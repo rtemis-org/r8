@@ -1,0 +1,531 @@
+{
+  "$corpus": 1,
+  "description": "Names: the pattern, reserved words, host keywords, and method names.",
+  "cases": [
+    {
+      "id": "plan-example",
+      "description": "The Kernel, Svm, and Fit example of the plan.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "rtemis",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "description": "Kernel function.",
+            "tag": "type",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "description": "",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "description": "",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double",
+                      "exclusive_min": 0.0
+                    },
+                    "description": "Kernel width."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Svm",
+            "description": "Support vector machine settings.",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double",
+                  "exclusive_min": 0.0
+                },
+                "default": 1.0,
+                "description": "Cost of a margin violation."
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "rtemis::Kernel"
+                },
+                "default": "Linear",
+                "description": "Kernel function."
+              },
+              {
+                "name": "weights",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "vec",
+                    "element": {
+                      "kind": "double",
+                      "min": 0.0
+                    }
+                  }
+                },
+                "description": "Case weights.",
+                "external": true
+              },
+              {
+                "name": "mtry",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "integer",
+                    "min": 1
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                },
+                "description": "Variables per split."
+              }
+            ],
+            "rules": [
+              {
+                "id": "RBF_GAMMA",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "kernel.gamma"
+                    },
+                    10
+                  ]
+                },
+                "message": "gamma is at most 10."
+              },
+              {
+                "id": "RBF_COST",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "cost"
+                    },
+                    100
+                  ]
+                },
+                "when": {
+                  "is_variant": [
+                    {
+                      "var": "kernel"
+                    },
+                    "Rbf"
+                  ]
+                },
+                "message": "cost is at most 100 with the Rbf kernel."
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "Trains a model from its settings.",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "Trains a model.",
+                "params": [
+                  "spec",
+                  "x",
+                  "y"
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "rtemis::Fit",
+            "target": {
+              "kind": "type",
+              "name": "rtemis::Svm"
+            },
+            "methods": [
+              "fit"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "type-name-host-keyword",
+      "description": "A type name becomes a class name in every host, so `class` aborts.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "class",
+            "version": 1,
+            "fields": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "name_host_keyword",
+            "path": "/types/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "variant-name-host-keyword",
+      "description": "`None` is a Python keyword.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Maybe",
+            "version": 1,
+            "variants": [
+              {
+                "name": "None",
+                "shape": "unit"
+              },
+              {
+                "name": "Some",
+                "shape": "unit"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "name_host_keyword",
+            "path": "/types/0/variants/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "field-names-keep-host-keywords",
+      "description": "A field name that is a keyword of one host is escaped by that host's binding.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "lambda",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "type",
+                "type": {
+                  "kind": "character"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "field-name-r-reserved",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "if",
+                "type": {
+                  "kind": "logical"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "field-name-period",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x.y",
+                "type": {
+                  "kind": "logical"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "field-name-leading-digit",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "1x",
+                "type": {
+                  "kind": "logical"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "field-name-rust-unescapable",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "logical"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "namespace-reserved",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "NULL"
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "named-type-unqualified",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "k",
+                "type": {
+                  "kind": "named",
+                  "name": "Kernel"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "named-type-reserved-part",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "k",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::NULL"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "method-name-reserved",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "L",
+            "methods": [
+              {
+                "name": "if",
+                "params": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "method-name-with-period",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "L",
+            "methods": [
+              {
+                "name": "as.data.frame",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "replacement-method-value-last",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Labeled",
+            "methods": [
+              {
+                "name": "labels<-",
+                "params": [
+                  "x",
+                  "value"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "replacement-method-without-value",
+      "description": "R passes the new value of a replacement call as `value`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Labeled",
+            "methods": [
+              {
+                "name": "labels<-",
+                "params": [
+                  "x",
+                  "v"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "replacement_value",
+            "path": "/traits/0/methods/0/params"
+          }
+        ]
+      }
+    }
+  ]
+}

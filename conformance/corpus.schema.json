@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "R8 conformance suite, format version 1",
+  "type": "object",
+  "required": ["$corpus", "description", "cases"],
+  "additionalProperties": false,
+  "properties": {
+    "$corpus": {"const": 1},
+    "description": {"type": "string", "minLength": 1},
+    "ir": {"type": "object", "description": "An IR document used by the value operations."},
+    "cases": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/case"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+    "error": {
+      "type": "object",
+      "required": ["code", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "path": {"type": "string", "pattern": "^(/([^~/]|~[01])*)*$"},
+        "rule": {"type": "string"}
+      }
+    },
+    "errors": {
+      "type": "object",
+      "required": ["errors"],
+      "additionalProperties": false,
+      "properties": {"errors": {"type": "array", "items": {"$ref": "#/$defs/error"}}}
+    },
+    "qualified": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*::[A-Za-z][A-Za-z0-9_]*$"},
+    "case": {
+      "type": "object",
+      "required": ["id", "op", "input", "expect"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "description": {"type": "string"},
+        "op": {"enum": ["declare", "decode", "canonical", "hash"]},
+        "type": {"$ref": "#/$defs/qualified"},
+        "input": true,
+        "options": {"type": "object"},
+        "expect": {"type": "object"}
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "op": {"const": "declare"},
+            "input": {"type": "object"},
+            "expect": {"oneOf": [
+              {"$ref": "#/$defs/errors"},
+              {"type": "object", "required": ["parse_error"], "additionalProperties": false, "properties": {"parse_error": {"const": true}}}
+            ]}
+          },
+          "not": {"required": ["type"]}
+        },
+        {
+          "required": ["type"],
+          "properties": {
+            "op": {"const": "decode"},
+            "expect": {"oneOf": [
+              {"$ref": "#/$defs/errors"},
+              {"type": "object", "required": ["valid"], "additionalProperties": false, "properties": {"valid": {"const": true}}}
+            ]}
+          }
+        },
+        {
+          "required": ["type"],
+          "properties": {
+            "op": {"const": "canonical"},
+            "expect": {"type": "object", "required": ["json"], "additionalProperties": false, "properties": {"json": {"type": "string"}}}
+          }
+        },
+        {
+          "required": ["type"],
+          "properties": {
+            "op": {"const": "hash"},
+            "options": {"type": "object", "additionalProperties": false, "properties": {"hash_key": {"type": "string"}}},
+            "expect": {"type": "object", "required": ["hash"], "additionalProperties": false, "properties": {"hash": {"type": "string", "pattern": "^(sha256|sha256-partial):[0-9a-f]{64}$|^hmac-sha256:[0-9a-f]{8}:[0-9a-f]{64}$"}}}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "r8-abi-check"
+description = "Test that the Rust ABI types of r8-core match the C header R8.h"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+r8-core = { path = "../r8-core" }
+
+[build-dependencies]
+cc = "1"

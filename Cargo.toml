@@ -1,0 +1,12 @@
+[workspace]
+members = ["crates/r8-core", "crates/r8-derive", "crates/r8-abi-check"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "BSD-3-Clause"
+authors = ["E.D. Gennatas"]
+repository = "https://github.com/rtemis-org/r8"
+homepage = "https://www.rtemis.org"

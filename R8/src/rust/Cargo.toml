@@ -1,0 +1,26 @@
+[package]
+name = 'r8-r'
+publish = false
+version = '0.1.0'
+edition = '2024'
+rust-version = '1.88'
+
+# The crate is its own workspace root, so it builds the same inside the r8
+# checkout, in R CMD check directories, and from the source tarball.
+[workspace]
+
+[lib]
+crate-type = [ 'rlib', 'staticlib' ]
+name = 'r8_r'
+
+[[bin]]
+name = 'document'
+path = 'document.rs'
+
+[dependencies]
+extendr-api = '0.9'
+r8-core = '0.1'
+
+[profile.release]
+lto = true
+codegen-units = 1

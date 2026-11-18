@@ -1,0 +1,15 @@
+# Rust
+/target
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.zed/
+*.code-workspace
+
+# Agents
+.claude/
+AGENTS.md
+CLAUDE.md

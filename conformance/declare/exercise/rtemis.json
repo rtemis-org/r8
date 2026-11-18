@@ -1,0 +1,555 @@
+{
+  "$corpus": 1,
+  "description": "M0 exercise: rtemis GLMNETHyperparameters, the ResamplerConfig family, and ClassificationMetrics (rtemis 76ea4ce) in the IR, with the decisions of the exercise gaps.",
+  "cases": [
+    {
+      "id": "rtemis-types",
+      "description": "GLMNET with rtemis:tunable extensions (G9), Resampler as a closed enum tagged by type, and ClassificationMetrics with optional (G10) and unique (G12) columns.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "rtemis",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Resampler",
+            "description": "A resampler: its type and its type-specific settings.",
+            "tag": "type",
+            "version": 1,
+            "variants": [
+              {
+                "name": "KFold",
+                "description": "K-fold cross-validation.",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "n_resamples",
+                    "type": {
+                      "kind": "integer",
+                      "min": 1
+                    },
+                    "description": "Number of resamples.",
+                    "default": 10
+                  },
+                  {
+                    "name": "stratify_var",
+                    "type": {
+                      "kind": "option",
+                      "inner": {
+                        "kind": "character"
+                      }
+                    },
+                    "description": "Name of the variable to stratify by."
+                  },
+                  {
+                    "name": "strat_n_bins",
+                    "type": {
+                      "kind": "integer",
+                      "min": 1
+                    },
+                    "description": "Number of bins to stratify a continuous variable into.",
+                    "default": 4
+                  },
+                  {
+                    "name": "id_strat",
+                    "type": {
+                      "kind": "option",
+                      "inner": {
+                        "kind": "character"
+                      }
+                    },
+                    "description": "Name of the column holding per-case grouping IDs; cases sharing an ID stay in the same resample."
+                  },
+                  {
+                    "name": "seed",
+                    "type": {
+                      "kind": "option",
+                      "inner": {
+                        "kind": "integer",
+                        "min": 0
+                      }
+                    },
+                    "description": "Random seed."
+                  }
+                ]
+              },
+              {
+                "name": "LOOCV",
+                "description": "Leave-one-out cross-validation.",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "n_resamples",
+                    "type": {
+                      "kind": "option",
+                      "inner": {
+                        "kind": "integer",
+                        "min": 1
+                      },
+                      "resolve": {
+                        "policy": "runtime"
+                      }
+                    },
+                    "description": "Number of resamples, one per case; filled from the data."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "GLMNET",
+            "description": "Elastic net (glmnet) hyperparameters. rtemis builds the search struct from the fields marked rtemis:tunable.",
+            "version": 1,
+            "fields": [
+              {
+                "name": "alpha",
+                "type": {
+                  "kind": "double",
+                  "min": 0,
+                  "max": 1
+                },
+                "description": "Elastic net mixing parameter (0 = ridge, 1 = lasso).",
+                "default": 1.0,
+                "extensions": {
+                  "rtemis:tunable": true
+                }
+              },
+              {
+                "name": "family",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "character",
+                    "enum": [
+                      "gaussian",
+                      "binomial",
+                      "poisson",
+                      "multinomial",
+                      "cox",
+                      "mgaussian"
+                    ]
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                },
+                "description": "GLM family; filled from the outcome type."
+              },
+              {
+                "name": "which_lambda_cv",
+                "type": {
+                  "kind": "character",
+                  "enum": [
+                    "lambda.1se",
+                    "lambda.min"
+                  ]
+                },
+                "description": "Which cross-validated lambda to use for prediction.",
+                "default": "lambda.1se"
+              },
+              {
+                "name": "nlambda",
+                "type": {
+                  "kind": "integer",
+                  "min": 1
+                },
+                "description": "Number of lambda values.",
+                "default": 100
+              },
+              {
+                "name": "lambda",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "vec",
+                    "element": {
+                      "kind": "double",
+                      "min": 0
+                    }
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                },
+                "description": "Regularization strength; filled by the backend's internal cross-validation during tuning."
+              },
+              {
+                "name": "penalty_factor",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "vec",
+                    "element": {
+                      "kind": "double",
+                      "min": 0
+                    }
+                  }
+                },
+                "description": "Penalty factor, one per design-matrix column. Absent uses 1 for every column."
+              },
+              {
+                "name": "standardize",
+                "type": {
+                  "kind": "logical"
+                },
+                "description": "Standardize features.",
+                "default": true
+              },
+              {
+                "name": "intercept",
+                "type": {
+                  "kind": "logical"
+                },
+                "description": "Include intercept.",
+                "default": true
+              },
+              {
+                "name": "ifw",
+                "type": {
+                  "kind": "logical"
+                },
+                "description": "Inverse frequency weighting in classification.",
+                "default": true,
+                "extensions": {
+                  "rtemis:tunable": true
+                }
+              },
+              {
+                "name": "lambda_min",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double",
+                    "exclusive_min": 0
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                },
+                "description": "Lambda minimizing cross-validated error; `lambda.min` in rtemis, renamed by the name rule."
+              },
+              {
+                "name": "lambda_1se",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double",
+                    "exclusive_min": 0
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                },
+                "description": "Largest lambda within one standard error of the minimum; `lambda.1se` in rtemis."
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "ClassificationMetrics",
+            "description": "Classification metrics for one sample.",
+            "version": 1,
+            "fields": [
+              {
+                "name": "sample",
+                "type": {
+                  "kind": "character",
+                  "enum": [
+                    "Training",
+                    "Validation",
+                    "Test"
+                  ]
+                },
+                "description": "Which sample the metrics describe."
+              },
+              {
+                "name": "confusion_long",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "reference",
+                      "type": {
+                        "kind": "character"
+                      },
+                      "description": "Reference outcome level."
+                    },
+                    {
+                      "name": "predicted",
+                      "type": {
+                        "kind": "character"
+                      },
+                      "description": "Predicted outcome level."
+                    },
+                    {
+                      "name": "n",
+                      "type": {
+                        "kind": "integer",
+                        "min": 0
+                      },
+                      "description": "Number of cases."
+                    }
+                  ]
+                },
+                "description": "Confusion matrix, one row per cell."
+              },
+              {
+                "name": "overall",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "balanced_accuracy",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "f1",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "accuracy",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "sensitivity",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      },
+                      "description": "Present for a binary outcome.",
+                      "optional": true
+                    },
+                    {
+                      "name": "specificity",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      },
+                      "description": "Present for a binary outcome.",
+                      "optional": true
+                    },
+                    {
+                      "name": "ppv",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      },
+                      "description": "Present for a binary outcome.",
+                      "optional": true
+                    },
+                    {
+                      "name": "npv",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      },
+                      "description": "Present for a binary outcome.",
+                      "optional": true
+                    },
+                    {
+                      "name": "auc",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      },
+                      "description": "Present with predicted probabilities.",
+                      "optional": true
+                    },
+                    {
+                      "name": "brier_score",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      },
+                      "description": "Present with predicted probabilities.",
+                      "optional": true
+                    }
+                  ]
+                },
+                "description": "Overall metrics, one row; a missing cell is a metric whose computation failed."
+              },
+              {
+                "name": "class",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "level",
+                      "type": {
+                        "kind": "character"
+                      },
+                      "description": "Outcome level.",
+                      "unique": true
+                    },
+                    {
+                      "name": "sensitivity",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "specificity",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "balanced_accuracy",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "ppv",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "npv",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "name": "f1",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double",
+                          "min": 0,
+                          "max": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                "description": "Per-class metrics, one row per outcome level."
+              },
+              {
+                "name": "positive_class",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "character"
+                  }
+                },
+                "description": "Outcome level treated as positive; present for a binary outcome."
+              }
+            ],
+            "rules": [
+              {
+                "id": "OVERALL_ONE_ROW",
+                "invariant": {
+                  "==": [
+                    {
+                      "nrow": [
+                        {
+                          "var": "overall"
+                        }
+                      ]
+                    },
+                    1
+                  ]
+                },
+                "message": "overall has one row."
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Hyperparameters",
+            "description": "Hyperparameters of a supervised learning algorithm.",
+            "tag": "algorithm",
+            "methods": []
+          }
+        ],
+        "impls": [
+          {
+            "trait": "rtemis::Hyperparameters",
+            "target": {
+              "kind": "type",
+              "name": "rtemis::GLMNET"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    }
+  ]
+}

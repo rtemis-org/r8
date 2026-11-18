@@ -1,0 +1,26 @@
+[package]
+name = "r8-core"
+description = "Runtime of the R8 type system: type declarations, validation, rules, JSON encoding, and hashing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["r", "types", "validation", "json", "schema"]
+categories = ["data-structures", "encoding"]
+
+[features]
+# JSON Schema of the IR document, generated from the IR types.
+schema = ["dep:schemars"]
+
+[dependencies]
+schemars = { version = "1", optional = true }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[dev-dependencies]
+jsonschema = { version = "0.61", default-features = false }

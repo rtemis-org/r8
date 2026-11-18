@@ -1,0 +1,1785 @@
+{
+  "$corpus": 1,
+  "description": "Field types, constraints, and declarations checked within one document.",
+  "cases": [
+    {
+      "id": "format-version-2",
+      "op": "declare",
+      "input": {
+        "$ir": 2,
+        "namespace": "ns"
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "unknown-member",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "logical"
+                },
+                "colour": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "unknown-member-in-type",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "integer",
+                  "colour": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "unknown-kind",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "quaternion"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "unknown-resolve-policy",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "logical"
+                  },
+                  "resolve": {
+                    "policy": "later"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "parse_error": true
+      }
+    },
+    {
+      "id": "version-zero",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 0,
+            "fields": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "version_zero",
+            "path": "/types/0/version"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-field",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "logical"
+                }
+              },
+              {
+                "name": "a",
+                "type": {
+                  "kind": "logical"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_field",
+            "path": "/types/0/fields/1/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "option-of-option",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "option",
+                    "inner": {
+                      "kind": "logical"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "option_option",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "option-of-json",
+      "description": "An absent value and JSON `null` would be indistinguishable.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "json"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "option_json",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-value-in-option",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "r-value-bare",
+      "description": "A runtime-only field is absent after reading, so it is declared `option()`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "model",
+                "type": {
+                  "kind": "r",
+                  "class": "lm"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "r_outside_option",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-value-in-vec",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "models",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "option",
+                    "inner": {
+                      "kind": "r",
+                      "class": "lm"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "r_outside_option",
+            "path": "/types/0/fields/0/type/element/inner"
+          }
+        ]
+      }
+    },
+    {
+      "id": "matrix-of-struct",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "m",
+                "type": {
+                  "kind": "matrix",
+                  "element": {
+                    "kind": "named",
+                    "name": "ns::P"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "matrix_element",
+            "path": "/types/0/fields/0/type/element"
+          }
+        ]
+      }
+    },
+    {
+      "id": "matrix-with-na",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "m",
+                "type": {
+                  "kind": "matrix",
+                  "element": {
+                    "kind": "option",
+                    "inner": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "table-column-not-scalar",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "t",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "x",
+                      "type": {
+                        "kind": "double"
+                      }
+                    },
+                    {
+                      "name": "g",
+                      "type": {
+                        "kind": "factor",
+                        "levels": [
+                          "a",
+                          "b"
+                        ]
+                      }
+                    },
+                    {
+                      "name": "v",
+                      "type": {
+                        "kind": "vec",
+                        "element": {
+                          "kind": "double"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "table_column",
+            "path": "/types/0/fields/0/type/columns/2/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "integer-bounds-inverted",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "integer",
+                  "min": 5,
+                  "max": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "bounds_inverted",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pattern-invalid",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "character",
+                  "pattern": "("
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "pattern_invalid",
+            "path": "/types/0/fields/0/type/pattern"
+          }
+        ]
+      }
+    },
+    {
+      "id": "factor-duplicate-level",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "factor",
+                  "levels": [
+                    "a",
+                    "a"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_level",
+            "path": "/types/0/fields/0/type/levels/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "variant-field-named-tag",
+      "description": "The variant's own field would write the tag member twice.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Shape",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Circle",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "type",
+                    "type": {
+                      "kind": "character"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "field_is_tag",
+            "path": "/types/0/variants/0/fields/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "every-error-reported",
+      "description": "Every problem is reported; the comparison ignores order.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "integer",
+                  "min": 5,
+                  "max": 1
+                }
+              },
+              {
+                "name": "a",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "json"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_field",
+            "path": "/types/0/fields/1/name"
+          },
+          {
+            "code": "bounds_inverted",
+            "path": "/types/0/fields/0/type"
+          },
+          {
+            "code": "option_json",
+            "path": "/types/0/fields/1/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "open-table",
+      "description": "An open table accepts columns the declaration does not name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "t",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "id",
+                      "type": {
+                        "kind": "character"
+                      }
+                    }
+                  ],
+                  "open": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "table-row-rules-duplicate",
+      "description": "Row rules of one table have distinct IDs.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "t",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "a",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ],
+                  "rules": [
+                    {
+                      "id": "R",
+                      "invariant": true,
+                      "message": "m"
+                    },
+                    {
+                      "id": "R",
+                      "invariant": true,
+                      "message": "m"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_rule",
+            "path": "/types/0/fields/0/type/rules/1/id"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unique-on-struct-field",
+      "description": "unique applies to a table column.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "character"
+                },
+                "unique": true
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_only",
+            "path": "/types/0/fields/0/unique"
+          }
+        ]
+      }
+    },
+    {
+      "id": "optional-on-struct-field",
+      "description": "optional applies to a table column.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "character"
+                },
+                "optional": true
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_only",
+            "path": "/types/0/fields/0/optional"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unique-and-optional-columns",
+      "description": "A column may be unique, and a column may be optional.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "t",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "id",
+                      "type": {
+                        "kind": "character"
+                      },
+                      "unique": true
+                    },
+                    {
+                      "name": "auc",
+                      "type": {
+                        "kind": "option",
+                        "inner": {
+                          "kind": "double"
+                        }
+                      },
+                      "optional": true
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "extension-namespaced",
+      "description": "Field extensions are namespaced.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "extensions": {
+                  "rtemis:tunable": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "extension-not-namespaced",
+      "description": "An extension key without a namespace aborts.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "extensions": {
+                  "tunable": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extension_namespace",
+            "path": "/types/0/fields/0/extensions/tunable"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sparse-double",
+      "description": "A sparse matrix of doubles.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "m",
+                "type": {
+                  "kind": "sparse_matrix",
+                  "element": {
+                    "kind": "double"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "sparse-integer",
+      "description": "A sparse matrix holds doubles or logicals.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "m",
+                "type": {
+                  "kind": "sparse_matrix",
+                  "element": {
+                    "kind": "integer"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_element",
+            "path": "/types/0/fields/0/type/element"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ordered-map",
+      "description": "An ordered map of doubles.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "m",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "double"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "ordered-map-r-value",
+      "description": "A runtime-only value is declared option() at the field.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "m",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "r",
+                    "class": "lm"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "r_outside_option",
+            "path": "/types/0/fields/0/type/value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "newtype-variants",
+      "description": "Newtype variants wrap structs; one in another namespace is checked by the registry.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "type",
+                "type": {
+                  "kind": "character"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "N",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Z",
+                "shape": "unit"
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "U",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Ax",
+                "shape": "newtype",
+                "of": "ns::A"
+              },
+              {
+                "name": "Other",
+                "shape": "newtype",
+                "of": "other::C"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "newtype-duplicate",
+      "description": "Two variants wrapping one struct.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "type",
+                "type": {
+                  "kind": "character"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "N",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Z",
+                "shape": "unit"
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "U",
+            "version": 1,
+            "variants": [
+              {
+                "name": "A1",
+                "shape": "newtype",
+                "of": "ns::A"
+              },
+              {
+                "name": "A2",
+                "shape": "newtype",
+                "of": "ns::A"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_newtype",
+            "path": "/types/3/variants/1/of"
+          }
+        ]
+      }
+    },
+    {
+      "id": "newtype-field-is-tag",
+      "description": "The flattened variant would write the tag member twice.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "type",
+                "type": {
+                  "kind": "character"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "N",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Z",
+                "shape": "unit"
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "U",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Bx",
+                "shape": "newtype",
+                "of": "ns::B"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "field_is_tag",
+            "path": "/types/3/variants/0/of"
+          }
+        ]
+      }
+    },
+    {
+      "id": "newtype-of-enum",
+      "description": "A newtype variant wraps a struct.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "type",
+                "type": {
+                  "kind": "character"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "N",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Z",
+                "shape": "unit"
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "U",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Nx",
+                "shape": "newtype",
+                "of": "ns::N"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "newtype_not_struct",
+            "path": "/types/3/variants/0/of"
+          }
+        ]
+      }
+    },
+    {
+      "id": "newtype-unknown",
+      "description": "The wrapped struct is declared in its namespace.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "type",
+                "type": {
+                  "kind": "character"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "N",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Z",
+                "shape": "unit"
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "U",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Qx",
+                "shape": "newtype",
+                "of": "ns::Q"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "newtype_unknown",
+            "path": "/types/3/variants/0/of"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-type",
+      "description": "Two types of one namespace share a name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": []
+          }
+        ],
+        "traits": [
+          {
+            "name": "T",
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_type",
+            "path": "/traits/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-variant",
+      "description": "Two variants share a name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "E",
+            "version": 1,
+            "variants": [
+              {
+                "name": "A",
+                "shape": "unit"
+              },
+              {
+                "name": "A",
+                "shape": "unit"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_variant",
+            "path": "/types/0/variants/1/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "enum-empty",
+      "description": "An enum has at least one variant.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "E",
+            "version": 1,
+            "variants": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "enum_empty",
+            "path": "/types/0/variants"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-method",
+      "description": "Two methods of a trait share a name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "L",
+            "methods": [
+              {
+                "name": "f",
+                "params": [
+                  "x"
+                ]
+              },
+              {
+                "name": "f",
+                "params": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_method",
+            "path": "/traits/0/methods/1/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-param",
+      "description": "Two arguments of a method share a name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "L",
+            "methods": [
+              {
+                "name": "f",
+                "params": [
+                  "x",
+                  "x"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_param",
+            "path": "/traits/0/methods/0/params/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "param-name",
+      "description": "An argument name is a syntactic R name or `...`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "L",
+            "methods": [
+              {
+                "name": "f",
+                "params": [
+                  "x",
+                  "1y",
+                  "..."
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "param_name",
+            "path": "/traits/0/methods/0/params/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "factor-no-levels",
+      "description": "Declared levels are not empty.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "g",
+                "type": {
+                  "kind": "factor",
+                  "levels": []
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "factor_no_levels",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-value-computed",
+      "description": "An R value is filled at run time, not computed by a rule expression.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "m",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "computed",
+                    "expr": {
+                      "var": "a"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "r_resolve",
+            "path": "/types/0/fields/0/type/resolve"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-message-empty",
+      "description": "A rule has a message.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "integer"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">=": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "message": " "
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_message_empty",
+            "path": "/types/0/rules/0/message"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-blank",
+      "description": "A unit has no surrounding spaces.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "dose",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": " mg"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unit_blank",
+            "path": "/types/0/fields/0/unit"
+          }
+        ]
+      }
+    }
+  ]
+}

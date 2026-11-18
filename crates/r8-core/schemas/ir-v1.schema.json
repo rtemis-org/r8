@@ -1,0 +1,1524 @@
+{
+  "$defs": {
+    "CharacterType": {
+      "additionalProperties": false,
+      "description": "Constraints of `type_character()`, and of the keys of `hashmap()`.",
+      "properties": {
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "pattern": {
+          "description": "A regular expression in Rust `regex` syntax, compiled at declaration.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ClassSystem": {
+      "description": "The class system of a host class.",
+      "enum": [
+        "s3",
+        "s4"
+      ],
+      "type": "string"
+    },
+    "FieldDef": {
+      "additionalProperties": false,
+      "description": "A field of a struct, a struct variant, a table, or a trait's required\nfields.",
+      "properties": {
+        "default": {
+          "description": "A literal default in the field's JSON form, filled by the constructor\nand by `r8_from_json()`."
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Namespaced extensions, such as `\"rtemis:tunable\"`, which R8 stores and\nexports and does not interpret.",
+          "type": "object"
+        },
+        "external": {
+          "description": "Written to an Arrow IPC file by `write_json()`.",
+          "type": "boolean"
+        },
+        "inherited_from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QualifiedName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ancestor that declared the field, for a field that `extends`\nflattened into a child."
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        },
+        "optional": {
+          "description": "A table column that may be absent from the table, as distinct from a\npresent column with missing cells, which is `option()`.",
+          "type": "boolean"
+        },
+        "sensitive": {
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/FieldType"
+        },
+        "unique": {
+          "description": "A table column whose values are distinct.",
+          "type": "boolean"
+        },
+        "unit": {
+          "description": "A UCUM code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "FieldType": {
+      "description": "A field type.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "`type_logical()`: a boolean, not `NA`.",
+          "properties": {
+            "kind": {
+              "const": "logical",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_integer()`.",
+          "properties": {
+            "enum": {
+              "description": "The admitted values, when the domain is a closed set.",
+              "items": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "exclusive_max": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "exclusive_min": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "integer",
+              "type": "string"
+            },
+            "max": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "min": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_double()`.",
+          "properties": {
+            "enum": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "exclusive_max": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "exclusive_min": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "finite": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "double",
+              "type": "string"
+            },
+            "max": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "min": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_character()`: a string without U+0000, not `NA`.",
+          "properties": {
+            "enum": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "character",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "A regular expression in Rust `regex` syntax, compiled at declaration.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_raw()`: bytes, written as padded base64 (RFC 4648 section 4).",
+          "properties": {
+            "kind": {
+              "const": "raw",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_date()`: a calendar date from 0000-01-01 to 9999-12-31.",
+          "properties": {
+            "kind": {
+              "const": "date",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_posixct()`: a UTC instant in microseconds, from 0000-01-01 to\n2112-09-17.",
+          "properties": {
+            "kind": {
+              "const": "posixct",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_factor()`: a vector of categorical values.",
+          "properties": {
+            "kind": {
+              "const": "factor",
+              "type": "string"
+            },
+            "levels": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "ordered": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_matrix(T, nrow, ncol)`: a dense matrix of a scalar type.",
+          "properties": {
+            "element": {
+              "$ref": "#/$defs/FieldType"
+            },
+            "kind": {
+              "const": "matrix",
+              "type": "string"
+            },
+            "ncol": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "nrow": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "element"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_array(T, dim)`: a dense array of a scalar type.",
+          "properties": {
+            "dim": {
+              "items": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "element": {
+              "$ref": "#/$defs/FieldType"
+            },
+            "kind": {
+              "const": "array",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "element"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_sparse_matrix(T)`: a matrix in compressed sparse column form,\n`dgCMatrix` in R and `{\"shape\", \"indptr\", \"indices\", \"data\"}` in JSON.",
+          "properties": {
+            "element": {
+              "$ref": "#/$defs/FieldType"
+            },
+            "kind": {
+              "const": "sparse_matrix",
+              "type": "string"
+            },
+            "ncol": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "nrow": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "element"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_matrix(S)`: a matrix whose columns are the fields of the struct\n`of`, all of one scalar type.",
+          "properties": {
+            "kind": {
+              "const": "matrix_of",
+              "type": "string"
+            },
+            "of": {
+              "$ref": "#/$defs/QualifiedName"
+            }
+          },
+          "required": [
+            "kind",
+            "of"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_table(columns, open, rules)`: a data.frame of equal-length\ncolumns. An open table also accepts columns the declaration does not\nname, each of a column type, whose types its JSON records in\n`\"$columns\"`. Each rule runs once per row and reads the row's columns\nby name.",
+          "properties": {
+            "columns": {
+              "items": {
+                "$ref": "#/$defs/FieldDef"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "table",
+              "type": "string"
+            },
+            "open": {
+              "type": "boolean"
+            },
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/RuleDef"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "columns"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_table(S)`: a data.frame whose columns are the fields of the\nstruct `of`.",
+          "properties": {
+            "kind": {
+              "const": "table_of",
+              "type": "string"
+            },
+            "of": {
+              "$ref": "#/$defs/QualifiedName"
+            }
+          },
+          "required": [
+            "kind",
+            "of"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_json()`: any JSON value.",
+          "properties": {
+            "kind": {
+              "const": "json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`type_r(class)`: an R value of a class, runtime-only.",
+          "properties": {
+            "class": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "r",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "class"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`vec(T, min_length, max_length, unique)`.",
+          "properties": {
+            "element": {
+              "$ref": "#/$defs/FieldType"
+            },
+            "kind": {
+              "const": "vec",
+              "type": "string"
+            },
+            "max_length": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "min_length": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "unique": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "element"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`option(T, resolve)`.",
+          "properties": {
+            "inner": {
+              "$ref": "#/$defs/FieldType"
+            },
+            "kind": {
+              "const": "option",
+              "type": "string"
+            },
+            "resolve": {
+              "$ref": "#/$defs/Resolve"
+            }
+          },
+          "required": [
+            "kind",
+            "inner"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`hashmap(T, keys)`: string keys, sorted at construction.",
+          "properties": {
+            "keys": {
+              "$ref": "#/$defs/CharacterType"
+            },
+            "kind": {
+              "const": "hashmap",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/FieldType"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`ordered_map(T, keys)`: unique string keys in insertion order; a named\nlist in R and an array of `{\"name\", \"value\"}` pairs in JSON. Order is\npart of the value.",
+          "properties": {
+            "keys": {
+              "$ref": "#/$defs/CharacterType"
+            },
+            "kind": {
+              "const": "ordered_map",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/FieldType"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A named struct or enum, by its qualified name.",
+          "properties": {
+            "kind": {
+              "const": "named",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/QualifiedName"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`dyn(Trait)`: any type that implements the trait.",
+          "properties": {
+            "kind": {
+              "const": "dyn",
+              "type": "string"
+            },
+            "trait": {
+              "$ref": "#/$defs/QualifiedName"
+            }
+          },
+          "required": [
+            "kind",
+            "trait"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ImplDef": {
+      "additionalProperties": false,
+      "description": "`impl()`: a trait implemented for a type.",
+      "properties": {
+        "codec": {
+          "description": "The impl supplies a JSON codec for a host class.",
+          "type": "boolean"
+        },
+        "methods": {
+          "description": "The methods this impl defines; the others take the trait's defaults.",
+          "items": {
+            "$ref": "#/$defs/MethodName"
+          },
+          "type": "array"
+        },
+        "tag_value": {
+          "description": "The value of the trait's tag member; defaults to the type's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/ImplTarget"
+        },
+        "trait": {
+          "$ref": "#/$defs/QualifiedName"
+        }
+      },
+      "required": [
+        "trait",
+        "target",
+        "methods"
+      ],
+      "type": "object"
+    },
+    "ImplTarget": {
+      "description": "What an impl implements its trait for.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "An R8 type.",
+          "properties": {
+            "kind": {
+              "const": "type",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/QualifiedName"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A class of another package in a host language, such as `dgCMatrix`.",
+          "properties": {
+            "class": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "host_class",
+              "type": "string"
+            },
+            "package": {
+              "type": "string"
+            },
+            "system": {
+              "$ref": "#/$defs/ClassSystem"
+            }
+          },
+          "required": [
+            "kind",
+            "host",
+            "package",
+            "class",
+            "system"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Logic": {
+      "description": "A JSONLogic expression, stored as its JSON value."
+    },
+    "MethodDef": {
+      "additionalProperties": false,
+      "description": "A trait method's signature.",
+      "properties": {
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "has_default": {
+          "description": "The trait supplies a default implementation.",
+          "type": "boolean"
+        },
+        "name": {
+          "$ref": "#/$defs/MethodName"
+        },
+        "params": {
+          "description": "The formal argument names, in order; `...` is allowed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stochastic": {
+          "description": "The method receives a seed and records it in provenance.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "params"
+      ],
+      "type": "object"
+    },
+    "MethodName": {
+      "anyOf": [
+        {
+          "const": "["
+        },
+        {
+          "pattern": "^([A-Za-z][._A-Za-z0-9]*|[.]([._A-Za-z][._A-Za-z0-9]*)?)(<-)?$"
+        }
+      ],
+      "description": "A method name: a syntactic R name that is not reserved, optionally ending in `<-`, or `[`.",
+      "not": {
+        "pattern": "^(if|else|repeat|while|function|for|in|next|break|TRUE|FALSE|NULL|Inf|NaN|NA|NA_integer_|NA_real_|NA_character_|NA_complex_)(<-)?$"
+      },
+      "type": "string"
+    },
+    "Migration": {
+      "additionalProperties": false,
+      "description": "The steps that take a document from `from_version` to the next version.",
+      "properties": {
+        "from_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/MigrationStep"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "from_version",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "MigrationStep": {
+      "description": "One step of a migration, from the fixed vocabulary that `r8-core` defines.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Renames a field.",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "rename",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "op",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Adds a field with a value.",
+          "properties": {
+            "field": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "add",
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "op",
+            "field",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Removes a field.",
+          "properties": {
+            "field": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "remove",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "field"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Splits one field into several, each computed from the old document.",
+          "properties": {
+            "field": {
+              "$ref": "#/$defs/Name"
+            },
+            "into": {
+              "items": {
+                "$ref": "#/$defs/SplitTarget"
+              },
+              "type": "array"
+            },
+            "op": {
+              "const": "split",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "field",
+            "into"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Merges several fields into one, computed from the old document.",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Logic"
+            },
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/Name"
+              },
+              "type": "array"
+            },
+            "into": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "merge",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "fields",
+            "into",
+            "expr"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes a field's type, computing the new value from the old.",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Logic"
+            },
+            "field": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "change_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "field",
+            "expr"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Renames an enum variant.",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "rename_variant",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "op",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Adds a field to one variant of an enum, with a value.",
+          "properties": {
+            "field": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "add_variant_field",
+              "type": "string"
+            },
+            "value": true,
+            "variant": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "op",
+            "variant",
+            "field",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Turns a unit variant into a struct variant with the given field values.",
+          "properties": {
+            "op": {
+              "const": "unit_to_struct",
+              "type": "string"
+            },
+            "values": {
+              "additionalProperties": false,
+              "patternProperties": {
+                "^[A-Za-z][A-Za-z0-9_]*$": true
+              },
+              "type": "object"
+            },
+            "variant": {
+              "$ref": "#/$defs/Name"
+            }
+          },
+          "required": [
+            "op",
+            "variant",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moves fields into a new nested struct field.",
+          "properties": {
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/Name"
+              },
+              "type": "array"
+            },
+            "into": {
+              "$ref": "#/$defs/Name"
+            },
+            "op": {
+              "const": "nest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "fields",
+            "into"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Converts a field's values between units by a factor.",
+          "properties": {
+            "factor": {
+              "format": "double",
+              "type": "number"
+            },
+            "field": {
+              "$ref": "#/$defs/Name"
+            },
+            "from": {
+              "type": "string"
+            },
+            "op": {
+              "const": "convert_unit",
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "field",
+            "from",
+            "to",
+            "factor"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Name": {
+      "description": "A name: a letter followed by letters, digits, and underscores; not an R reserved word or `self`, `Self`, `super`, or `crate`.",
+      "not": {
+        "enum": [
+          "if",
+          "else",
+          "repeat",
+          "while",
+          "function",
+          "for",
+          "in",
+          "next",
+          "break",
+          "TRUE",
+          "FALSE",
+          "NULL",
+          "Inf",
+          "NaN",
+          "NA",
+          "NA_integer_",
+          "NA_real_",
+          "NA_character_",
+          "NA_complex_",
+          "self",
+          "Self",
+          "super",
+          "crate"
+        ]
+      },
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+      "type": "string"
+    },
+    "QualifiedName": {
+      "description": "A qualified name, `namespace::Name`; both parts are names.",
+      "not": {
+        "pattern": "^(if|else|repeat|while|function|for|in|next|break|TRUE|FALSE|NULL|Inf|NaN|NA|NA_integer_|NA_real_|NA_character_|NA_complex_|self|Self|super|crate)::|::(if|else|repeat|while|function|for|in|next|break|TRUE|FALSE|NULL|Inf|NaN|NA|NA_integer_|NA_real_|NA_character_|NA_complex_|self|Self|super|crate)$"
+      },
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*::[A-Za-z][A-Za-z0-9_]*$",
+      "type": "string"
+    },
+    "Resolve": {
+      "description": "What an absent `option()` value means.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Absent is final.",
+          "properties": {
+            "policy": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`r8_resolve()` fills the value from an expression over other fields.",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Logic"
+            },
+            "policy": {
+              "const": "computed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy",
+            "expr"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`r8_resolve(x, context)` fills the value from data or the environment.",
+          "properties": {
+            "policy": {
+              "const": "runtime",
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuleDef": {
+      "additionalProperties": false,
+      "description": "`rule(id, invariant, message, when = )`: what must hold.\n\nA rule holds when `when` is `false` or when a field that `invariant` or\n`when` reads is absent, and reports a violation when `invariant` is\n`false`. The IR stores both expressions as declared.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Name"
+        },
+        "invariant": {
+          "$ref": "#/$defs/Logic"
+        },
+        "message": {
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Logic"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "invariant",
+        "message"
+      ],
+      "type": "object"
+    },
+    "SplitTarget": {
+      "additionalProperties": false,
+      "description": "A target of [`MigrationStep::Split`].",
+      "properties": {
+        "expr": {
+          "$ref": "#/$defs/Logic"
+        },
+        "field": {
+          "$ref": "#/$defs/Name"
+        }
+      },
+      "required": [
+        "field",
+        "expr"
+      ],
+      "type": "object"
+    },
+    "TraitDef": {
+      "additionalProperties": false,
+      "description": "`new_trait()`: behavior that types implement.",
+      "properties": {
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "methods": {
+          "items": {
+            "$ref": "#/$defs/MethodDef"
+          },
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        },
+        "required_fields": {
+          "description": "Fields every implementing type has.",
+          "items": {
+            "$ref": "#/$defs/FieldDef"
+          },
+          "type": "array"
+        },
+        "supertraits": {
+          "items": {
+            "$ref": "#/$defs/QualifiedName"
+          },
+          "type": "array"
+        },
+        "tag": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The member that names an implementor in JSON; without it, `\"$type\"`."
+        }
+      },
+      "required": [
+        "name",
+        "methods"
+      ],
+      "type": "object"
+    },
+    "TypeDef": {
+      "description": "A struct or an enum.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "`new_struct()`: a product type.",
+          "properties": {
+            "aliases": {
+              "description": "Former qualified names, which readers accept.",
+              "items": {
+                "$ref": "#/$defs/QualifiedName"
+              },
+              "type": "array"
+            },
+            "description": {
+              "default": "",
+              "type": "string"
+            },
+            "extends": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/QualifiedName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The parent, whose fields are flattened into `fields`."
+            },
+            "extensions": {
+              "additionalProperties": true,
+              "description": "Namespaced extensions that R8 stores and exports and does not\ninterpret.",
+              "type": "object"
+            },
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/FieldDef"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "struct",
+              "type": "string"
+            },
+            "migrations": {
+              "items": {
+                "$ref": "#/$defs/Migration"
+              },
+              "type": "array"
+            },
+            "name": {
+              "$ref": "#/$defs/Name"
+            },
+            "provenance": {
+              "description": "Values carry a provenance record.",
+              "type": "boolean"
+            },
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/RuleDef"
+              },
+              "type": "array"
+            },
+            "s4": {
+              "description": "Registered with `methods::setOldClass()`.",
+              "type": "boolean"
+            },
+            "version": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "version",
+            "fields"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`new_enum()`: a sum type.",
+          "properties": {
+            "aliases": {
+              "description": "Former qualified names, which readers accept.",
+              "items": {
+                "$ref": "#/$defs/QualifiedName"
+              },
+              "type": "array"
+            },
+            "description": {
+              "default": "",
+              "type": "string"
+            },
+            "extensions": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "kind": {
+              "const": "enum",
+              "type": "string"
+            },
+            "migrations": {
+              "items": {
+                "$ref": "#/$defs/Migration"
+              },
+              "type": "array"
+            },
+            "name": {
+              "$ref": "#/$defs/Name"
+            },
+            "tag": {
+              "$ref": "#/$defs/Name",
+              "default": "type",
+              "description": "The member that holds the variant name of a struct variant."
+            },
+            "variants": {
+              "items": {
+                "$ref": "#/$defs/VariantDef"
+              },
+              "type": "array"
+            },
+            "version": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "version",
+            "variants"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "VariantDef": {
+      "description": "A variant of an enum.",
+      "oneOf": [
+        {
+          "description": "A unit variant, written as its name.",
+          "properties": {
+            "shape": {
+              "const": "unit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shape"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A struct variant, written as an object with the enum's tag member.",
+          "properties": {
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/FieldDef"
+              },
+              "type": "array"
+            },
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/RuleDef"
+              },
+              "type": "array"
+            },
+            "shape": {
+              "const": "struct",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shape",
+            "fields"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A newtype variant, `variant(of = S)`: one value of the named struct\n`of`, written as that struct's object with the enum's tag member added.\nIn R the value is the struct's value itself.",
+          "properties": {
+            "of": {
+              "$ref": "#/$defs/QualifiedName"
+            },
+            "shape": {
+              "const": "newtype",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shape",
+            "of"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/Name"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The declarations of one namespace.",
+  "properties": {
+    "$ir": {
+      "const": 1,
+      "description": "The IR format version.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "impls": {
+      "items": {
+        "$ref": "#/$defs/ImplDef"
+      },
+      "type": "array"
+    },
+    "namespace": {
+      "$ref": "#/$defs/Name"
+    },
+    "traits": {
+      "items": {
+        "$ref": "#/$defs/TraitDef"
+      },
+      "type": "array"
+    },
+    "types": {
+      "items": {
+        "$ref": "#/$defs/TypeDef"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "$ir",
+    "namespace"
+  ],
+  "title": "R8 IR document, version 1",
+  "type": "object"
+}

@@ -1,0 +1,18 @@
+[package]
+name = "r8-derive"
+description = "Derive macro that declares a Rust struct or enum as an R8 type"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["r", "types", "derive"]
+categories = ["development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
