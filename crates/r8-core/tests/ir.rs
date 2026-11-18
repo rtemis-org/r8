@@ -50,3 +50,19 @@ fn a_non_finite_bound_is_reported() {
         vec![("bound_not_finite", "/types/1/fields/0/type/max".to_string())]
     );
 }
+
+/// The R package's test fixtures, one IR document per type, hold the
+/// declarations of this crate's fixture, so the R and Rust tests check one
+/// IR.
+#[test]
+fn the_r_fixtures_match_this_fixture() {
+    let d = IrDocument::from_json(SVM).unwrap();
+    for (file, index) in [("kernel.ir.json", 0), ("svm.ir.json", 1)] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../R8/tests/testthat/fixtures")
+            .join(file);
+        let r = IrDocument::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(r.namespace, d.namespace, "{file}");
+        assert_eq!(r.types, vec![d.types[index].clone()], "{file}");
+    }
+}

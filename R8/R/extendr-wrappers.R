@@ -5,6 +5,43 @@
 #' @useDynLib R8, .registration = TRUE
 NULL
 
+#' JSON text of an R declaration object.
+#'
+#' @param x List: A declaration built by the R8 constructors.
+#' @return Character: The JSON text.
+#' @keywords internal
+#' @noRd
+r8_ir_json <- function(x) .Call(wrap__r8_ir_json, x)
+
+#' The RFC 8785 canonical text of JSON text.
+#'
+#' @param json Character: JSON text.
+#' @return Character: The canonical text.
+#' @keywords internal
+#' @noRd
+r8_canonical_json <- function(json) .Call(wrap__r8_canonical_json, json)
+
+#' Checks a type declaration in its namespace and registers it.
+#'
+#' Returns a list with the code, path, and message of each problem; an empty
+#' list means the declaration passed and is registered.
+#'
+#' @param type_json Character: The type's IR declaration as JSON text.
+#' @param namespace Character: The namespace.
+#' @return List: The problems, as character vectors `code`, `path`, `message`.
+#' @keywords internal
+#' @noRd
+r8_declare_type <- function(type_json, namespace) .Call(wrap__r8_declare_type, type_json, namespace)
+
+#' The IR document of one registered type: its namespace and its
+#' declaration.
+#'
+#' @param name Character: The qualified name, `namespace::Type`.
+#' @return Character: The IR document as JSON text.
+#' @keywords internal
+#' @noRd
+r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
+
 #' Version of the r8-core crate
 #'
 #' Returns the version of the `r8-core` Rust crate compiled into R8, which

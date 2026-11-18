@@ -1,0 +1,35 @@
+{
+  "$ir": 1,
+  "namespace": "rtemis",
+  "types": [
+    {
+      "kind": "enum",
+      "name": "Kernel",
+      "description": "Kernel function.",
+      "tag": "type",
+      "version": 1,
+      "variants": [
+        {
+          "name": "Linear",
+          "description": "",
+          "shape": "unit"
+        },
+        {
+          "name": "Rbf",
+          "description": "",
+          "shape": "struct",
+          "fields": [
+            {
+              "name": "gamma",
+              "type": {
+                "kind": "double",
+                "exclusive_min": 0.0
+              },
+              "description": "Kernel width."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
