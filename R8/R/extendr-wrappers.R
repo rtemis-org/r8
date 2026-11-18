@@ -5,6 +5,39 @@
 #' @useDynLib R8, .registration = TRUE
 NULL
 
+#' Claims a namespace for the package that declares into it.
+#'
+#' The first package to declare into a namespace owns it; a declaration by
+#' another package is refused. Code outside a package (`package = ""`) owns
+#' no namespace, and a package may claim a namespace such code declared
+#' into.
+#'
+#' @param namespace Character: The namespace.
+#' @param package Character: The declaring package, or `""` outside a package.
+#' @return Character: `""` when the claim holds, otherwise the owning package.
+#' @keywords internal
+#' @noRd
+r8_claim_namespace <- function(namespace, package) .Call(wrap__r8_claim_namespace, namespace, package)
+
+#' Checks a trait declaration in its namespace and registers it.
+#'
+#' @param trait_json Character: The trait's IR declaration as JSON text.
+#' @param namespace Character: The namespace.
+#' @return List: The problems, as character vectors `code`, `path`, `message`.
+#' @keywords internal
+#' @noRd
+r8_declare_trait <- function(trait_json, namespace) .Call(wrap__r8_declare_trait, trait_json, namespace)
+
+#' Registers an impl in its namespace; an impl of the same trait for the same
+#' type replaces it.
+#'
+#' @param impl_json Character: The impl's IR declaration as JSON text.
+#' @param namespace Character: The namespace of the declaring code.
+#' @return NULL.
+#' @keywords internal
+#' @noRd
+r8_declare_impl <- function(impl_json, namespace) .Call(wrap__r8_declare_impl, impl_json, namespace)
+
 #' JSON text of an R declaration object.
 #'
 #' @param x List: A declaration built by the R8 constructors.
@@ -41,6 +74,47 @@ r8_declare_type <- function(type_json, namespace) .Call(wrap__r8_declare_type, t
 #' @keywords internal
 #' @noRd
 r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
+
+#' The identity of an R8 value: the canonical text of its normalized form,
+#' its content hash, and the paths of its runtime-only fields that hold a
+#' value.
+#'
+#' @param x An R8 value.
+#' @return List: `canonical`, `hash`, and `runtime`, or `errors`.
+#' @keywords internal
+#' @noRd
+r8_value_identity <- function(x) .Call(wrap__r8_value_identity, x)
+
+#' Constructs a value: the fields of `fields`, a named list, form a value of
+#' the struct `type_name`, or of the variant `variant` of the enum
+#' `type_name`, which is encoded, validated, and decoded.
+#'
+#' Returns `list(value = <R8 value>)` or `list(errors = <problems>)`.
+#'
+#' @param fields List: The fields, by name.
+#' @param type_name Character: The qualified type name.
+#' @param variant Character: The enum variant, or `""` for a struct.
+#' @return List: The value or the problems.
+#' @keywords internal
+#' @noRd
+r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, fields, type_name, variant)
+
+#' Writes an R8 value as a document.
+#'
+#' @param x An R8 value.
+#' @return List: `list(json = <text>)` or `list(errors = <problems>)`.
+#' @keywords internal
+#' @noRd
+r8_value_to_document <- function(x) .Call(wrap__r8_value_to_document, x)
+
+#' Reads a document of a type into an R8 value.
+#'
+#' @param text Character: The document.
+#' @param type_name Character: The qualified type name.
+#' @return List: `list(value = <R8 value>)` or `list(errors = <problems>)`.
+#' @keywords internal
+#' @noRd
+r8_value_from_document <- function(text, type_name) .Call(wrap__r8_value_from_document, text, type_name)
 
 #' Version of the r8-core crate
 #'

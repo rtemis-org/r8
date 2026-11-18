@@ -128,3 +128,27 @@ mod documents {
         assert_eq!(codes(read_document("{", &ty, &doc))[0].0, "document_json");
     }
 }
+
+#[test]
+fn dates_and_date_times_convert_both_ways() {
+    use r8_core::codec::{date_days, date_text, datetime_micros, datetime_text};
+    for (days, text) in [
+        (0, "1970-01-01"),
+        (-1, "1969-12-31"),
+        (19782, "2024-02-29"),
+        (-719528, "0000-01-01"),
+        (2932896, "9999-12-31"),
+    ] {
+        assert_eq!(date_text(days), text);
+        assert_eq!(date_days(text), days);
+    }
+    for (us, text) in [
+        (0, "1970-01-01T00:00:00.000000Z"),
+        (-1, "1969-12-31T23:59:59.999999Z"),
+        (4_503_599_627_370_495, "2112-09-17T23:53:47.370495Z"),
+        (-4_503_599_627_370_495, "1827-04-16T00:06:12.629505Z"),
+    ] {
+        assert_eq!(datetime_text(us), text);
+        assert_eq!(datetime_micros(text), us);
+    }
+}

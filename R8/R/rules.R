@@ -106,6 +106,15 @@ compile_rule_expr <- function(e) {
     )
   }
   fn <- e[[1L]]
+  # `R8::is_variant()` and `base::is.null()` name the same functions as
+  # their bare forms.
+  if (
+    is.call(fn) &&
+      identical(fn[[1L]], as.name("::")) &&
+      as.character(fn[[2L]]) %in% c("R8", "base")
+  ) {
+    fn <- fn[[3L]]
+  }
   if (!is.symbol(fn)) {
     r8_abort(
       "A rule calls a function by name: ",
@@ -219,3 +228,30 @@ rule <- function(id, invariant, message, when = NULL) {
   out[["message"]] <- message
   structure(out, class = "r8_rule")
 } # /R8::rule
+
+
+# %% is_variant ----
+#' Test an enum value's variant
+#'
+#' `TRUE` when `x` is a value of an R8 enum whose variant is `variant`. In a
+#' rule, `is_variant(kernel, "Rbf")` compiles to the same test over the
+#' value's JSON form.
+#'
+#' @param x An R8 enum value.
+#' @param variant Character: The variant name.
+#'
+#' @return Logical: One value.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Shape <- new_enum("Shape", variants = list(Circle = variant(), Square = variant()))
+#' is_variant(Shape@Circle, "Circle")
+#' options(op)
+#'
+#' @export
+is_variant <- function(x, variant) {
+  if (!inherits(x, "r8_value") || is.null(attr(x, "r8_variant"))) {
+    r8_abort("`x` is an R8 enum value.", class = "r8_type_error")
+  }
+  identical(attr(x, "r8_variant"), variant)
+} # /R8::is_variant

@@ -1,0 +1,5 @@
+export(Shape)
+export(Rect)
+export(Area)
+export(area)
+importFrom(R8, new_struct)

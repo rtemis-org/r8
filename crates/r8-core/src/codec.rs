@@ -283,12 +283,53 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-fn date_days(s: &str) -> i64 {
+/// The proleptic Gregorian date of a day count from 1970-01-01, as
+/// `(year, month, day)` (Hinnant's `civil_from_days`).
+pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// The canonical text of a date, `YYYY-MM-DD`, from its day count since
+/// 1970-01-01.
+pub fn date_text(days: i64) -> String {
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The canonical text of a date-time, `YYYY-MM-DDTHH:MM:SS.ffffffZ`, from its
+/// microsecond count since 1970-01-01T00:00:00Z.
+pub fn datetime_text(micros: i64) -> String {
+    let secs = micros.div_euclid(1_000_000);
+    let frac = micros.rem_euclid(1_000_000);
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    format!(
+        "{}T{:02}:{:02}:{:02}.{frac:06}Z",
+        date_text(days),
+        tod / 3600,
+        (tod / 60) % 60,
+        tod % 60
+    )
+}
+
+/// The day count since 1970-01-01 of a canonical date text.
+pub fn date_days(s: &str) -> i64 {
     let n = |r: std::ops::Range<usize>| s.get(r).and_then(|x| x.parse::<i64>().ok()).unwrap_or(0);
     days_from_civil(n(0..4), n(5..7), n(8..10))
 }
 
-fn datetime_micros(s: &str) -> i64 {
+/// The microsecond count since 1970-01-01T00:00:00Z of a canonical date-time
+/// text.
+pub fn datetime_micros(s: &str) -> i64 {
     let n = |r: std::ops::Range<usize>| s.get(r).and_then(|x| x.parse::<i64>().ok()).unwrap_or(0);
     let secs = date_days(s) * 86_400 + n(11..13) * 3600 + n(14..16) * 60 + n(17..19);
     secs * 1_000_000 + n(20..26)
@@ -660,12 +701,31 @@ pub fn content_hash(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
 ) -> Result<String, Vec<ValueError>> {
+    content_hash_with_runtime(value, ty, lookup, &[])
+}
+
+/// The content hash of a valid value whose runtime-only fields at the JSON
+/// Pointers `runtime` hold values in the host. Their values have no JSON form
+/// and stay out of the hash; their presence enters it as `"runtime"`, the
+/// sorted paths, a member the hashed object holds only when `runtime` is not
+/// empty.
+pub fn content_hash_with_runtime(
+    value: &Value,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    runtime: &[String],
+) -> Result<String, Vec<ValueError>> {
     let errors = validate(value, ty, lookup);
     if !errors.is_empty() {
         return Err(errors);
     }
     let hashed = Normalizer::new(lookup, true).named(ty, value);
-    let obj = json!({"type": ty.to_string(), "declaration": declaration_hash(ty, lookup), "value": hashed});
+    let mut obj = json!({"type": ty.to_string(), "declaration": declaration_hash(ty, lookup), "value": hashed});
+    if !runtime.is_empty() {
+        let mut paths = runtime.to_vec();
+        paths.sort();
+        obj["runtime"] = json!(paths);
+    }
     Ok(format!(
         "sha256:{}",
         sha256_hex(canonical_text(&obj).as_bytes())

@@ -225,6 +225,58 @@ fields_ir <- function(fields, what) {
 } # /R8::fields_ir
 
 
+# %% check_members ----
+#' Checks a named list of members
+#'
+#' @param x List: The members.
+#' @param what Character: The argument name.
+#' @param owner Character: What the members belong to, for messages.
+#'
+#' @return `x`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+check_members <- function(x, what, owner) {
+  if (!is.list(x)) {
+    r8_abort(
+      "`",
+      what,
+      "` of ",
+      owner,
+      " is a named list.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (length(x) > 0L) {
+    n <- names(x)
+    if (is.null(n) || any(!nzchar(n))) {
+      r8_abort(
+        "Every member of `",
+        what,
+        "` of ",
+        owner,
+        " is named: list(name = ...).",
+        class = "r8_declaration_error"
+      )
+    }
+    dup <- unique(n[duplicated(n)])
+    if (length(dup) > 0L) {
+      r8_abort(
+        "`",
+        what,
+        "` of ",
+        owner,
+        " names `",
+        paste(dup, collapse = "`, `"),
+        "` twice.",
+        class = "r8_declaration_error"
+      )
+    }
+  }
+  invisible(x)
+} # /R8::check_members
+
+
 # %% declare ----
 #' Check and register a declaration, and make its type object
 #'
@@ -237,7 +289,49 @@ fields_ir <- function(fields, what) {
 #'
 #' @keywords internal
 #' @noRd
-declare <- function(ir, namespace, class, formals) {
+declare <- function(ir, env, class, formals) {
+  namespace <- declaring_namespace(env)
+  package <- declaring_package(env)
+  claim_namespace(namespace, package)
+  qname <- paste0(namespace, "::", ir[["name"]])
+  field_names <- names(formals)
+  ctor <- as.function(
+    c(
+      formals,
+      bquote(r8_construct(
+        .(qname),
+        mget(.(field_names), envir = environment())
+      ))
+    ),
+    envir = asNamespace("R8")
+  )
+  type <- structure(
+    ctor,
+    class = c(class, "r8_type", "function"),
+    r8_name = qname,
+    r8_ir = ir
+  )
+  register_type(type, namespace)
+  record_declaration(
+    env,
+    list(kind = "type", type = type, namespace = namespace)
+  )
+  type
+} # /R8::declare
+
+
+# %% register_type ----
+#' Check a type's declaration and register it
+#'
+#' @param type A type object.
+#' @param namespace Character: Its namespace.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+register_type <- function(type, namespace) {
+  ir <- attr(type, "r8_ir")
   problems <- r8_declare_type(r8_ir_json(ir), namespace)
   if (length(problems[["code"]]) > 0L) {
     lines <- paste0(
@@ -262,28 +356,9 @@ declare <- function(ir, namespace, class, formals) {
       class = "r8_declaration_error"
     )
   }
-  qname <- paste0(namespace, "::", ir[["name"]])
-  ctor <- as.function(
-    c(
-      formals,
-      bquote(r8_abort(
-        "Constructing values of `",
-        .(qname),
-        "` arrives with R-native values.",
-        class = "r8_not_implemented"
-      ))
-    ),
-    envir = asNamespace("R8")
-  )
-  type <- structure(
-    ctor,
-    class = c(class, "r8_type", "function"),
-    r8_name = qname,
-    r8_ir = ir
-  )
-  assign(qname, type, envir = .r8_types)
-  type
-} # /R8::declare
+  assign(attr(type, "r8_name"), type, envir = .r8_types)
+  invisible(NULL)
+} # /R8::register_type
 
 
 # %% new_struct ----
@@ -296,7 +371,8 @@ declare <- function(ir, namespace, class, formals) {
 #' console belong to the option `r8.namespace`, `"global"` by default.
 #'
 #' @param name Character: The type name, an R8 name such as `"Svm"`.
-#' @param ... Named fields: `field(...)` calls or bare field types.
+#' @param fields Named list: The fields, `field(...)` calls or bare field
+#'   types.
 #' @param description Character: What the type is.
 #' @param version Integer: The type's version, from 1.
 #' @param rules List: `rule()` calls over the fields.
@@ -305,14 +381,14 @@ declare <- function(ir, namespace, class, formals) {
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
-#' Point <- new_struct("Point", x = type_double(), y = type_double(),
+#' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()),
 #'   description = "A point.")
 #' options(op)
 #'
 #' @export
 new_struct <- function(
   name,
-  ...,
+  fields = list(),
   description = "",
   version = 1L,
   rules = list()
@@ -323,8 +399,7 @@ new_struct <- function(
       class = "r8_declaration_error"
     )
   }
-  namespace <- declaring_namespace(parent.frame())
-  fields <- list(...)
+  check_members(fields, "fields", paste0("`", name, "`"))
   ir <- list(
     kind = "struct",
     name = name,
@@ -339,7 +414,7 @@ new_struct <- function(
     f <- as_field(f)
     if (isTRUE(f[["has_default"]])) f[["default"]] else NULL
   })
-  declare(ir, namespace, "r8_struct_type", formals)
+  declare(ir, parent.frame(), "r8_struct_type", formals)
 } # /R8::new_struct
 
 
@@ -349,7 +424,7 @@ new_struct <- function(
 #' A unit variant has no fields; a struct variant has named fields; a newtype
 #' variant holds one value of a struct, `variant(of = GRanges)`.
 #'
-#' @param ... Named fields of a struct variant.
+#' @param fields Named list: The fields of a struct variant.
 #' @param description Character: What the variant is.
 #' @param rules List: `rule()` calls over the variant's fields.
 #' @param of Optional R8 struct type: The struct a newtype variant holds.
@@ -357,12 +432,25 @@ new_struct <- function(
 #' @return An `r8_variant`.
 #'
 #' @examples
-#' variant(gamma = field(type_double(exclusive_min = 0), description = "Kernel width."))
+#' variant(fields = list(
+#'   gamma = field(type_double(exclusive_min = 0), description = "Kernel width.")
+#' ))
 #'
 #' @export
-variant <- function(..., description = "", rules = list(), of = NULL) {
+variant <- function(
+  fields = list(),
+  description = "",
+  rules = list(),
+  of = NULL
+) {
+  check_members(fields, "fields", "a variant")
   structure(
-    list(fields = list(...), description = description, rules = rules, of = of),
+    list(
+      fields = fields,
+      description = description,
+      rules = rules,
+      of = of
+    ),
     class = "r8_variant"
   )
 } # /R8::variant
@@ -377,7 +465,7 @@ variant <- function(..., description = "", rules = list(), of = NULL) {
 #' value.
 #'
 #' @param name Character: The type name.
-#' @param ... Named `variant()` calls.
+#' @param variants Named list: The variants, `variant()` calls.
 #' @param description Character: What the type is.
 #' @param tag Character: The member that names the variant in JSON.
 #' @param version Integer: The type's version, from 1.
@@ -387,21 +475,28 @@ variant <- function(..., description = "", rules = list(), of = NULL) {
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
-#' Kernel <- new_enum("Kernel", Linear = variant(),
-#'   Rbf = variant(gamma = type_double(exclusive_min = 0)))
+#' Kernel <- new_enum("Kernel", variants = list(
+#'   Linear = variant(),
+#'   Rbf = variant(fields = list(gamma = type_double(exclusive_min = 0)))
+#' ))
 #' Kernel@Linear
 #' options(op)
 #'
 #' @export
-new_enum <- function(name, ..., description = "", tag = "type", version = 1L) {
+new_enum <- function(
+  name,
+  variants = list(),
+  description = "",
+  tag = "type",
+  version = 1L
+) {
   if (!is_name(name)) {
     r8_abort(
       "A type name is an R8 name, such as \"Kernel\".",
       class = "r8_declaration_error"
     )
   }
-  namespace <- declaring_namespace(parent.frame())
-  variants <- list(...)
+  check_members(variants, "variants", paste0("`", name, "`"))
   if (
     length(variants) == 0L ||
       is.null(names(variants)) ||
@@ -448,7 +543,7 @@ new_enum <- function(name, ..., description = "", tag = "type", version = 1L) {
     version = as.integer(version),
     variants = variants_ir
   )
-  declare(ir, namespace, "r8_enum_type", list())
+  declare(ir, parent.frame(), "r8_enum_type", list())
 } # /R8::new_enum
 
 
@@ -472,19 +567,27 @@ new_enum <- function(name, ..., description = "", tag = "type", version = 1L) {
       class = "r8_value_error"
     )
   }
-  if (v[[1L]][["shape"]] != "unit") {
-    r8_abort(
-      "Constructing the struct variant `",
-      name,
-      "` arrives with R-native values.",
-      class = "r8_not_implemented"
-    )
+  qname <- attr(object, "r8_name")
+  if (v[[1L]][["shape"]] == "unit") {
+    return(r8_construct(qname, list(), name))
   }
-  structure(
-    list(),
-    class = c(attr(object, "r8_name"), "r8_value"),
-    r8_type = attr(object, "r8_name"),
-    r8_variant = name
+  # A struct or newtype variant: its constructor, with the fields as formals.
+  fields <- if (v[[1L]][["shape"]] == "struct") {
+    vapply(v[[1L]][["fields"]], function(f) f[["name"]], character(1))
+  } else {
+    names(formals(.r8_types[[v[[1L]][["of"]]]]))
+  }
+  defaults <- stats::setNames(rep(list(NULL), length(fields)), fields)
+  as.function(
+    c(
+      defaults,
+      bquote(r8_construct(
+        .(qname),
+        mget(.(fields), envir = environment()),
+        .(name)
+      ))
+    ),
+    envir = asNamespace("R8")
   )
 } # /R8::@.r8_enum_type
 
@@ -501,7 +604,7 @@ new_enum <- function(name, ..., description = "", tag = "type", version = 1L) {
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
-#' Point <- new_struct("Point", x = type_double(), y = type_double())
+#' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 #' r8_declaration(Point)
 #' options(op)
 #'

@@ -82,3 +82,80 @@ declaring_namespace <- function(env) {
   }
   ns
 } # /R8::declaring_namespace
+
+
+# %% declaring_package ----
+#' The package whose code makes a declaration
+#'
+#' @param env Environment: Where the declaration is made.
+#'
+#' @return Character: The package name, or `""` outside a package.
+#'
+#' @keywords internal
+#' @noRd
+declaring_package <- function(env) {
+  top <- topenv(env)
+  if (isNamespace(top)) getNamespaceName(top) else ""
+} # /R8::declaring_package
+
+
+# %% claim_namespace ----
+#' Claim a namespace for the declaring package, or abort
+#'
+#' @param namespace Character: The namespace.
+#' @param package Character: The declaring package, or `""`.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+claim_namespace <- function(namespace, package) {
+  owner <- r8_claim_namespace(namespace, package)
+  if (nzchar(owner)) {
+    r8_abort(
+      "The R8 namespace `",
+      namespace,
+      "` belongs to the package '",
+      owner,
+      "'",
+      if (nzchar(package)) {
+        paste0("; package '", package, "' declares into it")
+      } else {
+        ""
+      },
+      ". Declare into another namespace (`Config/R8/namespace` or the option `r8.namespace`).",
+      class = "r8_declaration_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::claim_namespace
+
+
+# %% record_declaration ----
+#' Record a declaration in the declaring package's namespace
+#'
+#' A package's top-level declarations run when the package is installed, in
+#' another R session; `r8_register()` replays the record when the package
+#' loads. Declarations outside a package, or after the namespace is locked,
+#' are not recorded.
+#'
+#' @param env Environment: Where the declaration is made.
+#' @param entry List: The declaration, with its `kind`.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+record_declaration <- function(env, entry) {
+  top <- topenv(env)
+  if (!isNamespace(top) || environmentIsLocked(top)) {
+    return(invisible(NULL))
+  }
+  if (!exists(".__r8__", envir = top, inherits = FALSE)) {
+    assign(".__r8__", new.env(parent = emptyenv()), envir = top)
+    top[[".__r8__"]][["entries"]] <- list()
+  }
+  table <- top[[".__r8__"]]
+  table[["entries"]] <- c(table[["entries"]], list(entry))
+  invisible(NULL)
+} # /R8::record_declaration

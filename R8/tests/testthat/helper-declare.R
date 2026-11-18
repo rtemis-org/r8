@@ -7,7 +7,12 @@
 declare_in <- function(ns, expr) {
   op <- options(r8.namespace = ns)
   on.exit(options(op))
-  eval(substitute(expr), envir = new.env(parent = globalenv()))
+  # Outside any namespace, with the caller's variables visible.
+  env <- list2env(
+    as.list(parent.frame()),
+    envir = new.env(parent = globalenv())
+  )
+  eval(substitute(expr), envir = env)
 }
 
 # The RFC 8785 text of a fixture file in tests/testthat/fixtures.

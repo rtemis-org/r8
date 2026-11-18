@@ -90,6 +90,12 @@ test:
     {{ rscript }} -e "testthat::test_local(stop_on_failure = TRUE)"
     @just _msg "Done"
 
+# Install R8, then run the tests that install packages declaring R8 types
+test-packages: install
+    @just _msg "─── Running the package tests for {{ pkg }}... ───"
+    R8_PACKAGE_TESTS=true {{ rscript }} -e "testthat::test_local(filter = 'packages', stop_on_failure = TRUE)"
+    @just _msg "Done"
+
 # Build the source tarball
 build: clean
     @just _msg "─── Building {{ pkg }} package... ───"

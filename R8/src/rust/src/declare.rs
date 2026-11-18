@@ -16,7 +16,7 @@ use r8_core::name::{Name, QualifiedName};
 use r8_core::rules::DocumentSet;
 use serde_json::{Map, Value};
 
-fn registry() -> &'static Mutex<DocumentSet> {
+pub(crate) fn registry() -> &'static Mutex<DocumentSet> {
     static REGISTRY: OnceLock<Mutex<DocumentSet>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(DocumentSet::default()))
 }
@@ -215,8 +215,138 @@ fn r8_type_document(name: &str) -> Result<String> {
     Ok(doc.to_json())
 }
 
+/// The namespace document of the registry, or an empty one.
+fn namespace_doc(reg: &DocumentSet, ns: &Name) -> IrDocument {
+    reg.0
+        .iter()
+        .find(|d| &d.namespace == ns)
+        .cloned()
+        .unwrap_or_else(|| IrDocument {
+            ir_version: IR_VERSION,
+            namespace: ns.clone(),
+            types: Vec::new(),
+            traits: Vec::new(),
+            impls: Vec::new(),
+        })
+}
+
+fn store(reg: &mut DocumentSet, doc: IrDocument) {
+    match reg.0.iter().position(|d| d.namespace == doc.namespace) {
+        Some(i) => reg.0[i] = doc,
+        None => reg.0.push(doc),
+    }
+}
+
+fn problems_list(problems: &[r8_core::ir::DeclError], prefix: &str) -> List {
+    let code: Vec<String> = problems.iter().map(|e| e.code.to_string()).collect();
+    let path: Vec<String> = problems
+        .iter()
+        .map(|e| e.path[prefix.len()..].to_string())
+        .collect();
+    let message: Vec<String> = problems.iter().map(|e| e.message.clone()).collect();
+    list!(code = code, path = path, message = message)
+}
+
+/// Checks a trait declaration in its namespace and registers it.
+///
+/// @param trait_json Character: The trait's IR declaration as JSON text.
+/// @param namespace Character: The namespace.
+/// @return List: The problems, as character vectors `code`, `path`, `message`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List> {
+    let def: r8_core::ir::TraitDef = serde_json::from_str(trait_json)
+        .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
+    let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
+    let mut reg = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let mut doc = namespace_doc(&reg, &ns);
+    let index = match doc.traits.iter().position(|t| t.name == def.name) {
+        Some(i) => {
+            doc.traits[i] = def;
+            i
+        }
+        None => {
+            doc.traits.push(def);
+            doc.traits.len() - 1
+        }
+    };
+    let prefix = format!("/traits/{index}");
+    let problems: Vec<_> = check_document(&doc)
+        .into_iter()
+        .filter(|e| e.path == prefix || e.path.starts_with(&format!("{prefix}/")))
+        .collect();
+    if problems.is_empty() {
+        store(&mut reg, doc);
+    }
+    Ok(problems_list(&problems, &prefix))
+}
+
+/// Registers an impl in its namespace; an impl of the same trait for the same
+/// type replaces it.
+///
+/// @param impl_json Character: The impl's IR declaration as JSON text.
+/// @param namespace Character: The namespace of the declaring code.
+/// @return NULL.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_declare_impl(impl_json: &str, namespace: &str) -> Result<()> {
+    let def: r8_core::ir::ImplDef = serde_json::from_str(impl_json)
+        .map_err(|e| fail(format!("the impl does not read: {e}")))?;
+    let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
+    let mut reg = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let mut doc = namespace_doc(&reg, &ns);
+    doc.impls
+        .retain(|i| !(i.r#trait == def.r#trait && i.target == def.target));
+    doc.impls.push(def);
+    store(&mut reg, doc);
+    Ok(())
+}
+
+fn owners() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    static OWNERS: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
+    OWNERS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Claims a namespace for the package that declares into it.
+///
+/// The first package to declare into a namespace owns it; a declaration by
+/// another package is refused. Code outside a package (`package = ""`) owns
+/// no namespace, and a package may claim a namespace such code declared
+/// into.
+///
+/// @param namespace Character: The namespace.
+/// @param package Character: The declaring package, or `""` outside a package.
+/// @return Character: `""` when the claim holds, otherwise the owning package.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_claim_namespace(namespace: &str, package: &str) -> Result<String> {
+    let mut map = owners()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    match map.get(namespace) {
+        Some(owner) if !owner.is_empty() && owner != package => Ok(owner.clone()),
+        Some(owner) if owner.is_empty() && package.is_empty() => Ok(String::new()),
+        _ => {
+            if !package.is_empty() || !map.contains_key(namespace) {
+                map.insert(namespace.to_string(), package.to_string());
+            }
+            Ok(String::new())
+        }
+    }
+}
+
 extendr_module! {
     mod declare;
+    fn r8_claim_namespace;
+    fn r8_declare_trait;
+    fn r8_declare_impl;
     fn r8_ir_json;
     fn r8_canonical_json;
     fn r8_declare_type;

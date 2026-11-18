@@ -1,0 +1,12 @@
+Package: r8pkgB
+Title: Test Package Implementing Another Package's Trait
+Version: 0.0.1
+Authors@R: person("E.D.", "Gennatas", role = c("aut", "cre"), email = "gennatas@gmail.com")
+Description: Declares an R8 type and implements a trait of 'r8pkgA' for it,
+    for the tests of R8.
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Imports:
+    R8,
+    r8pkgA
+Config/R8/namespace: pkgb

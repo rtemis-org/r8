@@ -4,10 +4,10 @@
 \alias{variant}
 \title{Declare an enum variant}
 \usage{
-variant(..., description = "", rules = list(), of = NULL)
+variant(fields = list(), description = "", rules = list(), of = NULL)
 }
 \arguments{
-\item{...}{Named fields of a struct variant.}
+\item{fields}{Named list: The fields of a struct variant.}
 
 \item{description}{Character: What the variant is.}
 
@@ -23,6 +23,8 @@ A unit variant has no fields; a struct variant has named fields; a newtype
 variant holds one value of a struct, \code{variant(of = GRanges)}.
 }
 \examples{
-variant(gamma = field(type_double(exclusive_min = 0), description = "Kernel width."))
+variant(fields = list(
+  gamma = field(type_double(exclusive_min = 0), description = "Kernel width.")
+))
 
 }

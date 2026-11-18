@@ -472,3 +472,118 @@ print.r8_field_type <- function(x, ...) {
   cat("<r8_field_type>", r8_ir_json(unclass(x)), "\n")
   invisible(x)
 } # /R8::print.r8_field_type
+
+
+# %% type_matrix ----
+#' Matrix field type
+#'
+#' A dense matrix of a scalar type, an atomic vector with `dim` in R. Given an
+#' R8 struct type, a matrix whose columns are the struct's fields, all of one
+#' scalar type.
+#'
+#' @param type An `r8_field_type` of a scalar type (or `option()` of one, for
+#'   missing cells), or an R8 struct type.
+#' @param nrow Optional Integer: The number of rows.
+#' @param ncol Optional Integer: The number of columns.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @examples
+#' type_matrix(option(type_double()), nrow = 2L)
+#'
+#' @export
+type_matrix <- function(type, nrow = NULL, ncol = NULL) {
+  if (inherits(type, "r8_struct_type")) {
+    return(new_field_type("matrix_of", of = attr(type, "r8_name")))
+  }
+  new_field_type(
+    "matrix",
+    element = as_field_type(type),
+    nrow = if (is.null(nrow)) NULL else as.integer(nrow),
+    ncol = if (is.null(ncol)) NULL else as.integer(ncol)
+  )
+} # /R8::type_matrix
+
+
+# %% type_array ----
+#' Array field type
+#'
+#' A dense array of a scalar type, an atomic vector with `dim` in R.
+#'
+#' @param type An `r8_field_type` of a scalar type, or `option()` of one.
+#' @param dim Optional Integer: The dimensions.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @examples
+#' type_array(type_integer(), dim = c(2L, 3L, 4L))
+#'
+#' @export
+type_array <- function(type, dim = NULL) {
+  new_field_type(
+    "array",
+    element = as_field_type(type),
+    dim = as_array(if (is.null(dim)) NULL else as.integer(dim))
+  )
+} # /R8::type_array
+
+
+# %% type_sparse_matrix ----
+#' Sparse matrix field type
+#'
+#' A matrix in compressed sparse column form, a `dgCMatrix` (package Matrix)
+#' in R.
+#'
+#' @param type An `r8_field_type`: `type_double()` or `type_logical()`.
+#' @param nrow Optional Integer: The number of rows.
+#' @param ncol Optional Integer: The number of columns.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @examples
+#' type_sparse_matrix()
+#'
+#' @export
+type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
+  new_field_type(
+    "sparse_matrix",
+    element = as_field_type(type),
+    nrow = if (is.null(nrow)) NULL else as.integer(nrow),
+    ncol = if (is.null(ncol)) NULL else as.integer(ncol)
+  )
+} # /R8::type_sparse_matrix
+
+
+# %% type_table ----
+#' Table field type
+#'
+#' A `data.frame` of equal-length columns, each a scalar type, a factor, or
+#' `option()` of one, with automatic row names. An open table also accepts
+#' columns its declaration does not name. A table's rules run once per row
+#' and read the row's columns by name. Given an R8 struct type, a table whose
+#' columns are the struct's fields.
+#'
+#' @param columns Named list of fields or field types, or an R8 struct type.
+#' @param open Logical: Accept columns the declaration does not name.
+#' @param rules List: `rule()` calls over a row's columns.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @examples
+#' type_table(
+#'   list(start = type_integer(), width = type_integer(min = 0L)),
+#'   rules = list(rule("END_FITS", start + width - 1 <= 2147483647, "The end fits in an integer."))
+#' )
+#'
+#' @export
+type_table <- function(columns = list(), open = FALSE, rules = list()) {
+  if (inherits(columns, "r8_struct_type")) {
+    return(new_field_type("table_of", of = attr(columns, "r8_name")))
+  }
+  new_field_type(
+    "table",
+    columns = fields_ir(columns, "a table"),
+    open = if (isTRUE(open)) TRUE else NULL,
+    rules = if (length(rules) > 0L) lapply(rules, unclass) else NULL
+  )
+} # /R8::type_table

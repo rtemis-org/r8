@@ -18,7 +18,7 @@ text.
 }
 \examples{
 op <- options(r8.namespace = "demo")
-Point <- new_struct("Point", x = type_double(), y = type_double())
+Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 r8_declaration(Point)
 options(op)
 

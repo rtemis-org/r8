@@ -11,10 +11,12 @@
 use extendr_api::prelude::*;
 
 mod declare;
+mod values;
 mod version;
 
 extendr_module! {
     mod R8;
     use declare;
+    use values;
     use version;
 }

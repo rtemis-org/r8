@@ -1,0 +1,11 @@
+Package: r8pkgA
+Title: Test Package Declaring R8 Types
+Version: 0.0.1
+Authors@R: person("E.D.", "Gennatas", role = c("aut", "cre"), email = "gennatas@gmail.com")
+Description: Declares R8 types, a trait, and an impl at its top level, for
+    the tests of R8.
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Imports:
+    R8
+Config/R8/namespace: pkga

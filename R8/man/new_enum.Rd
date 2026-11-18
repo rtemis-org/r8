@@ -5,14 +5,14 @@
 \alias{@.r8_enum_type}
 \title{Declare an enum}
 \usage{
-new_enum(name, ..., description = "", tag = "type", version = 1L)
+new_enum(name, variants = list(), description = "", tag = "type", version = 1L)
 
 \method{@}{r8_enum_type}(object, name)
 }
 \arguments{
 \item{name}{The variant's name.}
 
-\item{...}{Named \code{variant()} calls.}
+\item{variants}{Named list: The variants, \code{variant()} calls.}
 
 \item{description}{Character: What the type is.}
 
@@ -34,8 +34,10 @@ value.
 }
 \examples{
 op <- options(r8.namespace = "demo")
-Kernel <- new_enum("Kernel", Linear = variant(),
-  Rbf = variant(gamma = type_double(exclusive_min = 0)))
+Kernel <- new_enum("Kernel", variants = list(
+  Linear = variant(),
+  Rbf = variant(fields = list(gamma = type_double(exclusive_min = 0)))
+))
 Kernel@Linear
 options(op)
 

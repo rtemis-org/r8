@@ -4,12 +4,19 @@
 \alias{new_struct}
 \title{Declare a struct}
 \usage{
-new_struct(name, ..., description = "", version = 1L, rules = list())
+new_struct(
+  name,
+  fields = list(),
+  description = "",
+  version = 1L,
+  rules = list()
+)
 }
 \arguments{
 \item{name}{Character: The type name, an R8 name such as \code{"Svm"}.}
 
-\item{...}{Named fields: \code{field(...)} calls or bare field types.}
+\item{fields}{Named list: The fields, \code{field(...)} calls or bare field
+types.}
 
 \item{description}{Character: What the type is.}
 
@@ -29,7 +36,7 @@ console belong to the option \code{r8.namespace}, \code{"global"} by default.
 }
 \examples{
 op <- options(r8.namespace = "demo")
-Point <- new_struct("Point", x = type_double(), y = type_double(),
+Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()),
   description = "A point.")
 options(op)
 
