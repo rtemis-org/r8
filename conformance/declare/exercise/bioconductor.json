@@ -74,7 +74,7 @@
                 "invariant": {
                   "and": [
                     {
-                      "==": [
+                      "===": [
                         {
                           "length": [
                             {
@@ -92,7 +92,7 @@
                       ]
                     },
                     {
-                      "==": [
+                      "===": [
                         {
                           "length": [
                             {
@@ -110,7 +110,7 @@
                       ]
                     },
                     {
-                      "==": [
+                      "===": [
                         {
                           "length": [
                             {
@@ -265,7 +265,7 @@
               {
                 "id": "SEQNAMES_LEVELS",
                 "invariant": {
-                  "==": [
+                  "===": [
                     {
                       "levels": [
                         {
@@ -283,7 +283,7 @@
               {
                 "id": "MCOLS_ROWS",
                 "invariant": {
-                  "==": [
+                  "===": [
                     {
                       "nrow": [
                         {
@@ -305,7 +305,7 @@
               {
                 "id": "NAMES_LENGTH",
                 "invariant": {
-                  "==": [
+                  "===": [
                     {
                       "length": [
                         {
@@ -386,13 +386,9 @@
               {
                 "id": "ENDS_ORDER",
                 "invariant": {
-                  "non_increasing": [
+                  "non_decreasing": [
                     {
-                      "reverse": [
-                        {
-                          "var": "ends"
-                        }
-                      ]
+                      "var": "ends"
                     }
                   ]
                 },
@@ -572,7 +568,7 @@
                       "var": "assays"
                     },
                     {
-                      "==": [
+                      "===": [
                         {
                           "nrow": [
                             {
@@ -601,7 +597,7 @@
                       "var": "assays"
                     },
                     {
-                      "==": [
+                      "===": [
                         {
                           "ncol": [
                             {
@@ -625,7 +621,7 @@
               {
                 "id": "COL_NAMES_LENGTH",
                 "invariant": {
-                  "==": [
+                  "===": [
                     {
                       "length": [
                         {
@@ -745,7 +741,7 @@
               {
                 "id": "RSE_NO_ROW_DATA",
                 "invariant": {
-                  "==": [
+                  "===": [
                     {
                       "ncol": [
                         {
@@ -761,7 +757,7 @@
               {
                 "id": "ROW_RANGES_LENGTH",
                 "invariant": {
-                  "==": [
+                  "===": [
                     {
                       "nrow": [
                         {

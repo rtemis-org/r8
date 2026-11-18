@@ -1,0 +1,208 @@
+{
+  "$corpus": 1,
+  "cases": [
+    {
+      "description": "Absent fields take their defaults or null.",
+      "expect": {
+        "json": "{\"cost\":1,\"kernel\":{\"type\":\"Linear\"},\"mtry\":null,\"weights\":null}"
+      },
+      "id": "defaults",
+      "input": {},
+      "op": "canonical",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "The envelope is not part of the value.",
+      "expect": {
+        "json": "{\"cost\":2.5,\"kernel\":{\"type\":\"Linear\"},\"mtry\":null,\"weights\":null}"
+      },
+      "id": "envelope-removed",
+      "input": {
+        "$type": "rtemis::Svm",
+        "$types": {
+          "rtemis::Svm": 1
+        },
+        "cost": 2.5
+      },
+      "op": "canonical",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "Numbers in ECMAScript form: 2.50 as 2.5, 1e-7 as 1e-7.",
+      "expect": {
+        "json": "{\"cost\":2.5,\"kernel\":{\"gamma\":1e-7,\"type\":\"Rbf\"},\"mtry\":null,\"weights\":[1,0.5,100]}"
+      },
+      "id": "numbers",
+      "input": {
+        "cost": 2.5,
+        "kernel": {
+          "gamma": 1e-7,
+          "type": "Rbf"
+        },
+        "weights": [
+          1,
+          0.5,
+          100
+        ]
+      },
+      "op": "canonical",
+      "type": "rtemis::Svm"
+    }
+  ],
+  "description": "RFC 8785 canonical text of normalized values: defaults filled, absent fields null, the envelope removed.",
+  "ir": {
+    "$ir": 1,
+    "impls": [
+      {
+        "methods": [
+          "fit"
+        ],
+        "target": {
+          "kind": "type",
+          "name": "rtemis::Svm"
+        },
+        "trait": "rtemis::Fit"
+      }
+    ],
+    "namespace": "rtemis",
+    "traits": [
+      {
+        "description": "Trains a model from its settings.",
+        "methods": [
+          {
+            "description": "Trains a model.",
+            "name": "fit",
+            "params": [
+              "spec",
+              "x",
+              "y"
+            ]
+          }
+        ],
+        "name": "Fit"
+      }
+    ],
+    "types": [
+      {
+        "description": "Kernel function.",
+        "kind": "enum",
+        "name": "Kernel",
+        "tag": "type",
+        "variants": [
+          {
+            "description": "",
+            "name": "Linear",
+            "shape": "unit"
+          },
+          {
+            "description": "",
+            "fields": [
+              {
+                "description": "Kernel width.",
+                "name": "gamma",
+                "type": {
+                  "exclusive_min": 0,
+                  "kind": "double"
+                }
+              }
+            ],
+            "name": "Rbf",
+            "shape": "struct"
+          }
+        ],
+        "version": 1
+      },
+      {
+        "description": "Support vector machine settings.",
+        "fields": [
+          {
+            "default": 1,
+            "description": "Cost of a margin violation.",
+            "name": "cost",
+            "type": {
+              "exclusive_min": 0,
+              "kind": "double"
+            }
+          },
+          {
+            "default": {
+              "type": "Linear"
+            },
+            "description": "Kernel function.",
+            "name": "kernel",
+            "type": {
+              "kind": "named",
+              "name": "rtemis::Kernel"
+            }
+          },
+          {
+            "description": "Case weights.",
+            "external": true,
+            "name": "weights",
+            "type": {
+              "inner": {
+                "element": {
+                  "kind": "double",
+                  "min": 0
+                },
+                "kind": "vec"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "Variables per split.",
+            "name": "mtry",
+            "type": {
+              "inner": {
+                "kind": "integer",
+                "min": 1
+              },
+              "kind": "option",
+              "resolve": {
+                "policy": "runtime"
+              }
+            }
+          }
+        ],
+        "kind": "struct",
+        "name": "Svm",
+        "rules": [
+          {
+            "id": "RBF_GAMMA",
+            "invariant": {
+              "<=": [
+                {
+                  "var": "kernel.gamma"
+                },
+                10
+              ]
+            },
+            "message": "gamma is at most 10."
+          },
+          {
+            "id": "RBF_COST",
+            "invariant": {
+              "<=": [
+                {
+                  "var": "cost"
+                },
+                100
+              ]
+            },
+            "message": "cost is at most 100 with the Rbf kernel.",
+            "when": {
+              "is_variant": [
+                {
+                  "var": "kernel"
+                },
+                "Rbf"
+              ]
+            }
+          }
+        ],
+        "version": 1
+      }
+    ]
+  }
+}

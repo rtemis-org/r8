@@ -11,7 +11,7 @@ mod document;
 mod logic;
 mod types;
 
-pub use check::{DeclError, check_document};
+pub use check::{DeclError, check_document, is_column_type};
 pub use decl::{
     ClassSystem, EnumDef, FieldDef, ImplDef, ImplTarget, MethodDef, Migration, MigrationStep,
     RuleDef, SplitTarget, StructDef, TraitDef, VariantDef, VariantShape,

@@ -10,8 +10,17 @@
 //! repository of rtemis-org.
 
 pub mod abi;
+pub mod codec;
+pub mod derive;
 pub mod ir;
 pub mod name;
+pub mod rules;
+pub mod validate;
+pub mod value_schema;
+
+/// `#[derive(R8)]`, with the `derive` feature.
+#[cfg(feature = "derive")]
+pub use r8_derive::R8;
 
 /// Version of this crate, as recorded in provenance.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

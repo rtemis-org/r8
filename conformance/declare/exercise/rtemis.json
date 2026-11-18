@@ -512,7 +512,7 @@
               {
                 "id": "OVERALL_ONE_ROW",
                 "invariant": {
-                  "==": [
+                  "===": [
                     {
                       "nrow": [
                         {

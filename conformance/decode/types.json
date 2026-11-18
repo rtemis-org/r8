@@ -1,0 +1,1422 @@
+{
+  "$corpus": 1,
+  "cases": [
+    {
+      "description": "Every field optional and absent.",
+      "expect": {
+        "valid": true
+      },
+      "id": "empty",
+      "input": {},
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A full-date.",
+      "expect": {
+        "valid": true
+      },
+      "id": "date",
+      "input": {
+        "d": "2024-02-29"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "2023 is not a leap year.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_date",
+            "path": "/d"
+          }
+        ]
+      },
+      "id": "date-invalid-day",
+      "input": {
+        "d": "2023-02-29"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A date is YYYY-MM-DD.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_date",
+            "path": "/d"
+          }
+        ]
+      },
+      "id": "date-form",
+      "input": {
+        "d": "2024-2-1"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Six fraction digits and Z.",
+      "expect": {
+        "valid": true
+      },
+      "id": "posixct",
+      "input": {
+        "t": "2024-02-29T13:45:00.000001Z"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The canonical form has six fraction digits.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_datetime",
+            "path": "/t"
+          }
+        ]
+      },
+      "id": "posixct-no-fraction",
+      "input": {
+        "t": "2024-02-29T13:45:00Z"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "No leap seconds.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_datetime",
+            "path": "/t"
+          }
+        ]
+      },
+      "id": "posixct-leap-second",
+      "input": {
+        "t": "2016-12-31T23:59:60.000000Z"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The last instant a double holds exactly in microseconds.",
+      "expect": {
+        "valid": true
+      },
+      "id": "posixct-upper-bound",
+      "input": {
+        "t": "2112-09-17T23:53:47.370495Z"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "One microsecond later.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_datetime",
+            "path": "/t"
+          }
+        ]
+      },
+      "id": "posixct-beyond",
+      "input": {
+        "t": "2112-09-17T23:53:47.370496Z"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Before the lower bound, 1827-04-16T00:06:12.629505Z.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_datetime",
+            "path": "/t"
+          }
+        ]
+      },
+      "id": "posixct-before",
+      "input": {
+        "t": "1800-01-01T00:00:00.000000Z"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Canonical padded base64.",
+      "expect": {
+        "valid": true
+      },
+      "id": "raw",
+      "input": {
+        "b": "AQID"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Two bytes, one padding character.",
+      "expect": {
+        "valid": true
+      },
+      "id": "raw-padded",
+      "input": {
+        "b": "AQI="
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Padding is required.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_base64",
+            "path": "/b"
+          }
+        ]
+      },
+      "id": "raw-unpadded",
+      "input": {
+        "b": "AQI"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Unused bits are zero, so one byte string has one encoding.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_base64",
+            "path": "/b"
+          }
+        ]
+      },
+      "id": "raw-noncanonical",
+      "input": {
+        "b": "AQJ="
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Declared levels: a string array.",
+      "expect": {
+        "valid": true
+      },
+      "id": "factor-declared",
+      "input": {
+        "fl": [
+          "a",
+          "b",
+          "a"
+        ]
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A value outside the declared levels.",
+      "expect": {
+        "errors": [
+          {
+            "code": "not_a_level",
+            "path": "/fl/1"
+          }
+        ]
+      },
+      "id": "factor-not-a-level",
+      "input": {
+        "fl": [
+          "a",
+          "c"
+        ]
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Declared levels use the string array form.",
+      "expect": {
+        "errors": [
+          {
+            "code": "factor_form",
+            "path": "/fl"
+          }
+        ]
+      },
+      "id": "factor-declared-codes",
+      "input": {
+        "fl": {
+          "codes": [
+            1
+          ],
+          "levels": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Levels from the data: levels and 1-based codes.",
+      "expect": {
+        "valid": true
+      },
+      "id": "factor-data",
+      "input": {
+        "fd": {
+          "codes": [
+            2,
+            1,
+            2
+          ],
+          "levels": [
+            "x",
+            "y"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A code beyond the levels.",
+      "expect": {
+        "errors": [
+          {
+            "code": "invalid_code",
+            "path": "/fd/codes/0"
+          }
+        ]
+      },
+      "id": "factor-data-code",
+      "input": {
+        "fd": {
+          "codes": [
+            3
+          ],
+          "levels": [
+            "x",
+            "y"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Levels are distinct.",
+      "expect": {
+        "errors": [
+          {
+            "code": "not_unique",
+            "path": "/fd/levels/1"
+          }
+        ]
+      },
+      "id": "factor-data-duplicate-level",
+      "input": {
+        "fd": {
+          "codes": [
+            1
+          ],
+          "levels": [
+            "x",
+            "x"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Column-major data, NA as null, dimnames per dimension.",
+      "expect": {
+        "valid": true
+      },
+      "id": "matrix",
+      "input": {
+        "m": {
+          "data": [
+            1,
+            null,
+            3,
+            4
+          ],
+          "dimnames": [
+            [
+              "r1",
+              "r2"
+            ],
+            null
+          ],
+          "shape": [
+            2,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "nrow is declared 2.",
+      "expect": {
+        "errors": [
+          {
+            "code": "dimension_mismatch",
+            "path": "/m/shape/0"
+          }
+        ]
+      },
+      "id": "matrix-nrow",
+      "input": {
+        "m": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            1
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "data holds nrow times ncol values.",
+      "expect": {
+        "errors": [
+          {
+            "code": "matrix_form",
+            "path": "/m/data"
+          }
+        ]
+      },
+      "id": "matrix-data-length",
+      "input": {
+        "m": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "shape": [
+            2,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Compressed sparse column form.",
+      "expect": {
+        "valid": true
+      },
+      "id": "sparse",
+      "input": {
+        "s": {
+          "data": [
+            1.5,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            2,
+            1
+          ],
+          "indptr": [
+            0,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Row indices increase within a column.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-unsorted-rows",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            2,
+            0,
+            1
+          ],
+          "indptr": [
+            0,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Columns of equal length; an optional column omitted.",
+      "expect": {
+        "valid": true
+      },
+      "id": "table",
+      "input": {
+        "tb": {
+          "$length": 2,
+          "id": [
+            "a",
+            "b"
+          ],
+          "x": [
+            1,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "An extra column with its type in $columns.",
+      "expect": {
+        "valid": true
+      },
+      "id": "table-open-column",
+      "input": {
+        "tb": {
+          "$columns": {
+            "score": {
+              "kind": "double"
+            }
+          },
+          "$length": 1,
+          "id": [
+            "a"
+          ],
+          "score": [
+            0.5
+          ],
+          "x": [
+            1
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "An extra column needs its type in $columns.",
+      "expect": {
+        "errors": [
+          {
+            "code": "column_type",
+            "path": "/tb/$columns/score"
+          }
+        ]
+      },
+      "id": "table-open-column-untyped",
+      "input": {
+        "tb": {
+          "$length": 1,
+          "id": [
+            "a"
+          ],
+          "score": [
+            0.5
+          ],
+          "x": [
+            1
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A required column is present.",
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_column",
+            "path": "/tb/x"
+          }
+        ]
+      },
+      "id": "table-missing-column",
+      "input": {
+        "tb": {
+          "$length": 1,
+          "id": [
+            "a"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Every column has $length cells.",
+      "expect": {
+        "errors": [
+          {
+            "code": "column_length",
+            "path": "/tb/x"
+          }
+        ]
+      },
+      "id": "table-column-length",
+      "input": {
+        "tb": {
+          "$length": 2,
+          "id": [
+            "a",
+            "b"
+          ],
+          "x": [
+            1
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "id is unique.",
+      "expect": {
+        "errors": [
+          {
+            "code": "not_unique",
+            "path": "/tb/id/1"
+          }
+        ]
+      },
+      "id": "table-unique",
+      "input": {
+        "tb": {
+          "$length": 2,
+          "id": [
+            "a",
+            "a"
+          ],
+          "x": [
+            1,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "An option() column has missing cells.",
+      "expect": {
+        "valid": true
+      },
+      "id": "table-optional-cells",
+      "input": {
+        "tb": {
+          "$length": 2,
+          "auc": [
+            null,
+            0.9
+          ],
+          "id": [
+            "a",
+            "b"
+          ],
+          "x": [
+            1,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A row rule reports the cell.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/tb/x/1",
+            "rule": "X_MAX"
+          }
+        ]
+      },
+      "id": "table-row-rule",
+      "input": {
+        "tb": {
+          "$length": 3,
+          "id": [
+            "a",
+            "b",
+            "c"
+          ],
+          "x": [
+            1,
+            500,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "An array of name and value pairs.",
+      "expect": {
+        "valid": true
+      },
+      "id": "ordered-map",
+      "input": {
+        "om": [
+          {
+            "name": "counts",
+            "value": 1
+          },
+          {
+            "name": "logs",
+            "value": 2
+          }
+        ]
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Keys are distinct.",
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_key",
+            "path": "/om/1/name"
+          }
+        ]
+      },
+      "id": "ordered-map-duplicate",
+      "input": {
+        "om": [
+          {
+            "name": "a",
+            "value": 1
+          },
+          {
+            "name": "a",
+            "value": 2
+          }
+        ]
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "An object; keys match the declared pattern.",
+      "expect": {
+        "valid": true
+      },
+      "id": "hashmap",
+      "input": {
+        "hm": {
+          "a": 1,
+          "b": 2
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A key outside the pattern.",
+      "expect": {
+        "errors": [
+          {
+            "code": "pattern_mismatch",
+            "path": "/hm/A"
+          }
+        ]
+      },
+      "id": "hashmap-key",
+      "input": {
+        "hm": {
+          "A": 1
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Any JSON value.",
+      "expect": {
+        "valid": true
+      },
+      "id": "json",
+      "input": {
+        "j": {
+          "x": [
+            1,
+            "two",
+            null
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A runtime-only value has no JSON form.",
+      "expect": {
+        "errors": [
+          {
+            "code": "runtime_only",
+            "path": "/r"
+          }
+        ]
+      },
+      "id": "runtime-only",
+      "input": {
+        "r": {
+          "coefficients": [
+            1
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Elements are distinct.",
+      "expect": {
+        "errors": [
+          {
+            "code": "not_unique",
+            "path": "/v/2"
+          }
+        ]
+      },
+      "id": "vec-unique",
+      "input": {
+        "v": [
+          1,
+          2,
+          1
+        ]
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "At most three elements.",
+      "expect": {
+        "errors": [
+          {
+            "code": "length_above_max",
+            "path": "/v"
+          }
+        ]
+      },
+      "id": "vec-length",
+      "input": {
+        "v": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "finite = FALSE admits the non-finite strings.",
+      "expect": {
+        "valid": true
+      },
+      "id": "non-finite",
+      "input": {
+        "inf": "-Infinity"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The default domain is finite.",
+      "expect": {
+        "errors": [
+          {
+            "code": "not_finite",
+            "path": "/fin"
+          }
+        ]
+      },
+      "id": "non-finite-refused",
+      "input": {
+        "fin": "NaN"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A string matches its pattern.",
+      "expect": {
+        "errors": [
+          {
+            "code": "pattern_mismatch",
+            "path": "/code"
+          }
+        ]
+      },
+      "id": "pattern",
+      "input": {
+        "code": "abc"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "U+0000 has no R form.",
+      "expect": {
+        "errors": [
+          {
+            "code": "nul_character",
+            "path": "/code"
+          }
+        ]
+      },
+      "id": "nul",
+      "input": {
+        "code": "AB\u0000"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "An enum of unit variants is its variant name.",
+      "expect": {
+        "valid": true
+      },
+      "id": "unit-enum",
+      "input": {
+        "shape": "Circle"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A name the enum does not declare.",
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_variant",
+            "path": "/shape"
+          }
+        ]
+      },
+      "id": "unit-enum-unknown",
+      "input": {
+        "shape": "Hexagon"
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A tagged trait names its implementor by tag value.",
+      "expect": {
+        "valid": true
+      },
+      "id": "dyn-tag",
+      "input": {
+        "algo": {
+          "algorithm": "GLMNET",
+          "alpha": 0.5
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The tag value defaults to the type name.",
+      "expect": {
+        "valid": true
+      },
+      "id": "dyn-tag-default",
+      "input": {
+        "algo": {
+          "algorithm": "Cart",
+          "depth": 3
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A tag value no implementor has.",
+      "expect": {
+        "errors": [
+          {
+            "code": "unresolved_type",
+            "path": "/algo"
+          }
+        ]
+      },
+      "id": "dyn-tag-unknown",
+      "input": {
+        "algo": {
+          "algorithm": "XGB"
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The implementor's own fields are validated.",
+      "expect": {
+        "errors": [
+          {
+            "code": "above_max",
+            "path": "/algo/alpha"
+          }
+        ]
+      },
+      "id": "dyn-implementor-invalid",
+      "input": {
+        "algo": {
+          "algorithm": "GLMNET",
+          "alpha": 2
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "A trait without a tag names the type in $type.",
+      "expect": {
+        "valid": true
+      },
+      "id": "dyn-dollar-type",
+      "input": {
+        "plain": {
+          "$type": "ns::Cart",
+          "depth": 2
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    }
+  ],
+  "description": "The JSON form of each field type.",
+  "ir": {
+    "$ir": 1,
+    "impls": [
+      {
+        "methods": [],
+        "tag_value": "GLMNET",
+        "target": {
+          "kind": "type",
+          "name": "ns::Glmnet"
+        },
+        "trait": "ns::Algorithm"
+      },
+      {
+        "methods": [],
+        "target": {
+          "kind": "type",
+          "name": "ns::Cart"
+        },
+        "trait": "ns::Algorithm"
+      },
+      {
+        "methods": [],
+        "target": {
+          "kind": "type",
+          "name": "ns::Cart"
+        },
+        "trait": "ns::Plain"
+      }
+    ],
+    "namespace": "ns",
+    "traits": [
+      {
+        "description": "",
+        "methods": [],
+        "name": "Algorithm",
+        "tag": "algorithm"
+      },
+      {
+        "description": "",
+        "methods": [],
+        "name": "Plain"
+      }
+    ],
+    "types": [
+      {
+        "description": "",
+        "fields": [
+          {
+            "description": "",
+            "name": "d",
+            "type": {
+              "inner": {
+                "kind": "date"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "t",
+            "type": {
+              "inner": {
+                "kind": "posixct"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "b",
+            "type": {
+              "inner": {
+                "kind": "raw"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "fl",
+            "type": {
+              "inner": {
+                "kind": "factor",
+                "levels": [
+                  "a",
+                  "b"
+                ]
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "fd",
+            "type": {
+              "inner": {
+                "kind": "factor"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "m",
+            "type": {
+              "inner": {
+                "element": {
+                  "inner": {
+                    "kind": "double"
+                  },
+                  "kind": "option"
+                },
+                "kind": "matrix",
+                "nrow": 2
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "s",
+            "type": {
+              "inner": {
+                "element": {
+                  "kind": "double"
+                },
+                "kind": "sparse_matrix"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "tb",
+            "type": {
+              "inner": {
+                "columns": [
+                  {
+                    "description": "",
+                    "name": "id",
+                    "type": {
+                      "kind": "character"
+                    },
+                    "unique": true
+                  },
+                  {
+                    "description": "",
+                    "name": "x",
+                    "type": {
+                      "kind": "integer",
+                      "min": 0
+                    }
+                  },
+                  {
+                    "description": "",
+                    "name": "auc",
+                    "optional": true,
+                    "type": {
+                      "inner": {
+                        "kind": "double"
+                      },
+                      "kind": "option"
+                    }
+                  }
+                ],
+                "kind": "table",
+                "open": true,
+                "rules": [
+                  {
+                    "id": "X_MAX",
+                    "invariant": {
+                      "<=": [
+                        {
+                          "var": "x"
+                        },
+                        100
+                      ]
+                    },
+                    "message": "x is at most 100."
+                  }
+                ]
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "om",
+            "type": {
+              "inner": {
+                "kind": "ordered_map",
+                "value": {
+                  "kind": "double"
+                }
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "hm",
+            "type": {
+              "inner": {
+                "keys": {
+                  "pattern": "^[a-z]+$"
+                },
+                "kind": "hashmap",
+                "value": {
+                  "kind": "integer"
+                }
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "default": {},
+            "description": "",
+            "name": "j",
+            "type": {
+              "kind": "json"
+            }
+          },
+          {
+            "description": "",
+            "name": "r",
+            "type": {
+              "inner": {
+                "class": "lm",
+                "kind": "r"
+              },
+              "kind": "option",
+              "resolve": {
+                "policy": "runtime"
+              }
+            }
+          },
+          {
+            "description": "",
+            "name": "v",
+            "type": {
+              "inner": {
+                "element": {
+                  "kind": "integer"
+                },
+                "kind": "vec",
+                "max_length": 3,
+                "min_length": 1,
+                "unique": true
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "inf",
+            "type": {
+              "inner": {
+                "finite": false,
+                "kind": "double"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "fin",
+            "type": {
+              "inner": {
+                "kind": "double"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "code",
+            "type": {
+              "inner": {
+                "kind": "character",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "shape",
+            "type": {
+              "inner": {
+                "kind": "named",
+                "name": "ns::Shape"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "algo",
+            "type": {
+              "inner": {
+                "kind": "dyn",
+                "trait": "ns::Algorithm"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "",
+            "name": "plain",
+            "type": {
+              "inner": {
+                "kind": "dyn",
+                "trait": "ns::Plain"
+              },
+              "kind": "option"
+            }
+          }
+        ],
+        "kind": "struct",
+        "name": "T",
+        "version": 1
+      },
+      {
+        "description": "",
+        "kind": "enum",
+        "name": "Shape",
+        "tag": "type",
+        "variants": [
+          {
+            "description": "",
+            "name": "Circle",
+            "shape": "unit"
+          },
+          {
+            "description": "",
+            "name": "Square",
+            "shape": "unit"
+          }
+        ],
+        "version": 1
+      },
+      {
+        "description": "",
+        "fields": [
+          {
+            "description": "",
+            "name": "alpha",
+            "type": {
+              "kind": "double",
+              "max": 1.0,
+              "min": 0.0
+            }
+          }
+        ],
+        "kind": "struct",
+        "name": "Glmnet",
+        "version": 1
+      },
+      {
+        "description": "",
+        "fields": [
+          {
+            "description": "",
+            "name": "depth",
+            "type": {
+              "kind": "integer",
+              "min": 1
+            }
+          }
+        ],
+        "kind": "struct",
+        "name": "Cart",
+        "version": 1
+      }
+    ]
+  }
+}

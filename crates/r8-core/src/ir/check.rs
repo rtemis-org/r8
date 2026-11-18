@@ -12,6 +12,8 @@ use super::decl::{FieldDef, MethodDef, RuleDef, StructDef, TraitDef, VariantShap
 use super::document::{IrDocument, TypeDef};
 use super::types::{FieldType, Resolve};
 use crate::name::{Name, QualifiedName, is_host_keyword, is_syntactic_r_name};
+use crate::rules::{CompiledRule, check_computed};
+use crate::validate::validate_field;
 
 /// A problem in a declaration, located by a JSON Pointer into the document.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,11 +25,12 @@ pub struct DeclError {
     pub message: String,
 }
 
-struct Checker {
+struct Checker<'a> {
+    doc: &'a IrDocument,
     errors: Vec<DeclError>,
 }
 
-impl Checker {
+impl Checker<'_> {
     fn report(&mut self, code: &'static str, path: &str, message: String) {
         self.errors.push(DeclError {
             code,
@@ -101,6 +104,34 @@ impl Checker {
                 }
             }
             self.extensions(f.extensions.keys(), &format!("{fpath}/extensions"));
+            if let Some(d) = &f.default {
+                // A default whose type lies outside this document is checked
+                // by the registry.
+                for e in validate_field(d, &f.ty, self.doc)
+                    .into_iter()
+                    .filter(|e| e.code != "unresolved_type")
+                {
+                    self.report(
+                        "default_invalid",
+                        &format!("{fpath}/default{}", e.path),
+                        format!("the default of `{}` is invalid: {}", f.name, e.message),
+                    );
+                }
+            }
+            if let FieldType::Option {
+                resolve: Resolve::Computed { expr },
+                ..
+            } = &f.ty
+                && let Err(errors) = check_computed(expr, fields, self.doc, f)
+            {
+                for e in errors {
+                    self.report(
+                        e.code,
+                        &format!("{fpath}/type/resolve/expr{}", e.path),
+                        e.message,
+                    );
+                }
+            }
             if let Some(unit) = &f.unit
                 && (unit.trim().is_empty() || unit.trim() != unit)
             {
@@ -133,7 +164,9 @@ impl Checker {
         }
     }
 
-    fn rules(&mut self, rules: &[RuleDef], path: &str) {
+    /// Checks rules in the scope of `scope`: distinct IDs, a message, and an
+    /// invariant and condition that compile against the scope.
+    fn rules(&mut self, rules: &[RuleDef], scope: &[FieldDef], path: &str) {
         self.unique(
             rules
                 .iter()
@@ -149,6 +182,11 @@ impl Checker {
                     &format!("{path}/{i}/message"),
                     format!("rule `{}` has no message", r.id),
                 );
+            }
+            if let Err(errors) = CompiledRule::compile(r, scope, self.doc) {
+                for e in errors {
+                    self.report(e.code, &format!("{path}/{i}{}", e.path), e.message);
+                }
             }
         }
     }
@@ -229,7 +267,7 @@ impl Checker {
             }
             FieldType::Table { columns, rules, .. } => {
                 self.fields(columns, &format!("{path}/columns"), true);
-                self.rules(rules, &format!("{path}/rules"));
+                self.rules(rules, columns, &format!("{path}/rules"));
                 for (i, c) in columns.iter().enumerate() {
                     if !is_column_type(&c.ty) {
                         self.report(
@@ -371,7 +409,7 @@ impl Checker {
         self.version(s.version, &format!("{path}/version"));
         self.fields(&s.fields, &format!("{path}/fields"), false);
         self.extensions(s.extensions.keys(), &format!("{path}/extensions"));
-        self.rules(&s.rules, &format!("{path}/rules"));
+        self.rules(&s.rules, &s.fields, &format!("{path}/rules"));
     }
 
     /// Checks a newtype variant: the enum wraps each struct at most once, and
@@ -449,7 +487,9 @@ impl Checker {
     }
 }
 
-fn is_column_type(ty: &FieldType) -> bool {
+/// `true` for the types a table column holds: a scalar base type, a factor,
+/// or `option()` of one.
+pub fn is_column_type(ty: &FieldType) -> bool {
     let column = |t: &FieldType| t.is_scalar() || matches!(t, FieldType::Factor { .. });
     column(ty) || matches!(ty, FieldType::Option { inner, .. } if column(inner))
 }
@@ -457,7 +497,10 @@ fn is_column_type(ty: &FieldType) -> bool {
 /// Checks one IR document and returns every problem found, in document
 /// order; an empty vector means the document passes.
 pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
-    let mut c = Checker { errors: Vec::new() };
+    let mut c = Checker {
+        doc,
+        errors: Vec::new(),
+    };
     c.unique(
         doc.types
             .iter()
@@ -503,7 +546,7 @@ pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
                     }
                     if let VariantShape::Struct { fields, rules } = &v.shape {
                         c.fields(fields, &format!("{vpath}/fields"), false);
-                        c.rules(rules, &format!("{vpath}/rules"));
+                        c.rules(rules, fields, &format!("{vpath}/rules"));
                         if let Some(k) = fields.iter().position(|f| f.name == e.tag) {
                             c.report(
                                 "field_is_tag",

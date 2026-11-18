@@ -1683,9 +1683,7 @@
                   },
                   "resolve": {
                     "policy": "computed",
-                    "expr": {
-                      "var": "a"
-                    }
+                    "expr": 1
                   }
                 }
               }
@@ -1777,6 +1775,159 @@
           {
             "code": "unit_blank",
             "path": "/types/0/fields/0/unit"
+          }
+        ]
+      }
+    },
+    {
+      "id": "default-valid",
+      "description": "A default in the field's JSON form.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "K",
+            "version": 1,
+            "variants": [
+              {
+                "name": "L",
+                "shape": "unit"
+              },
+              {
+                "name": "R",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "g",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "k",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::K"
+                },
+                "default": {
+                  "type": "L"
+                }
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer",
+                  "min": 1
+                },
+                "default": 3
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "default-invalid",
+      "description": "An enum with a struct variant writes a unit variant as an object, so the bare name is not a valid default.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "K",
+            "version": 1,
+            "variants": [
+              {
+                "name": "L",
+                "shape": "unit"
+              },
+              {
+                "name": "R",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "g",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "k",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::K"
+                },
+                "default": "L"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_invalid",
+            "path": "/types/1/fields/0/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "default-out-of-range",
+      "description": "A default satisfies the field's constraints.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer",
+                  "min": 1
+                },
+                "default": 0
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_invalid",
+            "path": "/types/0/fields/0/default"
           }
         ]
       }

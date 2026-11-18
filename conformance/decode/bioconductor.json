@@ -1,0 +1,1602 @@
+{
+  "$corpus": 1,
+  "cases": [
+    {
+      "description": "A GRanges with a data-levels sequence factor and Seqinfo from its own namespace.",
+      "expect": {
+        "valid": true
+      },
+      "id": "granges",
+      "input": {
+        "mcols": {
+          "$length": 2
+        },
+        "metadata": {},
+        "ranges": {
+          "$length": 2,
+          "seqnames": {
+            "codes": [
+              1,
+              2
+            ],
+            "levels": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "start": [
+            1,
+            20
+          ],
+          "strand": [
+            "+",
+            "*"
+          ],
+          "width": [
+            10,
+            5
+          ]
+        },
+        "seqinfo": {
+          "genome": [
+            "hg38",
+            "hg38"
+          ],
+          "is_circular": [
+            false,
+            null
+          ],
+          "seqlengths": [
+            1000,
+            null
+          ],
+          "seqnames": [
+            "chr1",
+            "chr2"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "GenomicRanges::GRanges"
+    },
+    {
+      "description": "Metadata columns chosen by the data, typed in $columns.",
+      "expect": {
+        "valid": true
+      },
+      "id": "granges-mcols",
+      "input": {
+        "mcols": {
+          "$columns": {
+            "gene": {
+              "kind": "character"
+            },
+            "score": {
+              "kind": "double"
+            }
+          },
+          "$length": 2,
+          "gene": [
+            "A",
+            "B"
+          ],
+          "score": [
+            0.1,
+            0.9
+          ]
+        },
+        "metadata": {},
+        "ranges": {
+          "$length": 2,
+          "seqnames": {
+            "codes": [
+              1,
+              2
+            ],
+            "levels": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "start": [
+            1,
+            20
+          ],
+          "strand": [
+            "+",
+            "*"
+          ],
+          "width": [
+            10,
+            5
+          ]
+        },
+        "seqinfo": {
+          "genome": [
+            "hg38",
+            "hg38"
+          ],
+          "is_circular": [
+            false,
+            null
+          ],
+          "seqlengths": [
+            1000,
+            null
+          ],
+          "seqnames": [
+            "chr1",
+            "chr2"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "GenomicRanges::GRanges"
+    },
+    {
+      "description": "A range whose end exceeds the integer range; the row rule names the cell.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/ranges/start/1",
+            "rule": "END_FITS"
+          }
+        ]
+      },
+      "id": "granges-end-overflow",
+      "input": {
+        "mcols": {
+          "$length": 2
+        },
+        "metadata": {},
+        "ranges": {
+          "$length": 2,
+          "seqnames": {
+            "codes": [
+              1,
+              2
+            ],
+            "levels": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "start": [
+            1,
+            2147483640
+          ],
+          "strand": [
+            "+",
+            "*"
+          ],
+          "width": [
+            10,
+            100
+          ]
+        },
+        "seqinfo": {
+          "genome": [
+            "hg38",
+            "hg38"
+          ],
+          "is_circular": [
+            false,
+            null
+          ],
+          "seqlengths": [
+            1000,
+            null
+          ],
+          "seqnames": [
+            "chr1",
+            "chr2"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "GenomicRanges::GRanges"
+    },
+    {
+      "description": "The sequence factor's levels differ from seqinfo's sequence names.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "SEQNAMES_LEVELS"
+          }
+        ]
+      },
+      "id": "granges-levels",
+      "input": {
+        "mcols": {
+          "$length": 2
+        },
+        "metadata": {},
+        "ranges": {
+          "$length": 2,
+          "seqnames": {
+            "codes": [
+              1,
+              2
+            ],
+            "levels": [
+              "chr2",
+              "chr1"
+            ]
+          },
+          "start": [
+            1,
+            20
+          ],
+          "strand": [
+            "+",
+            "*"
+          ],
+          "width": [
+            10,
+            5
+          ]
+        },
+        "seqinfo": {
+          "genome": [
+            "hg38",
+            "hg38"
+          ],
+          "is_circular": [
+            false,
+            null
+          ],
+          "seqlengths": [
+            1000,
+            null
+          ],
+          "seqnames": [
+            "chr1",
+            "chr2"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "GenomicRanges::GRanges"
+    },
+    {
+      "description": "names has one entry per range.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "NAMES_LENGTH"
+          }
+        ]
+      },
+      "id": "granges-names-length",
+      "input": {
+        "mcols": {
+          "$length": 2
+        },
+        "metadata": {},
+        "names": [
+          "a"
+        ],
+        "ranges": {
+          "$length": 2,
+          "seqnames": {
+            "codes": [
+              1,
+              2
+            ],
+            "levels": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "start": [
+            1,
+            20
+          ],
+          "strand": [
+            "+",
+            "*"
+          ],
+          "width": [
+            10,
+            5
+          ]
+        },
+        "seqinfo": {
+          "genome": [
+            "hg38",
+            "hg38"
+          ],
+          "is_circular": [
+            false,
+            null
+          ],
+          "seqlengths": [
+            1000,
+            null
+          ],
+          "seqnames": [
+            "chr1",
+            "chr2"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "GenomicRanges::GRanges"
+    },
+    {
+      "description": "Strand levels are +, -, and *.",
+      "expect": {
+        "errors": [
+          {
+            "code": "not_a_level",
+            "path": "/ranges/strand/1"
+          }
+        ]
+      },
+      "id": "granges-strand",
+      "input": {
+        "mcols": {
+          "$length": 2
+        },
+        "metadata": {},
+        "ranges": {
+          "$length": 2,
+          "seqnames": {
+            "codes": [
+              1,
+              2
+            ],
+            "levels": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "start": [
+            1,
+            20
+          ],
+          "strand": [
+            "+",
+            "x"
+          ],
+          "width": [
+            10,
+            5
+          ]
+        },
+        "seqinfo": {
+          "genome": [
+            "hg38",
+            "hg38"
+          ],
+          "is_circular": [
+            false,
+            null
+          ],
+          "seqlengths": [
+            1000,
+            null
+          ],
+          "seqnames": [
+            "chr1",
+            "chr2"
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "GenomicRanges::GRanges"
+    },
+    {
+      "description": "Dense and sparse assays in order, with matching dimensions.",
+      "expect": {
+        "valid": true
+      },
+      "id": "summarized-experiment",
+      "input": {
+        "assays": [
+          {
+            "name": "counts",
+            "value": {
+              "type": "Double",
+              "values": {
+                "data": [
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5
+                ],
+                "shape": [
+                  2,
+                  3
+                ]
+              }
+            }
+          },
+          {
+            "name": "sparse",
+            "value": {
+              "type": "Sparse",
+              "values": {
+                "data": [
+                  4,
+                  5
+                ],
+                "indices": [
+                  0,
+                  1
+                ],
+                "indptr": [
+                  0,
+                  1,
+                  1,
+                  2
+                ],
+                "shape": [
+                  2,
+                  3
+                ]
+              }
+            }
+          }
+        ],
+        "col_data": {
+          "$length": 3
+        },
+        "metadata": {},
+        "row_data": {
+          "$length": 2
+        }
+      },
+      "op": "decode",
+      "type": "SummarizedExperiment::SummarizedExperiment"
+    },
+    {
+      "description": "all() reports each assay whose rows differ from the features.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/assays/1/value",
+            "rule": "ASSAY_ROWS"
+          }
+        ]
+      },
+      "id": "assay-dimensions",
+      "input": {
+        "assays": [
+          {
+            "name": "counts",
+            "value": {
+              "type": "Double",
+              "values": {
+                "data": [
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5
+                ],
+                "shape": [
+                  2,
+                  3
+                ]
+              }
+            }
+          },
+          {
+            "name": "bad",
+            "value": {
+              "type": "Double",
+              "values": {
+                "data": [
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5
+                ],
+                "shape": [
+                  4,
+                  3
+                ]
+              }
+            }
+          }
+        ],
+        "col_data": {
+          "$length": 3
+        },
+        "metadata": {},
+        "row_data": {
+          "$length": 2
+        }
+      },
+      "op": "decode",
+      "type": "SummarizedExperiment::SummarizedExperiment"
+    },
+    {
+      "description": "A RangedSummarizedExperiment whose row ranges are a GRanges, a flattened newtype variant.",
+      "expect": {
+        "valid": true
+      },
+      "id": "ranged",
+      "input": {
+        "assays": [
+          {
+            "name": "counts",
+            "value": {
+              "type": "Double",
+              "values": {
+                "data": [
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5
+                ],
+                "shape": [
+                  2,
+                  3
+                ]
+              }
+            }
+          }
+        ],
+        "col_data": {
+          "$length": 3
+        },
+        "metadata": {},
+        "row_data": {
+          "$length": 2
+        },
+        "row_ranges": {
+          "mcols": {
+            "$length": 2
+          },
+          "metadata": {},
+          "ranges": {
+            "$length": 2,
+            "seqnames": {
+              "codes": [
+                1,
+                2
+              ],
+              "levels": [
+                "chr1",
+                "chr2"
+              ]
+            },
+            "start": [
+              1,
+              20
+            ],
+            "strand": [
+              "+",
+              "*"
+            ],
+            "width": [
+              10,
+              5
+            ]
+          },
+          "seqinfo": {
+            "genome": [
+              "hg38",
+              "hg38"
+            ],
+            "is_circular": [
+              false,
+              null
+            ],
+            "seqlengths": [
+              1000,
+              null
+            ],
+            "seqnames": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "type": "GRanges"
+        }
+      },
+      "op": "decode",
+      "type": "SummarizedExperiment::RangedSummarizedExperiment"
+    },
+    {
+      "description": "Feature names come from row_ranges, so row_names is absent.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "RSE_NO_NAMES"
+          }
+        ]
+      },
+      "id": "ranged-row-names",
+      "input": {
+        "assays": [
+          {
+            "name": "counts",
+            "value": {
+              "type": "Double",
+              "values": {
+                "data": [
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5
+                ],
+                "shape": [
+                  2,
+                  3
+                ]
+              }
+            }
+          }
+        ],
+        "col_data": {
+          "$length": 3
+        },
+        "metadata": {},
+        "row_data": {
+          "$length": 2
+        },
+        "row_names": [
+          "g1",
+          "g2"
+        ],
+        "row_ranges": {
+          "mcols": {
+            "$length": 2
+          },
+          "metadata": {},
+          "ranges": {
+            "$length": 2,
+            "seqnames": {
+              "codes": [
+                1,
+                2
+              ],
+              "levels": [
+                "chr1",
+                "chr2"
+              ]
+            },
+            "start": [
+              1,
+              20
+            ],
+            "strand": [
+              "+",
+              "*"
+            ],
+            "width": [
+              10,
+              5
+            ]
+          },
+          "seqinfo": {
+            "genome": [
+              "hg38",
+              "hg38"
+            ],
+            "is_circular": [
+              false,
+              null
+            ],
+            "seqlengths": [
+              1000,
+              null
+            ],
+            "seqnames": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "type": "GRanges"
+        }
+      },
+      "op": "decode",
+      "type": "SummarizedExperiment::RangedSummarizedExperiment"
+    },
+    {
+      "description": "row_ranges has one range per feature.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "ROW_RANGES_LENGTH"
+          }
+        ]
+      },
+      "id": "ranged-wrong-length",
+      "input": {
+        "assays": [
+          {
+            "name": "counts",
+            "value": {
+              "type": "Double",
+              "values": {
+                "data": [
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5,
+                  0.5
+                ],
+                "shape": [
+                  3,
+                  3
+                ]
+              }
+            }
+          }
+        ],
+        "col_data": {
+          "$length": 3
+        },
+        "metadata": {},
+        "row_data": {
+          "$length": 3
+        },
+        "row_ranges": {
+          "mcols": {
+            "$length": 2
+          },
+          "metadata": {},
+          "ranges": {
+            "$length": 2,
+            "seqnames": {
+              "codes": [
+                1,
+                2
+              ],
+              "levels": [
+                "chr1",
+                "chr2"
+              ]
+            },
+            "start": [
+              1,
+              20
+            ],
+            "strand": [
+              "+",
+              "*"
+            ],
+            "width": [
+              10,
+              5
+            ]
+          },
+          "seqinfo": {
+            "genome": [
+              "hg38",
+              "hg38"
+            ],
+            "is_circular": [
+              false,
+              null
+            ],
+            "seqlengths": [
+              1000,
+              null
+            ],
+            "seqnames": [
+              "chr1",
+              "chr2"
+            ]
+          },
+          "type": "GRanges"
+        }
+      },
+      "op": "decode",
+      "type": "SummarizedExperiment::RangedSummarizedExperiment"
+    }
+  ],
+  "description": "Values of the Bioconductor exercise types, resolved across the Seqinfo, GenomicRanges, and SummarizedExperiment namespaces.",
+  "ir": [
+    {
+      "$ir": 1,
+      "namespace": "Seqinfo",
+      "types": [
+        {
+          "description": "Sequence information: one entry per sequence.",
+          "fields": [
+            {
+              "description": "Sequence names.",
+              "name": "seqnames",
+              "type": {
+                "element": {
+                  "kind": "character"
+                },
+                "kind": "vec",
+                "unique": true
+              }
+            },
+            {
+              "description": "Sequence lengths; missing when unknown.",
+              "name": "seqlengths",
+              "type": {
+                "element": {
+                  "inner": {
+                    "kind": "integer",
+                    "min": 0
+                  },
+                  "kind": "option"
+                },
+                "kind": "vec"
+              }
+            },
+            {
+              "description": "Whether each sequence is circular; missing when unknown.",
+              "name": "is_circular",
+              "type": {
+                "element": {
+                  "inner": {
+                    "kind": "logical"
+                  },
+                  "kind": "option"
+                },
+                "kind": "vec"
+              }
+            },
+            {
+              "description": "Genome assembly of each sequence; missing when unknown.",
+              "name": "genome",
+              "type": {
+                "element": {
+                  "inner": {
+                    "kind": "character"
+                  },
+                  "kind": "option"
+                },
+                "kind": "vec"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "Seqinfo",
+          "rules": [
+            {
+              "id": "SEQINFO_LENGTHS",
+              "invariant": {
+                "and": [
+                  {
+                    "===": [
+                      {
+                        "length": [
+                          {
+                            "var": "seqlengths"
+                          }
+                        ]
+                      },
+                      {
+                        "length": [
+                          {
+                            "var": "seqnames"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "===": [
+                      {
+                        "length": [
+                          {
+                            "var": "is_circular"
+                          }
+                        ]
+                      },
+                      {
+                        "length": [
+                          {
+                            "var": "seqnames"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "===": [
+                      {
+                        "length": [
+                          {
+                            "var": "genome"
+                          }
+                        ]
+                      },
+                      {
+                        "length": [
+                          {
+                            "var": "seqnames"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "seqnames, seqlengths, is_circular, and genome have one entry per sequence."
+            }
+          ],
+          "version": 1
+        }
+      ]
+    },
+    {
+      "$ir": 1,
+      "namespace": "GenomicRanges",
+      "types": [
+        {
+          "description": "Genomic ranges: one row per range, with sequence information.",
+          "fields": [
+            {
+              "description": "One row per range.",
+              "name": "ranges",
+              "type": {
+                "columns": [
+                  {
+                    "description": "Sequence of each range, a dense factor; an Rle input is expanded by r8_conform().",
+                    "name": "seqnames",
+                    "type": {
+                      "kind": "factor"
+                    }
+                  },
+                  {
+                    "description": "First position, 1-based.",
+                    "name": "start",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "description": "Number of positions.",
+                    "name": "width",
+                    "type": {
+                      "kind": "integer",
+                      "min": 0
+                    }
+                  },
+                  {
+                    "description": "Strand.",
+                    "name": "strand",
+                    "type": {
+                      "kind": "factor",
+                      "levels": [
+                        "+",
+                        "-",
+                        "*"
+                      ]
+                    }
+                  }
+                ],
+                "kind": "table",
+                "rules": [
+                  {
+                    "id": "END_FITS",
+                    "invariant": {
+                      "<=": [
+                        {
+                          "-": [
+                            {
+                              "+": [
+                                {
+                                  "var": "start"
+                                },
+                                {
+                                  "var": "width"
+                                }
+                              ]
+                            },
+                            1
+                          ]
+                        },
+                        2147483647
+                      ]
+                    },
+                    "message": "The end position, start + width - 1, fits in an integer."
+                  }
+                ]
+              }
+            },
+            {
+              "description": "Metadata columns, one row per range, chosen by the data.",
+              "name": "mcols",
+              "type": {
+                "columns": [],
+                "kind": "table",
+                "open": true
+              }
+            },
+            {
+              "description": "Range names.",
+              "name": "names",
+              "type": {
+                "inner": {
+                  "element": {
+                    "kind": "character"
+                  },
+                  "kind": "vec"
+                },
+                "kind": "option"
+              }
+            },
+            {
+              "description": "Sequence information.",
+              "name": "seqinfo",
+              "type": {
+                "kind": "named",
+                "name": "Seqinfo::Seqinfo"
+              }
+            },
+            {
+              "default": {},
+              "description": "Free-form metadata with a JSON form.",
+              "name": "metadata",
+              "type": {
+                "kind": "json"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "GRanges",
+          "rules": [
+            {
+              "id": "SEQNAMES_LEVELS",
+              "invariant": {
+                "===": [
+                  {
+                    "levels": [
+                      {
+                        "var": "ranges.seqnames"
+                      }
+                    ]
+                  },
+                  {
+                    "var": "seqinfo.seqnames"
+                  }
+                ]
+              },
+              "message": "The sequence factor's levels are the sequence names of seqinfo."
+            },
+            {
+              "id": "MCOLS_ROWS",
+              "invariant": {
+                "===": [
+                  {
+                    "nrow": [
+                      {
+                        "var": "mcols"
+                      }
+                    ]
+                  },
+                  {
+                    "nrow": [
+                      {
+                        "var": "ranges"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "mcols has one row per range."
+            },
+            {
+              "id": "NAMES_LENGTH",
+              "invariant": {
+                "===": [
+                  {
+                    "length": [
+                      {
+                        "var": "names"
+                      }
+                    ]
+                  },
+                  {
+                    "nrow": [
+                      {
+                        "var": "ranges"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "names has one entry per range."
+            }
+          ],
+          "version": 1
+        },
+        {
+          "description": "A list of GRanges, stored concatenated with element ends.",
+          "fields": [
+            {
+              "description": "The ranges of every element, concatenated.",
+              "name": "unlisted",
+              "type": {
+                "kind": "named",
+                "name": "GenomicRanges::GRanges"
+              }
+            },
+            {
+              "description": "End of each element in the concatenated ranges (PartitioningByEnd).",
+              "name": "ends",
+              "type": {
+                "element": {
+                  "kind": "integer",
+                  "min": 0
+                },
+                "kind": "vec"
+              }
+            },
+            {
+              "description": "Element names.",
+              "name": "names",
+              "type": {
+                "inner": {
+                  "element": {
+                    "kind": "character"
+                  },
+                  "kind": "vec"
+                },
+                "kind": "option"
+              }
+            },
+            {
+              "description": "Metadata columns, one row per element.",
+              "name": "mcols",
+              "type": {
+                "columns": [],
+                "kind": "table",
+                "open": true
+              }
+            },
+            {
+              "default": {},
+              "description": "Free-form metadata with a JSON form.",
+              "name": "metadata",
+              "type": {
+                "kind": "json"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "GRangesList",
+          "rules": [
+            {
+              "id": "ENDS_ORDER",
+              "invariant": {
+                "non_decreasing": [
+                  {
+                    "var": "ends"
+                  }
+                ]
+              },
+              "message": "Element ends are non-decreasing."
+            }
+          ],
+          "version": 1
+        }
+      ]
+    },
+    {
+      "$ir": 1,
+      "namespace": "SummarizedExperiment",
+      "types": [
+        {
+          "description": "The values of one assay, features by samples; on-disk DelayedArray assays are runtime-only through a host-class impl.",
+          "kind": "enum",
+          "name": "AssayData",
+          "tag": "type",
+          "variants": [
+            {
+              "description": "",
+              "fields": [
+                {
+                  "description": "",
+                  "name": "values",
+                  "type": {
+                    "element": {
+                      "inner": {
+                        "kind": "integer"
+                      },
+                      "kind": "option"
+                    },
+                    "kind": "matrix"
+                  }
+                }
+              ],
+              "name": "Integer",
+              "shape": "struct"
+            },
+            {
+              "description": "",
+              "fields": [
+                {
+                  "description": "",
+                  "name": "values",
+                  "type": {
+                    "element": {
+                      "inner": {
+                        "finite": false,
+                        "kind": "double"
+                      },
+                      "kind": "option"
+                    },
+                    "kind": "matrix"
+                  }
+                }
+              ],
+              "name": "Double",
+              "shape": "struct"
+            },
+            {
+              "description": "",
+              "fields": [
+                {
+                  "description": "",
+                  "name": "values",
+                  "type": {
+                    "element": {
+                      "finite": false,
+                      "kind": "double"
+                    },
+                    "kind": "sparse_matrix"
+                  }
+                }
+              ],
+              "name": "Sparse",
+              "shape": "struct"
+            }
+          ],
+          "version": 1
+        },
+        {
+          "description": "The genomic ranges of the features: one GRanges, or a GRangesList.",
+          "kind": "enum",
+          "name": "RowRanges",
+          "tag": "type",
+          "variants": [
+            {
+              "description": "",
+              "name": "GRanges",
+              "of": "GenomicRanges::GRanges",
+              "shape": "newtype"
+            },
+            {
+              "description": "",
+              "name": "GRangesList",
+              "of": "GenomicRanges::GRangesList",
+              "shape": "newtype"
+            }
+          ],
+          "version": 1
+        },
+        {
+          "description": "Assays of features by samples, with feature and sample annotations.",
+          "fields": [
+            {
+              "description": "Assays in order; assay(x) is the first.",
+              "name": "assays",
+              "type": {
+                "kind": "ordered_map",
+                "value": {
+                  "kind": "named",
+                  "name": "SummarizedExperiment::AssayData"
+                }
+              }
+            },
+            {
+              "description": "Feature names.",
+              "name": "row_names",
+              "type": {
+                "inner": {
+                  "element": {
+                    "kind": "character"
+                  },
+                  "kind": "vec"
+                },
+                "kind": "option"
+              }
+            },
+            {
+              "description": "Feature annotations, one row per feature.",
+              "name": "row_data",
+              "type": {
+                "columns": [],
+                "kind": "table",
+                "open": true
+              }
+            },
+            {
+              "description": "Sample names.",
+              "name": "col_names",
+              "type": {
+                "inner": {
+                  "element": {
+                    "kind": "character"
+                  },
+                  "kind": "vec"
+                },
+                "kind": "option"
+              }
+            },
+            {
+              "description": "Sample annotations, one row per sample.",
+              "name": "col_data",
+              "type": {
+                "columns": [],
+                "kind": "table",
+                "open": true
+              }
+            },
+            {
+              "default": {},
+              "description": "Free-form metadata with a JSON form.",
+              "name": "metadata",
+              "type": {
+                "kind": "json"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "SummarizedExperiment",
+          "rules": [
+            {
+              "id": "ASSAY_ROWS",
+              "invariant": {
+                "all": [
+                  {
+                    "var": "assays"
+                  },
+                  {
+                    "===": [
+                      {
+                        "nrow": [
+                          {
+                            "var": ".x.values"
+                          }
+                        ]
+                      },
+                      {
+                        "nrow": [
+                          {
+                            "var": "row_data"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "Every assay has one row per feature."
+            },
+            {
+              "id": "ASSAY_COLS",
+              "invariant": {
+                "all": [
+                  {
+                    "var": "assays"
+                  },
+                  {
+                    "===": [
+                      {
+                        "ncol": [
+                          {
+                            "var": ".x.values"
+                          }
+                        ]
+                      },
+                      {
+                        "nrow": [
+                          {
+                            "var": "col_data"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "Every assay has one column per sample."
+            },
+            {
+              "id": "COL_NAMES_LENGTH",
+              "invariant": {
+                "===": [
+                  {
+                    "length": [
+                      {
+                        "var": "col_names"
+                      }
+                    ]
+                  },
+                  {
+                    "nrow": [
+                      {
+                        "var": "col_data"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "col_names has one entry per sample."
+            }
+          ],
+          "version": 1
+        },
+        {
+          "description": "A SummarizedExperiment whose features are genomic ranges.",
+          "extends": "SummarizedExperiment::SummarizedExperiment",
+          "fields": [
+            {
+              "description": "Assays in order; assay(x) is the first.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment",
+              "name": "assays",
+              "type": {
+                "kind": "ordered_map",
+                "value": {
+                  "kind": "named",
+                  "name": "SummarizedExperiment::AssayData"
+                }
+              }
+            },
+            {
+              "description": "Feature names.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment",
+              "name": "row_names",
+              "type": {
+                "inner": {
+                  "element": {
+                    "kind": "character"
+                  },
+                  "kind": "vec"
+                },
+                "kind": "option"
+              }
+            },
+            {
+              "description": "Feature annotations, one row per feature.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment",
+              "name": "row_data",
+              "type": {
+                "columns": [],
+                "kind": "table",
+                "open": true
+              }
+            },
+            {
+              "description": "Sample names.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment",
+              "name": "col_names",
+              "type": {
+                "inner": {
+                  "element": {
+                    "kind": "character"
+                  },
+                  "kind": "vec"
+                },
+                "kind": "option"
+              }
+            },
+            {
+              "description": "Sample annotations, one row per sample.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment",
+              "name": "col_data",
+              "type": {
+                "columns": [],
+                "kind": "table",
+                "open": true
+              }
+            },
+            {
+              "default": {},
+              "description": "Free-form metadata with a JSON form.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment",
+              "name": "metadata",
+              "type": {
+                "kind": "json"
+              }
+            },
+            {
+              "description": "Genomic ranges of the features; their metadata columns hold the feature annotations.",
+              "name": "row_ranges",
+              "type": {
+                "kind": "named",
+                "name": "SummarizedExperiment::RowRanges"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "RangedSummarizedExperiment",
+          "rules": [
+            {
+              "id": "RSE_NO_NAMES",
+              "invariant": {
+                "is_null": [
+                  {
+                    "var": "row_names"
+                  }
+                ]
+              },
+              "message": "Feature names come from row_ranges."
+            },
+            {
+              "id": "RSE_NO_ROW_DATA",
+              "invariant": {
+                "===": [
+                  {
+                    "ncol": [
+                      {
+                        "var": "row_data"
+                      }
+                    ]
+                  },
+                  0
+                ]
+              },
+              "message": "Feature annotations live in the metadata columns of row_ranges."
+            },
+            {
+              "id": "ROW_RANGES_LENGTH",
+              "invariant": {
+                "===": [
+                  {
+                    "nrow": [
+                      {
+                        "var": "row_ranges.ranges"
+                      }
+                    ]
+                  },
+                  {
+                    "nrow": [
+                      {
+                        "var": "row_data"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "row_ranges has one range per feature.",
+              "when": {
+                "is_variant": [
+                  {
+                    "var": "row_ranges"
+                  },
+                  "GRanges"
+                ]
+              }
+            }
+          ],
+          "version": 1
+        }
+      ]
+    }
+  ]
+}

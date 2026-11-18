@@ -1,0 +1,4273 @@
+{
+  "$corpus": 1,
+  "description": "Rules compiled at declaration: operators, fields, types, units, variants, and scopes.",
+  "cases": [
+    {
+      "id": "strict-equality",
+      "description": "R's == compiles to strict equality, `===`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "===": [
+                    {
+                      "var": "n"
+                    },
+                    1
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "loose-equality",
+      "description": "JSONLogic's loose `==` is refused.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "==": [
+                    {
+                      "var": "n"
+                    },
+                    1
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_loose_equality",
+            "path": "/types/1/rules/0/invariant/=="
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-operator",
+      "description": "An operator outside the dialect.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "filter": [
+                    {
+                      "var": "tags"
+                    },
+                    true
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_operator",
+            "path": "/types/1/rules/0/invariant/filter"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-field",
+      "description": "A path names a field in scope.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "costs"
+                    },
+                    0
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/types/1/rules/0/invariant/>/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "enum-compared-with-string",
+      "description": "An enum value is never equal to a string; the message names is_variant().",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "===": [
+                    {
+                      "var": "kernel"
+                    },
+                    "Rbf"
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/1/rules/0/invariant/==="
+          }
+        ]
+      }
+    },
+    {
+      "id": "variant-test",
+      "description": "is_variant() names a variant of the enum.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "cost"
+                    },
+                    100
+                  ]
+                },
+                "when": {
+                  "is_variant": [
+                    {
+                      "var": "kernel"
+                    },
+                    "Rbf"
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "unknown-variant",
+      "description": "is_variant() with a name the enum does not declare.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": true,
+                "when": {
+                  "is_variant": [
+                    {
+                      "var": "kernel"
+                    },
+                    "Sigmoid"
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_variant",
+            "path": "/types/1/rules/0/when/is_variant/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "variant-field",
+      "description": "A field that two variants hold with one type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "kernel.gamma"
+                    },
+                    10
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "variant-field-unknown",
+      "description": "A field no variant holds.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "kernel.coef0"
+                    },
+                    10
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/types/1/rules/0/invariant/<=/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-mismatch",
+      "description": "Comparing milligrams with grams.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "dose_mg"
+                    },
+                    {
+                      "var": "max_g"
+                    }
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_unit",
+            "path": "/types/1/rules/0/invariant/<="
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-converted-by-product",
+      "description": "A product carries no unit, so a conversion by hand is accepted.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "dose_mg"
+                    },
+                    {
+                      "*": [
+                        {
+                          "var": "max_g"
+                        },
+                        1000
+                      ]
+                    }
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "unit-and-no-unit",
+      "description": "A field without a unit is exempt.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "dose_mg"
+                    },
+                    {
+                      "var": "cost"
+                    }
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "invariant-not-logical",
+      "description": "An invariant is a logical condition.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "+": [
+                    {
+                      "var": "n"
+                    },
+                    1
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_not_logical",
+            "path": "/types/1/rules/0/invariant"
+          }
+        ]
+      }
+    },
+    {
+      "id": "truthy-operand",
+      "description": "and() takes logicals, not numbers.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "and": [
+                    {
+                      "var": "n"
+                    },
+                    true
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_not_logical",
+            "path": "/types/1/rules/0/invariant/and/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "runtime-field",
+      "description": "A runtime-only R value cannot be read.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "is_null": [
+                    {
+                      "var": "model"
+                    }
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/1/rules/0/invariant/is_null/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nrow-of-vector",
+      "description": "nrow() takes a table or a matrix.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">": [
+                    {
+                      "nrow": [
+                        {
+                          "var": "tags"
+                        }
+                      ]
+                    },
+                    0
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/1/rules/0/invariant/>/0/nrow/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "length-of-table",
+      "description": "length() of a table is refused; nrow() counts rows.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">": [
+                    {
+                      "length": [
+                        {
+                          "var": "ranges"
+                        }
+                      ]
+                    },
+                    0
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/1/rules/0/invariant/>/0/length/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "arity",
+      "description": "A comparison takes two operands.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "n"
+                    }
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_arity",
+            "path": "/types/1/rules/0/invariant/<="
+          }
+        ]
+      }
+    },
+    {
+      "id": "element-outside-quantifier",
+      "description": ".x is the element of an enclosing all() or any().",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": ".x"
+                    },
+                    0
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_var",
+            "path": "/types/1/rules/0/invariant/>/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "all-over-ordered-map",
+      "description": "all() over an ordered map of matrices, with .x the element.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "all": [
+                    {
+                      "var": "assays"
+                    },
+                    {
+                      "===": [
+                        {
+                          "nrow": [
+                            {
+                              "var": ".x"
+                            }
+                          ]
+                        },
+                        {
+                          "var": "n"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "comparison-of-strings",
+      "description": "Strings do not compare by order.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "<": [
+                    {
+                      "cat": [
+                        "a"
+                      ]
+                    },
+                    "b"
+                  ]
+                },
+                "message": "Message."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/1/rules/0/invariant/<"
+          }
+        ]
+      }
+    },
+    {
+      "id": "row-rule-reads-columns",
+      "description": "A row rule reads the row's columns.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "t",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ],
+                  "rules": [
+                    {
+                      "id": "R",
+                      "invariant": {
+                        "<=": [
+                          {
+                            "-": [
+                              {
+                                "+": [
+                                  {
+                                    "var": "start"
+                                  },
+                                  {
+                                    "var": "width"
+                                  }
+                                ]
+                              },
+                              1
+                            ]
+                          },
+                          2147483647
+                        ]
+                      },
+                      "message": "Message."
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "row-rule-reads-outside",
+      "description": "A row rule's scope is the row; a field of the struct is not in scope.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "t",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ],
+                  "rules": [
+                    {
+                      "id": "R",
+                      "invariant": {
+                        "<=": [
+                          {
+                            "var": "start"
+                          },
+                          {
+                            "var": "n"
+                          }
+                        ]
+                      },
+                      "message": "Message."
+                    }
+                  ]
+                }
+              }
+            ],
+            "rules": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/types/1/fields/9/type/rules/0/invariant/<=/1/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "computed-unit-mismatch",
+      "description": "A computed total in grams from milligrams.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "total_g",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double"
+                  },
+                  "resolve": {
+                    "policy": "computed",
+                    "expr": {
+                      "+": [
+                        {
+                          "var": "dose_mg"
+                        },
+                        1
+                      ]
+                    }
+                  }
+                },
+                "unit": "g"
+              }
+            ],
+            "rules": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_unit",
+            "path": "/types/1/fields/9/type/resolve/expr"
+          }
+        ]
+      }
+    },
+    {
+      "id": "computed-converted",
+      "description": "A computed total converted by a factor.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kernel",
+            "version": 1,
+            "variants": [
+              {
+                "name": "Linear",
+                "shape": "unit"
+              },
+              {
+                "name": "Rbf",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "Poly",
+                "shape": "struct",
+                "fields": [
+                  {
+                    "name": "degree",
+                    "type": {
+                      "kind": "integer"
+                    }
+                  },
+                  {
+                    "name": "gamma",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "cost",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "kernel",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Kernel"
+                }
+              },
+              {
+                "name": "dose_mg",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "mg"
+              },
+              {
+                "name": "max_g",
+                "type": {
+                  "kind": "double"
+                },
+                "unit": "g"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "tags",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              },
+              {
+                "name": "model",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "r",
+                    "class": "lm"
+                  },
+                  "resolve": {
+                    "policy": "runtime"
+                  }
+                }
+              },
+              {
+                "name": "assays",
+                "type": {
+                  "kind": "ordered_map",
+                  "value": {
+                    "kind": "matrix",
+                    "element": {
+                      "kind": "double"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "ranges",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "start",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    },
+                    {
+                      "name": "width",
+                      "type": {
+                        "kind": "integer"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "total_g",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double"
+                  },
+                  "resolve": {
+                    "policy": "computed",
+                    "expr": {
+                      "/": [
+                        {
+                          "var": "dose_mg"
+                        },
+                        1000
+                      ]
+                    }
+                  }
+                },
+                "unit": "g"
+              }
+            ],
+            "rules": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    }
+  ]
+}

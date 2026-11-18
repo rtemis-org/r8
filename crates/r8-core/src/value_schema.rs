@@ -1,0 +1,480 @@
+//! The JSON Schema (draft 2020-12) of a type's values, for tools outside R8.
+//!
+//! [`json_schema`] writes each named type the type reaches into `$defs`,
+//! keyed by its qualified name, and the type itself as the root, which also
+//! admits the document envelope (`"$type"`, `"$types"`, `"$provenance"`). A
+//! struct is an object without other members; an absent field is `null` or
+//! an omitted member. An enum of unit variants is an `enum` of names; an enum
+//! with a struct or newtype variant is an `anyOf` of objects whose tag member
+//! is a `const`. A `dyn()` field is an object with a required type member and
+//! `x-r8.dyn` naming the trait. R8's facts that JSON Schema cannot state
+//! travel as annotations under `x-r8`: rules, units, and runtime-only fields.
+//!
+//! The schema accepts every valid value. It rejects the errors JSON Schema
+//! expresses: a value of the wrong kind, a missing or unknown member, a
+//! bound, a pattern, a length, or a level. Rules, distinct keys of an
+//! ordered map, column lengths, and the canonical forms of dates and bytes
+//! are left to R8's validation.
+
+use std::collections::BTreeMap;
+
+use serde_json::{Map, Value, json};
+
+use crate::ir::{FieldDef, FieldType, RuleDef, TypeDef, VariantShape};
+use crate::name::QualifiedName;
+use crate::rules::TypeLookup;
+
+const INT_MIN: i64 = -2_147_483_647;
+const INT_MAX: i64 = 2_147_483_647;
+
+struct Writer<'a> {
+    lookup: &'a dyn TypeLookup,
+    defs: BTreeMap<String, Value>,
+}
+
+fn reference(q: &QualifiedName) -> Value {
+    json!({"$ref": format!("#/$defs/{q}")})
+}
+
+fn nullable(s: Value) -> Value {
+    json!({"anyOf": [s, {"type": "null"}]})
+}
+
+fn with_description(mut s: Value, d: &str) -> Value {
+    if !d.is_empty()
+        && let Value::Object(m) = &mut s
+    {
+        m.insert("description".into(), Value::from(d));
+    }
+    s
+}
+
+fn rules_annotation(rules: &[RuleDef]) -> Option<Value> {
+    (!rules.is_empty()).then(|| serde_json::to_value(rules).expect("rules serialize"))
+}
+
+impl Writer<'_> {
+    /// The schema of a field type, for a present value.
+    fn ty(&mut self, ft: &FieldType) -> Value {
+        match ft {
+            FieldType::Logical => json!({"type": "boolean"}),
+            FieldType::Integer(c) => {
+                let mut s = json!({"type": "integer", "minimum": INT_MIN, "maximum": INT_MAX});
+                let m = s.as_object_mut().unwrap();
+                if let Some(x) = c.min {
+                    m.insert("minimum".into(), json!(x));
+                }
+                if let Some(x) = c.max {
+                    m.insert("maximum".into(), json!(x));
+                }
+                if let Some(x) = c.exclusive_min {
+                    m.insert("exclusiveMinimum".into(), json!(x));
+                }
+                if let Some(x) = c.exclusive_max {
+                    m.insert("exclusiveMaximum".into(), json!(x));
+                }
+                if let Some(v) = &c.values {
+                    m.insert("enum".into(), json!(v));
+                }
+                s
+            }
+            FieldType::Double(c) => {
+                let mut n = json!({"type": "number"});
+                let m = n.as_object_mut().unwrap();
+                for (k, v) in [
+                    ("minimum", c.min),
+                    ("maximum", c.max),
+                    ("exclusiveMinimum", c.exclusive_min),
+                    ("exclusiveMaximum", c.exclusive_max),
+                ] {
+                    if let Some(x) = v {
+                        m.insert(k.into(), json!(x));
+                    }
+                }
+                if let Some(v) = &c.values {
+                    m.insert("enum".into(), json!(v));
+                }
+                if c.finite {
+                    n
+                } else {
+                    json!({"anyOf": [n, {"enum": ["Infinity", "-Infinity", "NaN"]}]})
+                }
+            }
+            FieldType::Character(c) => {
+                let mut s = json!({"type": "string"});
+                let m = s.as_object_mut().unwrap();
+                if let Some(p) = &c.pattern {
+                    m.insert("pattern".into(), json!(p));
+                }
+                if let Some(v) = &c.values {
+                    m.insert("enum".into(), json!(v));
+                }
+                s
+            }
+            FieldType::Raw => json!({
+                "type": "string",
+                "contentEncoding": "base64",
+                "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+            }),
+            FieldType::Date => {
+                json!({"type": "string", "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"})
+            }
+            FieldType::Posixct => json!({
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+            }),
+            FieldType::Factor { levels, .. } => self.factor(levels.as_deref(), false),
+            FieldType::Matrix {
+                element,
+                nrow,
+                ncol,
+            } => {
+                let shape = json!({
+                    "type": "array",
+                    "prefixItems": [dim(*nrow), dim(*ncol)],
+                    "minItems": 2,
+                    "maxItems": 2
+                });
+                self.dense(element, shape)
+            }
+            FieldType::Array { element, dim: d } => {
+                let shape = match d {
+                    Some(d) => json!({"const": d}),
+                    None => json!({"type": "array", "items": {"type": "integer", "minimum": 0}}),
+                };
+                self.dense(element, shape)
+            }
+            FieldType::SparseMatrix {
+                element,
+                nrow,
+                ncol,
+            } => {
+                let ints = json!({"type": "array", "items": {"type": "integer", "minimum": 0}});
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "shape": {"type": "array", "prefixItems": [dim(*nrow), dim(*ncol)], "minItems": 2, "maxItems": 2},
+                        "indptr": ints,
+                        "indices": ints,
+                        "data": {"type": "array", "items": self.ty(element)}
+                    },
+                    "required": ["shape", "indptr", "indices", "data"],
+                    "additionalProperties": false,
+                    "x-r8": {"sparse": "csc"}
+                })
+            }
+            FieldType::MatrixOf { of } => {
+                let fields = self.struct_fields(of);
+                let element = fields
+                    .first()
+                    .map(|f| f.ty.clone())
+                    .unwrap_or(FieldType::Logical);
+                let shape = json!({"type": "array", "prefixItems": [dim(None), dim(Some(fields.len() as u32))], "minItems": 2, "maxItems": 2});
+                self.dense(&element, shape)
+            }
+            FieldType::Table {
+                columns,
+                open,
+                rules,
+            } => self.table(columns, *open, rules),
+            FieldType::TableOf { of } => {
+                let fields = self.struct_fields(of);
+                self.table(&fields, false, &[])
+            }
+            FieldType::Json => json!({}),
+            FieldType::R { class } => json!({"type": "null", "x-r8": {"runtime": class}}),
+            FieldType::Vec {
+                element,
+                min_length,
+                max_length,
+                unique,
+            } => {
+                let mut s = json!({"type": "array", "items": self.element(element)});
+                let m = s.as_object_mut().unwrap();
+                if let Some(x) = min_length {
+                    m.insert("minItems".into(), json!(x));
+                }
+                if let Some(x) = max_length {
+                    m.insert("maxItems".into(), json!(x));
+                }
+                if *unique {
+                    m.insert("uniqueItems".into(), json!(true));
+                }
+                s
+            }
+            FieldType::Option { inner, .. } => nullable(self.ty(inner)),
+            FieldType::Hashmap { value, keys } => json!({
+                "type": "object",
+                "propertyNames": key_schema(keys),
+                "additionalProperties": self.element(value)
+            }),
+            FieldType::OrderedMap { value, keys } => json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"name": key_schema(keys), "value": self.element(value)},
+                    "required": ["name", "value"],
+                    "additionalProperties": false
+                },
+                "x-r8": {"ordered_map": true}
+            }),
+            FieldType::Named { name } => {
+                self.define(name);
+                reference(name)
+            }
+            FieldType::Dyn { r#trait } => json!({
+                "type": "object",
+                "required": [self.lookup_tag(r#trait)],
+                "x-r8": {"dyn": r#trait.to_string()}
+            }),
+        }
+    }
+
+    /// An element of a collection: `null` only for `option()` elements.
+    fn element(&mut self, ft: &FieldType) -> Value {
+        self.ty(ft)
+    }
+
+    fn lookup_tag(&self, tr: &QualifiedName) -> String {
+        self.lookup.type_member(tr)
+    }
+
+    fn struct_fields(&self, of: &QualifiedName) -> Vec<FieldDef> {
+        match self.lookup.find(of) {
+            Some(TypeDef::Struct(s)) => s.fields.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn factor(&mut self, levels: Option<&[String]>, cells_optional: bool) -> Value {
+        let maybe_null = |s: Value| if cells_optional { nullable(s) } else { s };
+        match levels {
+            Some(l) => json!({"type": "array", "items": maybe_null(json!({"enum": l}))}),
+            None => json!({
+                "type": "object",
+                "properties": {
+                    "levels": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+                    "codes": {"type": "array", "items": maybe_null(json!({"type": "integer", "minimum": 1}))}
+                },
+                "required": ["levels", "codes"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    fn dense(&mut self, element: &FieldType, shape: Value) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "shape": shape,
+                "data": {"type": "array", "items": self.element(element)},
+                "dimnames": {"type": "array", "items": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]}}
+            },
+            "required": ["shape", "data"],
+            "additionalProperties": false
+        })
+    }
+
+    fn column(&mut self, c: &FieldDef) -> Value {
+        let (inner, optional) = match &c.ty {
+            FieldType::Option { inner, .. } => (inner.as_ref(), true),
+            other => (other, false),
+        };
+        let s = match inner {
+            FieldType::Factor { levels, .. } => self.factor(levels.as_deref(), optional),
+            other => {
+                let cell = self.ty(other);
+                let cell = if optional { nullable(cell) } else { cell };
+                let mut s = json!({"type": "array", "items": cell});
+                if c.unique {
+                    s["x-r8"] = json!({"unique": true});
+                }
+                s
+            }
+        };
+        with_description(s, &c.description)
+    }
+
+    fn table(&mut self, columns: &[FieldDef], open: bool, rules: &[RuleDef]) -> Value {
+        let mut props = Map::new();
+        props.insert("$length".into(), json!({"type": "integer", "minimum": 0}));
+        let mut required = vec![Value::from("$length")];
+        for c in columns {
+            props.insert(c.name.to_string(), self.column(c));
+            if !c.optional {
+                required.push(Value::from(c.name.as_str()));
+            }
+        }
+        if open {
+            props.insert("$columns".into(), json!({"type": "object"}));
+        }
+        let mut s = json!({
+            "type": "object",
+            "properties": props,
+            "required": required,
+            "additionalProperties": if open { json!({"anyOf": [{"type": "array"}, {"type": "object"}]}) } else { json!(false) }
+        });
+        if let Some(r) = rules_annotation(rules) {
+            s["x-r8"] = json!({"row_rules": r});
+        }
+        s
+    }
+
+    /// The schema of a field, absence included.
+    fn field(&mut self, f: &FieldDef) -> Value {
+        let s = self.ty(&f.ty);
+        let s = if f.default.is_some() && !matches!(f.ty, FieldType::Option { .. }) {
+            nullable(s)
+        } else {
+            s
+        };
+        let mut s = with_description(s, &f.description);
+        if let Some(u) = &f.unit {
+            s["x-r8"] = json!({"unit": u});
+        }
+        if let Some(d) = &f.default {
+            s["default"] = d.clone();
+        }
+        s
+    }
+
+    /// An object of fields, with `extra` members admitted beside them.
+    fn object(&mut self, fields: &[FieldDef], rules: &[RuleDef], extra: &[(&str, Value)]) -> Value {
+        let mut props = Map::new();
+        let mut required = Vec::new();
+        for f in fields {
+            props.insert(f.name.to_string(), self.field(f));
+            if !matches!(f.ty, FieldType::Option { .. }) && f.default.is_none() {
+                required.push(Value::from(f.name.as_str()));
+            }
+        }
+        for (k, v) in extra {
+            props.insert((*k).to_string(), v.clone());
+            if v.get("const").is_some() {
+                required.push(Value::from(*k));
+            }
+        }
+        let mut s = json!({"type": "object", "properties": props, "additionalProperties": false});
+        if !required.is_empty() {
+            s["required"] = Value::Array(required);
+        }
+        if let Some(r) = rules_annotation(rules) {
+            s["x-r8"] = json!({"rules": r});
+        }
+        s
+    }
+
+    fn define(&mut self, q: &QualifiedName) {
+        let key = q.to_string();
+        if self.defs.contains_key(&key) {
+            return;
+        }
+        self.defs.insert(key.clone(), Value::Null);
+        let schema = self.named(q, &[]);
+        self.defs.insert(key, schema);
+    }
+
+    /// The schema of a named type, with `extra` members admitted on a struct.
+    fn named(&mut self, q: &QualifiedName, extra: &[(&str, Value)]) -> Value {
+        match self.lookup.find(q).cloned() {
+            None => json!({"x-r8": {"unresolved": q.to_string()}}),
+            Some(TypeDef::Struct(s)) => {
+                with_description(self.object(&s.fields, &s.rules, extra), &s.description)
+            }
+            Some(TypeDef::Enum(e)) => {
+                if e.variants
+                    .iter()
+                    .all(|v| matches!(v.shape, VariantShape::Unit))
+                {
+                    let names: Vec<&str> = e.variants.iter().map(|v| v.name.as_str()).collect();
+                    return with_description(json!({"enum": names}), &e.description);
+                }
+                let tag = e.tag.as_str();
+                let alternatives: Vec<Value> = e
+                    .variants
+                    .iter()
+                    .map(|v| {
+                        let mut ex: Vec<(&str, Value)> = extra.to_vec();
+                        ex.push((tag, json!({"const": v.name.as_str()})));
+                        let s = match &v.shape {
+                            VariantShape::Unit => self.object(&[], &[], &ex),
+                            VariantShape::Struct { fields, rules } => {
+                                self.object(fields, rules, &ex)
+                            }
+                            VariantShape::Newtype { of } => match self.lookup.find(of).cloned() {
+                                Some(TypeDef::Struct(s)) => self.object(&s.fields, &s.rules, &ex),
+                                _ => json!({"x-r8": {"unresolved": of.to_string()}}),
+                            },
+                        };
+                        with_description(s, &v.description)
+                    })
+                    .collect();
+                with_description(
+                    json!({"anyOf": alternatives, "x-r8": {"tag": tag}}),
+                    &e.description,
+                )
+            }
+        }
+    }
+}
+
+fn dim(n: Option<u32>) -> Value {
+    match n {
+        Some(n) => json!({"const": n}),
+        None => json!({"type": "integer", "minimum": 0}),
+    }
+}
+
+fn key_schema(keys: &crate::ir::CharacterType) -> Value {
+    let mut s = json!({"type": "string", "minLength": 1});
+    if let Some(p) = &keys.pattern {
+        s["pattern"] = json!(p);
+    }
+    if let Some(v) = &keys.values {
+        s["enum"] = json!(v);
+    }
+    s
+}
+
+/// The JSON Schema 2020-12 of the values of a named type.
+pub fn json_schema(ty: &QualifiedName, lookup: &dyn TypeLookup) -> Value {
+    let mut w = Writer {
+        lookup,
+        defs: BTreeMap::new(),
+    };
+    let envelope = [
+        ("$type", json!({"type": "string"})),
+        (
+            "$types",
+            json!({"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}}),
+        ),
+        ("$provenance", json!({"type": "object"})),
+    ];
+    let root = match lookup.find(ty) {
+        Some(TypeDef::Struct(_)) => w.named(ty, &envelope),
+        _ => {
+            w.define(ty);
+            reference(ty)
+        }
+    };
+    // `define` also writes the root type's own entry when another type
+    // reaches it.
+    let mut out = match root {
+        Value::Object(m) => m,
+        other => {
+            let mut m = Map::new();
+            m.insert("allOf".into(), json!([other]));
+            m
+        }
+    };
+    out.insert(
+        "$schema".into(),
+        json!("https://json-schema.org/draft/2020-12/schema"),
+    );
+    out.insert("title".into(), json!(ty.to_string()));
+    if !w.defs.is_empty() {
+        out.insert("$defs".into(), Value::Object(w.defs.into_iter().collect()));
+    }
+    Value::Object(out)
+}

@@ -15,12 +15,17 @@ categories = ["data-structures", "encoding"]
 [features]
 # JSON Schema of the IR document, generated from the IR types.
 schema = ["dep:schemars"]
+# `#[derive(R8)]`, re-exported from r8-derive.
+derive = ["dep:r8-derive"]
 
 [dependencies]
+r8-derive = { path = "../r8-derive", version = "0.1", optional = true }
 schemars = { version = "1", optional = true }
 regex = "1"
+ryu-js = "0.2"
+sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 
 [dev-dependencies]
 jsonschema = { version = "0.61", default-features = false }

@@ -1,0 +1,520 @@
+{
+  "$corpus": 1,
+  "cases": [
+    {
+      "description": "The Svm defaults.",
+      "expect": {
+        "hash": "sha256:19dc8b7b087bc6bc4d58f62af46e48af5c205777613e605d7ea1bf2ef514a8cd"
+      },
+      "id": "svm-defaults",
+      "input": {},
+      "op": "hash",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "The same value with defaults written out and members in another order hashes the same.",
+      "expect": {
+        "hash": "sha256:19dc8b7b087bc6bc4d58f62af46e48af5c205777613e605d7ea1bf2ef514a8cd"
+      },
+      "id": "svm-defaults-explicit",
+      "input": {
+        "cost": 1,
+        "kernel": {
+          "type": "Linear"
+        },
+        "weights": null
+      },
+      "op": "hash",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A struct variant.",
+      "expect": {
+        "hash": "sha256:b19e1a92249594fa94e6648445b820ccfcc14c99da3be72e57d5c808e172bc02"
+      },
+      "id": "svm-rbf",
+      "input": {
+        "cost": 3,
+        "kernel": {
+          "gamma": 0.25,
+          "type": "Rbf"
+        },
+        "mtry": 7
+      },
+      "op": "hash",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A matrix with a missing cell, an infinity, and dimnames; a date and a date-time.",
+      "expect": {
+        "hash": "sha256:f5a3c81088e5717844e6cc629761a88fa116fd553218e35c9a0907f8022ee9f6"
+      },
+      "id": "matrix-dates",
+      "input": {
+        "d": "1969-12-31",
+        "m": {
+          "data": [
+            1.5,
+            null,
+            "-Infinity",
+            0
+          ],
+          "dimnames": [
+            [
+              "a",
+              "b"
+            ],
+            null
+          ],
+          "shape": [
+            2,
+            2
+          ]
+        },
+        "t": "2024-02-29T13:45:00.000001Z"
+      },
+      "op": "hash",
+      "type": "h::M"
+    },
+    {
+      "description": "A table with a declared factor, a missing cell, a date column, and an extra column.",
+      "expect": {
+        "hash": "sha256:0e3a57e72605850d96400d25ba78abf1343d681def67249592e79e0cfc58c65d"
+      },
+      "id": "table",
+      "input": {
+        "tb": {
+          "$columns": {
+            "score": {
+              "inner": {
+                "kind": "double"
+              },
+              "kind": "option"
+            }
+          },
+          "$length": 3,
+          "g": [
+            "hi",
+            "lo",
+            "hi"
+          ],
+          "id": [
+            "a",
+            "b",
+            "é"
+          ],
+          "n": [
+            1,
+            null,
+            -3
+          ],
+          "score": [
+            0.5,
+            null,
+            2
+          ],
+          "when": [
+            "2000-01-01",
+            "1970-01-01",
+            "1827-04-16"
+          ]
+        }
+      },
+      "op": "hash",
+      "type": "h::Tab"
+    },
+    {
+      "description": "A sparse matrix.",
+      "expect": {
+        "hash": "sha256:c49dbbe043e9b2a2b575dd44411e7ac2fd777bc8e078f23b9524a6c2ba5c873c"
+      },
+      "id": "sparse",
+      "input": {
+        "s": {
+          "data": [
+            1.5,
+            0,
+            3
+          ],
+          "indices": [
+            0,
+            2,
+            1
+          ],
+          "indptr": [
+            0,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "hash",
+      "type": "h::Sp"
+    },
+    {
+      "description": "A factor whose levels come from the data, and a logical column.",
+      "expect": {
+        "hash": "sha256:db4212960f81f6a9ad4a3df7cac7a9c9f78f7d39be6e3d6c12b164a09fa96d59"
+      },
+      "id": "factor-from-data",
+      "input": {
+        "tb": {
+          "$length": 2,
+          "f": {
+            "codes": [
+              2,
+              1
+            ],
+            "levels": [
+              "x",
+              "y"
+            ]
+          },
+          "ok": [
+            true,
+            false
+          ]
+        }
+      },
+      "op": "hash",
+      "type": "h::Fd"
+    }
+  ],
+  "description": "Content hashes: the declaration hash and the normalized value, with matrices, sparse matrices, and tables entering as digests of their canonical binary form.",
+  "ir": [
+    {
+      "$ir": 1,
+      "impls": [
+        {
+          "methods": [
+            "fit"
+          ],
+          "target": {
+            "kind": "type",
+            "name": "rtemis::Svm"
+          },
+          "trait": "rtemis::Fit"
+        }
+      ],
+      "namespace": "rtemis",
+      "traits": [
+        {
+          "description": "Trains a model from its settings.",
+          "methods": [
+            {
+              "description": "Trains a model.",
+              "name": "fit",
+              "params": [
+                "spec",
+                "x",
+                "y"
+              ]
+            }
+          ],
+          "name": "Fit"
+        }
+      ],
+      "types": [
+        {
+          "description": "Kernel function.",
+          "kind": "enum",
+          "name": "Kernel",
+          "tag": "type",
+          "variants": [
+            {
+              "description": "",
+              "name": "Linear",
+              "shape": "unit"
+            },
+            {
+              "description": "",
+              "fields": [
+                {
+                  "description": "Kernel width.",
+                  "name": "gamma",
+                  "type": {
+                    "exclusive_min": 0,
+                    "kind": "double"
+                  }
+                }
+              ],
+              "name": "Rbf",
+              "shape": "struct"
+            }
+          ],
+          "version": 1
+        },
+        {
+          "description": "Support vector machine settings.",
+          "fields": [
+            {
+              "default": 1,
+              "description": "Cost of a margin violation.",
+              "name": "cost",
+              "type": {
+                "exclusive_min": 0,
+                "kind": "double"
+              }
+            },
+            {
+              "default": {
+                "type": "Linear"
+              },
+              "description": "Kernel function.",
+              "name": "kernel",
+              "type": {
+                "kind": "named",
+                "name": "rtemis::Kernel"
+              }
+            },
+            {
+              "description": "Case weights.",
+              "external": true,
+              "name": "weights",
+              "type": {
+                "inner": {
+                  "element": {
+                    "kind": "double",
+                    "min": 0
+                  },
+                  "kind": "vec"
+                },
+                "kind": "option"
+              }
+            },
+            {
+              "description": "Variables per split.",
+              "name": "mtry",
+              "type": {
+                "inner": {
+                  "kind": "integer",
+                  "min": 1
+                },
+                "kind": "option",
+                "resolve": {
+                  "policy": "runtime"
+                }
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "Svm",
+          "rules": [
+            {
+              "id": "RBF_GAMMA",
+              "invariant": {
+                "<=": [
+                  {
+                    "var": "kernel.gamma"
+                  },
+                  10
+                ]
+              },
+              "message": "gamma is at most 10."
+            },
+            {
+              "id": "RBF_COST",
+              "invariant": {
+                "<=": [
+                  {
+                    "var": "cost"
+                  },
+                  100
+                ]
+              },
+              "message": "cost is at most 100 with the Rbf kernel.",
+              "when": {
+                "is_variant": [
+                  {
+                    "var": "kernel"
+                  },
+                  "Rbf"
+                ]
+              }
+            }
+          ],
+          "version": 1
+        }
+      ]
+    },
+    {
+      "$ir": 1,
+      "namespace": "h",
+      "types": [
+        {
+          "description": "Matrix, dates, and defaults.",
+          "fields": [
+            {
+              "description": "A matrix.",
+              "name": "m",
+              "type": {
+                "element": {
+                  "inner": {
+                    "finite": false,
+                    "kind": "double"
+                  },
+                  "kind": "option"
+                },
+                "kind": "matrix"
+              }
+            },
+            {
+              "description": "",
+              "name": "d",
+              "type": {
+                "kind": "date"
+              }
+            },
+            {
+              "description": "",
+              "name": "t",
+              "type": {
+                "kind": "posixct"
+              }
+            },
+            {
+              "default": [
+                "x"
+              ],
+              "description": "",
+              "name": "tags",
+              "type": {
+                "element": {
+                  "kind": "character"
+                },
+                "kind": "vec"
+              }
+            },
+            {
+              "default": true,
+              "description": "",
+              "name": "flag",
+              "type": {
+                "kind": "logical"
+              }
+            },
+            {
+              "description": "",
+              "name": "note",
+              "type": {
+                "inner": {
+                  "kind": "character"
+                },
+                "kind": "option"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "M",
+          "version": 1
+        },
+        {
+          "description": "",
+          "fields": [
+            {
+              "description": "",
+              "name": "tb",
+              "type": {
+                "columns": [
+                  {
+                    "description": "",
+                    "name": "g",
+                    "type": {
+                      "kind": "factor",
+                      "levels": [
+                        "lo",
+                        "hi"
+                      ]
+                    }
+                  },
+                  {
+                    "description": "",
+                    "name": "n",
+                    "type": {
+                      "inner": {
+                        "kind": "integer"
+                      },
+                      "kind": "option"
+                    }
+                  },
+                  {
+                    "description": "",
+                    "name": "when",
+                    "type": {
+                      "kind": "date"
+                    }
+                  },
+                  {
+                    "description": "",
+                    "name": "id",
+                    "type": {
+                      "kind": "character"
+                    }
+                  }
+                ],
+                "kind": "table",
+                "open": true
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "Tab",
+          "version": 1
+        },
+        {
+          "description": "",
+          "fields": [
+            {
+              "description": "",
+              "name": "s",
+              "type": {
+                "element": {
+                  "kind": "double"
+                },
+                "kind": "sparse_matrix"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "Sp",
+          "version": 1
+        },
+        {
+          "description": "",
+          "fields": [
+            {
+              "description": "",
+              "name": "tb",
+              "type": {
+                "columns": [
+                  {
+                    "description": "",
+                    "name": "f",
+                    "type": {
+                      "kind": "factor"
+                    }
+                  },
+                  {
+                    "description": "",
+                    "name": "ok",
+                    "type": {
+                      "kind": "logical"
+                    }
+                  }
+                ],
+                "kind": "table"
+              }
+            }
+          ],
+          "kind": "struct",
+          "name": "Fd",
+          "version": 1
+        }
+      ]
+    }
+  ]
+}

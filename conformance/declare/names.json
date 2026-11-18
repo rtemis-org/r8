@@ -60,7 +60,9 @@
                   "kind": "named",
                   "name": "rtemis::Kernel"
                 },
-                "default": "Linear",
+                "default": {
+                  "type": "Linear"
+                },
                 "description": "Kernel function."
               },
               {

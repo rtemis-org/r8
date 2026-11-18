@@ -1,0 +1,576 @@
+{
+  "$corpus": 1,
+  "cases": [
+    {
+      "description": "Every field present.",
+      "expect": {
+        "valid": true
+      },
+      "id": "complete",
+      "input": {
+        "cost": 1,
+        "kernel": {
+          "type": "Linear"
+        },
+        "mtry": 3,
+        "weights": [
+          1,
+          2.5
+        ]
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "cost and kernel take defaults; weights and mtry are optional; an absent field is null or omitted.",
+      "expect": {
+        "valid": true
+      },
+      "id": "defaults-and-absence",
+      "input": {
+        "weights": null
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "The document envelope is accepted on the outermost object.",
+      "expect": {
+        "valid": true
+      },
+      "id": "envelope",
+      "input": {
+        "$type": "rtemis::Svm",
+        "$types": {
+          "rtemis::Kernel": 1,
+          "rtemis::Svm": 1
+        },
+        "cost": 1
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A member that is not a field.",
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_field",
+            "path": "/colour"
+          }
+        ]
+      },
+      "id": "unknown-member",
+      "input": {
+        "colour": "red",
+        "cost": 1
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A string where a number belongs.",
+      "expect": {
+        "errors": [
+          {
+            "code": "type_mismatch",
+            "path": "/cost"
+          }
+        ]
+      },
+      "id": "cost-type",
+      "input": {
+        "cost": "1"
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "cost is above 0.",
+      "expect": {
+        "errors": [
+          {
+            "code": "below_min",
+            "path": "/cost"
+          }
+        ]
+      },
+      "id": "cost-exclusive-min",
+      "input": {
+        "cost": 0
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A double for an integer field is a whole number.",
+      "expect": {
+        "errors": [
+          {
+            "code": "not_integer",
+            "path": "/mtry"
+          }
+        ]
+      },
+      "id": "mtry-not-integer",
+      "input": {
+        "mtry": 1.5
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "Integers stop at 2147483647.",
+      "expect": {
+        "errors": [
+          {
+            "code": "out_of_range",
+            "path": "/mtry"
+          }
+        ]
+      },
+      "id": "mtry-out-of-range",
+      "input": {
+        "mtry": 2147483648
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "-2147483648 is R's NA_integer_.",
+      "expect": {
+        "errors": [
+          {
+            "code": "out_of_range",
+            "path": "/mtry"
+          }
+        ]
+      },
+      "id": "mtry-integer-min",
+      "input": {
+        "mtry": -2147483648
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "mtry is at least 1.",
+      "expect": {
+        "errors": [
+          {
+            "code": "below_min",
+            "path": "/mtry"
+          }
+        ]
+      },
+      "id": "mtry-min",
+      "input": {
+        "mtry": 0
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "Each weight is at least 0.",
+      "expect": {
+        "errors": [
+          {
+            "code": "below_min",
+            "path": "/weights/1"
+          }
+        ]
+      },
+      "id": "weights-element",
+      "input": {
+        "weights": [
+          1,
+          -1,
+          2
+        ]
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A vec() of a non-optional type has no missing elements.",
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_value",
+            "path": "/weights/1"
+          }
+        ]
+      },
+      "id": "weights-missing-element",
+      "input": {
+        "weights": [
+          1,
+          null
+        ]
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A struct variant.",
+      "expect": {
+        "valid": true
+      },
+      "id": "kernel-rbf",
+      "input": {
+        "kernel": {
+          "gamma": 0.1,
+          "type": "Rbf"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "Kernel has a struct variant, so every value is an object.",
+      "expect": {
+        "errors": [
+          {
+            "code": "type_mismatch",
+            "path": "/kernel"
+          }
+        ]
+      },
+      "id": "kernel-as-string",
+      "input": {
+        "kernel": "Linear"
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "The variant is named in the tag member.",
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_tag",
+            "path": "/kernel"
+          }
+        ]
+      },
+      "id": "kernel-missing-tag",
+      "input": {
+        "kernel": {
+          "gamma": 0.1
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A variant the enum does not declare.",
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_variant",
+            "path": "/kernel/type"
+          }
+        ]
+      },
+      "id": "kernel-unknown-variant",
+      "input": {
+        "kernel": {
+          "type": "Sigmoid"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A unit variant holds the tag member only.",
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_field",
+            "path": "/kernel/gamma"
+          }
+        ]
+      },
+      "id": "kernel-unit-variant-extra",
+      "input": {
+        "kernel": {
+          "gamma": 1,
+          "type": "Linear"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "gamma is required in Rbf.",
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_field",
+            "path": "/kernel/gamma"
+          }
+        ]
+      },
+      "id": "kernel-gamma-required",
+      "input": {
+        "kernel": {
+          "type": "Rbf"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "gamma above 10 violates RBF_GAMMA.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "RBF_GAMMA"
+          }
+        ]
+      },
+      "id": "rule-gamma",
+      "input": {
+        "kernel": {
+          "gamma": 20,
+          "type": "Rbf"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "cost above 100 with the Rbf kernel violates RBF_COST.",
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "RBF_COST"
+          }
+        ]
+      },
+      "id": "rule-cost-with-rbf",
+      "input": {
+        "cost": 500,
+        "kernel": {
+          "gamma": 1,
+          "type": "Rbf"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "RBF_COST does not apply to the Linear kernel.",
+      "expect": {
+        "valid": true
+      },
+      "id": "rule-cost-with-linear",
+      "input": {
+        "cost": 500,
+        "kernel": {
+          "type": "Linear"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "Rules run once the fields are valid, so an invalid gamma reports its own error only.",
+      "expect": {
+        "errors": [
+          {
+            "code": "below_min",
+            "path": "/kernel/gamma"
+          }
+        ]
+      },
+      "id": "rules-wait-for-fields",
+      "input": {
+        "kernel": {
+          "gamma": -1,
+          "type": "Rbf"
+        }
+      },
+      "op": "decode",
+      "type": "rtemis::Svm"
+    },
+    {
+      "description": "A struct value is an object.",
+      "expect": {
+        "errors": [
+          {
+            "code": "type_mismatch",
+            "path": ""
+          }
+        ]
+      },
+      "id": "not-an-object",
+      "input": [
+        1,
+        2
+      ],
+      "op": "decode",
+      "type": "rtemis::Svm"
+    }
+  ],
+  "description": "Values of the plan's Svm type: fields, defaults, absence, the Kernel enum, and rules.",
+  "ir": {
+    "$ir": 1,
+    "impls": [
+      {
+        "methods": [
+          "fit"
+        ],
+        "target": {
+          "kind": "type",
+          "name": "rtemis::Svm"
+        },
+        "trait": "rtemis::Fit"
+      }
+    ],
+    "namespace": "rtemis",
+    "traits": [
+      {
+        "description": "Trains a model from its settings.",
+        "methods": [
+          {
+            "description": "Trains a model.",
+            "name": "fit",
+            "params": [
+              "spec",
+              "x",
+              "y"
+            ]
+          }
+        ],
+        "name": "Fit"
+      }
+    ],
+    "types": [
+      {
+        "description": "Kernel function.",
+        "kind": "enum",
+        "name": "Kernel",
+        "tag": "type",
+        "variants": [
+          {
+            "description": "",
+            "name": "Linear",
+            "shape": "unit"
+          },
+          {
+            "description": "",
+            "fields": [
+              {
+                "description": "Kernel width.",
+                "name": "gamma",
+                "type": {
+                  "exclusive_min": 0.0,
+                  "kind": "double"
+                }
+              }
+            ],
+            "name": "Rbf",
+            "shape": "struct"
+          }
+        ],
+        "version": 1
+      },
+      {
+        "description": "Support vector machine settings.",
+        "fields": [
+          {
+            "default": 1.0,
+            "description": "Cost of a margin violation.",
+            "name": "cost",
+            "type": {
+              "exclusive_min": 0.0,
+              "kind": "double"
+            }
+          },
+          {
+            "default": {
+              "type": "Linear"
+            },
+            "description": "Kernel function.",
+            "name": "kernel",
+            "type": {
+              "kind": "named",
+              "name": "rtemis::Kernel"
+            }
+          },
+          {
+            "description": "Case weights.",
+            "external": true,
+            "name": "weights",
+            "type": {
+              "inner": {
+                "element": {
+                  "kind": "double",
+                  "min": 0.0
+                },
+                "kind": "vec"
+              },
+              "kind": "option"
+            }
+          },
+          {
+            "description": "Variables per split.",
+            "name": "mtry",
+            "type": {
+              "inner": {
+                "kind": "integer",
+                "min": 1
+              },
+              "kind": "option",
+              "resolve": {
+                "policy": "runtime"
+              }
+            }
+          }
+        ],
+        "kind": "struct",
+        "name": "Svm",
+        "rules": [
+          {
+            "id": "RBF_GAMMA",
+            "invariant": {
+              "<=": [
+                {
+                  "var": "kernel.gamma"
+                },
+                10
+              ]
+            },
+            "message": "gamma is at most 10."
+          },
+          {
+            "id": "RBF_COST",
+            "invariant": {
+              "<=": [
+                {
+                  "var": "cost"
+                },
+                100
+              ]
+            },
+            "message": "cost is at most 100 with the Rbf kernel.",
+            "when": {
+              "is_variant": [
+                {
+                  "var": "kernel"
+                },
+                "Rbf"
+              ]
+            }
+          }
+        ],
+        "version": 1
+      }
+    ]
+  }
+}

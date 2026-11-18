@@ -9,13 +9,24 @@
       "tag": "type",
       "version": 1,
       "variants": [
-        {"name": "Linear", "description": "", "shape": "unit"},
+        {
+          "name": "Linear",
+          "description": "",
+          "shape": "unit"
+        },
         {
           "name": "Rbf",
           "description": "",
           "shape": "struct",
           "fields": [
-            {"name": "gamma", "type": {"kind": "double", "exclusive_min": 0.0}, "description": "Kernel width."}
+            {
+              "name": "gamma",
+              "type": {
+                "kind": "double",
+                "exclusive_min": 0.0
+              },
+              "description": "Kernel width."
+            }
           ]
         }
       ]
@@ -26,14 +37,89 @@
       "description": "Support vector machine settings.",
       "version": 1,
       "fields": [
-        {"name": "cost", "type": {"kind": "double", "exclusive_min": 0.0}, "default": 1.0, "description": "Cost of a margin violation."},
-        {"name": "kernel", "type": {"kind": "named", "name": "rtemis::Kernel"}, "default": "Linear", "description": "Kernel function."},
-        {"name": "weights", "type": {"kind": "option", "inner": {"kind": "vec", "element": {"kind": "double", "min": 0.0}}}, "description": "Case weights.", "external": true},
-        {"name": "mtry", "type": {"kind": "option", "inner": {"kind": "integer", "min": 1}, "resolve": {"policy": "runtime"}}, "description": "Variables per split."}
+        {
+          "name": "cost",
+          "type": {
+            "kind": "double",
+            "exclusive_min": 0.0
+          },
+          "default": 1.0,
+          "description": "Cost of a margin violation."
+        },
+        {
+          "name": "kernel",
+          "type": {
+            "kind": "named",
+            "name": "rtemis::Kernel"
+          },
+          "default": {
+            "type": "Linear"
+          },
+          "description": "Kernel function."
+        },
+        {
+          "name": "weights",
+          "type": {
+            "kind": "option",
+            "inner": {
+              "kind": "vec",
+              "element": {
+                "kind": "double",
+                "min": 0.0
+              }
+            }
+          },
+          "description": "Case weights.",
+          "external": true
+        },
+        {
+          "name": "mtry",
+          "type": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer",
+              "min": 1
+            },
+            "resolve": {
+              "policy": "runtime"
+            }
+          },
+          "description": "Variables per split."
+        }
       ],
       "rules": [
-        {"id": "RBF_GAMMA", "invariant": {"<=": [{"var": "kernel.gamma"}, 10]}, "message": "gamma is at most 10."},
-        {"id": "RBF_COST", "invariant": {"<=": [{"var": "cost"}, 100]}, "when": {"is_variant": [{"var": "kernel"}, "Rbf"]}, "message": "cost is at most 100 with the Rbf kernel."}
+        {
+          "id": "RBF_GAMMA",
+          "invariant": {
+            "<=": [
+              {
+                "var": "kernel.gamma"
+              },
+              10
+            ]
+          },
+          "message": "gamma is at most 10."
+        },
+        {
+          "id": "RBF_COST",
+          "invariant": {
+            "<=": [
+              {
+                "var": "cost"
+              },
+              100
+            ]
+          },
+          "when": {
+            "is_variant": [
+              {
+                "var": "kernel"
+              },
+              "Rbf"
+            ]
+          },
+          "message": "cost is at most 100 with the Rbf kernel."
+        }
       ]
     }
   ],
@@ -42,11 +128,28 @@
       "name": "Fit",
       "description": "Trains a model from its settings.",
       "methods": [
-        {"name": "fit", "description": "Trains a model.", "params": ["spec", "x", "y"]}
+        {
+          "name": "fit",
+          "description": "Trains a model.",
+          "params": [
+            "spec",
+            "x",
+            "y"
+          ]
+        }
       ]
     }
   ],
   "impls": [
-    {"trait": "rtemis::Fit", "target": {"kind": "type", "name": "rtemis::Svm"}, "methods": ["fit"]}
+    {
+      "trait": "rtemis::Fit",
+      "target": {
+        "kind": "type",
+        "name": "rtemis::Svm"
+      },
+      "methods": [
+        "fit"
+      ]
+    }
   ]
 }
