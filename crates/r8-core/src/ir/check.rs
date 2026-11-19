@@ -77,7 +77,63 @@ impl Checker<'_> {
 
     /// Checks fields; `columns` is `true` for the columns of a table, the one
     /// position that admits `unique` and `optional`.
+    /// Reports a cycle among computed fields, which no order can resolve.
+    fn computed_cycles(&mut self, fields: &[FieldDef], path: &str) {
+        let computed: Vec<(usize, Vec<String>)> = fields
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| match &f.ty {
+                FieldType::Option {
+                    resolve: Resolve::Computed { expr },
+                    ..
+                } => Some((i, crate::rules::reads(expr))),
+                _ => None,
+            })
+            .collect();
+        let names: Vec<&str> = computed
+            .iter()
+            .map(|(i, _)| fields[*i].name.as_str())
+            .collect();
+        // Depth-first search for a computed field that reaches itself.
+        fn reaches(
+            start: &str,
+            at: &str,
+            deps: &[(usize, Vec<String>)],
+            names: &[&str],
+            seen: &mut Vec<String>,
+        ) -> bool {
+            let Some(k) = names.iter().position(|n| *n == at) else {
+                return false;
+            };
+            for d in &deps[k].1 {
+                if d == start {
+                    return true;
+                }
+                if !seen.contains(d) {
+                    seen.push(d.clone());
+                    if reaches(start, d, deps, names, seen) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        for (k, (i, _)) in computed.iter().enumerate() {
+            if reaches(names[k], names[k], &computed, &names, &mut Vec::new()) {
+                self.report(
+                    "computed_cycle",
+                    &format!("{path}/{i}/type/resolve/expr"),
+                    format!(
+                        "computed field `{}` depends on itself through other computed fields",
+                        names[k]
+                    ),
+                );
+            }
+        }
+    }
+
     fn fields(&mut self, fields: &[FieldDef], path: &str, columns: bool) {
+        self.computed_cycles(fields, path);
         self.unique(
             fields
                 .iter()

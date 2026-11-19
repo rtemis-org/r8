@@ -53,18 +53,63 @@ problems_message <- function(errors) {
 #' @noRd
 r8_construct <- function(type_name, fields, variant = "") {
   res <- r8_new_value(fields, type_name, variant)
-  if (!is.null(res[["errors"]])) {
-    label <- if (nzchar(variant)) paste0(type_name, "@", variant) else type_name
-    r8_abort(
-      "Invalid `",
-      label,
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = c("r8_value_error")
-    )
+  if (inherits(res, "r8_problems")) {
+    construct_error(res, type_name, variant)
   }
-  res[["value"]]
+  res
 } # /R8::r8_construct
+
+
+# %% construct_error ----
+#' Signal the problems of a construction
+#'
+#' @param res The `r8_problems` list that `r8_new_value()` returned.
+#' @param type_name Character: The qualified type name.
+#' @param variant Character: The enum variant, or `""` for a struct.
+#'
+#' @return Does not return; signals `r8_value_error`.
+#'
+#' @keywords internal
+#' @noRd
+construct_error <- function(res, type_name, variant) {
+  label <- if (nzchar(variant)) paste0(type_name, "@", variant) else type_name
+  r8_abort(
+    "Invalid `",
+    label,
+    "`:\n",
+    problems_message(res[["errors"]]),
+    class = c("r8_value_error")
+  )
+} # /R8::construct_error
+
+
+# %% constructor_body ----
+#' The body of a constructor
+#'
+#' One `.Call()` with the fields in declaration order; the constructor's
+#' environment is R8's namespace, where the native routine is bound.
+#'
+#' @param qname Character: The qualified type name.
+#' @param fields Character: The field names, in declaration order.
+#' @param variant Character: The enum variant, or `""` for a struct.
+#'
+#' @return A call.
+#'
+#' @keywords internal
+#' @noRd
+constructor_body <- function(qname, fields, variant = "") {
+  args <- as.call(c(
+    as.name("list"),
+    stats::setNames(lapply(fields, as.name), fields)
+  ))
+  bquote({
+    res <- .Call(wrap__r8_new_value, .(args), .(qname), .(variant))
+    if (inherits(res, "r8_problems")) {
+      construct_error(res, .(qname), .(variant))
+    }
+    res
+  })
+} # /R8::constructor_body
 
 
 # %% new_dgc ----
@@ -108,7 +153,8 @@ new_dgc <- function(i, p, x, dim) {
 #' @name r8_value_fields
 #' @export
 `$.r8_value` <- function(x, name) {
-  field_get(x, name)
+  v <- .subset2(x, name)
+  if (is.null(v)) field_get(x, name) else v
 } # /R8::$.r8_value
 
 
@@ -159,20 +205,20 @@ new_dgc <- function(i, p, x, dim) {
 #' @keywords internal
 #' @noRd
 field_get <- function(x, name) {
-  fields <- unclass(x)
-  if (!name %in% names(fields)) {
+  v <- .subset2(x, name)
+  if (is.null(v) && !name %in% names(x)) {
     r8_abort(
       "`",
       name,
       "` is not a field of `",
       attr(x, "r8_type"),
       "`. Fields: ",
-      paste(names(fields), collapse = ", "),
+      paste(names(x), collapse = ", "),
       ".",
       class = "r8_value_error"
     )
   }
-  fields[[name]]
+  v
 } # /R8::field_get
 
 
@@ -188,8 +234,8 @@ field_get <- function(x, name) {
 #' @keywords internal
 #' @noRd
 field_set <- function(x, name, value) {
-  fields <- unclass(x)
-  if (!name %in% names(fields)) {
+  res <- .Call(wrap__r8_set_field, x, name, value)
+  if (is.null(res)) {
     r8_abort(
       "`",
       name,
@@ -199,14 +245,15 @@ field_set <- function(x, name, value) {
       class = "r8_value_error"
     )
   }
-  attributes(fields) <- list(names = names(fields))
-  fields[name] <- list(value)
-  variant <- attr(x, "r8_variant")
-  r8_construct(
-    attr(x, "r8_type"),
-    fields,
-    if (is.null(variant)) "" else variant
-  )
+  if (inherits(res, "r8_problems")) {
+    variant <- attr(x, "r8_variant")
+    construct_error(
+      res,
+      attr(x, "r8_type"),
+      if (is.null(variant)) "" else variant
+    )
+  }
+  res
 } # /R8::field_set
 
 

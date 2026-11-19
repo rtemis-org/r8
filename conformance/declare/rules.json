@@ -4268,6 +4268,133 @@
       "expect": {
         "errors": []
       }
+    },
+    {
+      "id": "computed-chain",
+      "description": "A computed field may read another computed field.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double"
+                  },
+                  "resolve": {
+                    "policy": "computed",
+                    "expr": {
+                      "*": [
+                        {
+                          "var": "a"
+                        },
+                        2
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double"
+                  },
+                  "resolve": {
+                    "policy": "computed",
+                    "expr": {
+                      "+": [
+                        {
+                          "var": "b"
+                        },
+                        1
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "computed-cycle",
+      "description": "Two computed fields that read each other.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double"
+                  },
+                  "resolve": {
+                    "policy": "computed",
+                    "expr": {
+                      "var": "c"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double"
+                  },
+                  "resolve": {
+                    "policy": "computed",
+                    "expr": {
+                      "var": "b"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "computed_cycle",
+            "path": "/types/0/fields/0/type/resolve/expr"
+          },
+          {
+            "code": "computed_cycle",
+            "path": "/types/0/fields/1/type/resolve/expr"
+          }
+        ]
+      }
     }
   ]
 }

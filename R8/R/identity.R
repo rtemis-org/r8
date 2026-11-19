@@ -126,7 +126,8 @@ r8_equal <- function(x, y) {
 #' Comparison of R8 values
 #'
 #' `x == y` and `x != y` compare two R8 values with `r8_equal()`, the
-#' `PartialEq` standard trait; other operators raise an error.
+#' `PartialEq` standard trait. `<`, `<=`, `>`, and `>=` use the type's
+#' `PartialOrd` impl. Other operators raise an error.
 #'
 #' @param e1,e2 R8 values.
 #'
@@ -134,15 +135,34 @@ r8_equal <- function(x, y) {
 #'
 #' @export
 Ops.r8_value <- function(e1, e2) {
-  switch(
-    .Generic,
-    "==" = r8_equal(e1, e2),
-    "!=" = !r8_equal(e1, e2),
-    r8_abort(
-      "`",
-      .Generic,
-      "` is not defined for R8 values; `==` and `!=` compare them.",
-      class = "r8_dispatch_error"
-    )
+  # R binds .Generic in the frame of a group generic's method.
+  op <- .Generic # nolint: object_usage_linter.
+  if (op %in% c("==", "!=")) {
+    eq <- r8_equal(e1, e2)
+    return(if (op == "==") eq else !eq)
+  }
+  if (op %in% c("<", "<=", ">", ">=")) {
+    if (!identical(attr(e1, "r8_type"), attr(e2, "r8_type"))) {
+      r8_abort(
+        "`",
+        op,
+        "` compares two values of one type.",
+        class = "r8_dispatch_error"
+      )
+    }
+    o <- r8_cmp(e1, e2)
+    return(switch(
+      op,
+      "<" = o < 0,
+      "<=" = o <= 0,
+      ">" = o > 0,
+      ">=" = o >= 0
+    ))
+  }
+  r8_abort(
+    "`",
+    op,
+    "` is not defined for R8 values; `==` and `!=` compare them, and a type that implements PartialOrd orders them.",
+    class = "r8_dispatch_error"
   )
 } # /R8::Ops.r8_value

@@ -145,6 +145,7 @@ fn r8_declare_type(type_json: &str, namespace: &str) -> Result<List> {
     let mut reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
+    crate::construct::registry_changed();
     let mut doc = reg
         .0
         .iter()
@@ -262,6 +263,7 @@ fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List> {
     let mut reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
+    crate::construct::registry_changed();
     let mut doc = namespace_doc(&reg, &ns);
     let index = match doc.traits.iter().position(|t| t.name == def.name) {
         Some(i) => {
@@ -300,9 +302,11 @@ fn r8_declare_impl(impl_json: &str, namespace: &str) -> Result<()> {
     let mut reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
+    crate::construct::registry_changed();
     let mut doc = namespace_doc(&reg, &ns);
-    doc.impls
-        .retain(|i| !(i.r#trait == def.r#trait && i.target == def.target));
+    doc.impls.retain(|i| {
+        !(i.r#trait == def.r#trait && i.type_args == def.type_args && i.target == def.target)
+    });
     doc.impls.push(def);
     store(&mut reg, doc);
     Ok(())

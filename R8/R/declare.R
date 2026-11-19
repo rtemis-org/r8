@@ -298,10 +298,7 @@ declare <- function(ir, env, class, formals) {
   ctor <- as.function(
     c(
       formals,
-      bquote(r8_construct(
-        .(qname),
-        mget(.(field_names), envir = environment())
-      ))
+      constructor_body(qname, field_names)
     ),
     envir = asNamespace("R8")
   )
@@ -581,11 +578,7 @@ new_enum <- function(
   as.function(
     c(
       defaults,
-      bquote(r8_construct(
-        .(qname),
-        mget(.(fields), envir = environment()),
-        .(name)
-      ))
+      constructor_body(qname, fields, name)
     ),
     envir = asNamespace("R8")
   )
@@ -664,13 +657,6 @@ print.r8_type <- function(x, ...) {
 #'
 #' @export
 print.r8_value <- function(x, ...) {
-  variant <- attr(x, "r8_variant")
-  cat(
-    "<",
-    attr(x, "r8_type"),
-    if (!is.null(variant)) paste0("@", variant),
-    ">\n",
-    sep = ""
-  )
+  cat(format(x), sep = "\n")
   invisible(x)
 } # /R8::print.r8_value

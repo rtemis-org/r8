@@ -5,6 +5,38 @@
 #' @useDynLib R8, .registration = TRUE
 NULL
 
+#' Constructs a value: the fields of `fields`, a named list, form a value of
+#' the struct `type_name`, or of the variant `variant` of the enum
+#' `type_name`. The fields are validated in place and kept by reference
+#' where they are in their stored forms.
+#'
+#' Returns the value, or `list(errors = <problems>)` with the class
+#' `r8_problems`.
+#'
+#' @param fields List: The fields, by name.
+#' @param type_name Character: The qualified type name.
+#' @param variant Character: The enum variant, or `""` for a struct.
+#' @return The value or the problems.
+#' @keywords internal
+#' @noRd
+r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, fields, type_name, variant)
+
+#' Replaces the field `name` of the R8 value `x` with `value`, returning a
+#' new value: the field is validated against its type, and the type's rules
+#' that read it run on the new value. The other fields and the attributes
+#' are shared with `x`.
+#'
+#' Returns the new value; `list(errors = <problems>)` with the class
+#' `r8_problems`; or `NULL` when `name` is not a field.
+#'
+#' @param x An R8 value.
+#' @param name Character: The field name.
+#' @param value The new field value.
+#' @return The new value, the problems, or `NULL`.
+#' @keywords internal
+#' @noRd
+r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, value)
+
 #' Claims a namespace for the package that declares into it.
 #'
 #' The first package to declare into a namespace owns it; a declaration by
@@ -75,6 +107,17 @@ r8_declare_type <- function(type_json, namespace) .Call(wrap__r8_declare_type, t
 #' @noRd
 r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 
+#' Resolves a struct value: given its fields, with runtime fields filled by
+#' the caller, evaluates each absent computed field in dependency order,
+#' validates, and decodes the new value.
+#'
+#' @param fields List: The fields, by name.
+#' @param type_name Character: The qualified struct name.
+#' @return List: `list(value = <R8 value>)` or `list(errors = <problems>)`.
+#' @keywords internal
+#' @noRd
+r8_resolve_value <- function(fields, type_name) .Call(wrap__r8_resolve_value, fields, type_name)
+
 #' The identity of an R8 value: the canonical text of its normalized form,
 #' its content hash, and the paths of its runtime-only fields that hold a
 #' value.
@@ -85,9 +128,10 @@ r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 #' @noRd
 r8_value_identity <- function(x) .Call(wrap__r8_value_identity, x)
 
-#' Constructs a value: the fields of `fields`, a named list, form a value of
-#' the struct `type_name`, or of the variant `variant` of the enum
-#' `type_name`, which is encoded, validated, and decoded.
+#' The reference construction, through the JSON form: the fields are
+#' encoded to JSON, validated, normalized (an absent field takes its
+#' default), and decoded. The differential test compares `r8_new_value()`
+#' with it.
 #'
 #' Returns `list(value = <R8 value>)` or `list(errors = <problems>)`.
 #'
@@ -97,7 +141,7 @@ r8_value_identity <- function(x) .Call(wrap__r8_value_identity, x)
 #' @return List: The value or the problems.
 #' @keywords internal
 #' @noRd
-r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, fields, type_name, variant)
+r8_new_value_json <- function(fields, type_name, variant) .Call(wrap__r8_new_value_json, fields, type_name, variant)
 
 #' Writes an R8 value as a document.
 #'

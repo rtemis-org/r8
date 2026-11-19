@@ -1,4 +1,10 @@
-//! Evaluation of compiled expressions over JSON values.
+//! Evaluation of compiled expressions over values in any host form.
+//!
+//! The evaluator reads a value through [`Access`]. A `var` evaluates to a
+//! reference into the value with its declared type, converted to its JSON
+//! form only where an operator needs the value; `is.null()`, `length()`,
+//! `nrow()`, `ncol()`, `dim()`, `levels()`, `all()`, and `any()` read the
+//! reference directly.
 //!
 //! A `var` that reaches an absent value (a missing member or `null`) makes
 //! the expression [`Absent`]; the absence propagates through every operator
@@ -8,32 +14,27 @@
 use serde_json::Value;
 
 use super::compile::{Collection, Expr, Op, Root, Step, VariantTag};
+use super::ty::TypeLookup;
+use crate::access::Access;
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 
 /// An expression read an absent value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Absent;
 
+/// An evaluated expression: a JSON value, or a reference into the host
+/// form with its declared type, if known.
+pub(crate) enum Val<'l, A> {
+    V(Value),
+    R(A, Option<&'l FieldType>),
+}
+
 /// The result of evaluating an expression: a value, or absence. An `Err` is
 /// a failure that compilation did not exclude, such as a division by zero.
-pub type Evaluated = Result<Result<Value, Absent>, String>;
+pub(crate) type Evaluated<'l, A> = Result<Result<Val<'l, A>, Absent>, String>;
 
-pub(crate) struct Env<'a> {
-    pub data: &'a Value,
-    pub element: Option<&'a Value>,
-}
-
-fn present(v: Value) -> Evaluated {
-    Ok(Ok(v))
-}
-
-macro_rules! value {
-    ($e:expr) => {
-        match $e? {
-            Ok(v) => v,
-            Err(Absent) => return Ok(Err(Absent)),
-        }
-    };
-}
+/// The type of a value whose declared type is not known.
+static UNTYPED: FieldType = FieldType::Json;
 
 /// A number: a JSON number, or a non-finite double in its string form.
 pub(crate) fn as_number(v: &Value) -> Option<f64> {
@@ -131,43 +132,160 @@ fn ncol(v: &Value) -> Option<u64> {
     shape(v)?.get(1).copied()
 }
 
-impl Env<'_> {
-    pub fn eval(&self, e: &Expr) -> Evaluated {
-        match e {
-            Expr::Lit(v) => present(v.clone()),
-            Expr::Var { root, steps } => {
-                let start = match root {
-                    Root::Data => self.data,
-                    Root::Element => match self.element {
-                        Some(v) => v,
-                        None => return Err("`.x` outside `all()` or `any()`".to_string()),
-                    },
-                };
-                let mut cur = start;
-                for s in steps {
-                    let next = match (s, cur) {
-                        (Step::Member(k), Value::Object(m)) => m.get(k),
-                        (Step::OrderedKey(k), Value::Array(pairs)) => pairs
-                            .iter()
-                            .find(|p| p.get("name").and_then(Value::as_str) == Some(k))
-                            .and_then(|p| p.get("value")),
+fn present<'l, A>(v: Value) -> Evaluated<'l, A> {
+    Ok(Ok(Val::V(v)))
+}
+
+macro_rules! value {
+    ($self:ident, $e:expr) => {
+        match $e? {
+            Ok(v) => $self.json(v),
+            Err(Absent) => return Ok(Err(Absent)),
+        }
+    };
+}
+
+macro_rules! val {
+    ($e:expr) => {
+        match $e? {
+            Ok(v) => v,
+            Err(Absent) => return Ok(Err(Absent)),
+        }
+    };
+}
+
+fn unwrap_option(ft: &FieldType) -> &FieldType {
+    match ft {
+        FieldType::Option { inner, .. } => inner,
+        other => other,
+    }
+}
+
+/// An evaluation environment: the value a rule belongs to and the fields in
+/// its scope, and the element of an enclosing quantifier.
+pub(crate) struct Env<'l, A> {
+    pub data: A,
+    pub scope: &'l [FieldDef],
+    pub lookup: &'l dyn TypeLookup,
+    pub element: Option<(A, Option<&'l FieldType>)>,
+}
+
+impl<'a, 'l, A: Access<'a>> Env<'l, A> {
+    fn json(&self, v: Val<'l, A>) -> Value {
+        match v {
+            Val::V(v) => v,
+            Val::R(a, ty) => a.to_value(ty.unwrap_or(&UNTYPED), self.lookup),
+        }
+    }
+
+    /// The fields of a value of type `ty`; `None` means the rule's scope.
+    fn fields_of(&self, ty: Option<&'l FieldType>, cur: A) -> Option<&'l [FieldDef]> {
+        let lookup = self.lookup;
+        match ty.map(unwrap_option) {
+            None => Some(self.scope),
+            Some(FieldType::Named { name }) => match lookup.find(name)? {
+                TypeDef::Struct(s) => Some(&s.fields),
+                TypeDef::Enum(e) => {
+                    let variant = cur.variant(name, e).ok()?;
+                    match &e
+                        .variants
+                        .iter()
+                        .find(|v| v.name.as_str() == variant)?
+                        .shape
+                    {
+                        VariantShape::Struct { fields, .. } => Some(fields),
+                        VariantShape::Newtype { of } => match lookup.find(of)? {
+                            TypeDef::Struct(s) => Some(&s.fields),
+                            TypeDef::Enum(_) => None,
+                        },
+                        VariantShape::Unit => None,
+                    }
+                }
+            },
+            _ => None,
+        }
+    }
+
+    fn var(&self, root: Root, steps: &[Step]) -> Evaluated<'l, A> {
+        let (mut cur, mut ty) = match root {
+            Root::Data => (self.data, None),
+            Root::Element => match self.element {
+                Some(e) => e,
+                None => return Err("`.x` outside `all()` or `any()`".to_string()),
+            },
+        };
+        let mut at_root = root == Root::Data;
+        for s in steps {
+            if cur.is_absent() {
+                return Ok(Err(Absent));
+            }
+            match s {
+                Step::Member(k) => {
+                    let next_ty = match ty.map(unwrap_option) {
+                        Some(FieldType::Hashmap { value, .. }) => Some(value.as_ref()),
+                        _ if at_root || ty.is_some() => self
+                            .fields_of(if at_root { None } else { ty }, cur)
+                            .and_then(|f| f.iter().find(|f| f.name.as_str() == k.as_str()))
+                            .map(|f| &f.ty),
                         _ => None,
                     };
-                    match next {
-                        Some(v) => cur = v,
+                    cur = match ty.map(unwrap_option) {
+                        Some(FieldType::Hashmap { .. }) => {
+                            let mut found = None;
+                            cur.each_entry(|_, e| {
+                                if let Ok((key, x)) = e
+                                    && found.is_none()
+                                    && key == k.as_str()
+                                {
+                                    found = Some(x);
+                                }
+                            });
+                            match found {
+                                Some(x) => x,
+                                None => return Ok(Err(Absent)),
+                            }
+                        }
+                        _ => cur.member(k),
+                    };
+                    ty = next_ty;
+                }
+                Step::OrderedKey(k) => {
+                    let mut found = None;
+                    cur.each_entry(|_, e| {
+                        if let Ok((key, x)) = e
+                            && found.is_none()
+                            && key == k.as_str()
+                        {
+                            found = Some(x);
+                        }
+                    });
+                    ty = match ty.map(unwrap_option) {
+                        Some(FieldType::OrderedMap { value, .. }) => Some(value.as_ref()),
+                        _ => None,
+                    };
+                    match found {
+                        Some(x) => cur = x,
                         None => return Ok(Err(Absent)),
                     }
                 }
-                if cur.is_null() {
-                    Ok(Err(Absent))
-                } else {
-                    present(cur.clone())
-                }
             }
+            at_root = false;
+        }
+        if cur.is_absent() {
+            Ok(Err(Absent))
+        } else {
+            Ok(Ok(Val::R(cur, ty)))
+        }
+    }
+
+    pub fn eval(&self, e: &Expr) -> Evaluated<'l, A> {
+        match e {
+            Expr::Lit(v) => present(v.clone()),
+            Expr::Var { root, steps } => self.var(*root, steps),
             Expr::If(parts) => {
                 let mut i = 0;
                 while i + 1 < parts.len() {
-                    let c = value!(self.eval(&parts[i]));
+                    let c = value!(self, self.eval(&parts[i]));
                     if want_bool(&c, "an `if` condition")? {
                         return self.eval(&parts[i + 1]);
                     }
@@ -177,7 +295,7 @@ impl Env<'_> {
             }
             Expr::And(parts) => {
                 for p in parts {
-                    if !want_bool(&value!(self.eval(p)), "an operand of `and`")? {
+                    if !want_bool(&value!(self, self.eval(p)), "an operand of `and`")? {
                         return present(Value::Bool(false));
                     }
                 }
@@ -185,7 +303,7 @@ impl Env<'_> {
             }
             Expr::Or(parts) => {
                 for p in parts {
-                    if want_bool(&value!(self.eval(p)), "an operand of `or`")? {
+                    if want_bool(&value!(self, self.eval(p)), "an operand of `or`")? {
                         return present(Value::Bool(true));
                     }
                 }
@@ -197,7 +315,17 @@ impl Env<'_> {
                 variant,
                 tag,
             } => {
-                let v = value!(self.eval(value));
+                let v = val!(self.eval(value));
+                if let Val::R(a, Some(ft)) = &v
+                    && let FieldType::Named { name } = unwrap_option(ft)
+                    && let Some(TypeDef::Enum(def)) = self.lookup.find(name)
+                {
+                    return match a.variant(name, def) {
+                        Ok(n) => present(Value::Bool(n == variant.as_str())),
+                        Err(f) => Err(f.message),
+                    };
+                }
+                let v = self.json(v);
                 let name = match (tag, &v) {
                     (VariantTag::UnitOnly | VariantTag::Unknown, Value::String(s)) => {
                         Some(s.as_str())
@@ -216,7 +344,21 @@ impl Env<'_> {
                 }
             }
             Expr::Levels { value, declared } => {
-                let v = value!(self.eval(value));
+                let v = val!(self.eval(value));
+                if let Val::R(a, Some(ft)) = &v
+                    && let FieldType::Factor { levels, ordered } = unwrap_option(ft)
+                {
+                    return match a.factor(levels.as_deref(), *ordered) {
+                        Ok(f) => match (levels, declared) {
+                            (Some(d), _) | (None, Some(d)) => present(Value::from(d.clone())),
+                            _ => present(Value::from(
+                                f.levels.iter().map(|l| l.to_string()).collect::<Vec<_>>(),
+                            )),
+                        },
+                        Err(e) => Err(e.message),
+                    };
+                }
+                let v = self.json(v);
                 let levels = match (&v, declared) {
                     (Value::Object(m), _) => m.get("levels").cloned(),
                     (_, Some(d)) => Some(Value::from(d.clone())),
@@ -232,66 +374,167 @@ impl Env<'_> {
                 kind,
                 condition,
             } => {
-                let c = value!(self.eval(collection));
-                let elements = elements(&c, *kind)?;
-                for (_, el) in &elements {
+                let c = val!(self.eval(collection));
+                let mut result = None;
+                self.each_element(c, *kind, &mut |_, el| {
                     let env = Env {
                         data: self.data,
+                        scope: self.scope,
+                        lookup: self.lookup,
                         element: Some(el),
                     };
                     let holds = match env.eval(condition)? {
-                        Ok(v) => want_bool(&v, "a quantifier's condition")?,
+                        Ok(v) => want_bool(&env.json(v), "a quantifier's condition")?,
                         // An absent operand: the element holds.
                         Err(Absent) => *all,
                     };
                     if holds != *all {
-                        return present(Value::Bool(!*all));
+                        result = Some(!*all);
+                        return Ok(false);
                     }
-                }
-                present(Value::Bool(*all))
+                    Ok(true)
+                })?;
+                present(Value::Bool(result.unwrap_or(*all)))
             }
             Expr::Op(op, args) => {
+                if args.len() == 1 && matches!(op, Op::Length | Op::Nrow | Op::Ncol | Op::Dim) {
+                    let v = val!(self.eval(&args[0]));
+                    if let Val::R(a, Some(ft)) = &v
+                        && let Some(r) = self.measure(*op, *a, ft)
+                    {
+                        return r.map(Ok);
+                    }
+                    return apply(*op, &[self.json(v)]).map(|v| Ok(Val::V(v)));
+                }
                 let mut vals = Vec::with_capacity(args.len());
                 for a in args {
-                    vals.push(value!(self.eval(a)));
+                    vals.push(value!(self, self.eval(a)));
                 }
-                apply(*op, &vals).map(Ok)
+                apply(*op, &vals).map(|v| Ok(Val::V(v)))
             }
         }
     }
-}
 
-/// The elements of a collection, each with its JSON Pointer suffix.
-pub(crate) fn elements(c: &Value, kind: Collection) -> Result<Vec<(String, Value)>, String> {
-    match (kind, c) {
-        (Collection::OrderedMap, Value::Array(pairs)) => Ok(pairs
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                (
-                    format!("/{i}/value"),
-                    p.get("value").cloned().unwrap_or(Value::Null),
-                )
-            })
-            .collect()),
-        (Collection::Array | Collection::Dynamic, Value::Array(items)) => Ok(items
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (format!("/{i}"), v.clone()))
-            .collect()),
-        (Collection::Hashmap | Collection::Dynamic, Value::Object(m)) => Ok(m
-            .iter()
-            .map(|(k, v)| {
-                (
-                    format!("/{}", k.replace('~', "~0").replace('/', "~1")),
-                    v.clone(),
-                )
-            })
-            .collect()),
-        _ => Err(format!("{c} is not a collection")),
+    /// `length()`, `nrow()`, `ncol()`, and `dim()` of a reference, read
+    /// without converting the value; `None` where the declared type gives no
+    /// direct reading.
+    fn measure(&self, op: Op, a: A, ft: &'l FieldType) -> Option<Result<Val<'l, A>, String>> {
+        let ft = unwrap_option(ft);
+        let lookup = self.lookup;
+        let n = |x: u64| Some(Ok(Val::V(Value::from(x))));
+        match (op, ft) {
+            (Op::Length, FieldType::Vec { element, .. }) => {
+                a.vec(element).ok().and_then(|k| n(k as u64))
+            }
+            (Op::Length, FieldType::Factor { levels, ordered }) => a
+                .factor(levels.as_deref(), *ordered)
+                .ok()
+                .and_then(|f| n(f.codes.len() as u64)),
+            (_, FieldType::Matrix { element, .. } | FieldType::Array { element, .. }) => {
+                let d = a.dense(element).ok()?;
+                match op {
+                    Op::Nrow => n(*d.shape.first()?),
+                    Op::Ncol => n(*d.shape.get(1)?),
+                    Op::Dim => Some(Ok(Val::V(Value::from(d.shape)))),
+                    _ => None,
+                }
+            }
+            (_, FieldType::SparseMatrix { element, .. }) => {
+                let s = a.sparse(element).ok()?;
+                match op {
+                    Op::Nrow => n(s.shape[0]),
+                    Op::Ncol => n(s.shape[1]),
+                    Op::Dim => Some(Ok(Val::V(Value::from(s.shape.to_vec())))),
+                    _ => None,
+                }
+            }
+            (Op::Nrow | Op::Ncol, FieldType::Table { columns, open, .. }) => {
+                let t = a.table(columns, *open).ok()?;
+                n(if op == Op::Nrow {
+                    t.rows
+                } else {
+                    t.columns.len() as u64
+                })
+            }
+            (Op::Nrow | Op::Ncol, FieldType::TableOf { of }) => {
+                let TypeDef::Struct(s) = lookup.find(of)? else {
+                    return None;
+                };
+                let t = a.table(&s.fields, false).ok()?;
+                n(if op == Op::Nrow {
+                    t.rows
+                } else {
+                    t.columns.len() as u64
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Calls `f` with each element of a collection and its JSON Pointer
+    /// suffix, until `f` returns `false`.
+    pub fn each_element(
+        &self,
+        c: Val<'l, A>,
+        kind: Collection,
+        f: &mut dyn FnMut(String, (A, Option<&'l FieldType>)) -> Result<bool, String>,
+    ) -> Result<(), String> {
+        let (a, ty) = match c {
+            Val::R(a, ty) => (a, ty.map(unwrap_option)),
+            Val::V(v) => return Err(format!("{v} is not a collection")),
+        };
+        let as_array = match (kind, ty) {
+            (Collection::Array, _) => true,
+            (Collection::Hashmap | Collection::OrderedMap, _) => false,
+            (Collection::Dynamic, Some(FieldType::Vec { .. })) => true,
+            (Collection::Dynamic, Some(_)) => false,
+            (Collection::Dynamic, None) => a.vec(&UNTYPED).is_ok(),
+        };
+        if as_array {
+            let element = match ty {
+                Some(FieldType::Vec { element, .. }) => Some(element.as_ref()),
+                _ => None,
+            };
+            let n = a
+                .vec(element.unwrap_or(&UNTYPED))
+                .map_err(|_| format!("{} is not a collection", self.json(Val::R(a, ty))))?;
+            for i in 0..n {
+                if !f(format!("/{i}"), (a.item(i), element))? {
+                    break;
+                }
+            }
+            return Ok(());
+        }
+        let ordered =
+            kind == Collection::OrderedMap || matches!(ty, Some(FieldType::OrderedMap { .. }));
+        let value_ty = match ty {
+            Some(FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. }) => {
+                Some(value.as_ref())
+            }
+            _ => None,
+        };
+        if a.map(value_ty.unwrap_or(&UNTYPED), ordered).is_err() {
+            return Err(format!("{} is not a collection", self.json(Val::R(a, ty))));
+        }
+        let mut entries = Vec::new();
+        a.each_entry(|i, e| {
+            if let Ok((k, x)) = e {
+                let suffix = if ordered {
+                    format!("/{i}/value")
+                } else {
+                    format!("/{}", k.replace('~', "~0").replace('/', "~1"))
+                };
+                entries.push((suffix, x));
+            }
+        });
+        for (suffix, x) in entries {
+            if !f(suffix, (x, value_ty))? {
+                break;
+            }
+        }
+        Ok(())
     }
 }
-
 fn apply(op: Op, a: &[Value]) -> Result<Value, String> {
     let bool_ = |b: bool| Ok(Value::Bool(b));
     match op {
@@ -417,35 +660,4 @@ fn apply(op: Op, a: &[Value]) -> Result<Value, String> {
             .map(Value::from)
             .ok_or_else(|| format!("`dim` takes a matrix, found {}", a[0])),
     }
-}
-
-/// The rows of a table value, each as an object of the row's cells; a factor
-/// column given as `{"levels", "codes"}` contributes its decoded strings.
-pub(crate) fn rows(table: &Value) -> Result<Vec<Value>, String> {
-    let m = table.as_object().ok_or("a table is a JSON object")?;
-    let n = m
-        .get("$length")
-        .and_then(Value::as_u64)
-        .ok_or("a table has `$length`")? as usize;
-    let mut columns = Vec::new();
-    for (k, v) in m.iter().filter(|(k, _)| !k.starts_with('$')) {
-        let cells = factor_values(v).ok_or_else(|| format!("column `{k}` is not an array"))?;
-        if cells.len() != n {
-            return Err(format!(
-                "column `{k}` has {} cells, the table has {n} rows",
-                cells.len()
-            ));
-        }
-        columns.push((k.clone(), cells));
-    }
-    Ok((0..n)
-        .map(|i| {
-            Value::Object(
-                columns
-                    .iter()
-                    .map(|(k, c)| (k.clone(), c[i].clone()))
-                    .collect(),
-            )
-        })
-        .collect())
 }

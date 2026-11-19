@@ -289,6 +289,10 @@ pub enum ImplTarget {
 #[serde(deny_unknown_fields)]
 pub struct ImplDef {
     pub r#trait: QualifiedName,
+    /// The trait's type arguments, for a standard trait with a type
+    /// parameter, such as `From(source)`: `["data.frame"]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_args: Vec<String>,
     pub target: ImplTarget,
     /// The value of the trait's tag member; defaults to the type's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]

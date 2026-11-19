@@ -1430,6 +1430,13 @@
         "trait": {
           "$ref": "#/$defs/QualifiedName"
         },
+        "type_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The trait's type arguments, for a standard trait with a type\nparameter, such as `From(source)`: `[\"data.frame\"]`."
+        },
         "target": {
           "$ref": "#/$defs/ImplTarget"
         },

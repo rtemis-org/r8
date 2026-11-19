@@ -1,4 +1,4 @@
-//! Validation of a value's JSON form against its type.
+//! Validation of a value against its type.
 //!
 //! [`validate`] checks a value's JSON form against a named type: every field
 //! type, constraint, and rule, collecting every error with a stable code, a
@@ -6,12 +6,22 @@
 //! the codec writes: an absent field is `null` or an omitted member, and the
 //! document envelope (`"$type"`, `"$types"`, `"$provenance"`) is accepted on
 //! the outermost object.
+//!
+//! [`validate_access`] checks a value in any host form through
+//! [`Access`]; [`validate`] is its JSON instance. Paths are the JSON Pointers
+//! of the JSON form whatever the host form, and are rendered only for an
+//! error.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
+use crate::access::{
+    Access, Codes, DATE_MAX_DAYS, DATE_MIN_DAYS, Form, Json, POSIXCT_MAX, POSIXCT_MICROS,
+    POSIXCT_MIN,
+};
 use crate::ir::{
     CharacterType, DoubleType, FieldDef, FieldType, IntegerType, RuleDef, TypeDef, VariantShape,
 };
@@ -34,251 +44,471 @@ pub struct ValueError {
 const INT_MIN: i64 = -2_147_483_647;
 const INT_MAX: i64 = 2_147_483_647;
 
-/// The range of `type_posixct()`: microsecond counts of magnitude below 2^52,
-/// which a double holds exactly as seconds.
-const POSIXCT_MIN: &str = "1827-04-16T00:06:12.629505Z";
-const POSIXCT_MAX: &str = "2112-09-17T23:53:47.370495Z";
-
 const ENVELOPE: [&str; 3] = ["$type", "$types", "$provenance"];
 
-struct Validator<'a> {
-    lookup: &'a dyn TypeLookup,
-    errors: Vec<ValueError>,
+/// Compiled rules and patterns, kept between validations.
+///
+/// Rules are keyed by the address of their declaration, so a cache is valid
+/// for the lookup it was used with while that lookup is unchanged; a caller
+/// that changes its lookup clears the cache.
+#[derive(Debug, Default)]
+pub struct RuleCache {
     patterns: HashMap<String, Option<Regex>>,
-    rules: HashMap<usize, Option<CompiledRule>>,
+    rules: HashMap<usize, Option<Arc<CompiledRule>>>,
+}
+
+impl RuleCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.patterns.clear();
+        self.rules.clear();
+    }
+}
+
+/// A JSON Pointer, built as a chain and rendered for an error only.
+#[derive(Clone, Copy)]
+enum P<'p> {
+    Root(&'p str),
+    Key(&'p P<'p>, &'p str),
+    Idx(&'p P<'p>, usize),
+    /// A JSON Pointer suffix, already escaped.
+    Raw(&'p P<'p>, &'p str),
+}
+
+impl P<'_> {
+    fn render(&self) -> String {
+        match self {
+            P::Root(s) => s.to_string(),
+            P::Key(p, k) => format!("{}/{}", p.render(), esc(k)),
+            P::Idx(p, i) => format!("{}/{i}", p.render()),
+            P::Raw(p, s) => format!("{}{s}", p.render()),
+        }
+    }
 }
 
 fn esc(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
 }
 
-fn kind(v: &Value) -> &'static str {
-    match v {
-        Value::Null => "null",
-        Value::Bool(_) => "a logical",
-        Value::Number(_) => "a number",
-        Value::String(_) => "a string",
-        Value::Array(_) => "an array",
-        Value::Object(_) => "an object",
+fn unwrap_option(ft: &FieldType) -> (&FieldType, bool) {
+    match ft {
+        FieldType::Option { inner, .. } => (inner.as_ref(), true),
+        other => (other, false),
     }
 }
 
-fn is_leap(y: u32) -> bool {
-    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+fn is_scalar(ft: &FieldType) -> bool {
+    matches!(
+        ft,
+        FieldType::Logical
+            | FieldType::Integer(_)
+            | FieldType::Double(_)
+            | FieldType::Character(_)
+            | FieldType::Date
+            | FieldType::Posixct
+    )
 }
 
-fn digits(s: &str) -> Option<u32> {
-    (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())).then(|| s.parse().ok())?
+/// A scalar's identity for uniqueness: numbers by value, `NaN` equal to
+/// itself, as the dialect's strict equality decides.
+#[derive(PartialEq, Eq, Hash)]
+enum Key {
+    B(bool),
+    N(u64),
+    S(String),
 }
 
-/// A full-date `YYYY-MM-DD` in the proleptic Gregorian calendar, year 0000 to
-/// 9999.
-fn valid_date(s: &str) -> bool {
-    let b = s.as_bytes();
-    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
-        return false;
-    }
-    let (Some(y), Some(m), Some(d)) = (digits(&s[0..4]), digits(&s[5..7]), digits(&s[8..10]))
-    else {
-        return false;
-    };
-    let days = match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if is_leap(y) => 29,
-        2 => 28,
-        _ => return false,
-    };
-    (1..=days).contains(&d)
+fn number_key(x: f64) -> Key {
+    Key::N(if x.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        (x + 0.0).to_bits()
+    })
 }
 
-/// The canonical date-time form, `YYYY-MM-DDTHH:MM:SS.ffffffZ`, within the
-/// domain of `type_posixct()`.
-fn valid_posixct(s: &str) -> bool {
-    let b = s.as_bytes();
-    if b.len() != 27
-        || b[10] != b'T'
-        || b[13] != b':'
-        || b[16] != b':'
-        || b[19] != b'.'
-        || b[26] != b'Z'
-    {
-        return false;
-    }
-    let ok = valid_date(&s[0..10])
-        && digits(&s[11..13]).is_some_and(|h| h <= 23)
-        && digits(&s[14..16]).is_some_and(|m| m <= 59)
-        && digits(&s[17..19]).is_some_and(|x| x <= 59)
-        && digits(&s[20..26]).is_some();
-    ok && (POSIXCT_MIN..=POSIXCT_MAX).contains(&s)
+/// Whether a double satisfies its constraints; the reporting check runs
+/// only when it does not.
+#[inline(always)]
+fn double_ok(c: &DoubleType, x: f64) -> bool {
+    (!c.finite || x.is_finite())
+        && c.min.is_none_or(|m| x >= m)
+        && c.max.is_none_or(|m| x <= m)
+        && c.exclusive_min.is_none_or(|m| x > m)
+        && c.exclusive_max.is_none_or(|m| x < m)
+        && c.values.as_ref().is_none_or(|v| v.contains(&x))
 }
 
-/// Canonical base64 (RFC 4648 section 4): the standard alphabet, padding to
-/// a multiple of four, and zero bits after the last character's data.
-fn valid_base64(s: &str) -> bool {
-    let b = s.as_bytes();
-    if !b.len().is_multiple_of(4) {
-        return false;
-    }
-    let pad = b.iter().rev().take_while(|&&c| c == b'=').count();
-    if pad > 2 {
-        return false;
-    }
-    let val = |c: u8| match c {
-        b'A'..=b'Z' => Some(c - b'A'),
-        b'a'..=b'z' => Some(c - b'a' + 26),
-        b'0'..=b'9' => Some(c - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    };
-    let body = &b[..b.len() - pad];
-    if body.iter().any(|&c| val(c).is_none()) {
-        return false;
-    }
-    match (pad, body.last()) {
-        (1, Some(&c)) => val(c).unwrap() & 0b11 == 0,
-        (2, Some(&c)) => val(c).unwrap() & 0b1111 == 0,
-        _ => true,
+/// Whether a whole number satisfies the integer range and its constraints.
+#[inline(always)]
+fn integer_ok(c: &IntegerType, x: i64) -> bool {
+    (INT_MIN..=INT_MAX).contains(&x) && {
+        let y = x as i32;
+        c.min.is_none_or(|m| y >= m)
+            && c.max.is_none_or(|m| y <= m)
+            && c.exclusive_min.is_none_or(|m| y > m)
+            && c.exclusive_max.is_none_or(|m| y < m)
+            && c.values.as_ref().is_none_or(|v| v.contains(&y))
     }
 }
 
-impl Validator<'_> {
-    fn error(&mut self, code: &'static str, path: &str, message: String) {
+struct Validator<'l, 'c> {
+    lookup: &'l dyn TypeLookup,
+    errors: Vec<ValueError>,
+    cache: &'c mut RuleCache,
+}
+
+impl<'l> Validator<'l, '_> {
+    fn error(&mut self, code: &'static str, path: &P, message: String) {
         self.errors.push(ValueError {
             code,
-            path: path.to_string(),
+            path: path.render(),
             rule: None,
             message,
         });
     }
 
-    fn mismatch(&mut self, path: &str, want: &str, v: &Value) {
+    fn form(&mut self, f: Form, path: &P) {
+        self.errors.push(ValueError {
+            code: f.code,
+            path: format!("{}{}", path.render(), f.suffix),
+            rule: None,
+            message: f.message,
+        });
+    }
+
+    fn missing(&mut self, path: &P) {
         self.error(
-            "type_mismatch",
+            "missing_value",
             path,
-            format!("expected {want}, found {}", kind(v)),
+            "a value is required here".to_string(),
         );
     }
 
     fn regex(&mut self, pattern: &str) -> Option<&Regex> {
-        self.patterns
+        self.cache
+            .patterns
             .entry(pattern.to_string())
             .or_insert_with(|| Regex::new(pattern).ok())
             .as_ref()
     }
 
-    /// Checks a value of a field type. `null` is reported as a missing value;
-    /// callers handle absence where the type admits it.
-    fn value(&mut self, ft: &FieldType, v: &Value, path: &str) {
+    /// Checks a value of a field type. An absent value is reported as a
+    /// missing value; callers handle absence where the type admits it.
+    fn value<'a, A: Access<'a>>(&mut self, ft: &FieldType, v: A, path: &P) {
         match ft {
             FieldType::Option { inner, .. } => {
-                if !v.is_null() {
+                if !v.is_absent() {
                     self.value(inner, v, path);
                 }
             }
-            _ if v.is_null() => {
-                self.error("missing_value", path, "a value is required here".to_string());
-            }
+            _ if v.is_absent() => self.missing(path),
             FieldType::Logical => {
-                if !v.is_boolean() {
-                    self.mismatch(path, "a logical", v);
+                if let Err(f) = v.logical() {
+                    self.form(f, path);
                 }
             }
-            FieldType::Integer(c) => self.integer(c, v, path),
-            FieldType::Double(c) => self.double(c, v, path),
-            FieldType::Character(c) => self.character(c, v, path),
-            FieldType::Raw => match v.as_str() {
-                Some(s) if valid_base64(s) => {}
-                Some(_) => self.error("invalid_base64", path, "bytes are written in canonical padded base64 (RFC 4648 section 4)".to_string()),
-                None => self.mismatch(path, "a base64 string", v),
+            FieldType::Integer(c) => match v.integer() {
+                Ok(x) if integer_ok(c, x) => {}
+                Ok(x) => self.integer(c, x, path),
+                Err(f) => self.form(f, path),
             },
-            FieldType::Date => match v.as_str() {
-                Some(s) if valid_date(s) => {}
-                Some(s) => self.error("invalid_date", path, format!("`{s}` is not a date of the form YYYY-MM-DD")),
-                None => self.mismatch(path, "a date string", v),
+            FieldType::Double(c) => match v.double() {
+                Ok(x) if double_ok(c, x) => {}
+                Ok(x) => self.double(c, x, path),
+                Err(f) => self.form(f, path),
             },
-            FieldType::Posixct => match v.as_str() {
-                Some(s) if valid_posixct(s) => {}
-                Some(s) => self.error(
-                    "invalid_datetime",
-                    path,
-                    format!("`{s}` is not a date-time of the form YYYY-MM-DDTHH:MM:SS.ffffffZ from {POSIXCT_MIN} to {POSIXCT_MAX}"),
-                ),
-                None => self.mismatch(path, "a date-time string", v),
+            FieldType::Character(c) => match v.character() {
+                Ok(s) => self.character(c, &s, path),
+                Err(f) => self.form(f, path),
             },
-            FieldType::Factor { levels, .. } => self.factor(levels.as_deref(), false, v, path),
-            FieldType::Matrix { element, nrow, ncol } => {
-                self.dense(element, v, path, Some([*nrow, *ncol]), None);
+            FieldType::Raw => {
+                if let Err(f) = v.raw() {
+                    self.form(f, path);
+                }
             }
+            FieldType::Date => match v.date() {
+                Ok(d) => self.date(d, path),
+                Err(f) => self.form(f, path),
+            },
+            FieldType::Posixct => match v.datetime() {
+                Ok(m) => self.datetime(m, path),
+                Err(f) => self.form(f, path),
+            },
+            FieldType::Factor { levels, ordered } => {
+                self.factor(levels.as_deref(), *ordered, false, v, path);
+            }
+            FieldType::Matrix {
+                element,
+                nrow,
+                ncol,
+            } => self.dense(element, v, path, Some([*nrow, *ncol]), None),
             FieldType::Array { element, dim } => self.dense(element, v, path, None, dim.as_deref()),
-            FieldType::SparseMatrix { element, nrow, ncol } => self.sparse(element, v, path, *nrow, *ncol),
-            FieldType::MatrixOf { of } => match self.struct_fields(of) {
-                Some(fields) => {
-                    let element = fields.first().map(|f| f.ty.clone()).unwrap_or(FieldType::Logical);
-                    let n = fields.len() as u32;
-                    self.dense(&element, v, path, Some([None, Some(n)]), None);
-                }
-                None => self.unresolved(of, path),
-            },
-            FieldType::Table { columns, open, rules } => self.table(columns, *open, rules, v, path),
-            FieldType::TableOf { of } => match self.struct_fields(of) {
-                Some(fields) => self.table(&fields, false, &[], v, path),
-                None => self.unresolved(of, path),
-            },
-            FieldType::Json => {}
-            FieldType::R { .. } => self.error(
-                "runtime_only",
-                path,
-                "a runtime-only R value has no JSON form; the member is null or omitted".to_string(),
-            ),
-            FieldType::Vec { element, min_length, max_length, unique } => {
-                let Some(items) = v.as_array() else { return self.mismatch(path, "an array", v) };
-                self.lengths(items.len(), *min_length, *max_length, path);
-                for (i, item) in items.iter().enumerate() {
-                    self.value(element, item, &format!("{path}/{i}"));
-                }
-                if *unique {
-                    self.distinct(items.iter().enumerate().map(|(i, x)| (format!("{path}/{i}"), x)));
-                }
-            }
-            FieldType::Hashmap { value, keys } => {
-                let Some(m) = v.as_object() else { return self.mismatch(path, "an object", v) };
-                for (k, x) in m {
-                    let p = format!("{path}/{}", esc(k));
-                    self.key(keys, k, &p);
-                    self.value(value, x, &p);
-                }
-            }
-            FieldType::OrderedMap { value, keys } => {
-                let Some(pairs) = v.as_array() else {
-                    return self.mismatch(path, "an array of {\"name\", \"value\"} pairs", v);
-                };
-                let mut seen = HashSet::new();
-                for (i, pair) in pairs.iter().enumerate() {
-                    let p = format!("{path}/{i}");
-                    let Some(m) = pair.as_object().filter(|m| m.len() == 2 && m.contains_key("name") && m.contains_key("value")) else {
-                        self.error("type_mismatch", &p, "an ordered map entry is an object with exactly `name` and `value`".to_string());
-                        continue;
-                    };
-                    match m["name"].as_str() {
-                        Some(k) => {
-                            if !seen.insert(k.to_string()) {
-                                self.error("duplicate_key", &format!("{p}/name"), format!("key `{k}` appears twice"));
-                            }
-                            self.key(keys, k, &format!("{p}/name"));
-                        }
-                        None => self.mismatch(&format!("{p}/name"), "a string key", &m["name"]),
+            FieldType::SparseMatrix {
+                element,
+                nrow,
+                ncol,
+            } => self.sparse(element, v, path, *nrow, *ncol),
+            FieldType::MatrixOf { of } => {
+                let lookup = self.lookup;
+                match lookup.find(of) {
+                    Some(TypeDef::Struct(s)) => {
+                        let element = s.fields.first().map_or(&FieldType::Logical, |f| &f.ty);
+                        let n = s.fields.len() as u32;
+                        self.dense(element, v, path, Some([None, Some(n)]), None);
                     }
-                    self.value(value, &m["value"], &format!("{p}/value"));
+                    _ => self.unresolved(of, path),
                 }
             }
-            FieldType::Named { name } => self.named(name, v, path, false),
+            FieldType::Table {
+                columns,
+                open,
+                rules,
+            } => self.table(columns, *open, rules, v, path),
+            FieldType::TableOf { of } => {
+                let lookup = self.lookup;
+                match lookup.find(of) {
+                    Some(TypeDef::Struct(s)) => self.table(&s.fields, false, &[], v, path),
+                    _ => self.unresolved(of, path),
+                }
+            }
+            FieldType::Json => {
+                if let Err(f) = v.json() {
+                    self.form(f, path);
+                }
+            }
+            FieldType::R { .. } => {
+                if let Err(f) = v.runtime() {
+                    self.form(f, path);
+                }
+            }
+            FieldType::Vec {
+                element,
+                min_length,
+                max_length,
+                unique,
+            } => {
+                let n = match v.vec(element) {
+                    Ok(n) => n,
+                    Err(f) => return self.form(f, path),
+                };
+                self.lengths(n, *min_length, *max_length, path);
+                self.sequence(element, v, n, path, false, *unique);
+            }
+            FieldType::Hashmap { value, keys } => self.map(value, keys, false, v, path),
+            FieldType::OrderedMap { value, keys } => self.map(value, keys, true, v, path),
+            FieldType::Named { name } => self.named(name, v, path, &[]),
             FieldType::Dyn { r#trait } => self.dynamic(r#trait, v, path),
         }
     }
 
-    fn unresolved(&mut self, name: &QualifiedName, path: &str) {
+    /// Checks items `0..n` of a sequence of `element`. `cells_optional`
+    /// admits a missing item, as in an `option()` table column; `unique`
+    /// requires distinct present items.
+    fn sequence<'a, A: Access<'a>>(
+        &mut self,
+        element: &FieldType,
+        v: A,
+        n: usize,
+        path: &P,
+        cells_optional: bool,
+        unique: bool,
+    ) {
+        let (inner, optional) = unwrap_option(element);
+        let optional = optional || cells_optional;
+        if !is_scalar(inner) {
+            for i in 0..n {
+                let item = v.item(i);
+                if !(cells_optional && item.is_absent()) {
+                    self.value(element, item, &P::Idx(path, i));
+                }
+            }
+            if unique {
+                self.distinct_values(element, v, n, path);
+            }
+            return;
+        }
+        // A sequence held as one array is scanned first; items are read one
+        // by one only when the scan finds a problem.
+        if !unique {
+            let na_ok = |missing: bool, ok: bool| if missing { optional } else { ok };
+            let clean = match (inner, v.f64_slice(), v.i32_slice()) {
+                (FieldType::Double(c), Some(s), _) => s[..n.min(s.len())]
+                    .iter()
+                    .all(|&x| na_ok(crate::access::is_na_real(x), double_ok(c, x))),
+                (FieldType::Double(c), None, Some(s)) => s[..n.min(s.len())]
+                    .iter()
+                    .all(|&x| na_ok(x == i32::MIN, double_ok(c, f64::from(x)))),
+                (FieldType::Integer(c), _, Some(s)) => s[..n.min(s.len())]
+                    .iter()
+                    .all(|&x| na_ok(x == i32::MIN, integer_ok(c, i64::from(x)))),
+                (FieldType::Integer(c), Some(s), None) => s[..n.min(s.len())].iter().all(|&x| {
+                    na_ok(
+                        crate::access::is_na_real(x),
+                        x.fract() == 0.0 && integer_ok(c, x as i64),
+                    )
+                }),
+                _ => false,
+            };
+            if clean {
+                return;
+            }
+        }
+        let mut seen: HashSet<Key> = HashSet::new();
+        let mut dup = |this: &mut Self, i: usize, k: Key, shown: &dyn Fn() -> String| {
+            if !seen.insert(k) {
+                this.error(
+                    "not_unique",
+                    &P::Idx(path, i),
+                    format!("{} appears more than once", shown()),
+                );
+            }
+        };
+        match inner {
+            FieldType::Double(c) => v.each_double(n, |i, r| match r {
+                Ok(Some(x)) => {
+                    if !double_ok(c, x) {
+                        self.double(c, x, &P::Idx(path, i));
+                    }
+                    if unique {
+                        dup(self, i, number_key(x), &|| x.to_string());
+                    }
+                }
+                Ok(None) if optional => {}
+                Ok(None) => self.missing(&P::Idx(path, i)),
+                Err(f) => self.form(f, &P::Idx(path, i)),
+            }),
+            FieldType::Integer(c) => v.each_integer(n, |i, r| match r {
+                Ok(Some(x)) => {
+                    if !integer_ok(c, x) {
+                        self.integer(c, x, &P::Idx(path, i));
+                    }
+                    if unique {
+                        dup(self, i, number_key(x as f64), &|| x.to_string());
+                    }
+                }
+                Ok(None) if optional => {}
+                Ok(None) => self.missing(&P::Idx(path, i)),
+                Err(f) => self.form(f, &P::Idx(path, i)),
+            }),
+            FieldType::Logical => v.each_logical(n, |i, r| match r {
+                Ok(Some(b)) => {
+                    if unique {
+                        dup(self, i, Key::B(b), &|| b.to_string());
+                    }
+                }
+                Ok(None) if optional => {}
+                Ok(None) => self.missing(&P::Idx(path, i)),
+                Err(f) => self.form(f, &P::Idx(path, i)),
+            }),
+            FieldType::Character(c) => v.each_character(n, |i, r| match r {
+                Ok(Some(s)) => {
+                    self.character(c, &s, &P::Idx(path, i));
+                    if unique {
+                        let shown = format!("\"{s}\"");
+                        dup(self, i, Key::S(s.into_owned()), &|| shown.clone());
+                    }
+                }
+                Ok(None) if optional => {}
+                Ok(None) => self.missing(&P::Idx(path, i)),
+                Err(f) => self.form(f, &P::Idx(path, i)),
+            }),
+            FieldType::Date => v.each_date(n, |i, r| match r {
+                Ok(Some(d)) => {
+                    if !(DATE_MIN_DAYS..=DATE_MAX_DAYS).contains(&d) {
+                        self.date(d, &P::Idx(path, i));
+                    }
+                    if unique {
+                        dup(self, i, Key::N(d as u64), &|| crate::codec::date_text(d));
+                    }
+                }
+                Ok(None) if optional => {}
+                Ok(None) => self.missing(&P::Idx(path, i)),
+                Err(f) => self.form(f, &P::Idx(path, i)),
+            }),
+            FieldType::Posixct => v.each_datetime(n, |i, r| match r {
+                Ok(Some(m)) => {
+                    if !(-POSIXCT_MICROS..=POSIXCT_MICROS).contains(&m) {
+                        self.datetime(m, &P::Idx(path, i));
+                    }
+                    if unique {
+                        dup(self, i, Key::N(m as u64), &|| {
+                            crate::codec::datetime_text(m)
+                        });
+                    }
+                }
+                Ok(None) if optional => {}
+                Ok(None) => self.missing(&P::Idx(path, i)),
+                Err(f) => self.form(f, &P::Idx(path, i)),
+            }),
+            _ => unreachable!("is_scalar"),
+        }
+    }
+
+    /// Distinct items of a sequence of non-scalar values, by strict equality
+    /// of their JSON forms.
+    fn distinct_values<'a, A: Access<'a>>(
+        &mut self,
+        element: &FieldType,
+        v: A,
+        n: usize,
+        path: &P,
+    ) {
+        let mut seen: Vec<Value> = Vec::new();
+        for i in 0..n {
+            let item = v.item(i);
+            if item.is_absent() {
+                continue;
+            }
+            let x = item.to_value(element, self.lookup);
+            if seen.iter().any(|s| crate::rules::strict_equal(s, &x)) {
+                self.error(
+                    "not_unique",
+                    &P::Idx(path, i),
+                    format!("{x} appears more than once"),
+                );
+            } else {
+                seen.push(x);
+            }
+        }
+    }
+
+    fn map<'a, A: Access<'a>>(
+        &mut self,
+        value: &FieldType,
+        keys: &CharacterType,
+        ordered: bool,
+        v: A,
+        path: &P,
+    ) {
+        if let Err(f) = v.map(value, ordered) {
+            return self.form(f, path);
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        v.each_entry(|i, entry| {
+            let at = P::Idx(path, i);
+            let (k, x) = match entry {
+                Ok(e) => e,
+                Err(f) => return self.form(f, &at),
+            };
+            if ordered {
+                let name = P::Raw(&at, "/name");
+                if !seen.insert(k.to_string()) {
+                    self.error("duplicate_key", &name, format!("key `{k}` appears twice"));
+                }
+                self.key(keys, &k, &name);
+                self.value(value, x, &P::Raw(&at, "/value"));
+            } else {
+                let p = P::Key(path, &k);
+                self.key(keys, &k, &p);
+                self.value(value, x, &p);
+            }
+        });
+    }
+
+    fn unresolved(&mut self, name: &QualifiedName, path: &P) {
         self.error(
             "unresolved_type",
             path,
@@ -286,21 +516,7 @@ impl Validator<'_> {
         );
     }
 
-    fn struct_fields(&self, name: &QualifiedName) -> Option<Vec<FieldDef>> {
-        match self.lookup.find(name)? {
-            TypeDef::Struct(s) => Some(s.fields.clone()),
-            TypeDef::Enum(_) => None,
-        }
-    }
-
-    fn integer(&mut self, c: &IntegerType, v: &Value, path: &str) {
-        let Some(x) = v.as_f64() else {
-            return self.mismatch(path, "an integer", v);
-        };
-        if x.fract() != 0.0 {
-            return self.error("not_integer", path, format!("{x} is not a whole number"));
-        }
-        let x = x as i64;
+    fn integer(&mut self, c: &IntegerType, x: i64, path: &P) {
         if !(INT_MIN..=INT_MAX).contains(&x) {
             return self.error(
                 "out_of_range",
@@ -324,27 +540,23 @@ impl Validator<'_> {
         }
     }
 
-    fn double(&mut self, c: &DoubleType, v: &Value, path: &str) {
-        let x = match v {
-            Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
-            Value::String(s) if matches!(s.as_str(), "Infinity" | "-Infinity" | "NaN") => {
-                if c.finite {
-                    return self.error(
-                        "not_finite",
-                        path,
-                        format!(
-                            "`{s}` is not finite; declare `type_double(finite = FALSE)` to admit it"
-                        ),
-                    );
-                }
-                match s.as_str() {
-                    "Infinity" => f64::INFINITY,
-                    "-Infinity" => f64::NEG_INFINITY,
-                    _ => f64::NAN,
-                }
-            }
-            _ => return self.mismatch(path, "a number", v),
-        };
+    fn double(&mut self, c: &DoubleType, x: f64, path: &P) {
+        if c.finite && !x.is_finite() {
+            let shown = if x.is_nan() {
+                "NaN"
+            } else if x > 0.0 {
+                "Infinity"
+            } else {
+                "-Infinity"
+            };
+            return self.error(
+                "not_finite",
+                path,
+                format!(
+                    "`{shown}` is not finite; declare `type_double(finite = FALSE)` to admit it"
+                ),
+            );
+        }
         self.bounds(x, c.min, c.max, c.exclusive_min, c.exclusive_max, path);
         if let Some(values) = &c.values
             && !values.contains(&x)
@@ -361,7 +573,7 @@ impl Validator<'_> {
         max: Option<f64>,
         emin: Option<f64>,
         emax: Option<f64>,
-        path: &str,
+        path: &P,
     ) {
         if let Some(m) = min
             && (x.is_nan() || x < m)
@@ -385,10 +597,7 @@ impl Validator<'_> {
         }
     }
 
-    fn character(&mut self, c: &CharacterType, v: &Value, path: &str) {
-        let Some(s) = v.as_str() else {
-            return self.mismatch(path, "a string", v);
-        };
+    fn character(&mut self, c: &CharacterType, s: &str, path: &P) {
         if s.contains('\0') {
             return self.error(
                 "nul_character",
@@ -399,7 +608,27 @@ impl Validator<'_> {
         self.string_constraints(c, s, path);
     }
 
-    fn string_constraints(&mut self, c: &CharacterType, s: &str, path: &str) {
+    fn date(&mut self, d: i64, path: &P) {
+        if !(DATE_MIN_DAYS..=DATE_MAX_DAYS).contains(&d) {
+            self.error(
+                "invalid_date",
+                path,
+                format!("{d} days since 1970-01-01 is outside the years 0000 to 9999"),
+            );
+        }
+    }
+
+    fn datetime(&mut self, m: i64, path: &P) {
+        if !(-POSIXCT_MICROS..=POSIXCT_MICROS).contains(&m) {
+            self.error(
+                "invalid_datetime",
+                path,
+                format!("the date-time is outside {POSIXCT_MIN} to {POSIXCT_MAX}"),
+            );
+        }
+    }
+
+    fn string_constraints(&mut self, c: &CharacterType, s: &str, path: &P) {
         if let Some(p) = &c.pattern
             && let Some(re) = self.regex(p)
             && !re.is_match(s)
@@ -421,14 +650,14 @@ impl Validator<'_> {
         }
     }
 
-    fn key(&mut self, keys: &CharacterType, k: &str, path: &str) {
+    fn key(&mut self, keys: &CharacterType, k: &str, path: &P) {
         if k.is_empty() {
             return self.error("invalid_key", path, "a map key is not empty".to_string());
         }
         self.string_constraints(keys, k, path);
     }
 
-    fn lengths(&mut self, n: usize, min: Option<u64>, max: Option<u64>, path: &str) {
+    fn lengths(&mut self, n: usize, min: Option<u64>, max: Option<u64>, path: &P) {
         if let Some(m) = min
             && (n as u64) < m
         {
@@ -449,137 +678,111 @@ impl Validator<'_> {
         }
     }
 
-    fn distinct<'v>(&mut self, items: impl Iterator<Item = (String, &'v Value)>) {
-        let mut seen: Vec<&Value> = Vec::new();
-        for (p, x) in items {
-            if x.is_null() {
-                continue;
+    /// A factor. With declared levels, a cell's path is its index; with
+    /// levels from the data, its index under `codes`. `cells_optional` admits
+    /// a missing cell, as in an `option()` table column.
+    fn factor<'a, A: Access<'a>>(
+        &mut self,
+        declared: Option<&[String]>,
+        ordered: bool,
+        cells_optional: bool,
+        v: A,
+        path: &P,
+    ) -> Option<usize> {
+        let f = match v.factor(declared, ordered) {
+            Ok(f) => f,
+            Err(e) => {
+                self.form(e, path);
+                return None;
             }
-            if seen.iter().any(|s| crate::rules::strict_equal(s, x)) {
-                self.error("not_unique", &p, format!("{x} appears more than once"));
-            } else {
-                seen.push(x);
-            }
+        };
+        let problems = f.problems;
+        for e in problems {
+            self.form(e, path);
         }
-    }
-
-    /// A factor: a string array when the levels are declared, otherwise
-    /// `{"levels", "codes"}` with 1-based codes. `cells_optional` admits a
-    /// missing cell, as in an `option()` table column.
-    fn factor(&mut self, levels: Option<&[String]>, cells_optional: bool, v: &Value, path: &str) {
-        match (levels, v) {
-            (Some(levels), Value::Array(items)) => {
-                for (i, x) in items.iter().enumerate() {
-                    let p = format!("{path}/{i}");
-                    match x {
-                        Value::Null if cells_optional => {}
-                        Value::String(s) if levels.contains(s) => {}
-                        Value::String(s) => self.error(
-                            "not_a_level",
-                            &p,
-                            format!("`{s}` is not one of the levels {levels:?}"),
-                        ),
-                        other => self.mismatch(&p, "a level", other),
-                    }
-                }
-            }
-            (None, Value::Object(m)) => {
-                let lv = m.get("levels").and_then(Value::as_array);
-                let codes = m.get("codes").and_then(Value::as_array);
-                let (Some(lv), Some(codes)) = (lv, codes) else {
-                    return self.error("factor_form", path, "a factor whose levels come from the data is {\"levels\": [...], \"codes\": [...]}".to_string());
-                };
-                if m.len() != 2 {
+        let codes_path = P::Raw(path, "/codes");
+        let cell_base = if declared.is_some() {
+            path
+        } else {
+            &codes_path
+        };
+        if declared.is_none() {
+            let lp = P::Raw(path, "/levels");
+            let mut seen: HashSet<&str> = HashSet::new();
+            for (i, l) in f.levels.iter().enumerate() {
+                if !seen.insert(l) {
                     self.error(
-                        "factor_form",
-                        path,
-                        "a factor holds `levels` and `codes` only".to_string(),
+                        "not_unique",
+                        &P::Idx(&lp, i),
+                        format!("\"{l}\" appears more than once"),
                     );
                 }
-                if lv.iter().any(|l| !l.is_string()) {
-                    self.error(
-                        "factor_form",
-                        &format!("{path}/levels"),
-                        "levels are strings".to_string(),
-                    );
-                }
-                self.distinct(
-                    lv.iter()
-                        .enumerate()
-                        .map(|(i, x)| (format!("{path}/levels/{i}"), x)),
-                );
-                for (i, c) in codes.iter().enumerate() {
-                    let p = format!("{path}/codes/{i}");
-                    match c.as_u64() {
-                        Some(k) if k >= 1 && (k as usize) <= lv.len() => {}
-                        _ if c.is_null() && cells_optional => {}
-                        _ => self.error(
-                            "invalid_code",
-                            &p,
-                            format!("a code is an integer from 1 to {}", lv.len()),
-                        ),
-                    }
-                }
             }
-            (Some(_), _) => self.error(
-                "factor_form",
-                path,
-                "a factor with declared levels is a string array".to_string(),
-            ),
-            (None, _) => self.error(
-                "factor_form",
-                path,
-                "a factor whose levels come from the data is {\"levels\": [...], \"codes\": [...]}"
-                    .to_string(),
-            ),
         }
+        let known: Vec<bool> = match declared {
+            Some(d) => f.levels.iter().map(|l| d.iter().any(|x| x == l)).collect(),
+            None => vec![true; f.levels.len()],
+        };
+        let n = f.codes.len();
+        let fast = matches!(f.codes, Codes::I32(_)) && known.iter().all(|&k| k);
+        for i in 0..n {
+            match f.codes.get(i) {
+                None if cells_optional => {}
+                None if declared.is_some() => self.error(
+                    "type_mismatch",
+                    &P::Idx(cell_base, i),
+                    "expected a level, found null".to_string(),
+                ),
+                None => self.error(
+                    "invalid_code",
+                    &P::Idx(cell_base, i),
+                    format!("a code is an integer from 1 to {}", f.levels.len()),
+                ),
+                Some(_) if fast => {}
+                Some(0) => {}
+                Some(c) => match known.get((c as usize).wrapping_sub(1)) {
+                    Some(true) => {}
+                    Some(false) => self.error(
+                        "not_a_level",
+                        &P::Idx(cell_base, i),
+                        format!(
+                            "`{}` is not one of the levels {:?}",
+                            f.levels[c as usize - 1],
+                            declared.unwrap_or_default()
+                        ),
+                    ),
+                    None => self.error(
+                        "invalid_code",
+                        &P::Idx(cell_base, i),
+                        format!("a code is an integer from 1 to {}", f.levels.len()),
+                    ),
+                },
+            }
+        }
+        Some(n)
     }
 
-    fn shape(&mut self, v: &Value, path: &str) -> Option<(Vec<u64>, Map<String, Value>)> {
-        let Some(m) = v.as_object() else {
-            self.mismatch(path, "an object with `shape`", v);
-            return None;
-        };
-        let Some(shape) = m
-            .get("shape")
-            .and_then(Value::as_array)
-            .and_then(|s| s.iter().map(Value::as_u64).collect::<Option<Vec<u64>>>())
-        else {
-            self.error(
-                "matrix_form",
-                path,
-                "`shape` is an array of non-negative integers".to_string(),
-            );
-            return None;
-        };
-        Some((shape, m.clone()))
-    }
-
-    fn dense(
+    fn dense<'a, A: Access<'a>>(
         &mut self,
         element: &FieldType,
-        v: &Value,
-        path: &str,
+        v: A,
+        path: &P,
         matrix: Option<[Option<u32>; 2]>,
         dim: Option<&[u32]>,
     ) {
-        let Some((shape, m)) = self.shape(v, path) else {
-            return;
+        let d = match v.dense(element) {
+            Ok(d) => d,
+            Err(f) => return self.form(f, path),
         };
-        if m.keys()
-            .any(|k| !matches!(k.as_str(), "shape" | "data" | "dimnames"))
-        {
-            self.error(
-                "matrix_form",
-                path,
-                "a matrix holds `shape`, `data`, and optionally `dimnames`".to_string(),
-            );
+        let shape = &d.shape;
+        for f in d.problems {
+            self.form(f, path);
         }
         if let Some([nrow, ncol]) = matrix {
             if shape.len() != 2 {
                 return self.error(
                     "matrix_form",
-                    &format!("{path}/shape"),
+                    &P::Raw(path, "/shape"),
                     "a matrix has two dimensions".to_string(),
                 );
             }
@@ -589,224 +792,135 @@ impl Validator<'_> {
                 {
                     self.error(
                         "dimension_mismatch",
-                        &format!("{path}/shape/{i}"),
+                        &P::Idx(&P::Raw(path, "/shape"), i),
                         format!("dimension {} is {}, declared {w}", i + 1, shape[i]),
                     );
                 }
             }
         }
         if let Some(dim) = dim
-            && shape != dim.iter().map(|&d| u64::from(d)).collect::<Vec<_>>()
+            && *shape != dim.iter().map(|&x| u64::from(x)).collect::<Vec<_>>()
         {
             self.error(
                 "dimension_mismatch",
-                &format!("{path}/shape"),
+                &P::Raw(path, "/shape"),
                 format!("shape {shape:?} differs from the declared {dim:?}"),
             );
         }
-        let Some(data) = m.get("data").and_then(Value::as_array) else {
-            return self.error("matrix_form", path, "`data` is an array".to_string());
-        };
         let n: u64 = shape.iter().product();
-        if data.len() as u64 != n {
+        let data = P::Raw(path, "/data");
+        if d.len as u64 != n {
             return self.error(
                 "matrix_form",
-                &format!("{path}/data"),
+                &data,
                 format!(
                     "`data` holds {} values, the shape {shape:?} needs {n}",
-                    data.len()
+                    d.len
                 ),
             );
         }
-        for (i, x) in data.iter().enumerate() {
-            self.value(element, x, &format!("{path}/data/{i}"));
-        }
-        if let Some(dn) = m.get("dimnames") {
-            let ok = dn.as_array().is_some_and(|d| {
-                d.len() == shape.len()
-                    && d.iter().zip(&shape).all(|(names, &len)| {
-                        names.is_null()
-                            || names.as_array().is_some_and(|a| {
-                                a.len() as u64 == len && a.iter().all(Value::is_string)
-                            })
-                    })
-            });
-            if !ok {
-                self.error(
-                    "matrix_form",
-                    &format!("{path}/dimnames"),
-                    "`dimnames` holds, per dimension, null or one string per index".to_string(),
-                );
-            }
-        }
+        self.sequence(element, d.data, d.len, &data, false, false);
     }
 
-    fn sparse(
+    fn sparse<'a, A: Access<'a>>(
         &mut self,
         element: &FieldType,
-        v: &Value,
-        path: &str,
+        v: A,
+        path: &P,
         nrow: Option<u32>,
         ncol: Option<u32>,
     ) {
-        let Some((shape, m)) = self.shape(v, path) else {
-            return;
+        let s = match v.sparse(element) {
+            Ok(s) => s,
+            Err(f) => return self.form(f, path),
         };
-        if shape.len() != 2 {
-            return self.error(
-                "matrix_form",
-                &format!("{path}/shape"),
-                "a sparse matrix has two dimensions".to_string(),
-            );
-        }
         for (i, want) in [nrow, ncol].into_iter().enumerate() {
             if let Some(w) = want
-                && shape[i] != u64::from(w)
+                && s.shape[i] != u64::from(w)
             {
                 self.error(
                     "dimension_mismatch",
-                    &format!("{path}/shape/{i}"),
-                    format!("dimension {} is {}, declared {w}", i + 1, shape[i]),
+                    &P::Idx(&P::Raw(path, "/shape"), i),
+                    format!("dimension {} is {}, declared {w}", i + 1, s.shape[i]),
                 );
             }
         }
-        let ints = |k: &str| {
-            m.get(k)
-                .and_then(Value::as_array)
-                .and_then(|a| a.iter().map(Value::as_u64).collect::<Option<Vec<u64>>>())
-        };
-        let (Some(indptr), Some(indices), Some(data)) = (
-            ints("indptr"),
-            ints("indices"),
-            m.get("data").and_then(Value::as_array),
-        ) else {
-            return self.error(
-                "sparse_form",
-                path,
-                "a sparse matrix holds `shape`, `indptr`, `indices`, and `data`".to_string(),
-            );
-        };
-        let nnz = data.len() as u64;
-        let well_formed = indptr.len() as u64 == shape[1] + 1
-            && indptr.first() == Some(&0)
-            && indptr.last() == Some(&nnz)
-            && indptr.windows(2).all(|w| w[0] <= w[1])
-            && indices.len() as u64 == nnz
-            && indptr.windows(2).all(|w| {
-                let col = &indices[w[0] as usize..w[1] as usize];
-                col.iter().all(|&r| r < shape[0]) && col.windows(2).all(|p| p[0] < p[1])
-            });
-        if !well_formed {
-            return self.error(
-                "sparse_form",
-                path,
-                "compressed sparse column form: `indptr` has ncol + 1 non-decreasing offsets from 0 to the number of values, and each column's row `indices` increase and lie below nrow".to_string(),
-            );
-        }
-        for (i, x) in data.iter().enumerate() {
-            self.value(element, x, &format!("{path}/data/{i}"));
-        }
+        self.sequence(element, s.data, s.len, &P::Raw(path, "/data"), false, false);
     }
 
-    fn table(
+    fn table<'a, A: Access<'a>>(
         &mut self,
         columns: &[FieldDef],
         open: bool,
         rules: &[RuleDef],
-        v: &Value,
-        path: &str,
+        v: A,
+        path: &P,
     ) {
-        let Some(m) = v.as_object() else {
-            return self.mismatch(path, "a table object", v);
+        let t = match v.table(columns, open) {
+            Ok(t) => t,
+            Err(f) => return self.form(f, path),
         };
-        let Some(n) = m.get("$length").and_then(Value::as_u64) else {
-            return self.error(
-                "table_form",
-                path,
-                "a table holds `$length`, its number of rows".to_string(),
-            );
-        };
-        let declared: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
-        let extra_types: Option<&Map<String, Value>> = m.get("$columns").and_then(Value::as_object);
-        if m.contains_key("$columns") && (!open || extra_types.is_none()) {
-            self.error(
-                "table_form",
-                &format!("{path}/$columns"),
-                "`$columns` belongs to an open table and is an object of column types".to_string(),
-            );
+        let before = self.errors.len();
+        for f in t.problems {
+            self.form(f, path);
         }
-        let mut all_columns: Vec<FieldDef> = Vec::new();
+        let n = t.rows;
+        let present = |name: &str| t.columns.iter().find(|(k, _)| k == name).map(|(_, c)| *c);
+        let mut all_columns: Vec<(FieldDef, A)> = Vec::new();
         for c in columns {
-            match m.get(c.name.as_str()) {
-                Some(_) => all_columns.push(c.clone()),
+            match present(c.name.as_str()) {
+                Some(cells) => all_columns.push((c.clone(), cells)),
                 None if c.optional => {}
                 None => self.error(
                     "missing_column",
-                    &format!("{path}/{}", esc(c.name.as_str())),
+                    &P::Key(path, c.name.as_str()),
                     format!("column `{}` is required", c.name),
                 ),
             }
         }
-        for (k, _) in m
-            .iter()
-            .filter(|(k, _)| !k.starts_with('$') && !declared.contains(k.as_str()))
-        {
-            let p = format!("{path}/{}", esc(k));
+        for (k, cells) in &t.columns {
+            if columns.iter().any(|c| c.name.as_str() == k.as_ref()) {
+                continue;
+            }
             if !open {
                 self.error(
                     "unknown_column",
-                    &p,
+                    &P::Key(path, k),
                     format!("`{k}` is not a column of this table"),
                 );
                 continue;
             }
-            let ty = extra_types
-                .and_then(|t| t.get(k))
-                .map(|t| serde_json::from_value::<FieldType>(t.clone()));
-            match (ty, Name::new(k.clone())) {
-                (Some(Ok(ft)), Ok(name)) if crate::ir::is_column_type(&ft) => all_columns.push(FieldDef {
-                    name,
-                    ty: ft,
-                    default: None,
-                    description: String::new(),
-                    sensitive: false,
-                    unit: None,
-                    external: false,
-                    unique: false,
-                    optional: false,
-                    inherited_from: None,
-                    extensions: Default::default(),
-                }),
-                (_, Err(e)) => self.error("unknown_column", &p, e.to_string()),
-                _ => self.error("column_type", &format!("{path}/$columns/{}", esc(k)), format!("column `{k}` of an open table needs its type in `$columns`: a scalar, a factor, or option() of one")),
-            }
-        }
-        if let Some(t) = extra_types {
-            for k in t
-                .keys()
-                .filter(|k| !m.contains_key(k.as_str()) || declared.contains(k.as_str()))
-            {
-                self.error(
+            match (v.extra_column_type(k), Name::new(k.to_string())) {
+                (_, Err(e)) => self.error("unknown_column", &P::Key(path, k), e.to_string()),
+                (Ok(ft), Ok(name)) if crate::ir::is_column_type(&ft) => all_columns.push((
+                    FieldDef {
+                        name,
+                        ty: ft,
+                        default: None,
+                        description: String::new(),
+                        sensitive: false,
+                        unit: None,
+                        external: false,
+                        unique: false,
+                        optional: false,
+                        inherited_from: None,
+                        extensions: Default::default(),
+                    },
+                    *cells,
+                )),
+                (Ok(_), Ok(_)) => self.error(
                     "column_type",
-                    &format!("{path}/$columns/{}", esc(k)),
-                    format!("`$columns` lists `{k}`, which is not an extra column of the table"),
-                );
+                    &P::Key(&P::Raw(path, "/$columns"), k),
+                    format!("column `{k}` of an open table needs its type in `$columns`: a scalar, a factor, or option() of one"),
+                ),
+                (Err(f), Ok(_)) => self.form(f, path),
             }
         }
-        for c in &all_columns {
-            let p = format!("{path}/{}", esc(c.name.as_str()));
-            let cells = &m[c.name.as_str()];
-            let (inner, optional) = match &c.ty {
-                FieldType::Option { inner, .. } => (inner.as_ref(), true),
-                other => (other, false),
-            };
-            if let FieldType::Factor { levels, .. } = inner {
-                let len = match cells {
-                    Value::Array(a) => Some(a.len()),
-                    Value::Object(o) => o.get("codes").and_then(Value::as_array).map(Vec::len),
-                    _ => None,
-                };
-                if let Some(len) = len
+        for (c, cells) in &all_columns {
+            let p = P::Key(path, c.name.as_str());
+            let (inner, optional) = unwrap_option(&c.ty);
+            if let FieldType::Factor { levels, ordered } = inner {
+                if let Some(len) = self.factor(levels.as_deref(), *ordered, optional, *cells, &p)
                     && len as u64 != n
                 {
                     self.error(
@@ -818,76 +932,61 @@ impl Validator<'_> {
                         ),
                     );
                 }
-                self.factor(levels.as_deref(), optional, cells, &p);
                 continue;
             }
-            let Some(items) = cells.as_array() else {
-                self.mismatch(&p, "a column array", cells);
-                continue;
+            let len = match cells.vec(inner) {
+                Ok(len) => len,
+                Err(f) => {
+                    self.form(f, &p);
+                    continue;
+                }
             };
-            if items.len() as u64 != n {
+            if len as u64 != n {
                 self.error(
                     "column_length",
                     &p,
                     format!(
-                        "column `{}` has {} cells, the table has {n} rows",
-                        c.name,
-                        items.len()
+                        "column `{}` has {len} cells, the table has {n} rows",
+                        c.name
                     ),
                 );
                 continue;
             }
-            for (i, x) in items.iter().enumerate() {
-                if !(x.is_null() && optional) {
-                    self.value(inner, x, &format!("{p}/{i}"));
-                }
-            }
-            if c.unique {
-                self.distinct(
-                    items
-                        .iter()
-                        .enumerate()
-                        .map(|(i, x)| (format!("{p}/{i}"), x)),
-                );
-            }
+            self.sequence(inner, *cells, len, &p, optional, c.unique);
         }
-        if !rules.is_empty() && self.errors_under(path) == 0 {
+        if !rules.is_empty() && self.errors.len() == before {
+            let scope: Vec<FieldDef> = all_columns.into_iter().map(|(c, _)| c).collect();
             for r in rules {
-                if let Some(rule) = self.compiled(r, &all_columns) {
-                    match rule.check_rows(v) {
+                if let Some(rule) = self.compiled(r, &scope) {
+                    match rule.check_rows_access(v, n as usize, &scope, self.lookup) {
                         Ok(paths) => {
                             for p in paths {
-                                self.violation(&rule, &format!("{path}{p}"));
+                                self.violation(&rule, &format!("{}{p}", path.render()));
                             }
                         }
-                        Err(e) => self.rule_error(&rule, path, e),
+                        Err(e) => self.rule_error(&rule, &path.render(), e),
                     }
                 }
             }
         }
     }
 
-    fn errors_under(&self, path: &str) -> usize {
-        self.errors
-            .iter()
-            .filter(|e| e.path == path || e.path.starts_with(&format!("{path}/")))
-            .count()
-    }
-
-    fn compiled(&mut self, r: &RuleDef, scope: &[FieldDef]) -> Option<CompiledRule> {
+    fn compiled(&mut self, r: &RuleDef, scope: &[FieldDef]) -> Option<Arc<CompiledRule>> {
         let key = r as *const RuleDef as usize;
-        if !self.rules.contains_key(&key) {
-            let c = CompiledRule::compile(r, scope, self.lookup).ok();
+        if !self.cache.rules.contains_key(&key) {
+            let c = CompiledRule::compile(r, scope, self.lookup)
+                .ok()
+                .map(Arc::new);
             if c.is_none() {
                 self.error(
                     "rule_invalid",
-                    "",
+                    &P::Root(""),
                     format!("rule `{}` does not compile; check the declaration", r.id),
                 );
             }
-            self.rules.insert(key, c);
+            self.cache.rules.insert(key, c);
         }
-        self.rules[&key].clone()
+        self.cache.rules[&key].clone()
     }
 
     fn violation(&mut self, rule: &CompiledRule, path: &str) {
@@ -908,44 +1007,48 @@ impl Validator<'_> {
         });
     }
 
-    /// Checks an object against fields, with `allowed` extra members, then
+    /// Checks a record against fields, with `allowed` extra members, then
     /// the rules, when the fields themselves hold no error.
-    fn object(
+    fn object<'a, A: Access<'a>>(
         &mut self,
         fields: &[FieldDef],
         rules: &[RuleDef],
-        v: &Value,
-        path: &str,
+        v: A,
+        path: &P,
         allowed: &[&str],
     ) {
-        let Some(m) = v.as_object() else {
-            return self.mismatch(path, "an object", v);
-        };
-        for (k, _) in m.iter().filter(|(k, _)| {
-            !allowed.contains(&k.as_str()) && !fields.iter().any(|f| f.name.as_str() == k.as_str())
-        }) {
-            self.error(
-                "unknown_field",
-                &format!("{path}/{}", esc(k)),
-                format!("`{k}` is not a field"),
-            );
+        let members = v.members();
+        let in_order = members.len() <= fields.len()
+            && members
+                .iter()
+                .zip(fields)
+                .all(|(k, f)| k == f.name.as_str());
+        if !in_order {
+            for k in members {
+                if !allowed.contains(&k.as_ref()) && !fields.iter().any(|f| f.name.as_str() == k) {
+                    self.error(
+                        "unknown_field",
+                        &P::Key(path, &k),
+                        format!("`{k}` is not a field"),
+                    );
+                }
+            }
         }
         let before = self.errors.len();
-        for f in fields {
-            let p = format!("{path}/{}", esc(f.name.as_str()));
-            match m.get(f.name.as_str()) {
-                None | Some(Value::Null) => {
-                    let admits_absence =
-                        matches!(f.ty, FieldType::Option { .. }) || f.default.is_some();
-                    if !admits_absence {
-                        self.error(
-                            "missing_field",
-                            &p,
-                            format!("field `{}` is required", f.name),
-                        );
-                    }
+        for (index, f) in fields.iter().enumerate() {
+            let x = v.member_at(index, f.name.as_str());
+            if x.is_absent() {
+                let admits_absence =
+                    matches!(f.ty, FieldType::Option { .. }) || f.default.is_some();
+                if !admits_absence {
+                    self.error(
+                        "missing_field",
+                        &P::Key(path, f.name.as_str()),
+                        format!("field `{}` is required", f.name),
+                    );
                 }
-                Some(x) => self.value(&f.ty, x, &p),
+            } else {
+                self.value(&f.ty, x, &P::Key(path, f.name.as_str()));
             }
         }
         if self.errors.len() > before {
@@ -953,63 +1056,54 @@ impl Validator<'_> {
         }
         for r in rules {
             if let Some(rule) = self.compiled(r, fields) {
-                match rule.check(v) {
+                match rule.check_access(v, fields, self.lookup) {
                     Ok(Outcome::Holds) => {}
                     Ok(Outcome::Violated(paths)) => {
                         for p in paths {
-                            self.violation(&rule, &format!("{path}{p}"));
+                            self.violation(&rule, &format!("{}{p}", path.render()));
                         }
                     }
-                    Err(e) => self.rule_error(&rule, path, e),
+                    Err(e) => self.rule_error(&rule, &path.render(), e),
                 }
             }
         }
     }
 
-    fn named(&mut self, name: &QualifiedName, v: &Value, path: &str, top: bool) {
-        let envelope: &[&str] = if top { &ENVELOPE } else { &[] };
-        match self.lookup.find(name) {
+    fn named<'a, A: Access<'a>>(
+        &mut self,
+        name: &QualifiedName,
+        v: A,
+        path: &P,
+        envelope: &[&str],
+    ) {
+        let lookup = self.lookup;
+        match lookup.find(name) {
             None => self.unresolved(name, path),
-            Some(TypeDef::Struct(s)) => {
-                self.object(&s.fields.clone(), &s.rules.clone(), v, path, envelope)
-            }
+            Some(TypeDef::Struct(s)) => match v.record(name) {
+                Ok(()) => self.object(&s.fields, &s.rules, v, path, envelope),
+                Err(f) => self.form(f, path),
+            },
             Some(TypeDef::Enum(e)) => {
-                let e = e.clone();
                 let unit_only = e
                     .variants
                     .iter()
                     .all(|x| matches!(x.shape, VariantShape::Unit));
-                if unit_only {
-                    match v.as_str() {
-                        Some(s) if e.variants.iter().any(|x| x.name.as_str() == s) => {}
-                        Some(s) => self.error(
-                            "unknown_variant",
-                            path,
-                            format!("`{s}` is not a variant of `{name}`"),
-                        ),
-                        None => self.mismatch(path, &format!("a variant name of `{name}`"), v),
-                    }
-                    return;
-                }
-                let tag = e.tag.as_str();
-                let Some(variant) = v.get(tag).and_then(Value::as_str) else {
-                    return if v.is_object() {
-                        self.error(
-                            "missing_tag",
-                            path,
-                            format!("a `{name}` value names its variant in `{tag}`"),
-                        )
-                    } else {
-                        self.mismatch(path, &format!("a `{name}` object"), v)
-                    };
+                let variant = match v.variant(name, e) {
+                    Ok(s) => s,
+                    Err(f) => return self.form(f, path),
                 };
+                let tag = e.tag.as_str();
                 let Some(def) = e.variants.iter().find(|x| x.name.as_str() == variant) else {
+                    let at = if unit_only { *path } else { P::Key(path, tag) };
                     return self.error(
                         "unknown_variant",
-                        &format!("{path}/{}", esc(tag)),
+                        &at,
                         format!("`{variant}` is not a variant of `{name}`"),
                     );
                 };
+                if unit_only {
+                    return;
+                }
                 let mut allowed: Vec<&str> = envelope.to_vec();
                 allowed.push(tag);
                 match &def.shape {
@@ -1017,10 +1111,9 @@ impl Validator<'_> {
                     VariantShape::Struct { fields, rules } => {
                         self.object(fields, rules, v, path, &allowed)
                     }
-                    VariantShape::Newtype { of } => match self.lookup.find(of) {
+                    VariantShape::Newtype { of } => match lookup.find(of) {
                         Some(TypeDef::Struct(s)) => {
-                            let (f, r) = (s.fields.clone(), s.rules.clone());
-                            self.object(&f, &r, v, path, &allowed)
+                            self.object(&s.fields, &s.rules, v, path, &allowed)
                         }
                         _ => self.unresolved(of, path),
                     },
@@ -1029,43 +1122,68 @@ impl Validator<'_> {
         }
     }
 
-    fn dynamic(&mut self, tr: &QualifiedName, v: &Value, path: &str) {
-        match self.lookup.implementor(tr, v) {
-            Ok((ty, member)) => {
-                // The type member names the type; the rest is the type's value.
-                let mut inner = v.clone();
-                if let Some(o) = inner.as_object_mut() {
-                    o.remove(&member);
-                }
-                self.named(&ty, &inner, path, false);
-            }
+    fn dynamic<'a, A: Access<'a>>(&mut self, tr: &QualifiedName, v: A, path: &P) {
+        match v.implementor(tr, self.lookup) {
+            // The type member names the type; the rest is the type's value.
+            Ok((ty, member)) => match &member {
+                Some(m) => self.named(&ty, v, path, &[m.as_str()]),
+                None => self.named(&ty, v, path, &[]),
+            },
             Err(msg) => self.error("unresolved_type", path, msg),
         }
     }
 }
 
-/// Validates a value's JSON form against a field type, as a field's default
-/// is checked; `null` is valid for `option()` only.
-pub fn validate_field(value: &Value, ty: &FieldType, lookup: &dyn TypeLookup) -> Vec<ValueError> {
+/// Validates a value in any host form against a field type, as a field's
+/// default is checked; an absent value is valid for `option()` only.
+pub fn validate_field_access<'a, A: Access<'a>>(
+    value: A,
+    ty: &FieldType,
+    lookup: &dyn TypeLookup,
+    cache: &mut RuleCache,
+) -> Vec<ValueError> {
     let mut v = Validator {
         lookup,
         errors: Vec::new(),
-        patterns: HashMap::new(),
-        rules: HashMap::new(),
+        cache,
     };
-    v.value(ty, value, "");
+    v.value(ty, value, &P::Root(""));
     v.errors
 }
 
-/// Validates a value's JSON form against the named type and returns every
-/// error; an empty vector means the value is valid.
-pub fn validate(value: &Value, ty: &QualifiedName, lookup: &dyn TypeLookup) -> Vec<ValueError> {
+/// Validates a value in any host form against the named type and returns
+/// every error; an empty vector means the value is valid.
+pub fn validate_access<'a, A: Access<'a>>(
+    value: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    cache: &mut RuleCache,
+) -> Vec<ValueError> {
     let mut v = Validator {
         lookup,
         errors: Vec::new(),
-        patterns: HashMap::new(),
-        rules: HashMap::new(),
+        cache,
     };
-    v.named(ty, value, "", true);
+    v.named(ty, value, &P::Root(""), &[]);
+    v.errors
+}
+
+/// Validates a value's JSON form against a field type, as a field's default
+/// is checked; `null` is valid for `option()` only.
+pub fn validate_field(value: &Value, ty: &FieldType, lookup: &dyn TypeLookup) -> Vec<ValueError> {
+    validate_field_access(Json::new(value), ty, lookup, &mut RuleCache::new())
+}
+
+/// Validates a value's JSON form against the named type and returns every
+/// error; an empty vector means the value is valid. The document envelope is
+/// accepted on the outermost object.
+pub fn validate(value: &Value, ty: &QualifiedName, lookup: &dyn TypeLookup) -> Vec<ValueError> {
+    let mut cache = RuleCache::new();
+    let mut v = Validator {
+        lookup,
+        errors: Vec::new(),
+        cache: &mut cache,
+    };
+    v.named(ty, Json::new(value), &P::Root(""), &ENVELOPE);
     v.errors
 }

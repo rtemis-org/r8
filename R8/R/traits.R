@@ -203,6 +203,32 @@ new_trait <- function(name, methods = list(), description = "", tag = NULL) {
   env <- parent.frame()
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
+  trait <- build_trait(name, methods, description, tag, namespace, env)
+  register_trait(trait, namespace)
+  record_declaration(
+    env,
+    list(kind = "trait", trait = trait, namespace = namespace)
+  )
+  trait
+} # /R8::new_trait
+
+
+# %% build_trait ----
+#' A trait object, without registering it
+#'
+#' @param name Character: The trait name.
+#' @param methods Named list: `trait_method()` calls.
+#' @param description Character: What the trait is.
+#' @param tag Optional Character: The tag member.
+#' @param namespace Character: The trait's namespace.
+#' @param env Environment: Where the trait is declared, for existing
+#'   generics.
+#'
+#' @return The trait object.
+#'
+#' @keywords internal
+#' @noRd
+build_trait <- function(name, methods, description, tag, namespace, env) {
   qname <- paste0(namespace, "::", name)
   check_members(methods, "methods", paste0("`", qname, "`"))
   if (
@@ -293,13 +319,8 @@ new_trait <- function(name, methods = list(), description = "", tag = NULL) {
     ),
     class = "r8_trait"
   )
-  register_trait(trait, namespace)
-  record_declaration(
-    env,
-    list(kind = "trait", trait = trait, namespace = namespace)
-  )
   trait
-} # /R8::new_trait
+} # /R8::build_trait
 
 
 # %% register_trait ----
@@ -468,6 +489,10 @@ impl <- function(trait, type, methods = list(), tag_value = NULL) {
     ir = ir,
     namespace = namespace
   )
+  if (inherits(trait, "r8_from_trait")) {
+    entry[["source"]] <- t[["source"]]
+    entry[["ir"]][["type_args"]] <- list(t[["source"]])
+  }
   register_impl(entry)
   record_declaration(env, entry)
   invisible(NULL)
@@ -485,6 +510,15 @@ impl <- function(trait, type, methods = list(), tag_value = NULL) {
 #' @noRd
 register_impl <- function(entry) {
   t <- unclass(entry[["trait"]])
+  if (!is.null(entry[["source"]])) {
+    assign(
+      paste("R8::From", entry[["source"]], entry[["type_name"]], sep = "|"),
+      entry[["fns"]][["from"]],
+      envir = .r8_impls
+    )
+    r8_declare_impl(r8_ir_json(entry[["ir"]]), entry[["namespace"]])
+    return(invisible(NULL))
+  }
   for (m in names(entry[["fns"]])) {
     generic <- t[["generics"]][[m]]
     if (inherits(generic, "r8_generic")) {

@@ -19,7 +19,7 @@
 //! enum value an R8 value of its type.
 
 use extendr_api::prelude::*;
-use extendr_api::{Error, Result};
+use extendr_api::{Error, Result, SEXP};
 use r8_core::codec::{
     date_days, date_text, datetime_micros, datetime_text, read_document, to_document,
 };
@@ -63,7 +63,7 @@ fn number(x: f64) -> Value {
 // ------------------------------------------------------------------ encode
 
 struct Encoder<'a> {
-    lookup: &'a DocumentSet,
+    lookup: &'a dyn TypeLookup,
     errors: Vec<ValueError>,
     /// The paths of runtime-only fields that hold a value.
     runtime: Vec<String>,
@@ -834,7 +834,7 @@ fn infer_column(col: &Robj) -> Option<FieldType> {
 // ------------------------------------------------------------------ decode
 
 struct Decoder<'a> {
-    lookup: &'a DocumentSet,
+    lookup: &'a dyn TypeLookup,
 }
 
 fn na_logical() -> Rbool {
@@ -1228,6 +1228,24 @@ impl Decoder<'_> {
 
 // ------------------------------------------------------------- entry points
 
+/// The JSON form of an R object of the field type `ft`, for the rule
+/// evaluator and for export; `null` where the object has no JSON form.
+pub(crate) fn encode_field(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> Value {
+    let robj = unsafe { Robj::from_sexp(x) };
+    let mut enc = Encoder {
+        lookup,
+        errors: Vec::new(),
+        runtime: Vec::new(),
+    };
+    enc.value(&robj, ft, "")
+}
+
+/// The stored R form of a field's value given in its JSON form, such as a
+/// declared default.
+pub(crate) fn decode_field(v: &Value, ft: &FieldType, lookup: &dyn TypeLookup) -> Result<Robj> {
+    Decoder { lookup }.value(v, ft)
+}
+
 fn errors_list(errors: &[ValueError]) -> List {
     let code: Vec<String> = errors.iter().map(|e| e.code.to_string()).collect();
     let path: Vec<String> = errors.iter().map(|e| e.path.clone()).collect();
@@ -1305,9 +1323,10 @@ fn r8_value_identity(x: Robj) -> Result<List> {
     }
 }
 
-/// Constructs a value: the fields of `fields`, a named list, form a value of
-/// the struct `type_name`, or of the variant `variant` of the enum
-/// `type_name`, which is encoded, validated, and decoded.
+/// The reference construction, through the JSON form: the fields are
+/// encoded to JSON, validated, normalized (an absent field takes its
+/// default), and decoded. The differential test compares `r8_new_value()`
+/// with it.
 ///
 /// Returns `list(value = <R8 value>)` or `list(errors = <problems>)`.
 ///
@@ -1318,21 +1337,21 @@ fn r8_value_identity(x: Robj) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_new_value(fields: Robj, type_name: &str, variant: &str) -> Result<List> {
+fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<List> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?
         .clone();
-    // The input as an R8 value of the type, so the encoder reads it as any
-    // value of the type.
-    let mut input = fields.clone();
+    let mut input = fields.duplicate();
     input.set_class([type_name, "r8_value"])?;
     input.set_attrib("r8_type", type_name)?;
     if !variant.is_empty() {
         input.set_attrib("r8_variant", variant)?;
     }
-    match encode_and_validate(&input, &q, &docs) {
+    match encode_and_validate(&input, &q, &docs)
+        .and_then(|v| r8_core::codec::normalize(&v, &q, &docs))
+    {
         Ok(v) => {
             let value = Decoder { lookup: &docs }.named(&v, &q, Some(&input))?;
             Ok(list!(value = value))
@@ -1386,10 +1405,115 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     }
 }
 
+/// Resolves a struct value: given its fields, with runtime fields filled by
+/// the caller, evaluates each absent computed field in dependency order,
+/// validates, and decodes the new value.
+///
+/// @param fields List: The fields, by name.
+/// @param type_name Character: The qualified struct name.
+/// @return List: `list(value = <R8 value>)` or `list(errors = <problems>)`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
+    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+    let docs = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?
+        .clone();
+    let Some(TypeDef::Struct(def)) = docs.find(&q).cloned() else {
+        return Err(fail(format!("`{type_name}` is not a registered struct")));
+    };
+    let mut input = fields.duplicate();
+    input.set_class([type_name, "r8_value"])?;
+    input.set_attrib("r8_type", type_name)?;
+    let mut enc = Encoder {
+        lookup: &docs,
+        errors: Vec::new(),
+        runtime: Vec::new(),
+    };
+    let mut v = enc.value(&input, &FieldType::Named { name: q.clone() }, "");
+    if !enc.errors.is_empty() {
+        return Ok(list!(errors = errors_list(&enc.errors)));
+    }
+    let mut pending: Vec<&FieldDef> = def
+        .fields
+        .iter()
+        .filter(|f| {
+            matches!(
+                &f.ty,
+                FieldType::Option {
+                    resolve: r8_core::ir::Resolve::Computed { .. },
+                    ..
+                }
+            )
+        })
+        .filter(|f| v.get(f.name.as_str()).is_none_or(Value::is_null))
+        .collect();
+    let mut errors = Vec::new();
+    while !pending.is_empty() {
+        let pending_names: Vec<String> = pending.iter().map(|f| f.name.to_string()).collect();
+        // A field is ready when no field it reads is still pending.
+        let ready = pending.iter().position(|f| {
+            let FieldType::Option {
+                resolve: r8_core::ir::Resolve::Computed { expr },
+                ..
+            } = &f.ty
+            else {
+                return false;
+            };
+            r8_core::rules::reads(expr)
+                .iter()
+                .all(|r| !pending_names.contains(r) || r == f.name.as_str())
+        });
+        let Some(k) = ready else { break };
+        let f = pending.remove(k);
+        let FieldType::Option {
+            resolve: r8_core::ir::Resolve::Computed { expr },
+            ..
+        } = &f.ty
+        else {
+            continue;
+        };
+        match r8_core::rules::evaluate_computed(expr, &def.fields, &docs, f, &v) {
+            Ok(Some(x)) => {
+                if let Value::Object(m) = &mut v {
+                    m.insert(f.name.to_string(), x);
+                }
+            }
+            Ok(None) => errors.push(ValueError {
+                code: "computed_absent",
+                path: format!("/{}", esc(f.name.as_str())),
+                rule: None,
+                message: format!(
+                    "computed field `{}` reads a field that is absent; resolve that field first",
+                    f.name
+                ),
+            }),
+            Err(e) => errors.push(ValueError {
+                code: "computed_error",
+                path: format!("/{}", esc(f.name.as_str())),
+                rule: None,
+                message: e,
+            }),
+        }
+    }
+    if !errors.is_empty() {
+        return Ok(list!(errors = errors_list(&errors)));
+    }
+    let problems = validate(&v, &q, &docs);
+    if !problems.is_empty() {
+        return Ok(list!(errors = errors_list(&problems)));
+    }
+    let value = Decoder { lookup: &docs }.named(&v, &q, Some(&input))?;
+    Ok(list!(value = value))
+}
+
 extendr_module! {
     mod values;
+    fn r8_resolve_value;
     fn r8_value_identity;
-    fn r8_new_value;
+    fn r8_new_value_json;
     fn r8_value_to_document;
     fn r8_value_from_document;
 }

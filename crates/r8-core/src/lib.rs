@@ -10,6 +10,7 @@
 //! repository of rtemis-org.
 
 pub mod abi;
+pub mod access;
 pub mod codec;
 pub mod derive;
 pub mod ir;

@@ -20,11 +20,13 @@ mod ty;
 
 use serde_json::Value;
 
+use crate::access::{Access, Json};
+
 pub use compile::RuleError;
 pub use ty::{DocumentSet, Ty, TypeLookup};
 
 use compile::{Expr, Root, Step, compile, compile_computed};
-use eval::{Absent, Env, elements};
+use eval::{Absent, Env, Val};
 
 use crate::ir::{FieldDef, RuleDef};
 use crate::name::Name;
@@ -93,31 +95,46 @@ impl CompiledRule {
         }
     }
 
-    /// Checks the rule against a value's JSON form. An `Err` is a failure the
-    /// declaration checks did not exclude, such as a division by zero.
+    /// Checks the rule against a value's JSON form.
     pub fn check(&self, value: &Value) -> Result<Outcome, String> {
+        self.check_access(Json::new(value), &[], &NoLookup)
+    }
+
+    /// Checks the rule against a value in any host form, whose fields are
+    /// `scope`.
+    pub fn check_access<'a, A: Access<'a>>(
+        &self,
+        value: A,
+        scope: &[FieldDef],
+        lookup: &dyn TypeLookup,
+    ) -> Result<Outcome, String> {
         let env = Env {
             data: value,
+            scope,
+            lookup,
             element: None,
         };
         if let Some(w) = &self.when {
             match env.eval(w)? {
                 Err(Absent) => return Ok(Outcome::Holds),
-                Ok(Value::Bool(false)) => return Ok(Outcome::Holds),
-                Ok(Value::Bool(true)) => {}
-                Ok(v) => return Err(format!("a rule's `when` condition is a logical, found {v}")),
+                Ok(v) => match truth(&env, v) {
+                    Some(false) => return Ok(Outcome::Holds),
+                    Some(true) => {}
+                    None => return Err("a rule's `when` condition is a logical".to_string()),
+                },
             }
         }
         match env.eval(&self.invariant)? {
-            Err(Absent) | Ok(Value::Bool(true)) => Ok(Outcome::Holds),
-            Ok(Value::Bool(false)) => Ok(Outcome::Violated(self.violation_paths(value)?)),
-            Ok(v) => Err(format!("a rule's invariant is a logical, found {v}")),
+            Err(Absent) => Ok(Outcome::Holds),
+            Ok(v) => match truth(&env, v) {
+                Some(true) => Ok(Outcome::Holds),
+                Some(false) => Ok(Outcome::Violated(self.violation_paths(&env)?)),
+                None => Err("a rule's invariant is a logical".to_string()),
+            },
         }
     }
 
-    /// For an invariant `all(collection, condition)` over a field of the
-    /// value, the paths of the failing elements; otherwise the value itself.
-    fn violation_paths(&self, value: &Value) -> Result<Vec<String>, String> {
+    fn violation_paths<'a, A: Access<'a>>(&self, env: &Env<'_, A>) -> Result<Vec<String>, String> {
         let Expr::Quantifier {
             all: true,
             collection,
@@ -137,38 +154,53 @@ impl CompiledRule {
         let Some(base) = var_pointer(steps) else {
             return Ok(vec![String::new()]);
         };
-        let env = Env {
-            data: value,
-            element: None,
-        };
         let Ok(c) = env.eval(collection)? else {
             return Ok(vec![String::new()]);
         };
         let mut failing = Vec::new();
-        for (suffix, el) in elements(&c, *kind)? {
+        env.each_element(c, *kind, &mut |suffix, el| {
             let e = Env {
-                data: value,
-                element: Some(&el),
+                data: env.data,
+                scope: env.scope,
+                lookup: env.lookup,
+                element: Some(el),
             };
             if let Ok(v) = e.eval(condition)?
-                && v == Value::Bool(false)
+                && truth(&e, v) == Some(false)
             {
                 failing.push(format!("{base}{suffix}"));
             }
-        }
+            Ok(true)
+        })?;
         Ok(failing)
     }
 
     /// Checks a table's row rule against every row of the table's JSON form.
-    /// Each violation's path is the cell of the first column the rule reads,
-    /// relative to the table, such as `/start/4`; a rule that reads no column
-    /// reports the row number alone.
     pub fn check_rows(&self, table: &Value) -> Result<Vec<String>, String> {
+        let rows = table
+            .get("$length")
+            .and_then(Value::as_u64)
+            .ok_or("a table has `$length`")? as usize;
+        self.check_rows_access(Json::new(table), rows, &[], &NoLookup)
+    }
+
+    /// Checks a table's row rule against rows `0..rows` of a table in any
+    /// host form, whose columns are `scope`. Each violation's path is the
+    /// cell of the first column the rule reads, relative to the table, such
+    /// as `/start/4`; a rule that reads no column reports the row number
+    /// alone.
+    pub fn check_rows_access<'a, A: Access<'a>>(
+        &self,
+        table: A,
+        rows: usize,
+        scope: &[FieldDef],
+        lookup: &dyn TypeLookup,
+    ) -> Result<Vec<String>, String> {
         let first =
             first_column(&self.invariant).or_else(|| self.when.as_ref().and_then(first_column));
         let mut paths = Vec::new();
-        for (i, row) in eval::rows(table)?.iter().enumerate() {
-            if let Outcome::Violated(_) = self.check(row)? {
+        for i in 0..rows {
+            if let Outcome::Violated(_) = self.check_access(table.row(i), scope, lookup)? {
                 paths.push(match &first {
                     Some(c) => format!("/{}/{i}", c.replace('~', "~0").replace('/', "~1")),
                     None => format!("/{i}"),
@@ -176,6 +208,30 @@ impl CompiledRule {
             }
         }
         Ok(paths)
+    }
+}
+
+/// A logical result, read without converting a reference to a logical
+/// field.
+fn truth<'a, A: Access<'a>>(env: &Env<'_, A>, v: Val<'_, A>) -> Option<bool> {
+    match v {
+        Val::V(Value::Bool(b)) => Some(b),
+        Val::V(_) => None,
+        Val::R(a, _) => a.logical().ok().or_else(|| env_json_bool(env, a)),
+    }
+}
+
+fn env_json_bool<'a, A: Access<'a>>(env: &Env<'_, A>, a: A) -> Option<bool> {
+    a.to_value(&crate::ir::FieldType::Logical, env.lookup)
+        .as_bool()
+}
+
+/// A lookup that holds no type, for expressions over JSON alone.
+struct NoLookup;
+
+impl TypeLookup for NoLookup {
+    fn find(&self, _name: &crate::name::QualifiedName) -> Option<&crate::ir::TypeDef> {
+        None
     }
 }
 
@@ -202,6 +258,58 @@ pub fn strict_equal(a: &Value, b: &Value) -> bool {
 /// form (`"Infinity"`, `"-Infinity"`, `"NaN"`).
 pub fn number_value(v: &Value) -> Option<f64> {
     eval::as_number(v)
+}
+
+/// Evaluates a computed field's expression over a value's JSON form, in
+/// the scope of `fields`. `Ok(None)` when the expression reads an absent
+/// field.
+pub fn evaluate_computed(
+    logic: &crate::ir::Logic,
+    fields: &[FieldDef],
+    lookup: &dyn TypeLookup,
+    target: &FieldDef,
+    value: &Value,
+) -> Result<Option<Value>, String> {
+    let ty = Ty::of(&target.ty, target.unit.as_deref());
+    let expr = compile_computed(logic, fields, lookup, &ty).map_err(|e| {
+        e.into_iter()
+            .map(|x| x.message)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    let env = Env {
+        data: Json::new(value),
+        scope: fields,
+        lookup,
+        element: None,
+    };
+    Ok(env.eval(&expr)?.ok().map(|v| match v {
+        Val::V(v) => v,
+        Val::R(a, ty) => a.to_value(ty.unwrap_or(&crate::ir::FieldType::Json), lookup),
+    }))
+}
+
+/// The fields a computed expression reads, by name, in the order the
+/// expression names them.
+pub fn reads(logic: &crate::ir::Logic) -> Vec<String> {
+    fn walk(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::Object(m) => {
+                if let Some(Value::String(p)) = m.get("var") {
+                    let head = p.split('.').next().unwrap_or_default().to_string();
+                    if !head.starts_with('.') && !out.contains(&head) {
+                        out.push(head);
+                    }
+                }
+                m.values().for_each(|x| walk(x, out));
+            }
+            Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(&logic.0, &mut out);
+    out
 }
 
 fn prefix(errors: Vec<RuleError>, p: &str) -> Vec<RuleError> {
