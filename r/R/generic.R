@@ -379,6 +379,17 @@ classify_generic <- function(g, type_label = "Type") {
       fn = g
     ))
   }
+  if (identical(g, r8_convert) || identical(g, r8_converter)) {
+    r8_abort(
+      "Conversions use the From trait: impl(From(\"character\"), ",
+      type_label,
+      ", methods = list(from = function(x) ...)) declares one, and ",
+      "r8_converter(",
+      type_label,
+      ") returns a conversion function.",
+      class = "r8_declaration_error"
+    )
+  }
   if (identical(g, base::nrow) || identical(g, base::ncol)) {
     r8_abort(
       "nrow() and ncol() follow dim(); implement(dim, ",
@@ -417,7 +428,8 @@ classify_generic <- function(g, type_label = "Type") {
 #'   (`$`, `[[`, `@`, `as.list`, `$<-`, `[[<-`, `[<-`, `names<-`,
 #'   `length<-`, `dim<-`, `levels<-`, `==`, `!=`), the comparison and other
 #'   operators, S4 generics, and functions that are not generics raise
-#'   `r8_declaration_error`.
+#'   `r8_declaration_error`. For `r8_convert` and `r8_converter`, the error
+#'   names `impl(From(source), Type, ...)`, which declares a conversion.
 #'
 #' An impl is declared in the namespace of its generic or of its type.
 #'

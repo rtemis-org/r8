@@ -95,6 +95,15 @@ test_that("From converts through r8_convert(), Type@from(), and r8_converter()",
     "no From impl",
     class = "r8_dispatch_error"
   )
+  Count <- declare_in(
+    "demo",
+    new_struct("Count", fields = list(n = type_integer()))
+  )
+  expect_error(
+    r8_convert(5, Count),
+    'no From impl for "numeric"\\.$',
+    class = "r8_dispatch_error"
+  )
   expect_error(Money@nothing, class = "r8_dispatch_error")
   expect_match(r8_declaration(Money), "MoneyS")
 })

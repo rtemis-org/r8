@@ -224,6 +224,8 @@ test_that("implement() refuses the functions R8 owns, operators, and non-generic
   refuse(try_impl(`+`), "operators")
   refuse(try_impl(Ops), "operators")
   refuse(try_impl(nrow), "implement\\(dim, GBM\\)")
+  refuse(try_impl(r8_convert), "impl\\(From\\(\"character\"\\), GBM")
+  refuse(try_impl(r8_converter), "r8_converter\\(GBM\\)")
   refuse(try_impl(function(x) x), "not a generic")
   refuse(try_impl(methods::show), "S4 generic")
   refuse(try_impl(1), "takes a generic")

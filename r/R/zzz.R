@@ -192,7 +192,7 @@ r8_convert <- function(x, type) {
   sources <- if (inherits(x, "r8_value")) {
     attr(x, "r8_type")
   } else {
-    c(class(x), if (is.numeric(x)) "numeric")
+    unique(c(class(x), if (is.numeric(x)) "numeric"))
   }
   for (s in sources) {
     fn <- .r8_impls[[paste("R8::From", s, target, sep = "|")]]
