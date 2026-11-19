@@ -167,14 +167,25 @@ test_that("implement() on another S3 generic registers a method for the qualifie
   )
 })
 
-test_that("implement() registers methods of a generic of a package R8 does not import", {
-  skip_if_not_installed("generics")
+test_that("implement() registers methods of an S3 generic that R8's namespace cannot reach", {
   GBM <- gbm_types("gen8")[["GBM"]]
+  # A generic in an environment of its own, as a generic of a package R8 does
+  # not import is in that package's namespace.
+  home <- new.env(parent = globalenv())
+  evalq(tidy_up <- function(x, ...) UseMethod("tidy_up"), home)
+  tidy_up <- home$tidy_up
+  on.exit(
+    rm(
+      list = "tidy_up.gen8::GBM",
+      envir = globalenv()[[".__S3MethodsTable__."]]
+    ),
+    add = TRUE
+  )
   declare_in("gen8", {
-    tidy <- generics::tidy
-    implement(tidy, GBM) <- function(x, ...) data.frame(n_trees = x$n_trees)
+    implement(tidy_up, GBM) <- function(x, ...) x$n_trees + 1L
   })
-  expect_identical(generics::tidy(GBM(n_trees = 9L))$n_trees, 9L)
+  expect_identical(tidy_up(GBM(n_trees = 9L)), 10L)
+  expect_identical(r8_method(tidy_up, GBM)(GBM(n_trees = 1L)), 2L)
 })
 
 test_that("implement() takes the method of a trait", {

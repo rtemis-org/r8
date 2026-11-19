@@ -95,7 +95,7 @@ declaring_namespace <- function(env) {
 #' @noRd
 declaring_package <- function(env) {
   top <- topenv(env)
-  if (isNamespace(top)) getNamespaceName(top) else ""
+  if (isNamespace(top)) unname(getNamespaceName(top)) else ""
 } # /R8::declaring_package
 
 

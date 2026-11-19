@@ -20,7 +20,7 @@ Each \verb{implement(generic, Type) <- function(...)} call adds an entry to the
 usage section of an Rd file, \verb{## R8 method for struct 'Type'} (or \code{enum})
 followed by the call with the method's arguments. The entry goes to the Rd
 file of the generic when the package declares and documents the generic,
-and otherwise to the Rd file of the type. A roxygen block above the call
+an R8 generic or an S3 generic, and otherwise to the Rd file of the type. A roxygen block above the call
 adds its \verb{@param} entries to that file; a call without a block is found by
 scanning \verb{R/}, and is left out when neither the generic nor the type has an
 Rd file in the package. The usage of an enum lists its variants, such as

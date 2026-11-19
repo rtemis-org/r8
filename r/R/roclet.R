@@ -19,7 +19,7 @@
 #' usage section of an Rd file, `## R8 method for struct 'Type'` (or `enum`)
 #' followed by the call with the method's arguments. The entry goes to the Rd
 #' file of the generic when the package declares and documents the generic,
-#' and otherwise to the Rd file of the type. A roxygen block above the call
+#' an R8 generic or an S3 generic, and otherwise to the Rd file of the type. A roxygen block above the call
 #' adds its `@param` entries to that file; a call without a block is found by
 #' scanning `R/`, and is left out when neither the generic nor the type has an
 #' Rd file in the package. The usage of an enum lists its variants, such as
@@ -138,7 +138,7 @@ topic_of <- function(blocks, value) {
   for (b in blocks) {
     if (
       !is.null(b$object) &&
-        identical(b$object$value, value) &&
+        identical(roxygen_value(b$object$value), value) &&
         !roxygen2::block_has_tags(b, "noRd")
     ) {
       rdname <- roxygen2::block_get_tag_value(b, "rdname")
@@ -151,6 +151,27 @@ topic_of <- function(blocks, value) {
   }
   NULL
 } # /R8::topic_of
+
+
+# %% roxygen_value ----
+#' A block's object value without the class roxygen2 adds
+#'
+#' roxygen2 8.1.1 adds the class `s3generic` to the value of an S3 generic's
+#' block.
+#'
+#' @param x The value.
+#'
+#' @return `x` without that class.
+#'
+#' @keywords internal
+#' @noRd
+roxygen_value <- function(x) {
+  if (inherits(x, "s3generic")) {
+    cls <- setdiff(class(x), c("s3generic", "function"))
+    class(x) <- if (length(cls) > 0L) c(cls, "function") else NULL
+  }
+  x
+} # /R8::roxygen_value
 
 
 # %% scan_unblocked ----
@@ -220,6 +241,8 @@ method_block <- function(block, blocks, env) {
     if (identical(trait_ns, declaring_namespace(env))) {
       topic <- topic_of(blocks, generic)
     }
+  } else if (identical(target[["package"]], declaring_package(env))) {
+    topic <- topic_of(blocks, generic)
   }
   if (is.null(topic)) {
     topic <- topic_of(blocks, type)

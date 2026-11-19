@@ -35,3 +35,23 @@ implement(toString, Resampler) <- function(x, ...) {
 implement(print, Method) <- function(x, ...) {
   cat("A resampling method\n")
 }
+
+#' Count the resamples of a value
+#'
+#' An S3 generic of this package.
+#'
+#' @param x A value.
+#' @param ... Arguments of methods.
+#'
+#' @return Integer: The number of resamples.
+#'
+#' @examples
+#' n_resamples(Resampler(method = Method@Bootstrap, n_resamples = 4L))
+#' @export
+n_resamples <- function(x, ...) {
+  UseMethod("n_resamples")
+}
+
+implement(n_resamples, Resampler) <- function(x, ...) {
+  x$n_resamples
+}

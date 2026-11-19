@@ -268,7 +268,8 @@ generic <- function(name, args = "x", description = "") {
 #' @param type_label Character: The type's name, for messages.
 #'
 #' @return A list: `kind` `"trait"` with `trait` and `method`, or `kind`
-#'   `"s3"` with `name` and `package`.
+#'   `"s3"` with `name`, `package` (`""` for a generic outside a package),
+#'   and `fn`, the generic.
 #'
 #' @keywords internal
 #' @noRd
@@ -374,7 +375,8 @@ classify_generic <- function(g, type_label = "Type") {
     return(list(
       kind = "s3",
       name = info[["name"]],
-      package = info[["package"]]
+      package = info[["package"]],
+      fn = g
     ))
   }
   if (identical(g, base::nrow) || identical(g, base::ncol)) {
@@ -517,8 +519,7 @@ declare_s3_method <- function(target, type, fn, env) {
       class = "r8_declaration_error"
     )
   }
-  gen <- get(target[["name"]], envir = asNamespace(target[["package"]]))
-  check_method_formals(fn, generic_formals(gen), target[["name"]])
+  check_method_formals(fn, generic_formals(target[["fn"]]), target[["name"]])
   entry <- list(
     kind = "s3method",
     name = target[["name"]],
@@ -527,6 +528,11 @@ declare_s3_method <- function(target, type, fn, env) {
     fn = fn,
     namespace = namespace
   )
+  if (!nzchar(target[["package"]])) {
+    # A generic outside a package, found in its own environment; such code
+    # is not recorded for r8_register().
+    entry[["envir"]] <- environment(target[["fn"]])
+  }
   register_s3_method(entry)
   record_declaration(env, entry)
   invisible(NULL)
@@ -536,19 +542,37 @@ declare_s3_method <- function(target, type, fn, env) {
 # %% register_s3_method ----
 #' Register an S3 method of another package's generic
 #'
-#' @param entry List: `name`, `package`, `type_name`, and `fn`.
+#' @param entry List: `name`, `package`, `type_name`, and `fn`, and `envir`
+#'   when `package` is `""`.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
 register_s3_method <- function(entry) {
-  registerS3method(
-    entry[["name"]],
-    entry[["type_name"]],
-    entry[["fn"]],
-    envir = asNamespace(entry[["package"]])
-  )
+  if (nzchar(entry[["package"]])) {
+    registerS3method(
+      entry[["name"]],
+      entry[["type_name"]],
+      entry[["fn"]],
+      envir = asNamespace(entry[["package"]])
+    )
+  } else {
+    # UseMethod() finds the methods of a generic outside a package in the S3
+    # table of the generic's top environment, where registerS3method() writes
+    # for a generic of the global environment.
+    top <- topenv(entry[["envir"]])
+    table <- get0(".__S3MethodsTable__.", envir = top, inherits = FALSE)
+    if (is.null(table)) {
+      table <- new.env(hash = TRUE, parent = baseenv())
+      assign(".__S3MethodsTable__.", table, envir = top)
+    }
+    assign(
+      paste0(entry[["name"]], ".", entry[["type_name"]]),
+      entry[["fn"]],
+      envir = table
+    )
+  }
   assign(
     paste(
       paste0(entry[["package"]], "::", entry[["name"]]),

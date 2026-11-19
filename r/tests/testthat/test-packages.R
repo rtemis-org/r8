@@ -230,7 +230,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "Resampler.Rd",
       "Summarize.Rd",
       "as_resampler.Rd",
-      "describe.Rd"
+      "describe.Rd",
+      "n_resamples.Rd"
     )
   )
   ns <- readLines(file.path(pkg, "NAMESPACE"))
@@ -276,6 +277,12 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     "## R8 method for enum 'Method'\n\\special{print(x, ...)}",
     fixed = TRUE
   )
+  # A method of the package's own S3 generic, in the generic's Rd file.
+  expect_match(
+    rd("n_resamples.Rd"),
+    "## R8 method for struct 'Resampler'\n\\special{n_resamples(x, ...)}",
+    fixed = TRUE
+  )
   # A second run writes nothing.
   again <- run_r(
     character(),
@@ -307,7 +314,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     info = paste(c(built, check), collapse = "\n")
   )
   # In a fresh session, r8_register() restores the generic's methods, the S3
-  # method of a base generic, and the Print impl.
+  # methods of a base generic and of the package's own S3 generic, and the
+  # Print impl.
   used <- run_r(
     file.path(dir, "r8pkgDoc.Rcheck"),
     c(
@@ -316,6 +324,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "cat(describe(r, verbose = TRUE), '\\n')",
       "cat(describe(Method@Bootstrap), '\\n')",
       "cat(toString(r), '\\n')",
+      "cat(n_resamples(r), '\\n')",
       "print(Method@Bootstrap)"
     )
   )
@@ -325,6 +334,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "2 resamples, seed 1",
       "a resampling method",
       "Resampler(2)",
+      "2",
       "A resampling method"
     ),
     info = paste(used, collapse = "\n")
