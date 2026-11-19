@@ -38,19 +38,19 @@ if (!is_not_cran) {
 )
 
 # R8_CRATES_PATH, when set, points to the `crates` directory of an r8
-# checkout (for example /path/to/r8/crates). Cargo then builds `r8-core` from
+# checkout (for example /path/to/r8/crates). Cargo then builds `rtemis-r8` from
 # that source in place of the crates.io release named in Cargo.toml. The
 # justfile sets it to the checkout that holds this package; CRAN builds leave
 # it unset.
 crates_path <- Sys.getenv("R8_CRATES_PATH")
 .cargo_config <- if (nzchar(crates_path)) {
   core_path <- normalizePath(
-    file.path(crates_path, "r8-core"),
+    file.path(crates_path, "rtemis-r8"),
     winslash = "/",
     mustWork = TRUE
   )
-  message("Using the r8-core crate at ", core_path, ".")
-  sprintf("--config 'patch.crates-io.r8-core.path=\"%s\"'", core_path)
+  message("Using the rtemis-r8 crate at ", core_path, ".")
+  sprintf("--config 'patch.crates-io.rtemis-r8.path=\"%s\"'", core_path)
 } else {
   ""
 }

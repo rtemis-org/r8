@@ -498,37 +498,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "r8-abi-check"
-version = "0.1.0"
-dependencies = [
- "cc",
- "r8-core",
-]
-
-[[package]]
-name = "r8-core"
-version = "0.1.0"
-dependencies = [
- "jsonschema",
- "r8-derive",
- "regex",
- "ryu-js",
- "schemars",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "r8-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -602,6 +571,37 @@ name = "regex-syntax"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
+
+[[package]]
+name = "rtemis-r8"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "regex",
+ "rtemis-r8-macros",
+ "ryu-js",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "rtemis-r8-abi-check"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "rtemis-r8",
+]
+
+[[package]]
+name = "rtemis-r8-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "rustversion"

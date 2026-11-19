@@ -6,10 +6,10 @@ pkg := `awk '/^Package:/{print $2; exit}' DESCRIPTION`
 r := env("R", "R")
 rscript := env("RSCRIPT", "Rscript")
 tarball_glob := pkg + "_*.tar.gz"
-# The r8-core crate of this checkout; tools/config.R and `rust-check` patch the
+# The rtemis-r8 crate of this checkout; tools/config.R and `rust-check` patch the
 # crates.io release with it. Every recipe exports it to the build.
 export R8_CRATES_PATH := env("R8_CRATES_PATH", canonicalize(justfile_directory() / ".." / "crates"))
-cargo_config := "--config 'patch.crates-io.r8-core.path=\"" + R8_CRATES_PATH / "r8-core" + "\"'"
+cargo_config := "--config 'patch.crates-io.rtemis-r8.path=\"" + R8_CRATES_PATH / "rtemis-r8" + "\"'"
 
 # List available recipes
 default:

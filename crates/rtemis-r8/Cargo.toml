@@ -1,0 +1,37 @@
+[package]
+name = "rtemis-r8"
+description = "Runtime of the R8 type system: type declarations, validation, rules, JSON encoding, and hashing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["r8", "r", "rlang", "type-system", "validation"]
+categories = ["data-structures", "encoding"]
+# The conformance corpus lives at the repository root; its runner stays in
+# the repository.
+exclude = ["tests/conformance.rs"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# JSON Schema of the IR document, generated from the IR types.
+schema = ["dep:schemars"]
+# The procedural macros of rtemis-r8-macros, `#[derive(R8)]`, re-exported.
+macros = ["dep:rtemis-r8-macros"]
+
+[dependencies]
+rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.1", optional = true }
+schemars = { version = "1", optional = true }
+regex = "1"
+ryu-js = "0.2"
+sha2 = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[dev-dependencies]
+jsonschema = { version = "0.61", default-features = false }

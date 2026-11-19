@@ -1,8 +1,8 @@
 /*
  * R8.h -- the C interface between R packages and the R8 registry.
  *
- * ABI version 1. The Rust types in `r8_core::abi` mirror these declarations
- * field for field; the crate `r8-abi-check` compiles this header and asserts
+ * ABI version 1. The Rust types in `rtemis_r8::abi` mirror these declarations
+ * field for field; the crate `rtemis-r8-abi-check` compiles this header and asserts
  * that every size and offset matches.
  *
  * Two directions:

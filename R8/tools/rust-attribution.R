@@ -13,7 +13,7 @@ crate_authors <- c(
   "extendr-api" = "The extendr contributors",
   "extendr-ffi" = "The extendr contributors",
   "extendr-macros" = "The extendr contributors",
-  "r8-core" = "E.D. Gennatas"
+  "rtemis-r8" = "E.D. Gennatas"
 )
 
 # %% License notices ----

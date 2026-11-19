@@ -22,11 +22,11 @@ use extendr_ffi::{
     INTEGER, LOGICAL, R_xlen_t, REAL, Rf_allocVector, Rf_mkCharLenCE, Rf_protect, Rf_setAttrib,
     Rf_unprotect, SET_STRING_ELT, SET_VECTOR_ELT, SEXPTYPE, STRING_ELT, VECTOR_ELT, cetype_t,
 };
-use r8_core::access::Access;
-use r8_core::ir::{FieldDef, FieldType, TypeDef, VariantShape};
-use r8_core::name::QualifiedName;
-use r8_core::rules::TypeLookup;
-use r8_core::validate::{RuleCache, ValueError, validate_access};
+use rtemis_r8::access::Access;
+use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use rtemis_r8::name::QualifiedName;
+use rtemis_r8::rules::TypeLookup;
+use rtemis_r8::validate::{RuleCache, ValueError, validate_access};
 
 use crate::declare::registry;
 use crate::rview::*;
@@ -724,7 +724,7 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
     let def = lookup
         .find(&q)
         .ok_or_else(|| fail(format!("`{q}` is not registered")))?;
-    let (fields, rules): (&[FieldDef], &[r8_core::ir::RuleDef]) = match def {
+    let (fields, rules): (&[FieldDef], &[rtemis_r8::ir::RuleDef]) = match def {
         TypeDef::Struct(s) => (&s.fields, &s.rules),
         TypeDef::Enum(e) => {
             let v = variant.as_deref().unwrap_or_default();
@@ -771,7 +771,7 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
         }
     } else {
         let mut errors = with_cache(|cache| {
-            r8_core::validate::validate_field_access(RView::Whole(vs), &f.ty, lookup, cache)
+            rtemis_r8::validate::validate_field_access(RView::Whole(vs), &f.ty, lookup, cache)
         });
         if !errors.is_empty() {
             for e in &mut errors {
@@ -813,25 +813,25 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
     };
     drop(created);
     // The rules that read the field.
-    let reading: Vec<&r8_core::ir::RuleDef> = rules
+    let reading: Vec<&rtemis_r8::ir::RuleDef> = rules
         .iter()
         .filter(|r| {
-            r8_core::rules::reads(&r.invariant)
+            rtemis_r8::rules::reads(&r.invariant)
                 .iter()
                 .any(|x| x == name)
                 || r.when
                     .as_ref()
-                    .is_some_and(|w| r8_core::rules::reads(w).iter().any(|x| x == name))
+                    .is_some_and(|w| rtemis_r8::rules::reads(w).iter().any(|x| x == name))
         })
         .collect();
     if !reading.is_empty() {
         let os = unsafe { out.get() };
         let mut errors = Vec::new();
         for r in reading {
-            match r8_core::rules::CompiledRule::compile(r, fields, lookup) {
+            match rtemis_r8::rules::CompiledRule::compile(r, fields, lookup) {
                 Ok(rule) => match rule.check_access(RView::Whole(os), fields, lookup) {
-                    Ok(r8_core::rules::Outcome::Holds) => {}
-                    Ok(r8_core::rules::Outcome::Violated(paths)) => {
+                    Ok(rtemis_r8::rules::Outcome::Holds) => {}
+                    Ok(rtemis_r8::rules::Outcome::Violated(paths)) => {
                         for p in paths {
                             errors.push(ValueError {
                                 code: "rule_violation",

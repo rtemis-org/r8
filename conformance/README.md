@@ -1,14 +1,14 @@
 # Conformance corpus
 
-Language-neutral test cases that every R8 host runs: the R package, `r8-core`'s own tests, and the Python and web bindings. A host passes when it produces exactly the expected result for every case of every operation it implements. Behavior that only one host has, such as the conversion of an R integer for `type_double()` at construction, is tested in that host's own suite.
+Language-neutral test cases that every R8 host runs: the R package, `rtemis-r8`'s own tests, and the Python and web bindings. A host passes when it produces exactly the expected result for every case of every operation it implements. Behavior that only one host has, such as the conversion of an R integer for `type_double()` at construction, is tested in that host's own suite.
 
 ## Files
 
 - `corpus.schema.json`: the JSON Schema (draft 2020-12) of a suite file. A runner validates each file against it before running the cases.
 - `<area>/<suite>.json`: one suite per file, grouped by area (`declare/`, `decode/`, `canonical/`, and `hash/`).
-- `tools/reference-codec.mjs`: an independent JavaScript implementation of the canonical form and the content hash, written from the specification in `crates/r8-core/src/codec.rs`, which writes the expected results of the `canonical` and `hash` cases (`node conformance/tools/reference-codec.mjs <suite>...`).
+- `tools/reference-codec.mjs`: an independent JavaScript implementation of the canonical form and the content hash, written from the specification in `crates/rtemis-r8/src/codec.rs`, which writes the expected results of the `canonical` and `hash` cases (`node conformance/tools/reference-codec.mjs <suite>...`).
 
-A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compared as RFC 8785 text: the declaration hash reads that form. `R8_UPDATE_CORPUS=1 cargo test -p r8-core --all-features --test conformance` rewrites it.
+A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compared as RFC 8785 text: the declaration hash reads that form. `R8_UPDATE_CORPUS=1 cargo test -p rtemis-r8 --all-features --test conformance` rewrites it.
 
 ## Suite
 

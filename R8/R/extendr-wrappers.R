@@ -195,9 +195,9 @@ r8_value_to_document <- function(x) .Call(wrap__r8_value_to_document, x)
 #' @noRd
 r8_value_from_document <- function(text, type_name) .Call(wrap__r8_value_from_document, text, type_name)
 
-#' Version of the r8-core crate
+#' Version of the rtemis-r8 crate
 #'
-#' Returns the version of the `r8-core` Rust crate compiled into R8, which
+#' Returns the version of the `rtemis-r8` Rust crate compiled into R8, which
 #' provenance records alongside the versions of R8 and R.
 #'
 #' @return Character: The version, for example `"0.1.0"`.

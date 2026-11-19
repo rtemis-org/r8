@@ -1,5 +1,5 @@
 //! The registry of declarations, and the conversion of declarations built in
-//! R to the IR of `r8-core`.
+//! R to the IR of `rtemis-r8`.
 //!
 //! The registry lives in this shared object only: one `DocumentSet`, one IR
 //! document per namespace. Declaring a type checks it against the registry
@@ -10,10 +10,10 @@ use std::sync::{Mutex, OnceLock};
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
-use r8_core::codec::canonical_text;
-use r8_core::ir::{IR_VERSION, IrDocument, TypeDef, check_document};
-use r8_core::name::{Name, QualifiedName};
-use r8_core::rules::DocumentSet;
+use rtemis_r8::codec::canonical_text;
+use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef, check_document};
+use rtemis_r8::name::{Name, QualifiedName};
+use rtemis_r8::rules::DocumentSet;
 use serde_json::{Map, Value};
 
 pub(crate) fn registry() -> &'static Mutex<DocumentSet> {
@@ -203,7 +203,7 @@ fn r8_type_document(name: &str) -> Result<String> {
     let reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
-    let def = r8_core::rules::TypeLookup::find(&*reg, &q)
+    let def = rtemis_r8::rules::TypeLookup::find(&*reg, &q)
         .cloned()
         .ok_or_else(|| fail(format!("`{name}` is not registered")))?;
     let doc = IrDocument {
@@ -238,7 +238,7 @@ fn store(reg: &mut DocumentSet, doc: IrDocument) {
     }
 }
 
-fn problems_list(problems: &[r8_core::ir::DeclError], prefix: &str) -> List {
+fn problems_list(problems: &[rtemis_r8::ir::DeclError], prefix: &str) -> List {
     let code: Vec<String> = problems.iter().map(|e| e.code.to_string()).collect();
     let path: Vec<String> = problems
         .iter()
@@ -257,7 +257,7 @@ fn problems_list(problems: &[r8_core::ir::DeclError], prefix: &str) -> List {
 /// @noRd
 #[extendr]
 fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List> {
-    let def: r8_core::ir::TraitDef = serde_json::from_str(trait_json)
+    let def: rtemis_r8::ir::TraitDef = serde_json::from_str(trait_json)
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
     let mut reg = registry()
@@ -296,7 +296,7 @@ fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List> {
 /// @noRd
 #[extendr]
 fn r8_declare_impl(impl_json: &str, namespace: &str) -> Result<()> {
-    let def: r8_core::ir::ImplDef = serde_json::from_str(impl_json)
+    let def: rtemis_r8::ir::ImplDef = serde_json::from_str(impl_json)
         .map_err(|e| fail(format!("the impl does not read: {e}")))?;
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
     let mut reg = registry()

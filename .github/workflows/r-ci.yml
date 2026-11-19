@@ -12,7 +12,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   CARGO_TERM_COLOR: always
-  # tools/config.R patches the crates.io release of r8-core with this checkout's
+  # tools/config.R patches the crates.io release of rtemis-r8 with this checkout's
   # crate.
   R8_CRATES_PATH: ${{ github.workspace }}/crates
 
@@ -51,7 +51,7 @@ jobs:
           working-directory: R8
           upload-snapshots: true
           # R CMD check reports a WARNING for downloading Rust crates until the
-          # package vendors r8-core from a crates.io release; an error fails the
+          # package vendors rtemis-r8 from a crates.io release; an error fails the
           # job.
           error-on: '"error"'
           args: 'c("--no-manual", "--as-cran")'
@@ -81,7 +81,7 @@ jobs:
         with:
           components: clippy, rustfmt
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --locked --config "patch.crates-io.r8-core.path=\"$R8_CRATES_PATH/r8-core\"" -- -D warnings
+      - run: cargo clippy --all-targets --locked --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
 
   msrv:
     name: Install with the minimum Rust version

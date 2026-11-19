@@ -1,0 +1,16 @@
+[package]
+name = "rtemis-r8-abi-check"
+description = "Test that the Rust ABI types of rtemis-r8 match the C header R8.h"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+rtemis-r8 = { path = "../rtemis-r8" }
+
+[build-dependencies]
+cc = "1"

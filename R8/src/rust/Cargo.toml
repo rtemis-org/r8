@@ -20,7 +20,7 @@ path = 'document.rs'
 [dependencies]
 extendr-api = '0.9'
 extendr-ffi = '0.9'
-r8-core = '0.1'
+rtemis-r8 = '0.1'
 serde_json = { version = '1', features = ['float_roundtrip', 'preserve_order'] }
 
 [profile.release]

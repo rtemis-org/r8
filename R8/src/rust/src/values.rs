@@ -2,7 +2,7 @@
 //! field type, and the construction, encoding, and decoding of values.
 //!
 //! A value is constructed by encoding the R input to its JSON form, validating
-//! it with `r8-core`, and decoding the JSON form back to R, so the stored R
+//! it with `rtemis-r8`, and decoding the JSON form back to R, so the stored R
 //! value is the normalized one and reading its document returns it exactly.
 //! A runtime-only field has no JSON form; construction carries its R value
 //! over from the input.
@@ -20,11 +20,11 @@
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result, SEXP};
-use r8_core::codec::{date_days, date_text, datetime_micros, datetime_text, read_document};
-use r8_core::ir::{FieldDef, FieldType, TypeDef, VariantShape};
-use r8_core::name::QualifiedName;
-use r8_core::rules::{DocumentSet, TypeLookup};
-use r8_core::validate::{ValueError, validate};
+use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text, read_document};
+use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use rtemis_r8::name::QualifiedName;
+use rtemis_r8::rules::{DocumentSet, TypeLookup};
+use rtemis_r8::validate::{ValueError, validate};
 use serde_json::{Map, Value};
 
 use crate::declare::registry;
@@ -336,7 +336,7 @@ impl Encoder<'_> {
             | FieldType::Posixct => self.scalar(x, ft, path),
             FieldType::Raw => match x.as_raw_slice() {
                 Some(b) if self.plain(x, &[], path) => {
-                    r8_core::derive::Encode::encode(&r8_core::derive::Bytes(b.to_vec()))
+                    rtemis_r8::derive::Encode::encode(&rtemis_r8::derive::Bytes(b.to_vec()))
                         .unwrap_or(Value::Null)
                 }
                 Some(_) => Value::Null,
@@ -858,7 +858,7 @@ impl Decoder<'_> {
             .into(),
             FieldType::Double(_) => Doubles::from_values(items.iter().map(|v| match v {
                 Value::Null => Rfloat::na(),
-                other => Rfloat::from(r8_core::rules::number_value(other).unwrap_or(f64::NAN)),
+                other => Rfloat::from(rtemis_r8::rules::number_value(other).unwrap_or(f64::NAN)),
             }))
             .into(),
             FieldType::Character(_) => {
@@ -908,8 +908,8 @@ impl Decoder<'_> {
             | FieldType::Date
             | FieldType::Posixct => self.atomic(std::slice::from_ref(v), ft),
             FieldType::Raw => {
-                let b =
-                    <r8_core::derive::Bytes as r8_core::derive::Encode>::decode(v).map_err(fail)?;
+                let b = <rtemis_r8::derive::Bytes as rtemis_r8::derive::Encode>::decode(v)
+                    .map_err(fail)?;
                 Ok(Raw::from_bytes(&b.0).into())
             }
             FieldType::Factor { levels, ordered } => self.factor(v, levels.as_deref(), *ordered),
@@ -1304,14 +1304,14 @@ fn r8_value_identity(x: Robj) -> Result<List> {
     let lookup: &dyn TypeLookup = &*docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
-        r8_core::validate::validate_access(v, &q, lookup, cache)
+        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
     });
     if !errors.is_empty() {
         return Ok(list!(errors = errors_list(&errors)));
     }
-    let canonical = r8_core::codec::canonical_access(v, &q, lookup);
-    let hash = r8_core::codec::content_hash_access(v, &q, lookup);
-    let runtime = r8_core::codec::runtime_paths(&q, v, lookup);
+    let canonical = rtemis_r8::codec::canonical_access(v, &q, lookup);
+    let hash = rtemis_r8::codec::content_hash_access(v, &q, lookup);
+    let runtime = rtemis_r8::codec::runtime_paths(&q, v, lookup);
     Ok(list!(canonical = canonical, hash = hash, runtime = runtime))
 }
 
@@ -1328,12 +1328,12 @@ fn r8_value_hash(x: Robj) -> Result<Robj> {
     let lookup: &dyn TypeLookup = &*docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
-        r8_core::validate::validate_access(v, &q, lookup, cache)
+        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
     });
     if !errors.is_empty() {
         return Ok(list!(errors = errors_list(&errors)).into());
     }
-    Ok(r8_core::codec::content_hash_access(v, &q, lookup).into())
+    Ok(rtemis_r8::codec::content_hash_access(v, &q, lookup).into())
 }
 
 /// Whether two R8 values of one type are equal: the same normalized form,
@@ -1352,7 +1352,7 @@ fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
         return Ok(false.into());
     }
     let lookup: &dyn TypeLookup = &*docs;
-    let eq = r8_core::equal::equal_access(
+    let eq = rtemis_r8::equal::equal_access(
         &q,
         crate::rview::RView::Whole(xs),
         crate::rview::RView::Whole(ys),
@@ -1399,7 +1399,7 @@ fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<Lis
         input.set_attrib("r8_variant", variant)?;
     }
     match encode_and_validate(&input, &q, &docs)
-        .and_then(|v| r8_core::codec::normalize(&v, &q, &docs))
+        .and_then(|v| rtemis_r8::codec::normalize(&v, &q, &docs))
     {
         Ok(v) => {
             let value = Decoder { lookup: &docs }.named(&v, &q, Some(&input))?;
@@ -1424,8 +1424,8 @@ fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
     let result = read_document(text, &q, &*docs).and_then(|v| {
-        let canonical = r8_core::codec::canonical(&v, &q, &*docs)?;
-        let hash = r8_core::codec::content_hash(&v, &q, &*docs)?;
+        let canonical = rtemis_r8::codec::canonical(&v, &q, &*docs)?;
+        let hash = rtemis_r8::codec::content_hash(&v, &q, &*docs)?;
         Ok((canonical, hash))
     });
     match result {
@@ -1447,12 +1447,14 @@ fn r8_value_to_document(x: Robj) -> Result<List> {
     let lookup: &dyn TypeLookup = &*docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
-        r8_core::validate::validate_access(v, &q, lookup, cache)
+        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
     });
     if !errors.is_empty() {
         return Ok(list!(errors = errors_list(&errors)));
     }
-    Ok(list!(json = r8_core::codec::document_access(v, &q, lookup)))
+    Ok(list!(
+        json = rtemis_r8::codec::document_access(v, &q, lookup)
+    ))
 }
 
 /// Reads a document of a type into an R8 value.
@@ -1491,7 +1493,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
     use extendr_ffi::{
         R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_VECTOR_ELT, SEXPTYPE, VECTOR_ELT,
     };
-    use r8_core::ir::Resolve;
+    use rtemis_r8::ir::Resolve;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry()
         .lock()
@@ -1547,7 +1549,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
         // A field is ready when no field it reads is still pending.
         let ready = pending.iter().position(|f| {
             computed(f).is_some_and(|expr| {
-                r8_core::rules::reads(&expr)
+                rtemis_r8::rules::reads(&expr)
                     .iter()
                     .all(|r| !pending_names.contains(r) || r == f.name.as_str())
             })
@@ -1556,7 +1558,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
         let f = pending.remove(k);
         let Some(expr) = computed(f) else { continue };
         let at = format!("/{}", esc(f.name.as_str()));
-        match r8_core::rules::evaluate_computed_access(
+        match rtemis_r8::rules::evaluate_computed_access(
             &expr,
             &def.fields,
             lookup,
@@ -1602,7 +1604,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
         return Ok(list!(errors = errors_list(&errors)));
     }
     let problems = crate::construct::with_cache(|cache| {
-        r8_core::validate::validate_access(crate::rview::RView::Draft(ws, ""), &q, lookup, cache)
+        rtemis_r8::validate::validate_access(crate::rview::RView::Draft(ws, ""), &q, lookup, cache)
     });
     if !problems.is_empty() {
         return Ok(list!(errors = errors_list(&problems)));
@@ -1624,7 +1626,7 @@ fn r8_value_check(x: Robj) -> Result<Robj> {
     let (q, docs) = value_type(xs)?;
     let lookup: &dyn TypeLookup = &*docs;
     let errors = crate::construct::with_cache(|cache| {
-        r8_core::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
+        rtemis_r8::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
     });
     if errors.is_empty() {
         Ok(().into())

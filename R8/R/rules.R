@@ -4,7 +4,7 @@
 
 # An R expression compiles to a JSONLogic expression as a list: an operation
 # is a named list with one member whose value is the list of operands; a
-# field is `list(var = "path")`. `r8-core` checks the result against the
+# field is `list(var = "path")`. `rtemis-r8` checks the result against the
 # type when the type is declared.
 
 # Operators of R and the JSONLogic operators they compile to.

@@ -1,6 +1,6 @@
-//! R bindings of the `r8-core` crate for the R package R8.
+//! R bindings of the `rtemis-r8` crate for the R package R8.
 //!
-//! Each module converts R objects to the values `r8-core` takes, checks the R
+//! Each module converts R objects to the values `rtemis-r8` takes, checks the R
 //! input contract, and reports errors with R argument names and one-based
 //! positions.
 //!

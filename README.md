@@ -4,15 +4,15 @@ R8 is a developer-facing type system for R whose runtime is written in Rust. Typ
 
 | Directory | Contents |
 |---|---|
-| `crates/r8-core` | The runtime: declaration IR, validation, rules, JSON codec, hashing, provenance, and dispatch |
-| `crates/r8-derive` | `#[derive(R8)]` |
-| `crates/r8-abi-check` | Test-only: the Rust ABI types of `r8-core` match the C header |
+| `crates/rtemis-r8` | The runtime: declaration IR, validation, rules, the value-access trait, the JSON codec, equality, and hashing |
+| `crates/rtemis-r8-macros` | The procedural macros, `#[derive(R8)]` |
+| `crates/rtemis-r8-abi-check` | Test-only: the Rust ABI types of `rtemis-r8` match the C header |
 | `conformance` | Language-neutral test cases that every host runs, with their format and JSON Schema |
-| `R8` | The R package, which binds `r8-core` through extendr; `R8/inst/include/R8.h` is the C interface for other packages |
+| `R8` | The R package, which binds `rtemis-r8` through extendr; `R8/inst/include/R8.h` is the C interface for other packages |
 
 ## Development
 
-The R package builds against the `r8-core` of this checkout: its `justfile` sets `R8_CRATES_PATH` to `crates/`, and `tools/config.R` passes Cargo a patch of the crates.io release with that path.
+The R package builds against the `rtemis-r8` of this checkout: its `justfile` sets `R8_CRATES_PATH` to `crates/`, and `tools/config.R` passes Cargo a patch of the crates.io release with that path.
 
 ```sh
 just rust-check            # workspace: rustfmt, clippy, tests

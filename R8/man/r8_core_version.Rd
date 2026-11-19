@@ -2,7 +2,7 @@
 % Please edit documentation in R/extendr-wrappers.R
 \name{r8_core_version}
 \alias{r8_core_version}
-\title{Version of the r8-core crate}
+\title{Version of the rtemis-r8 crate}
 \usage{
 r8_core_version()
 }
@@ -10,7 +10,7 @@ r8_core_version()
 Character: The version, for example \code{"0.1.0"}.
 }
 \description{
-Returns the version of the \code{r8-core} Rust crate compiled into R8, which
+Returns the version of the \code{rtemis-r8} Rust crate compiled into R8, which
 provenance records alongside the versions of R8 and R.
 }
 \examples{

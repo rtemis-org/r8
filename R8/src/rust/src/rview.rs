@@ -1,10 +1,10 @@
 //! The value-access trait over R objects, read in place.
 //!
-//! [`RView`] implements `r8_core::access::Access` for R objects: it reads
+//! [`RView`] implements `rtemis_r8::access::Access` for R objects: it reads
 //! numbers, strings, and attributes through R's C API without copying, so
 //! validating a vector of 10^6 doubles is one loop over R's own array. Form
 //! problems carry the codes of the R form (`r_type`, `r_length`,
-//! `na_value`, `r_attributes`, and the others); the validator in `r8-core`
+//! `na_value`, `r_attributes`, and the others); the validator in `rtemis-r8`
 //! checks the declared constraints.
 //!
 //! A handle holds a raw `SEXP`, which is valid while the `.Call` that
@@ -21,10 +21,10 @@ use extendr_ffi::{
     R_NilValue, R_compute_identical, R_xlen_t, RAW, REAL, REAL_GET_REGION, Rf_getAttrib,
     Rf_install, SEXPTYPE, STRING_ELT, TYPEOF, VECTOR_ELT, XLENGTH,
 };
-use r8_core::access::{Access, Codes, Dense, Dimnames, Factor, Form, Read, Sparse, Table};
-use r8_core::ir::{EnumDef, FieldDef, FieldType};
-use r8_core::name::QualifiedName;
-use r8_core::rules::TypeLookup;
+use rtemis_r8::access::{Access, Codes, Dense, Dimnames, Factor, Form, Read, Sparse, Table};
+use rtemis_r8::ir::{EnumDef, FieldDef, FieldType};
+use rtemis_r8::name::QualifiedName;
+use rtemis_r8::rules::TypeLookup;
 use serde_json::Value;
 
 // ------------------------------------------------------------- attributes
@@ -1027,10 +1027,10 @@ fn elem_value(x: SEXP, i: usize, ft: &FieldType) -> Value {
                 .map_or(Value::Null, |s| Value::from(s.into_owned()))
         }
         (FieldType::Date, _) => number_elt(x, i).map_or(Value::Null, |d| {
-            Value::from(r8_core::codec::date_text(d as i64))
+            Value::from(rtemis_r8::codec::date_text(d as i64))
         }),
         (FieldType::Posixct, _) => number_elt(x, i).map_or(Value::Null, |s| {
-            Value::from(r8_core::codec::datetime_text((s * 1e6).round() as i64))
+            Value::from(rtemis_r8::codec::datetime_text((s * 1e6).round() as i64))
         }),
         (_, SEXPTYPE::LGLSXP) => Value::Bool(logicals(x)[i] != 0),
         (_, SEXPTYPE::STRSXP) => {
