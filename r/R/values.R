@@ -207,14 +207,23 @@ new_dgc <- function(i, p, x, dim) {
 field_get <- function(x, name) {
   v <- .subset2(x, name)
   if (is.null(v) && !name %in% names(x)) {
+    variant <- attr(x, "r8_variant")
+    label <- paste0(
+      attr(x, "r8_type"),
+      if (!is.null(variant)) paste0("@", variant)
+    )
+    fields <- names(x)
     r8_abort(
       "`",
       name,
       "` is not a field of `",
-      attr(x, "r8_type"),
-      "`. Fields: ",
-      paste(names(x), collapse = ", "),
-      ".",
+      label,
+      "`",
+      if (length(fields) == 0L) {
+        ", which has no fields."
+      } else {
+        paste0(". Fields: ", paste(fields, collapse = ", "), ".")
+      },
       class = "r8_value_error"
     )
   }
