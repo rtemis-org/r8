@@ -198,8 +198,13 @@ pub trait Access<'a>: Copy + 'a {
     }
 
     /// Items `0..n` of a sequence of doubles, `Ok(None)` for a missing item.
-    fn each_double(self, n: usize, mut f: impl FnMut(usize, Read<Option<f64>>)) {
-        for i in 0..n {
+    fn each_double(self, n: usize, f: impl FnMut(usize, Read<Option<f64>>)) {
+        self.each_double_in(0, n, f)
+    }
+
+    /// Items `start..end` of a sequence of `each_double`'s kind.
+    fn each_double_in(self, start: usize, end: usize, mut f: impl FnMut(usize, Read<Option<f64>>)) {
+        for i in start..end {
             let x = self.item(i);
             f(
                 i,
@@ -213,8 +218,18 @@ pub trait Access<'a>: Copy + 'a {
     }
 
     /// Items `0..n` of a sequence of whole numbers.
-    fn each_integer(self, n: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
-        for i in 0..n {
+    fn each_integer(self, n: usize, f: impl FnMut(usize, Read<Option<i64>>)) {
+        self.each_integer_in(0, n, f)
+    }
+
+    /// Items `start..end` of a sequence of `each_integer`'s kind.
+    fn each_integer_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<i64>>),
+    ) {
+        for i in start..end {
             let x = self.item(i);
             f(
                 i,
@@ -228,8 +243,18 @@ pub trait Access<'a>: Copy + 'a {
     }
 
     /// Items `0..n` of a sequence of logicals.
-    fn each_logical(self, n: usize, mut f: impl FnMut(usize, Read<Option<bool>>)) {
-        for i in 0..n {
+    fn each_logical(self, n: usize, f: impl FnMut(usize, Read<Option<bool>>)) {
+        self.each_logical_in(0, n, f)
+    }
+
+    /// Items `start..end` of a sequence of `each_logical`'s kind.
+    fn each_logical_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<bool>>),
+    ) {
+        for i in start..end {
             let x = self.item(i);
             f(
                 i,
@@ -243,8 +268,18 @@ pub trait Access<'a>: Copy + 'a {
     }
 
     /// Items `0..n` of a sequence of strings.
-    fn each_character(self, n: usize, mut f: impl FnMut(usize, Read<Option<Cow<'a, str>>>)) {
-        for i in 0..n {
+    fn each_character(self, n: usize, f: impl FnMut(usize, Read<Option<Cow<'a, str>>>)) {
+        self.each_character_in(0, n, f)
+    }
+
+    /// Items `start..end` of a sequence of `each_character`'s kind.
+    fn each_character_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<Cow<'a, str>>>),
+    ) {
+        for i in start..end {
             let x = self.item(i);
             f(
                 i,
@@ -258,8 +293,13 @@ pub trait Access<'a>: Copy + 'a {
     }
 
     /// Items `0..n` of a sequence of dates.
-    fn each_date(self, n: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
-        for i in 0..n {
+    fn each_date(self, n: usize, f: impl FnMut(usize, Read<Option<i64>>)) {
+        self.each_date_in(0, n, f)
+    }
+
+    /// Items `start..end` of a sequence of `each_date`'s kind.
+    fn each_date_in(self, start: usize, end: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
+        for i in start..end {
             let x = self.item(i);
             f(
                 i,
@@ -273,8 +313,18 @@ pub trait Access<'a>: Copy + 'a {
     }
 
     /// Items `0..n` of a sequence of date-times.
-    fn each_datetime(self, n: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
-        for i in 0..n {
+    fn each_datetime(self, n: usize, f: impl FnMut(usize, Read<Option<i64>>)) {
+        self.each_datetime_in(0, n, f)
+    }
+
+    /// Items `start..end` of a sequence of `each_datetime`'s kind.
+    fn each_datetime_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<i64>>),
+    ) {
+        for i in start..end {
             let x = self.item(i);
             f(
                 i,

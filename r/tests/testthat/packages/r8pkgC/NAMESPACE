@@ -1,0 +1,6 @@
+useDynLib(r8pkgC, .registration = TRUE)
+export(Point)
+export(Norm)
+export(magnitude)
+export(ratio)
+importFrom(R8, new_struct)

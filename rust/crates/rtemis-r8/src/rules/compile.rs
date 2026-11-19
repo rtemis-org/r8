@@ -7,6 +7,7 @@
 
 use serde_json::Value;
 
+use super::eval::Scalar;
 use super::ty::{Shape, Ty, TypeLookup, VariantFields, shape};
 use crate::ir::{FieldDef, Logic};
 
@@ -102,7 +103,7 @@ pub enum Op {
 /// A compiled expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Lit(Value),
+    Lit(Scalar),
     Var {
         root: Root,
         steps: Vec<Step>,
@@ -156,15 +157,18 @@ impl Compiler<'_> {
             path: path.to_string(),
             message,
         });
-        (Expr::Lit(Value::Null), Ty::Any)
+        (Expr::Lit(Scalar::Null), Ty::Any)
     }
 
     fn compile(&mut self, logic: &Value, path: &str) -> (Expr, Ty) {
         match logic {
-            Value::Bool(_) => (Expr::Lit(logic.clone()), Ty::Bool),
-            Value::Number(_) => (Expr::Lit(logic.clone()), Ty::Number { unit: None }),
-            Value::String(_) => (Expr::Lit(logic.clone()), Ty::String),
-            Value::Null => (Expr::Lit(Value::Null), Ty::Any),
+            Value::Bool(b) => (Expr::Lit(Scalar::Bool(*b)), Ty::Bool),
+            Value::Number(n) => (
+                Expr::Lit(Scalar::Num(n.as_f64().unwrap_or(f64::NAN))),
+                Ty::Number { unit: None },
+            ),
+            Value::String(t) => (Expr::Lit(Scalar::Str(t.clone())), Ty::String),
+            Value::Null => (Expr::Lit(Scalar::Null), Ty::Any),
             Value::Array(items) => {
                 let mut elem = None;
                 let mut out = Vec::new();
@@ -184,7 +188,7 @@ impl Compiler<'_> {
                     });
                 }
                 (
-                    Expr::Lit(Value::Array(out)),
+                    Expr::Lit(Scalar::Array(out)),
                     Ty::Array(Box::new(elem.unwrap_or(Ty::Any))),
                 )
             }
@@ -341,7 +345,7 @@ impl Compiler<'_> {
 
     fn var(&mut self, args: &[&Value], path: &str) -> (Expr, Ty) {
         if !self.arity("var", args, 1..=1, path) {
-            return (Expr::Lit(Value::Null), Ty::Any);
+            return (Expr::Lit(Scalar::Null), Ty::Any);
         }
         let Some(p) = args[0].as_str() else {
             return self.error("rule_var", path, "`var` takes a path string".to_string());
@@ -382,7 +386,7 @@ impl Compiler<'_> {
                     steps.push(s);
                     ty = t;
                 }
-                None => return (Expr::Lit(Value::Null), Ty::Any),
+                None => return (Expr::Lit(Scalar::Null), Ty::Any),
             }
         }
         if ty == Ty::Runtime {
@@ -506,12 +510,12 @@ impl Compiler<'_> {
             }
             "is_null" => {
                 if !self.arity(op, args, 1..=1, path) {
-                    return (Expr::Lit(Value::Null), Ty::Bool);
+                    return (Expr::Lit(Scalar::Null), Ty::Bool);
                 }
                 let before = self.errors.len();
                 let (e, _) = self.compile(args[0], &format!("{path}/0"));
                 if self.errors.len() > before {
-                    return (Expr::Lit(Value::Null), Ty::Bool);
+                    return (Expr::Lit(Scalar::Null), Ty::Bool);
                 }
                 if !matches!(e, Expr::Var { .. }) {
                     return self.error("rule_type", path, "`is_null` takes a field".to_string());
@@ -521,7 +525,7 @@ impl Compiler<'_> {
             "is_variant" => return self.is_variant(args, path),
             "levels" => {
                 if !self.arity(op, args, 1..=1, path) {
-                    return (Expr::Lit(Value::Null), Ty::Any);
+                    return (Expr::Lit(Scalar::Null), Ty::Any);
                 }
                 let (e, t) = self.compile(args[0], &format!("{path}/0"));
                 let declared = match &t {
@@ -568,7 +572,7 @@ impl Compiler<'_> {
             }
             "and" | "or" => {
                 if !self.arity(op, args, 1..=usize::MAX, path) {
-                    return (Expr::Lit(Value::Null), Ty::Bool);
+                    return (Expr::Lit(Scalar::Null), Ty::Bool);
                 }
                 let parts = self.operands(args, path);
                 for (i, (_, t)) in parts.iter().enumerate() {
@@ -622,7 +626,7 @@ impl Compiler<'_> {
             }
         };
         if !self.arity(op, args, range, path) {
-            return (Expr::Lit(Value::Null), Ty::Any);
+            return (Expr::Lit(Scalar::Null), Ty::Any);
         }
         let parts = self.operands(args, path);
         let tys: Vec<Ty> = parts.iter().map(|(_, t)| t.clone()).collect();
@@ -771,7 +775,7 @@ impl Compiler<'_> {
 
     fn is_variant(&mut self, args: &[&Value], path: &str) -> (Expr, Ty) {
         if !self.arity("is_variant", args, 2..=2, path) {
-            return (Expr::Lit(Value::Null), Ty::Bool);
+            return (Expr::Lit(Scalar::Null), Ty::Bool);
         }
         let (e, t) = self.compile(args[0], &format!("{path}/0"));
         let Some(variant) = args[1].as_str() else {
@@ -827,7 +831,7 @@ impl Compiler<'_> {
     fn quantifier(&mut self, all: bool, args: &[&Value], path: &str) -> (Expr, Ty) {
         let op = if all { "all" } else { "any" };
         if !self.arity(op, args, 2..=2, path) {
-            return (Expr::Lit(Value::Null), Ty::Bool);
+            return (Expr::Lit(Scalar::Null), Ty::Bool);
         }
         let (coll, t) = self.compile(args[0], &format!("{path}/0"));
         let (kind, elem) = match &t {

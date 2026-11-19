@@ -87,23 +87,41 @@ typedef struct R8CallContext {
 } R8CallContext;
 
 /* The codec of a Rust-native type. `state` is the type's Rust value, owned
- * by R8 between `decode` or `with_field` and `drop`. */
+ * by R8 between `from_fields`, `decode`, or `with_field` and `drop`. A
+ * package's `types` array holds codecs of one size, `size`, which is the
+ * array's stride; fields are appended within a major version. */
 typedef struct R8TypeVTable {
+  /* The size of this struct in bytes. */
+  uint32_t size;
   /* Qualified name, "namespace::Type". */
   const char *type_name;
-  /* Builds a state from the type's JSON document. */
+  /* Builds a state from the type's fields, `n` R values in declaration
+   * order, which R8 has validated and converted to their stored forms. */
+  R8Status (*from_fields)(const SEXP *fields, size_t n, void **state, R8Error *err);
+  /* Builds a state from the type's JSON document, for import
+   * (`r8_from_json()`). */
   R8Status (*decode)(const uint8_t *json, size_t len, void **state, R8Error *err);
-  /* Writes the state's JSON document. */
+  /* Writes the state's JSON document, for export (`to_json()`). */
   R8Status (*encode)(const void *state, R8Writer *out, R8Error *err);
-  /* Reads one field as an R value. */
-  R8Status (*get_field)(const void *state, const char *field, SEXP *value, R8Error *err);
+  /* Writes the state's bytes, in a form of the package's choosing, for
+   * `saveRDS()` and parallel workers. */
+  R8Status (*write_state)(const void *state, R8Writer *out, R8Error *err);
+  /* Builds a state from bytes that `write_state` wrote. */
+  R8Status (*read_state)(const uint8_t *bytes, size_t len, void **state, R8Error *err);
+  /* Reads one field as an R value. `owner` is the external pointer that
+   * holds `state`; a field that views the state's memory, through
+   * `R8Api.view_doubles` and its siblings, passes it as the view's owner,
+   * so the state lives as long as the view. R8 calls it once per field and
+   * keeps the result. */
+  R8Status (*get_field)(const void *state, SEXP owner, const char *field, SEXP *value, R8Error *err);
   /* Builds a new state with one field replaced by an R value that R8 has
-   * validated; `state` is unchanged. */
+   * validated; `state` is unchanged. The new state shares the buffers of
+   * the unchanged fields, so a replacement copies no large field. */
   R8Status (*with_field)(const void *state, const char *field, SEXP value, void **new_state, R8Error *err);
   /* Frees a state. */
   void (*drop)(void *state);
   /* The state's size in bytes, including memory it owns. */
-  size_t (*size)(const void *state);
+  size_t (*bytes)(const void *state);
 } R8TypeVTable;
 
 /* An impl function: a trait method implemented in compiled code. `args`
@@ -146,6 +164,14 @@ typedef struct R8Api {
   /* Borrows the state of a value of the given type; the state stays valid
    * while `value` is protected. */
   R8Status (*value_state)(SEXP value, const char *type_name, const void **state, R8Error *err);
+  /* Views `n` elements at `data`, memory that `owner` keeps alive, as an R
+   * vector, without copying. A write to the vector goes to a copy that R
+   * makes; the memory is only read. */
+  R8Status (*view_doubles)(SEXP owner, const double *data, size_t n, SEXP *value, R8Error *err);
+  R8Status (*view_integers)(SEXP owner, const int32_t *data, size_t n, SEXP *value, R8Error *err);
+  /* Logicals in R's form: 0, 1, and NA_LOGICAL as int32_t. */
+  R8Status (*view_logicals)(SEXP owner, const int32_t *data, size_t n, SEXP *value, R8Error *err);
+  R8Status (*view_bytes)(SEXP owner, const uint8_t *data, size_t n, SEXP *value, R8Error *err);
 } R8Api;
 
 /* The entry point R8 registers with R_RegisterCCallable("R8", "r8_api").

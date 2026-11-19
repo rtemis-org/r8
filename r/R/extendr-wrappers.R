@@ -107,6 +107,43 @@ r8_declare_type <- function(type_json, namespace) .Call(wrap__r8_declare_type, t
 #' @noRd
 r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 
+#' The package and namespace of an exports table, checked.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @return List: `package` and `namespace`.
+#' @keywords internal
+#' @noRd
+r8_exports_info <- function(ptr) .Call(wrap__r8_exports_info, ptr)
+
+#' Registers an exports table: declares its IR document's types, traits, and
+#' impls, and keeps the codecs of its Rust-native types and its impl
+#' functions, replacing the package's earlier entries.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @param package Character: The registering package.
+#' @return List: `trait_name`, `type_name`, and `method` of each impl function.
+#' @keywords internal
+#' @noRd
+r8_register_exports <- function(ptr, package) .Call(wrap__r8_register_exports, ptr, package)
+
+#' Calls a registered impl function with the arguments of the method's
+#' call, in the method's declared order.
+#'
+#' @param trait_name,type_name,method Character: The impl.
+#' @param args List: The arguments.
+#' @return The function's result.
+#' @keywords internal
+#' @noRd
+r8_call_impl <- function(trait_name, type_name, method, args) .Call(wrap__r8_call_impl, trait_name, type_name, method, args)
+
+#' The registered Rust-native types and whether each codec table holds
+#' every function.
+#'
+#' @return List: `type_name` and `complete`.
+#' @keywords internal
+#' @noRd
+r8_compiled_types <- function() .Call(wrap__r8_compiled_types)
+
 #' Resolves a struct value: given its fields, with runtime fields filled by
 #' the caller, evaluates each absent computed field in dependency order over
 #' the R objects in place, then constructs the value natively.

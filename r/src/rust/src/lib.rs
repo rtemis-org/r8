@@ -12,6 +12,7 @@ use extendr_api::prelude::*;
 
 mod construct;
 mod declare;
+mod exports;
 mod rview;
 mod values;
 mod version;
@@ -20,6 +21,7 @@ extendr_module! {
     mod R8;
     use construct;
     use declare;
+    use exports;
     use values;
     use version;
 }

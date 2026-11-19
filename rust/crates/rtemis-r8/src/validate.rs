@@ -157,15 +157,55 @@ fn integer_ok(c: &IntegerType, x: i64) -> bool {
     }
 }
 
+/// The most errors one validation lists. A value with more is reported by
+/// its first `ERROR_LIMIT` errors and one `error_limit` entry, so that the
+/// report of a large invalid value stays small.
+pub const ERROR_LIMIT: usize = 100;
+
 struct Validator<'l, 'c> {
     lookup: &'l dyn TypeLookup,
     errors: Vec<ValueError>,
+    /// The number of errors found, including those past the limit.
+    count: usize,
     cache: &'c mut RuleCache,
+}
+
+impl<'l, 'c> Validator<'l, 'c> {
+    fn new(lookup: &'l dyn TypeLookup, cache: &'c mut RuleCache) -> Self {
+        Validator {
+            lookup,
+            errors: Vec::new(),
+            count: 0,
+            cache,
+        }
+    }
+
+    fn push(&mut self, e: ValueError) {
+        self.count += 1;
+        if self.errors.len() < ERROR_LIMIT {
+            self.errors.push(e);
+        }
+    }
+
+    fn finish(mut self) -> Vec<ValueError> {
+        if self.count > ERROR_LIMIT {
+            let limit = ValueError {
+                code: "error_limit",
+                path: String::new(),
+                rule: None,
+                message: format!(
+                    "the value has more than {ERROR_LIMIT} errors; the first {ERROR_LIMIT} are listed"
+                ),
+            };
+            self.errors.push(limit);
+        }
+        self.errors
+    }
 }
 
 impl<'l> Validator<'l, '_> {
     fn error(&mut self, code: &'static str, path: &P, message: String) {
-        self.errors.push(ValueError {
+        self.push(ValueError {
             code,
             path: path.render(),
             rule: None,
@@ -174,7 +214,7 @@ impl<'l> Validator<'l, '_> {
     }
 
     fn form(&mut self, f: Form, path: &P) {
-        self.errors.push(ValueError {
+        self.push(ValueError {
             code: f.code,
             path: format!("{}{}", path.render(), f.suffix),
             rule: None,
@@ -450,8 +490,9 @@ impl<'l> Validator<'l, '_> {
         }
     }
 
-    /// Distinct items of a sequence of non-scalar values, by strict equality
-    /// of their JSON forms.
+    /// Distinct items of a sequence of non-scalar values, by the SHA-256
+    /// digest of each item's canonical form, streamed from the value: one
+    /// pass, 32 bytes per item.
     fn distinct_values<'a, A: Access<'a>>(
         &mut self,
         element: &FieldType,
@@ -459,21 +500,24 @@ impl<'l> Validator<'l, '_> {
         n: usize,
         path: &P,
     ) {
-        let mut seen: Vec<Value> = Vec::new();
+        use sha2::{Digest, Sha256};
+        let mut seen: HashMap<[u8; 32], usize> = HashMap::with_capacity(n);
         for i in 0..n {
             let item = v.item(i);
             if item.is_absent() {
                 continue;
             }
-            let x = item.to_value(element, self.lookup);
-            if seen.iter().any(|s| crate::rules::strict_equal(s, &x)) {
+            let mut e = crate::emit::Emitter::new(self.lookup, Sha256::new(), true, true);
+            e.value(element, item);
+            let key: [u8; 32] = e.w.out.finalize().into();
+            if let Some(&first) = seen.get(&key) {
                 self.error(
                     "not_unique",
                     &P::Idx(path, i),
-                    format!("{x} appears more than once"),
+                    format!("the item at index {i} equals the item at index {first}"),
                 );
             } else {
-                seen.push(x);
+                seen.insert(key, i);
             }
         }
     }
@@ -863,7 +907,7 @@ impl<'l> Validator<'l, '_> {
             Ok(t) => t,
             Err(f) => return self.form(f, path),
         };
-        let before = self.errors.len();
+        let before = self.count;
         for f in t.problems {
             self.form(f, path);
         }
@@ -957,7 +1001,7 @@ impl<'l> Validator<'l, '_> {
             }
             self.sequence(inner, *cells, len, &p, optional, c.unique);
         }
-        if !rules.is_empty() && self.errors.len() == before {
+        if !rules.is_empty() && self.count == before {
             let scope: Vec<FieldDef> = all_columns.into_iter().map(|(c, _)| c).collect();
             for r in rules {
                 if let Some(rule) = self.compiled(r, &scope) {
@@ -993,7 +1037,7 @@ impl<'l> Validator<'l, '_> {
     }
 
     fn violation(&mut self, rule: &CompiledRule, path: &str) {
-        self.errors.push(ValueError {
+        self.push(ValueError {
             code: "rule_violation",
             path: path.to_string(),
             rule: Some(rule.id.clone()),
@@ -1002,7 +1046,7 @@ impl<'l> Validator<'l, '_> {
     }
 
     fn rule_error(&mut self, rule: &CompiledRule, path: &str, e: String) {
-        self.errors.push(ValueError {
+        self.push(ValueError {
             code: "rule_error",
             path: path.to_string(),
             rule: Some(rule.id.clone()),
@@ -1037,7 +1081,7 @@ impl<'l> Validator<'l, '_> {
                 }
             }
         }
-        let before = self.errors.len();
+        let before = self.count;
         for (index, f) in fields.iter().enumerate() {
             let x = v.member_at(index, f.name.as_str());
             if x.is_absent() {
@@ -1054,7 +1098,7 @@ impl<'l> Validator<'l, '_> {
                 self.value(&f.ty, x, &P::Key(path, f.name.as_str()));
             }
         }
-        if self.errors.len() > before {
+        if self.count > before {
             return;
         }
         for r in rules {
@@ -1145,13 +1189,9 @@ pub fn validate_field_access<'a, A: Access<'a>>(
     lookup: &dyn TypeLookup,
     cache: &mut RuleCache,
 ) -> Vec<ValueError> {
-    let mut v = Validator {
-        lookup,
-        errors: Vec::new(),
-        cache,
-    };
+    let mut v = Validator::new(lookup, cache);
     v.value(ty, value, &P::Root(""));
-    v.errors
+    v.finish()
 }
 
 /// Validates a value in any host form against the named type and returns
@@ -1162,13 +1202,9 @@ pub fn validate_access<'a, A: Access<'a>>(
     lookup: &dyn TypeLookup,
     cache: &mut RuleCache,
 ) -> Vec<ValueError> {
-    let mut v = Validator {
-        lookup,
-        errors: Vec::new(),
-        cache,
-    };
+    let mut v = Validator::new(lookup, cache);
     v.named(ty, value, &P::Root(""), &[]);
-    v.errors
+    v.finish()
 }
 
 /// Validates a value's JSON form against a field type, as a field's default
@@ -1182,11 +1218,7 @@ pub fn validate_field(value: &Value, ty: &FieldType, lookup: &dyn TypeLookup) ->
 /// accepted on the outermost object.
 pub fn validate(value: &Value, ty: &QualifiedName, lookup: &dyn TypeLookup) -> Vec<ValueError> {
     let mut cache = RuleCache::new();
-    let mut v = Validator {
-        lookup,
-        errors: Vec::new(),
-        cache: &mut cache,
-    };
+    let mut v = Validator::new(lookup, &mut cache);
     v.named(ty, Json::new(value), &P::Root(""), &ENVELOPE);
-    v.errors
+    v.finish()
 }

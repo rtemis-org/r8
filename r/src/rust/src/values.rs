@@ -1566,7 +1566,12 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
             crate::rview::RView::Draft(ws, ""),
         ) {
             Ok(Some(x)) => {
-                let r = decode_field(&x, &f.ty, lookup)?;
+                let r = match x {
+                    rtemis_r8::rules::Computed::Scalar(x) => {
+                        crate::construct::scalar_to_r(&x, &f.ty)?
+                    }
+                    rtemis_r8::rules::Computed::Value(v) => v.robj()?,
+                };
                 match names.iter().position(|k| k == f.name.as_str()) {
                     Some(i) => unsafe {
                         SET_VECTOR_ELT(ws, i as R_xlen_t, r.get());

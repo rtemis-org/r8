@@ -17,3 +17,6 @@ __dev/
 AGENTS.md
 CLAUDE.md
 r/src/rust/Cargo.lock.saved
+r/tests/testthat/packages/*/src/*.o
+r/tests/testthat/packages/*/src/*.so
+r/tests/testthat/packages/*/src/*.dll

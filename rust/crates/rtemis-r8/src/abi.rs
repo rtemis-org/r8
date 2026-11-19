@@ -58,20 +58,37 @@ pub struct CallContext {
     pub seed: u64,
 }
 
-/// `R8TypeVTable`: the codec of a Rust-native type.
+/// `R8TypeVTable`: the codec of a Rust-native type. A package's codecs have
+/// one size, `size`, which is the stride of its `types` array.
 #[repr(C)]
 pub struct TypeVTable {
+    /// The size of this struct in bytes.
+    pub size: u32,
     /// The qualified type name, NUL-terminated.
     pub type_name: *const c_char,
-    /// Reads a value from its binary form.
+    /// Builds a state from the type's fields, R values in declaration order
+    /// that R8 has validated and converted to their stored forms.
+    pub from_fields:
+        Option<unsafe extern "C" fn(*const Sexp, usize, *mut *mut c_void, *mut Error) -> Status>,
+    /// Builds a state from the type's JSON document, for import.
     pub decode:
         Option<unsafe extern "C" fn(*const u8, usize, *mut *mut c_void, *mut Error) -> Status>,
-    /// Writes a value's binary form to a writer.
+    /// Writes the state's JSON document to a writer, for export.
     pub encode: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
-    /// Reads one field of a value as an R value.
-    pub get_field:
-        Option<unsafe extern "C" fn(*const c_void, *const c_char, *mut Sexp, *mut Error) -> Status>,
-    /// Returns a new value with one field replaced.
+    /// Writes the state's bytes, in a form of the package's choosing, for
+    /// persistence and parallel workers.
+    pub write_state: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
+    /// Builds a state from bytes that `write_state` wrote.
+    pub read_state:
+        Option<unsafe extern "C" fn(*const u8, usize, *mut *mut c_void, *mut Error) -> Status>,
+    /// Reads one field as an R value. `owner` is the external pointer that
+    /// holds the state; a field that views the state's memory passes it as
+    /// the view's owner. R8 calls it once per field and keeps the result.
+    pub get_field: Option<
+        unsafe extern "C" fn(*const c_void, Sexp, *const c_char, *mut Sexp, *mut Error) -> Status,
+    >,
+    /// Builds a new state with one field replaced by a validated R value;
+    /// the new state shares the buffers of the unchanged fields.
     pub with_field: Option<
         unsafe extern "C" fn(
             *const c_void,
@@ -83,8 +100,8 @@ pub struct TypeVTable {
     >,
     /// Frees a value.
     pub drop: Option<unsafe extern "C" fn(*mut c_void)>,
-    /// The bytes a value holds, for size reporting.
-    pub size: Option<unsafe extern "C" fn(*const c_void) -> usize>,
+    /// The bytes a state holds, including memory it owns.
+    pub bytes: Option<unsafe extern "C" fn(*const c_void) -> usize>,
 }
 
 /// `R8MethodFn`: an impl function.
@@ -140,7 +157,19 @@ pub struct Api {
     /// The Rust-native state of an R value of a registered type.
     pub value_state:
         Option<unsafe extern "C" fn(Sexp, *const c_char, *mut *const c_void, *mut Error) -> Status>,
+    /// Views doubles that `owner` keeps alive as an R vector, without copying.
+    pub view_doubles: Option<ViewFn<f64>>,
+    /// Views integers that `owner` keeps alive as an R vector.
+    pub view_integers: Option<ViewFn<i32>>,
+    /// Views logicals in R's form (0, 1, `NA_LOGICAL`) as an R vector.
+    pub view_logicals: Option<ViewFn<i32>>,
+    /// Views bytes as an R raw vector.
+    pub view_bytes: Option<ViewFn<u8>>,
 }
+
+/// A view function of [`Api`]: the owner, the elements, their number, the
+/// view, and the error report.
+pub type ViewFn<T> = unsafe extern "C" fn(Sexp, *const T, usize, *mut Sexp, *mut Error) -> Status;
 
 /// The size of every struct and the offset of every field, in the order of
 /// `layout.c` in `rtemis-r8-abi-check`, which computes the same list from the C
@@ -156,15 +185,28 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("R8CallContext.flags", offset_of!(CallContext, flags)),
         ("R8CallContext.seed", offset_of!(CallContext, seed)),
         ("R8TypeVTable", size_of::<TypeVTable>()),
+        ("R8TypeVTable.type_name", offset_of!(TypeVTable, type_name)),
+        (
+            "R8TypeVTable.from_fields",
+            offset_of!(TypeVTable, from_fields),
+        ),
         ("R8TypeVTable.decode", offset_of!(TypeVTable, decode)),
         ("R8TypeVTable.encode", offset_of!(TypeVTable, encode)),
+        (
+            "R8TypeVTable.write_state",
+            offset_of!(TypeVTable, write_state),
+        ),
+        (
+            "R8TypeVTable.read_state",
+            offset_of!(TypeVTable, read_state),
+        ),
         ("R8TypeVTable.get_field", offset_of!(TypeVTable, get_field)),
         (
             "R8TypeVTable.with_field",
             offset_of!(TypeVTable, with_field),
         ),
         ("R8TypeVTable.drop", offset_of!(TypeVTable, drop)),
-        ("R8TypeVTable.size", offset_of!(TypeVTable, size)),
+        ("R8TypeVTable.bytes", offset_of!(TypeVTable, bytes)),
         ("R8ImplEntry", size_of::<ImplEntry>()),
         ("R8ImplEntry.type_name", offset_of!(ImplEntry, type_name)),
         ("R8ImplEntry.method", offset_of!(ImplEntry, method)),
@@ -182,5 +224,9 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("R8Api.size", offset_of!(Api, size)),
         ("R8Api.new_value", offset_of!(Api, new_value)),
         ("R8Api.value_state", offset_of!(Api, value_state)),
+        ("R8Api.view_doubles", offset_of!(Api, view_doubles)),
+        ("R8Api.view_integers", offset_of!(Api, view_integers)),
+        ("R8Api.view_logicals", offset_of!(Api, view_logicals)),
+        ("R8Api.view_bytes", offset_of!(Api, view_bytes)),
     ]
 }

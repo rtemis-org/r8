@@ -12,6 +12,7 @@
 //! Compiled rules and patterns are kept between constructions in a
 //! [`RuleCache`], cleared when a declaration changes the registry.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -50,6 +51,38 @@ pub(crate) fn with_cache<T>(f: impl FnOnce(&mut RuleCache) -> T) -> T {
         guard.0 = g;
     }
     f(&mut guard.1)
+}
+
+/// An R object kept between calls; R runs these calls on one thread.
+struct Kept(Robj);
+// SAFETY: R8's native functions run on R's main thread only.
+unsafe impl Send for Kept {}
+
+/// The R form of the declared default `d` of a field of `ft`, decoded from
+/// the IR document once per registry and shared by every value that takes
+/// it. A value that modifies the field copies it first, since the cache
+/// holds a reference.
+pub(crate) fn default_r(
+    d: &serde_json::Value,
+    ft: &FieldType,
+    lookup: &dyn TypeLookup,
+) -> Result<SEXP> {
+    static CACHE: OnceLock<Mutex<(u64, HashMap<usize, Kept>)>> = OnceLock::new();
+    let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
+    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
+    let g = GENERATION.load(Ordering::Relaxed);
+    if guard.0 != g {
+        guard.1.clear();
+        guard.0 = g;
+    }
+    let key = d as *const serde_json::Value as usize;
+    if let Some(r) = guard.1.get(&key) {
+        return Ok(unsafe { r.0.get() });
+    }
+    let r = crate::values::decode_field(d, ft, lookup)?;
+    let s = unsafe { r.get() };
+    guard.1.insert(key, Kept(r));
+    Ok(s)
 }
 
 fn fail(message: impl Into<String>) -> Error {
@@ -210,6 +243,82 @@ fn build_atomic(inner: &FieldType, items: &[(SEXP, usize)]) -> Robj {
 
 fn elements(x: SEXP) -> Vec<(SEXP, usize)> {
     (0..xlen(x)).map(|i| (x, i)).collect()
+}
+
+/// The stored R form of a computed value of the field type `ft`: a scalar
+/// as a length-one vector, an array as a vector of the element type.
+pub(crate) fn scalar_to_r(v: &rtemis_r8::rules::Scalar, ft: &FieldType) -> Result<Robj> {
+    use rtemis_r8::rules::Scalar;
+    let inner = unwrap_option(ft);
+    let (element, items): (&FieldType, Vec<&Scalar>) = match (inner, v) {
+        (_, Scalar::Null) => return Ok(().into()),
+        (FieldType::Vec { element, .. }, Scalar::Array(a)) => {
+            (unwrap_option(element), a.iter().collect())
+        }
+        (_, Scalar::Array(_)) => {
+            return Err(fail("a computed array for a field that is not a vector"));
+        }
+        (t, s) => (t, vec![s]),
+    };
+    let n = items.len() as R_xlen_t;
+    unsafe {
+        let x = match element {
+            FieldType::Logical => {
+                let x = Rf_protect(Rf_allocVector(SEXPTYPE::LGLSXP, n));
+                for (i, s) in items.iter().enumerate() {
+                    *LOGICAL(x).add(i) = match s {
+                        Scalar::Bool(b) => i32::from(*b),
+                        _ => NA_INT,
+                    };
+                }
+                x
+            }
+            FieldType::Integer(_) => {
+                let x = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, n));
+                for (i, s) in items.iter().enumerate() {
+                    *INTEGER(x).add(i) = match s {
+                        Scalar::Num(d) if d.is_finite() => *d as i32,
+                        _ => NA_INT,
+                    };
+                }
+                x
+            }
+            FieldType::Character(_) => {
+                let x = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, n));
+                for (i, s) in items.iter().enumerate() {
+                    if let Scalar::Str(t) = s {
+                        SET_STRING_ELT(x, i as R_xlen_t, mkchar(t));
+                    } else {
+                        SET_STRING_ELT(x, i as R_xlen_t, extendr_ffi::R_NaString);
+                    }
+                }
+                x
+            }
+            _ => {
+                let x = Rf_protect(Rf_allocVector(SEXPTYPE::REALSXP, n));
+                for (i, s) in items.iter().enumerate() {
+                    *REAL(x).add(i) = match (element, s) {
+                        (FieldType::Date, Scalar::Date(d)) => *d as f64,
+                        (FieldType::Posixct, Scalar::DateTime(m)) => *m as f64 / 1e6,
+                        (_, Scalar::Num(d)) => *d,
+                        _ => NA_REAL,
+                    };
+                }
+                x
+            }
+        };
+        let r = own(x);
+        Rf_unprotect(1);
+        match element {
+            FieldType::Date => set_attr(&r, sym_class(), character(&["Date"]).get()),
+            FieldType::Posixct => {
+                set_attr(&r, sym_class(), character(&["POSIXct", "POSIXt"]).get());
+                set_attr(&r, sym_tzone(), character(&["UTC"]).get());
+            }
+            _ => {}
+        }
+        Ok(r)
+    }
 }
 
 /// The stored form of an atomic vector of the scalar type `inner`, or
@@ -614,12 +723,7 @@ pub(crate) fn assemble(
             let x = list_member_at(fields, k, f.name.as_str()).unwrap_or(nil());
             let value = if is_null(x) {
                 match &f.default {
-                    Some(d) => {
-                        let r = crate::values::decode_field(d, &f.ty, lookup)?;
-                        let s = r.get();
-                        created.push(r);
-                        s
-                    }
+                    Some(d) => default_r(d, &f.ty, lookup)?,
                     None => nil(),
                 }
             } else {
@@ -753,12 +857,7 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
     let mut created: Option<Robj> = None;
     let stored = if is_null(vs) {
         match &f.default {
-            Some(d) => {
-                let r = crate::values::decode_field(d, &f.ty, lookup)?;
-                let s = unsafe { r.get() };
-                created = Some(r);
-                s
-            }
+            Some(d) => default_r(d, &f.ty, lookup)?,
             None if matches!(f.ty, FieldType::Option { .. }) => nil(),
             None => {
                 return problems(&[ValueError {

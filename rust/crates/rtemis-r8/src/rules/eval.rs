@@ -1,31 +1,147 @@
 //! Evaluation of compiled expressions over values in any host form.
 //!
 //! The evaluator reads a value through [`Access`]. A `var` evaluates to a
-//! reference into the value with its declared type, converted to its JSON
-//! form only where an operator needs the value; `is.null()`, `length()`,
-//! `nrow()`, `ncol()`, `dim()`, `levels()`, `all()`, and `any()` read the
-//! reference directly.
+//! reference into the value with its declared type, read as a [`Scalar`]
+//! only where an operator needs its value: a number, a logical, a string, a
+//! date, a date-time, or an array of them. `is.null()`, `length()`, `nrow()`,
+//! `ncol()`, `dim()`, `levels()`, `all()`, and `any()` read the reference
+//! directly, `in`, `non_increasing()`, and `non_decreasing()` scan a vector
+//! in place, and `==` compares two struct or enum values with
+//! [`crate::equal`]. A rule's literals, JSONLogic in the IR, become scalars
+//! when the rule is evaluated.
 //!
 //! A `var` that reaches an absent value (a missing member or `null`) makes
 //! the expression [`Absent`]; the absence propagates through every operator
 //! except `is_null()`, and a rule with an absent operand holds. Conditional
 //! positions take logicals only.
 
+use std::cmp::Ordering;
+
 use serde_json::Value;
 
 use super::compile::{Collection, Expr, Op, Root, Step, VariantTag};
 use super::ty::TypeLookup;
-use crate::access::Access;
+use crate::access::{Access, valid_date, valid_posixct};
+use crate::codec::{date_days, date_text, datetime_micros, datetime_text};
+use crate::emit::number_text;
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 
 /// An expression read an absent value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Absent;
 
-/// An evaluated expression: a JSON value, or a reference into the host
-/// form with its declared type, if known.
+/// A value of the rule dialect.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Scalar {
+    /// `null`, from a literal.
+    Null,
+    /// A logical.
+    Bool(bool),
+    /// A number; integers and doubles alike.
+    Num(f64),
+    /// A string.
+    Str(String),
+    /// Days since 1970-01-01.
+    Date(i64),
+    /// Microseconds since 1970-01-01T00:00:00Z.
+    DateTime(i64),
+    /// An array, from a vector, a factor, `levels()`, or `dim()`.
+    Array(Vec<Scalar>),
+}
+
+impl Scalar {
+    /// A value of the JSON host form without a declared type as a scalar.
+    /// A string stays a string; comparison with a number reads a
+    /// non-finite number's string form (`"NaN"`, `"Infinity"`,
+    /// `"-Infinity"`) as that number.
+    pub fn from_value(v: &Value) -> Scalar {
+        match v {
+            Value::Null => Scalar::Null,
+            Value::Bool(b) => Scalar::Bool(*b),
+            Value::Number(n) => Scalar::Num(n.as_f64().unwrap_or(f64::NAN)),
+            Value::String(s) => Scalar::Str(s.clone()),
+            Value::Array(a) => Scalar::Array(a.iter().map(Scalar::from_value).collect()),
+            Value::Object(_) => Scalar::Null,
+        }
+    }
+
+    /// The scalar's JSON form, for the JSON host form's callers.
+    pub fn to_value(&self) -> Value {
+        match self {
+            Scalar::Null => Value::Null,
+            Scalar::Bool(b) => Value::Bool(*b),
+            Scalar::Num(x) => number_value(*x),
+            Scalar::Str(s) => Value::from(s.as_str()),
+            Scalar::Date(d) => Value::from(date_text(*d)),
+            Scalar::DateTime(m) => Value::from(datetime_text(*m)),
+            Scalar::Array(a) => Value::Array(a.iter().map(Scalar::to_value).collect()),
+        }
+    }
+
+    /// The value as a rule's message shows it.
+    pub fn shown(&self) -> String {
+        match self {
+            Scalar::Null => "null".to_string(),
+            Scalar::Bool(b) => b.to_string(),
+            Scalar::Num(x) => number_text(*x),
+            Scalar::Str(s) => format!("\"{s}\""),
+            Scalar::Date(d) => date_text(*d),
+            Scalar::DateTime(m) => datetime_text(*m),
+            Scalar::Array(a) => format!(
+                "[{}]",
+                a.iter().map(Scalar::shown).collect::<Vec<_>>().join(", ")
+            ),
+        }
+    }
+
+    /// A number, or the string form of a non-finite number.
+    fn number(&self) -> Option<f64> {
+        match self {
+            Scalar::Num(x) => Some(*x),
+            Scalar::Str(s) => as_number(&Value::from(s.as_str())),
+            _ => None,
+        }
+    }
+
+    fn is_num(&self) -> bool {
+        matches!(self, Scalar::Num(_))
+    }
+
+    /// The days of a date, or of a date literal.
+    fn days(&self) -> Option<i64> {
+        match self {
+            Scalar::Date(d) => Some(*d),
+            Scalar::Str(s) if valid_date(s) => Some(date_days(s)),
+            _ => None,
+        }
+    }
+
+    /// The microseconds of a date-time, or of a date-time literal.
+    fn micros(&self) -> Option<i64> {
+        match self {
+            Scalar::DateTime(m) => Some(*m),
+            Scalar::Str(s) if valid_posixct(s) => Some(datetime_micros(s)),
+            _ => None,
+        }
+    }
+}
+
+fn number_value(x: f64) -> Value {
+    if x.is_finite() && x.fract() == 0.0 && x.abs() < 9.007_199_254_740_992e15 {
+        Value::from(x as i64)
+    } else if x.is_nan() {
+        Value::from("NaN")
+    } else if x.is_infinite() {
+        Value::from(if x > 0.0 { "Infinity" } else { "-Infinity" })
+    } else {
+        serde_json::Number::from_f64(x).map_or(Value::Null, Value::Number)
+    }
+}
+
+/// An evaluated expression: a scalar, or a reference into the host form
+/// with its declared type, if known.
 pub(crate) enum Val<'l, A> {
-    V(Value),
+    V(Scalar),
     R(A, Option<&'l FieldType>),
 }
 
@@ -34,7 +150,7 @@ pub(crate) enum Val<'l, A> {
 pub(crate) type Evaluated<'l, A> = Result<Result<Val<'l, A>, Absent>, String>;
 
 /// The type of a value whose declared type is not known.
-static UNTYPED: FieldType = FieldType::Json;
+pub(crate) static UNTYPED: FieldType = FieldType::Json;
 
 /// A number: a JSON number, or a non-finite double in its string form.
 pub(crate) fn as_number(v: &Value) -> Option<f64> {
@@ -50,28 +166,8 @@ pub(crate) fn as_number(v: &Value) -> Option<f64> {
     }
 }
 
-fn number(x: f64) -> Value {
-    if x.is_finite() && x.fract() == 0.0 && x.abs() < 9.007_199_254_740_992e15 {
-        Value::from(x as i64)
-    } else if x.is_nan() {
-        Value::from("NaN")
-    } else if x.is_infinite() {
-        Value::from(if x > 0.0 { "Infinity" } else { "-Infinity" })
-    } else {
-        serde_json::Number::from_f64(x).map_or(Value::Null, Value::Number)
-    }
-}
-
-fn want_number(v: &Value, op: &str) -> Result<f64, String> {
-    as_number(v).ok_or_else(|| format!("`{op}` takes numbers, found {v}"))
-}
-
-fn want_bool(v: &Value, what: &str) -> Result<bool, String> {
-    v.as_bool()
-        .ok_or_else(|| format!("{what} is a logical condition, found {v}"))
-}
-
-/// Strict equality: numbers by value, everything else structurally.
+/// Strict equality of JSON values: numbers by value, everything else
+/// structurally.
 pub(crate) fn strict_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Array(x), Value::Array(y)) => {
@@ -84,62 +180,255 @@ pub(crate) fn strict_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// The values of a factor: a string array, or the strings that
-/// `{"levels", "codes"}` encodes.
-fn factor_values(v: &Value) -> Option<Vec<Value>> {
+/// Strict equality of scalars: numbers by value, with `NaN` equal to
+/// itself; a date or date-time equal to the literal of the same instant;
+/// arrays element by element.
+fn scalar_eq(a: &Scalar, b: &Scalar) -> bool {
+    match (a, b) {
+        (Scalar::Num(_), _) | (_, Scalar::Num(_)) => match (a.number(), b.number()) {
+            (Some(x), Some(y)) => x == y || (x.is_nan() && y.is_nan()),
+            _ => false,
+        },
+        (Scalar::Array(x), Scalar::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| scalar_eq(p, q))
+        }
+        (Scalar::Date(_), _) | (_, Scalar::Date(_)) => match (a.days(), b.days()) {
+            (Some(x), Some(y)) => x == y,
+            _ => false,
+        },
+        (Scalar::DateTime(_), _) | (_, Scalar::DateTime(_)) => match (a.micros(), b.micros()) {
+            (Some(x), Some(y)) => x == y,
+            _ => false,
+        },
+        _ => a == b,
+    }
+}
+
+/// The order of two scalars: numbers, dates, date-times, and strings.
+fn scalar_cmp(a: &Scalar, b: &Scalar) -> Result<Option<Ordering>, String> {
+    if (a.is_num() || b.is_num())
+        && let (Some(x), Some(y)) = (a.number(), b.number())
+    {
+        return Ok(x.partial_cmp(&y));
+    }
+    if (matches!(a, Scalar::Date(_)) || matches!(b, Scalar::Date(_)))
+        && let (Some(x), Some(y)) = (a.days(), b.days())
+    {
+        return Ok(Some(x.cmp(&y)));
+    }
+    if (matches!(a, Scalar::DateTime(_)) || matches!(b, Scalar::DateTime(_)))
+        && let (Some(x), Some(y)) = (a.micros(), b.micros())
+    {
+        return Ok(Some(x.cmp(&y)));
+    }
+    match (a, b) {
+        (Scalar::Str(x), Scalar::Str(y)) => Ok(Some(x.cmp(y))),
+        _ => Err(format!("cannot compare {} and {}", a.shown(), b.shown())),
+    }
+}
+
+fn want_number(v: &Scalar, op: &str) -> Result<f64, String> {
+    v.number()
+        .ok_or_else(|| format!("`{op}` takes numbers, found {}", v.shown()))
+}
+
+fn want_bool(v: &Scalar, what: &str) -> Result<bool, String> {
     match v {
-        Value::Array(items) => Some(items.clone()),
-        Value::Object(m) => {
-            let levels = m.get("levels")?.as_array()?;
-            let codes = m.get("codes")?.as_array()?;
+        Scalar::Bool(b) => Ok(*b),
+        other => Err(format!(
+            "{what} is a logical condition, found {}",
+            other.shown()
+        )),
+    }
+}
+
+pub(crate) fn unwrap_option(ft: &FieldType) -> &FieldType {
+    match ft {
+        FieldType::Option { inner, .. } => inner,
+        other => other,
+    }
+}
+
+/// A value of the host form read as a scalar by its declared type; a value
+/// of an unknown type, or of a type without a scalar reading, through its
+/// JSON form.
+pub(crate) fn read_scalar<'a, A: Access<'a>>(
+    a: A,
+    ty: Option<&FieldType>,
+    lookup: &dyn TypeLookup,
+) -> Scalar {
+    let Some(ft) = ty.map(unwrap_option) else {
+        return untyped(&a.to_value(&UNTYPED, lookup));
+    };
+    match ft {
+        FieldType::Logical => a.logical().map_or(Scalar::Null, Scalar::Bool),
+        FieldType::Integer(_) => a.integer().map_or(Scalar::Null, |x| Scalar::Num(x as f64)),
+        FieldType::Double(_) => a.double().map_or(Scalar::Null, Scalar::Num),
+        FieldType::Character(_) => a
+            .character()
+            .map_or(Scalar::Null, |s| Scalar::Str(s.into_owned())),
+        FieldType::Date => a.date().map_or(Scalar::Null, Scalar::Date),
+        FieldType::Posixct => a.datetime().map_or(Scalar::Null, Scalar::DateTime),
+        FieldType::Vec { element, .. } => {
+            let n = a.vec(element).unwrap_or(0);
+            Scalar::Array(read_items(a, element, n, lookup))
+        }
+        FieldType::Factor { levels, ordered } => match a.factor(levels.as_deref(), *ordered) {
+            Ok(f) => Scalar::Array(
+                (0..f.codes.len())
+                    .map(|i| match f.codes.get(i) {
+                        Some(c) if c >= 1 => f
+                            .levels
+                            .get(c as usize - 1)
+                            .map_or(Scalar::Null, |l| Scalar::Str(l.to_string())),
+                        _ => Scalar::Null,
+                    })
+                    .collect(),
+            ),
+            Err(_) => Scalar::from_value(&a.to_value(ft, lookup)),
+        },
+        _ => Scalar::from_value(&a.to_value(ft, lookup)),
+    }
+}
+
+/// Whether `read_scalar` reads a value of `ft` without its JSON form: a
+/// scalar, a factor, or a vector of these.
+pub(crate) fn readable(ft: &FieldType) -> bool {
+    match unwrap_option(ft) {
+        FieldType::Logical
+        | FieldType::Integer(_)
+        | FieldType::Double(_)
+        | FieldType::Character(_)
+        | FieldType::Date
+        | FieldType::Posixct
+        | FieldType::Factor { .. } => true,
+        FieldType::Vec { element, .. } => readable(element),
+        _ => false,
+    }
+}
+
+/// Whether `==` compares two values of `ft` with `equal_field_access`:
+/// every type but a scalar, whose comparison follows `scalar_eq`, and a
+/// factor, which compares by labels.
+fn compared_in_place(ft: &FieldType) -> bool {
+    !matches!(
+        ft,
+        FieldType::Logical
+            | FieldType::Integer(_)
+            | FieldType::Double(_)
+            | FieldType::Character(_)
+            | FieldType::Date
+            | FieldType::Posixct
+            | FieldType::Factor { .. }
+    )
+}
+
+/// Items `0..n` of a sequence of `element` as scalars.
+fn read_items<'a, A: Access<'a>>(
+    a: A,
+    element: &FieldType,
+    n: usize,
+    lookup: &dyn TypeLookup,
+) -> Vec<Scalar> {
+    let mut out = Vec::with_capacity(n);
+    match unwrap_option(element) {
+        FieldType::Double(_) => a.each_double(n, |_, r| {
+            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::Num))
+        }),
+        FieldType::Integer(_) => a.each_integer(n, |_, r| {
+            out.push(
+                r.ok()
+                    .flatten()
+                    .map_or(Scalar::Null, |x| Scalar::Num(x as f64)),
+            )
+        }),
+        FieldType::Logical => a.each_logical(n, |_, r| {
+            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::Bool))
+        }),
+        FieldType::Character(_) => a.each_character(n, |_, r| {
+            out.push(
+                r.ok()
+                    .flatten()
+                    .map_or(Scalar::Null, |s| Scalar::Str(s.into_owned())),
+            )
+        }),
+        FieldType::Date => a.each_date(n, |_, r| {
+            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::Date))
+        }),
+        FieldType::Posixct => a.each_datetime(n, |_, r| {
+            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::DateTime))
+        }),
+        _ => {
+            for i in 0..n {
+                let x = a.item(i);
+                out.push(if x.is_absent() {
+                    Scalar::Null
+                } else {
+                    read_scalar(x, Some(element), lookup)
+                });
+            }
+        }
+    }
+    out
+}
+
+/// A value of the JSON host form without a declared type: a factor's
+/// `{"levels", "codes"}` reads as its level strings.
+fn untyped(v: &Value) -> Scalar {
+    if let Value::Object(m) = v
+        && let (Some(Value::Array(levels)), Some(Value::Array(codes))) =
+            (m.get("levels"), m.get("codes"))
+    {
+        return Scalar::Array(
             codes
                 .iter()
                 .map(|c| {
-                    let i = c.as_u64()? as usize;
-                    levels.get(i.checked_sub(1)?).cloned()
+                    c.as_u64()
+                        .and_then(|k| levels.get((k as usize).checked_sub(1)?))
+                        .map_or(Scalar::Null, Scalar::from_value)
                 })
-                .collect()
+                .collect(),
+        );
+    }
+    Scalar::from_value(v)
+}
+
+/// `nrow()`, `ncol()`, and `dim()` of a value of the JSON host form without
+/// a declared type: a table's `"$length"` and columns, a matrix's `shape`.
+fn untyped_measure(op: Op, v: &Value) -> Option<Scalar> {
+    let shape = || -> Option<Vec<u64>> {
+        v.get("shape")?
+            .as_array()?
+            .iter()
+            .map(Value::as_u64)
+            .collect()
+    };
+    let rows = v.get("$length").and_then(Value::as_u64);
+    match op {
+        Op::Nrow => rows
+            .or_else(|| shape()?.first().copied())
+            .map(|x| Scalar::Num(x as f64)),
+        Op::Ncol => match (rows, v.as_object()) {
+            (Some(_), Some(m)) => Some(Scalar::Num(
+                m.keys().filter(|k| !k.starts_with('$')).count() as f64,
+            )),
+            _ => shape()?.get(1).map(|&x| Scalar::Num(x as f64)),
+        },
+        Op::Dim => {
+            shape().map(|s| Scalar::Array(s.into_iter().map(|x| Scalar::Num(x as f64)).collect()))
         }
         _ => None,
     }
 }
 
-/// The items of an array-like value: an array, or a factor's values.
-fn items(v: &Value) -> Option<Vec<Value>> {
-    factor_values(v)
-}
-
-fn shape(v: &Value) -> Option<Vec<u64>> {
-    v.get("shape")?
-        .as_array()?
-        .iter()
-        .map(Value::as_u64)
-        .collect()
-}
-
-/// The number of rows of a table (`"$length"`) or a matrix (`shape[0]`).
-fn nrow(v: &Value) -> Option<u64> {
-    v.get("$length")
-        .and_then(Value::as_u64)
-        .or_else(|| shape(v)?.first().copied())
-}
-
-fn ncol(v: &Value) -> Option<u64> {
-    if v.get("$length").is_some() {
-        let m = v.as_object()?;
-        return Some(m.keys().filter(|k| !k.starts_with('$')).count() as u64);
-    }
-    shape(v)?.get(1).copied()
-}
-
-fn present<'l, A>(v: Value) -> Evaluated<'l, A> {
+fn present<'l, A>(v: Scalar) -> Evaluated<'l, A> {
     Ok(Ok(Val::V(v)))
 }
 
 macro_rules! value {
     ($self:ident, $e:expr) => {
         match $e? {
-            Ok(v) => $self.json(v),
+            Ok(v) => $self.scalar(v),
             Err(Absent) => return Ok(Err(Absent)),
         }
     };
@@ -154,13 +443,6 @@ macro_rules! val {
     };
 }
 
-fn unwrap_option(ft: &FieldType) -> &FieldType {
-    match ft {
-        FieldType::Option { inner, .. } => inner,
-        other => other,
-    }
-}
-
 /// An evaluation environment: the value a rule belongs to and the fields in
 /// its scope, and the element of an enclosing quantifier.
 pub(crate) struct Env<'l, A> {
@@ -171,10 +453,11 @@ pub(crate) struct Env<'l, A> {
 }
 
 impl<'a, 'l, A: Access<'a>> Env<'l, A> {
-    fn json(&self, v: Val<'l, A>) -> Value {
+    /// The value of an evaluated expression, read by its declared type.
+    pub fn scalar(&self, v: Val<'l, A>) -> Scalar {
         match v {
             Val::V(v) => v,
-            Val::R(a, ty) => a.to_value(ty.unwrap_or(&UNTYPED), self.lookup),
+            Val::R(a, ty) => read_scalar(a, ty, self.lookup),
         }
     }
 
@@ -296,20 +579,20 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
             Expr::And(parts) => {
                 for p in parts {
                     if !want_bool(&value!(self, self.eval(p)), "an operand of `and`")? {
-                        return present(Value::Bool(false));
+                        return present(Scalar::Bool(false));
                     }
                 }
-                present(Value::Bool(true))
+                present(Scalar::Bool(true))
             }
             Expr::Or(parts) => {
                 for p in parts {
                     if want_bool(&value!(self, self.eval(p)), "an operand of `or`")? {
-                        return present(Value::Bool(true));
+                        return present(Scalar::Bool(true));
                     }
                 }
-                present(Value::Bool(false))
+                present(Scalar::Bool(false))
             }
-            Expr::IsNull(inner) => present(Value::Bool(self.eval(inner)?.is_err())),
+            Expr::IsNull(inner) => present(Scalar::Bool(self.eval(inner)?.is_err())),
             Expr::IsVariant {
                 value,
                 variant,
@@ -321,12 +604,16 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     && let Some(TypeDef::Enum(def)) = self.lookup.find(name)
                 {
                     return match a.variant(name, def) {
-                        Ok(n) => present(Value::Bool(n == variant.as_str())),
+                        Ok(n) => present(Scalar::Bool(n == variant.as_str())),
                         Err(f) => Err(f.message),
                     };
                 }
-                let v = self.json(v);
-                let name = match (tag, &v) {
+                // A value of the JSON host form without a declared type.
+                let json = match v {
+                    Val::R(a, ty) => a.to_value(ty.unwrap_or(&UNTYPED), self.lookup),
+                    Val::V(s) => s.to_value(),
+                };
+                let name = match (tag, &json) {
                     (VariantTag::UnitOnly | VariantTag::Unknown, Value::String(s)) => {
                         Some(s.as_str())
                     }
@@ -339,8 +626,8 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     _ => None,
                 };
                 match name {
-                    Some(n) => present(Value::Bool(n == variant)),
-                    None => Err(format!("{v} is not a value of the enum")),
+                    Some(n) => present(Scalar::Bool(n == variant)),
+                    None => Err(format!("{json} is not a value of the enum")),
                 }
             }
             Expr::Levels { value, declared } => {
@@ -350,23 +637,28 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 {
                     return match a.factor(levels.as_deref(), *ordered) {
                         Ok(f) => match (levels, declared) {
-                            (Some(d), _) | (None, Some(d)) => present(Value::from(d.clone())),
-                            _ => present(Value::from(
-                                f.levels.iter().map(|l| l.to_string()).collect::<Vec<_>>(),
+                            (Some(d), _) | (None, Some(d)) => present(strings(d)),
+                            _ => present(Scalar::Array(
+                                f.levels
+                                    .iter()
+                                    .map(|l| Scalar::Str(l.to_string()))
+                                    .collect(),
                             )),
                         },
                         Err(e) => Err(e.message),
                     };
                 }
-                let v = self.json(v);
-                let levels = match (&v, declared) {
-                    (Value::Object(m), _) => m.get("levels").cloned(),
-                    (_, Some(d)) => Some(Value::from(d.clone())),
-                    _ => None,
-                };
-                levels
-                    .map(present)
-                    .unwrap_or_else(|| Err(format!("{v} carries no levels")))
+                // A factor of the JSON host form: `{"levels", "codes"}`.
+                if let Val::R(a, ty) = &v
+                    && let Value::Object(m) = a.to_value(ty.unwrap_or(&UNTYPED), self.lookup)
+                    && let Some(l) = m.get("levels")
+                {
+                    return present(Scalar::from_value(l));
+                }
+                match declared {
+                    Some(d) => present(strings(d)),
+                    None => Err("the value carries no levels".to_string()),
+                }
             }
             Expr::Quantifier {
                 all,
@@ -384,7 +676,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                         element: Some(el),
                     };
                     let holds = match env.eval(condition)? {
-                        Ok(v) => want_bool(&env.json(v), "a quantifier's condition")?,
+                        Ok(v) => want_bool(&env.scalar(v), "a quantifier's condition")?,
                         // An absent operand: the element holds.
                         Err(Absent) => *all,
                     };
@@ -394,7 +686,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     }
                     Ok(true)
                 })?;
-                present(Value::Bool(result.unwrap_or(*all)))
+                present(Scalar::Bool(result.unwrap_or(*all)))
             }
             Expr::Op(op, args) => {
                 if args.len() == 1 && matches!(op, Op::Length | Op::Nrow | Op::Ncol | Op::Dim) {
@@ -404,14 +696,86 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     {
                         return r.map(Ok);
                     }
-                    return apply(*op, &[self.json(v)]).map(|v| Ok(Val::V(v)));
+                    if let Val::R(a, None) = &v
+                        && *op != Op::Length
+                        && let Some(r) = untyped_measure(*op, &a.to_value(&UNTYPED, self.lookup))
+                    {
+                        return present(r);
+                    }
+                    return apply(*op, &[self.scalar(v)]).map(|v| Ok(Val::V(v)));
                 }
                 let mut vals = Vec::with_capacity(args.len());
                 for a in args {
-                    vals.push(value!(self, self.eval(a)));
+                    vals.push(val!(self.eval(a)));
                 }
-                apply(*op, &vals).map(|v| Ok(Val::V(v)))
+                if let Some(r) = self.in_place(*op, &vals) {
+                    return r.map(|v| Ok(Val::V(v)));
+                }
+                let scalars: Vec<Scalar> = vals.into_iter().map(|v| self.scalar(v)).collect();
+                apply(*op, &scalars).map(|v| Ok(Val::V(v)))
             }
+        }
+    }
+
+    /// The operators that read references in place: `==` and `!=` of two
+    /// struct or enum values, `in` over a vector, and `non_increasing()` and
+    /// `non_decreasing()` of a vector; `None` for the others.
+    fn in_place(&self, op: Op, vals: &[Val<'l, A>]) -> Option<Result<Scalar, String>> {
+        match (op, vals) {
+            (Op::Eq | Op::Ne, [Val::R(a, ta), Val::R(b, tb)]) => {
+                let (ta, tb) = (ta.map(unwrap_option), tb.map(unwrap_option));
+                let eq = match (ta, tb) {
+                    // Two values of one declared type that is not a scalar
+                    // or a factor: compared in place.
+                    (Some(fa), Some(fb)) if fa == fb && compared_in_place(fa) => {
+                        crate::equal::equal_field_access(fa, *a, *b, self.lookup)
+                    }
+                    // A value without a scalar reading, or of an unknown
+                    // type: compared by canonical form.
+                    _ if !ta.is_some_and(readable) || !tb.is_some_and(readable) => {
+                        crate::equal::canonical_equal(
+                            ta.unwrap_or(&UNTYPED),
+                            *a,
+                            tb.unwrap_or(&UNTYPED),
+                            *b,
+                            self.lookup,
+                        )
+                    }
+                    _ => return None,
+                };
+                Some(Ok(Scalar::Bool(eq == (op == Op::Eq))))
+            }
+            (Op::In, [needle, Val::R(a, Some(ft))]) => {
+                let FieldType::Vec { element, .. } = unwrap_option(ft) else {
+                    return None;
+                };
+                let needle = match needle {
+                    Val::V(s) => s.clone(),
+                    Val::R(x, t) => read_scalar(*x, *t, self.lookup),
+                };
+                let n = a.vec(element).ok()?;
+                Some(Ok(Scalar::Bool(contains(
+                    *a,
+                    element,
+                    n,
+                    &needle,
+                    self.lookup,
+                ))))
+            }
+            (Op::NonIncreasing | Op::NonDecreasing, [Val::R(a, Some(ft))]) => {
+                let FieldType::Vec { element, .. } = unwrap_option(ft) else {
+                    return None;
+                };
+                let n = a.vec(element).ok()?;
+                Some(monotone(
+                    *a,
+                    element,
+                    n,
+                    op == Op::NonIncreasing,
+                    self.lookup,
+                ))
+            }
+            _ => None,
         }
     }
 
@@ -421,7 +785,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
     fn measure(&self, op: Op, a: A, ft: &'l FieldType) -> Option<Result<Val<'l, A>, String>> {
         let ft = unwrap_option(ft);
         let lookup = self.lookup;
-        let n = |x: u64| Some(Ok(Val::V(Value::from(x))));
+        let n = |x: u64| Some(Ok(Val::V(Scalar::Num(x as f64))));
         match (op, ft) {
             (Op::Length, FieldType::Vec { element, .. }) => {
                 a.vec(element).ok().and_then(|k| n(k as u64))
@@ -435,7 +799,9 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 match op {
                     Op::Nrow => n(*d.shape.first()?),
                     Op::Ncol => n(*d.shape.get(1)?),
-                    Op::Dim => Some(Ok(Val::V(Value::from(d.shape)))),
+                    Op::Dim => Some(Ok(Val::V(Scalar::Array(
+                        d.shape.iter().map(|&x| Scalar::Num(x as f64)).collect(),
+                    )))),
                     _ => None,
                 }
             }
@@ -444,7 +810,9 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 match op {
                     Op::Nrow => n(s.shape[0]),
                     Op::Ncol => n(s.shape[1]),
-                    Op::Dim => Some(Ok(Val::V(Value::from(s.shape.to_vec())))),
+                    Op::Dim => Some(Ok(Val::V(Scalar::Array(
+                        s.shape.iter().map(|&x| Scalar::Num(x as f64)).collect(),
+                    )))),
                     _ => None,
                 }
             }
@@ -481,7 +849,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
     ) -> Result<(), String> {
         let (a, ty) = match c {
             Val::R(a, ty) => (a, ty.map(unwrap_option)),
-            Val::V(v) => return Err(format!("{v} is not a collection")),
+            Val::V(v) => return Err(format!("{} is not a collection", v.shown())),
         };
         let as_array = match (kind, ty) {
             (Collection::Array, _) => true,
@@ -497,7 +865,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
             };
             let n = a
                 .vec(element.unwrap_or(&UNTYPED))
-                .map_err(|_| format!("{} is not a collection", self.json(Val::R(a, ty))))?;
+                .map_err(|_| "the value is not a collection".to_string())?;
             for i in 0..n {
                 if !f(format!("/{i}"), (a.item(i), element))? {
                     break;
@@ -514,7 +882,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
             _ => None,
         };
         if a.map(value_ty.unwrap_or(&UNTYPED), ordered).is_err() {
-            return Err(format!("{} is not a collection", self.json(Val::R(a, ty))));
+            return Err("the value is not a collection".to_string());
         }
         let mut entries = Vec::new();
         a.each_entry(|i, e| {
@@ -535,28 +903,122 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         Ok(())
     }
 }
-fn apply(op: Op, a: &[Value]) -> Result<Value, String> {
-    let bool_ = |b: bool| Ok(Value::Bool(b));
+
+fn strings(items: &[String]) -> Scalar {
+    Scalar::Array(items.iter().map(|s| Scalar::Str(s.clone())).collect())
+}
+
+/// Whether items `0..n` of a vector hold `needle`, scanning doubles and
+/// integers in place.
+fn contains<'a, A: Access<'a>>(
+    a: A,
+    element: &FieldType,
+    n: usize,
+    needle: &Scalar,
+    lookup: &dyn TypeLookup,
+) -> bool {
+    match (unwrap_option(element), needle) {
+        (FieldType::Double(_) | FieldType::Integer(_), Scalar::Num(x)) => {
+            if let Some(s) = a.f64_slice() {
+                return s[..n.min(s.len())]
+                    .iter()
+                    .any(|&v| !crate::access::is_na_real(v) && scalar_eq(&Scalar::Num(v), needle));
+            }
+            if let Some(s) = a.i32_slice() {
+                return s[..n.min(s.len())]
+                    .iter()
+                    .any(|&v| v != i32::MIN && f64::from(v) == *x);
+            }
+            read_items(a, element, n, lookup)
+                .iter()
+                .any(|i| scalar_eq(i, needle))
+        }
+        _ => read_items(a, element, n, lookup)
+            .iter()
+            .any(|i| scalar_eq(i, needle)),
+    }
+}
+
+/// Whether items `0..n` of a vector are in order, scanning doubles in
+/// place.
+fn monotone<'a, A: Access<'a>>(
+    a: A,
+    element: &FieldType,
+    n: usize,
+    non_increasing: bool,
+    lookup: &dyn TypeLookup,
+) -> Result<Scalar, String> {
+    let ok_pair = |o: Option<Ordering>| match o {
+        Some(Ordering::Less) => !non_increasing,
+        Some(Ordering::Greater) => non_increasing,
+        Some(Ordering::Equal) => true,
+        None => false,
+    };
+    let unordered = || "an ordered array holds numbers, dates, or date-times".to_string();
+    let inner = unwrap_option(element);
+    if matches!(inner, FieldType::Double(_))
+        && let Some(s) = a.f64_slice()
+    {
+        let s = &s[..n.min(s.len())];
+        let mut ok = true;
+        for (i, &x) in s.iter().enumerate() {
+            if crate::access::is_na_real(x) {
+                return Err(unordered());
+            }
+            if i > 0 {
+                ok &= ok_pair(s[i - 1].partial_cmp(&x));
+            }
+        }
+        return Ok(Scalar::Bool(ok));
+    }
+    // Numbers, dates, and date-times streamed in place; `NA` is not
+    // ordered.
+    let mut prev: Option<f64> = None;
+    let (mut ok, mut missing) = (true, false);
+    let mut step = |r: Option<f64>| match r {
+        None => missing = true,
+        Some(x) => {
+            if let Some(p) = prev {
+                ok &= ok_pair(p.partial_cmp(&x));
+            }
+            prev = Some(x);
+        }
+    };
+    match inner {
+        FieldType::Double(_) => a.each_double(n, |_, r| step(r.ok().flatten())),
+        FieldType::Integer(_) => a.each_integer(n, |_, r| step(r.ok().flatten().map(|x| x as f64))),
+        FieldType::Date => a.each_date(n, |_, r| step(r.ok().flatten().map(|d| d as f64))),
+        FieldType::Posixct => a.each_datetime(n, |_, r| step(r.ok().flatten().map(|m| m as f64))),
+        _ => {
+            let items = read_items(a, element, n, lookup);
+            let mut ok = true;
+            for w in items.windows(2) {
+                ok &= ok_pair(scalar_cmp(&w[0], &w[1]).map_err(|_| unordered())?);
+            }
+            return Ok(Scalar::Bool(ok));
+        }
+    }
+    if missing {
+        Err(unordered())
+    } else {
+        Ok(Scalar::Bool(ok))
+    }
+}
+
+fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
+    let bool_ = |b: bool| Ok(Scalar::Bool(b));
     match op {
-        Op::Eq => bool_(strict_eq(&a[0], &a[1])),
-        Op::Ne => bool_(!strict_eq(&a[0], &a[1])),
+        Op::Eq => bool_(scalar_eq(&a[0], &a[1])),
+        Op::Ne => bool_(!scalar_eq(&a[0], &a[1])),
         Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-            let ord = match (as_number(&a[0]), as_number(&a[1])) {
-                (Some(x), Some(y)) => x.partial_cmp(&y),
-                // Dates and date-times compare in their canonical text form,
-                // which sorts in time order.
-                _ => match (&a[0], &a[1]) {
-                    (Value::String(x), Value::String(y)) => Some(x.cmp(y)),
-                    _ => return Err(format!("cannot compare {} and {}", a[0], a[1])),
-                },
+            let Some(o) = scalar_cmp(&a[0], &a[1])? else {
+                return bool_(false);
             };
-            let Some(o) = ord else { return bool_(false) };
-            use std::cmp::Ordering::*;
             bool_(match op {
-                Op::Lt => o == Less,
-                Op::Le => o != Greater,
-                Op::Gt => o == Greater,
-                _ => o != Less,
+                Op::Lt => o == Ordering::Less,
+                Op::Le => o != Ordering::Greater,
+                Op::Gt => o == Ordering::Greater,
+                _ => o != Ordering::Less,
             })
         }
         Op::Not => bool_(!want_bool(&a[0], "the operand of `!`")?),
@@ -565,17 +1027,16 @@ fn apply(op: Op, a: &[Value]) -> Result<Value, String> {
             for v in a {
                 xs.push(want_number(v, "arithmetic")?);
             }
-            let r = match op {
+            Ok(Scalar::Num(match op {
                 Op::Add => xs.iter().sum(),
                 Op::Mul => xs.iter().product(),
                 Op::Min => xs.iter().copied().fold(f64::INFINITY, f64::min),
                 _ => xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            };
-            Ok(number(r))
+            }))
         }
         Op::Sub => {
             let x = want_number(&a[0], "-")?;
-            Ok(number(match a.get(1) {
+            Ok(Scalar::Num(match a.get(1) {
                 Some(y) => x - want_number(y, "-")?,
                 None => -x,
             }))
@@ -585,79 +1046,75 @@ fn apply(op: Op, a: &[Value]) -> Result<Value, String> {
             if y == 0.0 {
                 return Err("division by zero".to_string());
             }
-            Ok(number(if op == Op::Div { x / y } else { x % y }))
+            Ok(Scalar::Num(if op == Op::Div { x / y } else { x % y }))
         }
-        Op::Floor => Ok(number(want_number(&a[0], "floor")?.floor())),
-        Op::Ceiling => Ok(number(want_number(&a[0], "ceiling")?.ceil())),
+        Op::Floor => Ok(Scalar::Num(want_number(&a[0], "floor")?.floor())),
+        Op::Ceiling => Ok(Scalar::Num(want_number(&a[0], "ceiling")?.ceil())),
         // R's round(): halves to even (IEC 60559).
-        Op::Round => Ok(number(want_number(&a[0], "round")?.round_ties_even())),
-        Op::In => match &a[1] {
-            Value::String(s) => match &a[0] {
-                Value::String(n) => bool_(s.contains(n.as_str())),
-                other => Err(format!("`in` over a string takes a string, found {other}")),
-            },
-            other => {
-                let hay =
-                    items(other).ok_or_else(|| format!("`in` searches an array, found {other}"))?;
-                bool_(hay.iter().any(|i| strict_eq(i, &a[0])))
-            }
+        Op::Round => Ok(Scalar::Num(want_number(&a[0], "round")?.round_ties_even())),
+        Op::In => match (&a[0], &a[1]) {
+            (Scalar::Str(n), Scalar::Str(s)) => bool_(s.contains(n.as_str())),
+            (other, Scalar::Str(_)) => Err(format!(
+                "`in` over a string takes a string, found {}",
+                other.shown()
+            )),
+            (needle, Scalar::Array(hay)) => bool_(hay.iter().any(|i| scalar_eq(i, needle))),
+            (_, other) => Err(format!("`in` searches an array, found {}", other.shown())),
         },
         Op::Cat => {
             let mut out = String::new();
             for v in a {
                 match v {
-                    Value::String(s) => out.push_str(s),
-                    Value::Number(n) => out.push_str(&n.to_string()),
-                    other => return Err(format!("`cat` joins strings and numbers, found {other}")),
+                    Scalar::Str(s) => out.push_str(s),
+                    Scalar::Num(x) => out.push_str(&number_text(*x)),
+                    Scalar::Date(d) => out.push_str(&date_text(*d)),
+                    Scalar::DateTime(m) => out.push_str(&datetime_text(*m)),
+                    other => {
+                        return Err(format!(
+                            "`cat` joins strings and numbers, found {}",
+                            other.shown()
+                        ));
+                    }
                 }
             }
-            Ok(Value::String(out))
+            Ok(Scalar::Str(out))
         }
         Op::Length => match &a[0] {
-            Value::String(s) => Ok(Value::from(s.chars().count())),
-            other => items(other)
-                .map(|i| Value::from(i.len()))
-                .ok_or_else(|| format!("`length` takes an array, found {other}")),
+            Scalar::Str(s) => Ok(Scalar::Num(s.chars().count() as f64)),
+            Scalar::Array(i) => Ok(Scalar::Num(i.len() as f64)),
+            other => Err(format!("`length` takes an array, found {}", other.shown())),
         },
-        Op::Subset => {
-            let (x, y) = (items(&a[0]), items(&a[1]));
-            match (x, y) {
-                (Some(x), Some(y)) => bool_(x.iter().all(|i| y.iter().any(|j| strict_eq(i, j)))),
-                _ => Err("`subset` takes arrays".to_string()),
+        Op::Subset => match (&a[0], &a[1]) {
+            (Scalar::Array(x), Scalar::Array(y)) => {
+                bool_(x.iter().all(|i| y.iter().any(|j| scalar_eq(i, j))))
             }
-        }
+            _ => Err("`subset` takes arrays".to_string()),
+        },
         Op::NonIncreasing | Op::NonDecreasing => {
-            let xs = items(&a[0]).ok_or("`non_increasing` takes an array")?;
+            let Scalar::Array(xs) = &a[0] else {
+                return Err("`non_increasing` takes an array".to_string());
+            };
             let mut ok = true;
             for w in xs.windows(2) {
-                let o = match (as_number(&w[0]), as_number(&w[1])) {
-                    (Some(p), Some(q)) => p.partial_cmp(&q),
-                    _ => match (&w[0], &w[1]) {
-                        (Value::String(p), Value::String(q)) => Some(p.cmp(q)),
-                        _ => {
-                            return Err(
-                                "an ordered array holds numbers, dates, or date-times".to_string()
-                            );
-                        }
-                    },
-                };
+                let o = scalar_cmp(&w[0], &w[1]).map_err(|_| {
+                    "an ordered array holds numbers, dates, or date-times".to_string()
+                })?;
                 ok &= match o {
-                    Some(std::cmp::Ordering::Less) => op == Op::NonDecreasing,
-                    Some(std::cmp::Ordering::Greater) => op == Op::NonIncreasing,
-                    Some(std::cmp::Ordering::Equal) => true,
+                    Some(Ordering::Less) => op == Op::NonDecreasing,
+                    Some(Ordering::Greater) => op == Op::NonIncreasing,
+                    Some(Ordering::Equal) => true,
                     None => false,
                 };
             }
             bool_(ok)
         }
-        Op::Nrow => nrow(&a[0])
-            .map(Value::from)
-            .ok_or_else(|| format!("`nrow` takes a table or a matrix, found {}", a[0])),
-        Op::Ncol => ncol(&a[0])
-            .map(Value::from)
-            .ok_or_else(|| format!("`ncol` takes a table or a matrix, found {}", a[0])),
-        Op::Dim => shape(&a[0])
-            .map(Value::from)
-            .ok_or_else(|| format!("`dim` takes a matrix, found {}", a[0])),
+        Op::Nrow | Op::Ncol | Op::Dim => Err(format!(
+            "`{}` takes a table or a matrix",
+            match op {
+                Op::Nrow => "nrow",
+                Op::Ncol => "ncol",
+                _ => "dim",
+            }
+        )),
     }
 }

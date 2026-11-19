@@ -1,0 +1,425 @@
+//! The exports of compiled code: an `R8Exports` table from a package, its
+//! registration, and calls of its impl functions.
+//!
+//! A package whose declarations are compiled returns a static `R8Exports`
+//! from its `.Call` routine `r8_exports`, as an external pointer tagged with
+//! the symbol `r8_exports` (`R8.h`). `r8_register()` passes the pointer to
+//! [`r8_exports_info`], which checks the table, and to
+//! [`r8_register_exports`], which declares its IR document and keeps its
+//! function pointers; an impl's R method calls [`r8_call_impl`].
+//!
+//! Everything a table points to is static while the package's shared object
+//! is loaded, so the registry keeps the pointers themselves.
+
+use std::collections::HashMap;
+use std::ffi::{CStr, c_char};
+use std::sync::{Mutex, OnceLock};
+
+use extendr_api::prelude::*;
+use extendr_api::{Error, Result, SEXP};
+use extendr_ffi::{R_ExternalPtrAddr, R_ExternalPtrTag, R_xlen_t, Rf_install, VECTOR_ELT};
+use rtemis_r8::abi::{
+    ABI_VERSION, CallContext, ERROR, Error as AbiError, Exports, ImplEntry, MethodFn, OK, Sexp,
+    TypeVTable,
+};
+use rtemis_r8::ir::{ImplTarget, IrDocument};
+
+fn fail(message: impl Into<String>) -> Error {
+    Error::Other(message.into())
+}
+
+/// The size of `R8Exports` in ABI version 1, the fields every table holds.
+const EXPORTS_SIZE: u32 = std::mem::size_of::<Exports>() as u32;
+
+/// A registered impl function.
+#[derive(Clone, Copy)]
+struct ImplFn {
+    call: MethodFn,
+}
+
+/// A registered codec of a Rust-native type.
+#[derive(Clone, Copy)]
+struct VTable(*const TypeVTable);
+
+// The tables are static data of loaded shared objects, read on R's main
+// thread only.
+unsafe impl Send for VTable {}
+
+/// An impl function's trait, type, and method.
+type ImplKey = (String, String, String);
+
+/// The entries one package registered.
+#[derive(Default)]
+struct Owned {
+    impls: Vec<ImplKey>,
+    types: Vec<String>,
+}
+
+#[derive(Default)]
+struct Compiled {
+    /// Impl functions by trait, type, and method.
+    impls: HashMap<ImplKey, ImplFn>,
+    /// Codecs of Rust-native types by qualified name.
+    types: HashMap<String, VTable>,
+    /// The entries each package registered, for their replacement.
+    owned: HashMap<String, Owned>,
+}
+
+fn compiled() -> &'static Mutex<Compiled> {
+    static COMPILED: OnceLock<Mutex<Compiled>> = OnceLock::new();
+    COMPILED.get_or_init(|| Mutex::new(Compiled::default()))
+}
+
+/// The registered Rust-native types and whether each codec table holds
+/// every function.
+///
+/// @return List: `type_name` and `complete`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_compiled_types() -> Result<List> {
+    let c = compiled()
+        .lock()
+        .map_err(|_| fail("the registry of compiled exports is unavailable"))?;
+    let mut names: Vec<&String> = c.types.keys().collect();
+    names.sort();
+    let complete: Vec<bool> = names
+        .iter()
+        .map(|n| {
+            let v = unsafe { &*c.types[*n].0 };
+            v.from_fields.is_some()
+                && v.decode.is_some()
+                && v.encode.is_some()
+                && v.write_state.is_some()
+                && v.read_state.is_some()
+                && v.get_field.is_some()
+                && v.with_field.is_some()
+                && v.drop.is_some()
+                && v.bytes.is_some()
+        })
+        .collect();
+    let type_name: Vec<String> = names.into_iter().cloned().collect();
+    Ok(list!(type_name = type_name, complete = complete))
+}
+
+/// The size of `R8TypeVTable` in ABI version 1.
+const TYPE_VTABLE_SIZE: u32 = std::mem::size_of::<TypeVTable>() as u32;
+
+/// The codec tables of an exports table. The array's stride is the `size` of
+/// its entries, so a package built against a later header, whose entries
+/// carry appended fields, is read at the offsets it wrote.
+fn type_tables(e: &Exports) -> Result<Vec<*const TypeVTable>> {
+    if e.types.is_null() || e.n_types == 0 {
+        return Ok(Vec::new());
+    }
+    let base = e.types.cast::<u8>();
+    let stride = unsafe { (*e.types).size };
+    if stride < TYPE_VTABLE_SIZE {
+        return Err(fail(format!(
+            "the codec tables have size {stride}; ABI version 1 requires at least {TYPE_VTABLE_SIZE}"
+        )));
+    }
+    let mut out = Vec::with_capacity(e.n_types);
+    for i in 0..e.n_types {
+        let v = unsafe { base.add(i * stride as usize) }.cast::<TypeVTable>();
+        let size = unsafe { (*v).size };
+        if size != stride {
+            return Err(fail(format!(
+                "codec table {} has size {size}; the first has size {stride}",
+                i + 1
+            )));
+        }
+        out.push(v);
+    }
+    Ok(out)
+}
+
+/// A NUL-terminated UTF-8 string of a table.
+fn text(p: *const c_char, what: &str) -> Result<String> {
+    if p.is_null() {
+        return Err(fail(format!("the exports table has no {what}")));
+    }
+    unsafe { CStr::from_ptr(p) }
+        .to_str()
+        .map(str::to_string)
+        .map_err(|_| fail(format!("the exports table's {what} is not UTF-8")))
+}
+
+/// The `R8Exports` an external pointer holds, checked: the tag, the ABI
+/// version, and the size.
+fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
+    let x = unsafe { ptr.get() };
+    if ptr.rtype() != Rtype::ExternalPtr {
+        return Err(fail(
+            "`r8_exports` returned another object than an external pointer",
+        ));
+    }
+    let tag = unsafe { R_ExternalPtrTag(x) };
+    let expected = unsafe { Rf_install(c"r8_exports".as_ptr()) };
+    if tag != expected {
+        return Err(fail(
+            "the external pointer of `r8_exports` is not tagged `r8_exports`",
+        ));
+    }
+    let p = unsafe { R_ExternalPtrAddr(x) } as *const Exports;
+    if p.is_null() {
+        return Err(fail("the external pointer of `r8_exports` is NULL"));
+    }
+    let e = unsafe { &*p };
+    if e.abi_version != ABI_VERSION {
+        return Err(fail(format!(
+            "the package was built against R8 ABI version {}, and this R8 provides version {ABI_VERSION}; reinstall the package",
+            e.abi_version
+        )));
+    }
+    if e.size < EXPORTS_SIZE {
+        return Err(fail(format!(
+            "the exports table has {} bytes, fewer than the {EXPORTS_SIZE} of ABI version {ABI_VERSION}",
+            e.size
+        )));
+    }
+    Ok(e)
+}
+
+fn ir_document(e: &Exports) -> Result<IrDocument> {
+    if e.ir_json.is_null() {
+        return Err(fail("the exports table has no IR document"));
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(e.ir_json as *const u8, e.ir_json_len) };
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| fail("the exports table's IR document is not UTF-8"))?;
+    IrDocument::from_json(text).map_err(|e| {
+        fail(format!(
+            "the exports table's IR document does not read: {e}"
+        ))
+    })
+}
+
+/// The package and namespace of an exports table, checked.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @return List: `package` and `namespace`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_exports_info(ptr: Robj) -> Result<List> {
+    let e = exports_of(&ptr)?;
+    let package = text(e.package, "package name")?;
+    let doc = ir_document(e)?;
+    Ok(list!(
+        package = package,
+        namespace = doc.namespace.to_string()
+    ))
+}
+
+/// Registers an exports table: declares its IR document's types, traits, and
+/// impls, and keeps the codecs of its Rust-native types and its impl
+/// functions, replacing the package's earlier entries.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @param package Character: The registering package.
+/// @return List: `trait_name`, `type_name`, and `method` of each impl function.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
+    let e = exports_of(&ptr)?;
+    let declared = text(e.package, "package name")?;
+    if declared != package {
+        return Err(fail(format!(
+            "the exports table names the package `{declared}` and is registered by `{package}`"
+        )));
+    }
+    let doc = ir_document(e)?;
+    let ns = doc.namespace.to_string();
+    let report = |what: &str, name: &str, problems: List| -> Result<()> {
+        let messages: Vec<String> = problems
+            .dollar("message")
+            .ok()
+            .and_then(|m| m.as_string_vector())
+            .unwrap_or_default();
+        if messages.is_empty() {
+            Ok(())
+        } else {
+            Err(fail(format!(
+                "the {what} `{name}` of `{package}` does not declare: {}",
+                messages.join("; ")
+            )))
+        }
+    };
+    for t in &doc.types {
+        let json = serde_json::to_string(t).map_err(|e| fail(e.to_string()))?;
+        report(
+            "type",
+            t.name().as_str(),
+            crate::declare::r8_declare_type(&json, &ns)?,
+        )?;
+    }
+    for t in &doc.traits {
+        let json = serde_json::to_string(t).map_err(|e| fail(e.to_string()))?;
+        report(
+            "trait",
+            t.name.as_str(),
+            crate::declare::r8_declare_trait(&json, &ns)?,
+        )?;
+    }
+    for i in &doc.impls {
+        let json = serde_json::to_string(i).map_err(|e| fail(e.to_string()))?;
+        crate::declare::r8_declare_impl(&json, &ns)?;
+    }
+    // Codecs and impl functions.
+    let vtables = type_tables(e)?;
+    let entries: &[ImplEntry] = if e.impls.is_null() || e.n_impls == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(e.impls, e.n_impls) }
+    };
+    let mut types = Vec::new();
+    for v in vtables {
+        let name = text(unsafe { (*v).type_name }, "type name")?;
+        let declared = doc
+            .types
+            .iter()
+            .any(|t| format!("{ns}::{}", t.name()) == name);
+        if !declared {
+            return Err(fail(format!(
+                "the codec of `{name}` has no declaration in the IR document of `{package}`"
+            )));
+        }
+        types.push((name, VTable(v)));
+    }
+    let mut impls = Vec::new();
+    for entry in entries {
+        let key = (
+            text(entry.trait_name, "trait name")?,
+            text(entry.type_name, "type name")?,
+            text(entry.method, "method name")?,
+        );
+        let call = entry.call.ok_or_else(|| {
+            fail(format!(
+                "the impl function of `{}` for `{}` is NULL",
+                key.0, key.1
+            ))
+        })?;
+        let declared = doc.impls.iter().any(|i| {
+            i.r#trait.to_string() == key.0
+                && matches!(&i.target, ImplTarget::Type { name } if name.to_string() == key.1)
+                && i.methods.iter().any(|m| m.as_str() == key.2)
+        });
+        if !declared {
+            return Err(fail(format!(
+                "the impl function `{}` of `{}` for `{}` has no impl in the IR document of `{package}`",
+                key.2, key.0, key.1
+            )));
+        }
+        impls.push((key, ImplFn { call }));
+    }
+    let mut c = compiled()
+        .lock()
+        .map_err(|_| fail("the registry of compiled exports is unavailable"))?;
+    if let Some(old) = c.owned.remove(package) {
+        for k in old.impls {
+            c.impls.remove(&k);
+        }
+        for t in old.types {
+            c.types.remove(&t);
+        }
+    }
+    let keys: Vec<ImplKey> = impls.iter().map(|(k, _)| k.clone()).collect();
+    let names: Vec<String> = types.iter().map(|(n, _)| n.clone()).collect();
+    for (k, f) in impls {
+        c.impls.insert(k, f);
+    }
+    for (n, v) in types {
+        c.types.insert(n, v);
+    }
+    c.owned.insert(
+        package.to_string(),
+        Owned {
+            impls: keys.clone(),
+            types: names,
+        },
+    );
+    let trait_names: Vec<String> = keys.iter().map(|k| k.0.clone()).collect();
+    let type_names: Vec<String> = keys.iter().map(|k| k.1.clone()).collect();
+    let methods: Vec<String> = keys.iter().map(|k| k.2.clone()).collect();
+    Ok(list!(
+        trait_name = trait_names,
+        type_name = type_names,
+        method = methods
+    ))
+}
+
+/// The text of a NUL-terminated field of an `R8Error`.
+fn error_text(buf: &[c_char]) -> String {
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Calls a registered impl function with the arguments of the method's
+/// call, in the method's declared order.
+///
+/// @param trait_name,type_name,method Character: The impl.
+/// @param args List: The arguments.
+/// @return The function's result.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_call_impl(trait_name: &str, type_name: &str, method: &str, args: List) -> Result<Robj> {
+    let f = {
+        let c = compiled()
+            .lock()
+            .map_err(|_| fail("the registry of compiled exports is unavailable"))?;
+        c.impls
+            .get(&(
+                trait_name.to_string(),
+                type_name.to_string(),
+                method.to_string(),
+            ))
+            .copied()
+    };
+    let Some(f) = f else {
+        return Err(fail(format!(
+            "`{type_name}` has no compiled impl of `{trait_name}` (method `{method}`)"
+        )));
+    };
+    let a = unsafe { args.get() };
+    // `rtemis_r8::abi::Sexp` is an untyped pointer of the size of `SEXP`.
+    let argv: Vec<Sexp> = (0..args.len())
+        .map(|i| unsafe { VECTOR_ELT(a, i as R_xlen_t) } as Sexp)
+        .collect();
+    let ctx = CallContext {
+        size: std::mem::size_of::<CallContext>() as u32,
+        flags: 0,
+        seed: 0,
+    };
+    let mut result: Sexp = unsafe { extendr_ffi::R_NilValue } as Sexp;
+    let mut err = AbiError {
+        code: [0; 64],
+        message: [0; 1024],
+    };
+    let status = unsafe { (f.call)(&ctx, argv.as_ptr(), argv.len(), &mut result, &mut err) };
+    match status {
+        OK => Ok(unsafe { Robj::from_sexp(result as SEXP) }),
+        ERROR => Err(fail(format!(
+            "{} [{}]",
+            error_text(&err.message),
+            error_text(&err.code)
+        ))),
+        other => Err(fail(format!(
+            "the impl function of `{trait_name}` for `{type_name}` returned the status {other}, neither R8_OK nor R8_ERROR"
+        ))),
+    }
+}
+
+extendr_module! {
+    mod exports;
+    fn r8_exports_info;
+    fn r8_register_exports;
+    fn r8_call_impl;
+    fn r8_compiled_types;
+}

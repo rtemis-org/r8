@@ -17,9 +17,9 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use extendr_api::SEXP;
 use extendr_ffi::{
-    ALTREP, INTEGER, INTEGER_GET_REGION, LENGTH, LOGICAL, LOGICAL_GET_REGION, R_CHAR, R_NaString,
-    R_NilValue, R_compute_identical, R_xlen_t, RAW, REAL, REAL_GET_REGION, Rf_getAttrib,
-    Rf_install, SEXPTYPE, STRING_ELT, TYPEOF, VECTOR_ELT, XLENGTH,
+    DATAPTR_OR_NULL, INTEGER, INTEGER_GET_REGION, LENGTH, LOGICAL, LOGICAL_GET_REGION, R_CHAR,
+    R_NaString, R_NilValue, R_compute_identical, R_xlen_t, RAW, REAL, REAL_GET_REGION,
+    Rf_getAttrib, Rf_install, SEXPTYPE, STRING_ELT, TYPEOF, VECTOR_ELT, XLENGTH,
 };
 use rtemis_r8::access::{Access, Codes, Dense, Dimnames, Factor, Form, Read, Sparse, Table};
 use rtemis_r8::ir::{EnumDef, FieldDef, FieldType};
@@ -208,27 +208,31 @@ fn logicals<'a>(x: SEXP) -> &'a [i32] {
     unsafe { std::slice::from_raw_parts(LOGICAL(x), xlen(x)) }
 }
 
-fn is_altrep(x: SEXP) -> bool {
-    unsafe { ALTREP(x) != 0 }
+/// The elements of a vector as one array, where R holds them as one: an
+/// ordinary vector, or an ALTREP vector whose data are materialized.
+fn data<'a, T>(x: SEXP) -> Option<&'a [T]> {
+    let p = unsafe { DATAPTR_OR_NULL(x) };
+    (!p.is_null()).then(|| unsafe { std::slice::from_raw_parts(p.cast::<T>(), xlen(x)) })
 }
 
-/// Calls `f` with each element of a double vector, reading an ALTREP vector
-/// by region so that it is not materialized.
-fn for_reals(x: SEXP, n: usize, mut f: impl FnMut(usize, f64)) {
-    if !is_altrep(x) {
-        for (i, &v) in reals(x)[..n].iter().enumerate() {
-            f(i, v);
+/// Calls `f` with elements `start..end` of a double vector, reading an
+/// ALTREP vector without materialized data by region, so that it stays
+/// unmaterialized. A short region read ends the calls early.
+fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, f64)) {
+    if let Some(s) = data::<f64>(x) {
+        for (i, &v) in s[start..end].iter().enumerate() {
+            f(start + i, v);
         }
         return;
     }
     let mut buf = [0f64; 4096];
-    let mut i = 0;
-    while i < n {
+    let mut i = start;
+    while i < end {
         let got = unsafe {
             REAL_GET_REGION(
                 x,
                 i as R_xlen_t,
-                buf.len().min(n - i) as R_xlen_t,
+                buf.len().min(end - i) as R_xlen_t,
                 buf.as_mut_ptr(),
             )
         } as usize;
@@ -242,21 +246,20 @@ fn for_reals(x: SEXP, n: usize, mut f: impl FnMut(usize, f64)) {
     }
 }
 
-/// Calls `f` with each element of an integer or logical vector, reading an
-/// ALTREP vector by region.
-fn for_ints(x: SEXP, n: usize, mut f: impl FnMut(usize, i32)) {
-    let logical = sexptype(x) == SEXPTYPE::LGLSXP;
-    if !is_altrep(x) {
-        let s = if logical { logicals(x) } else { ints(x) };
-        for (i, &v) in s[..n].iter().enumerate() {
-            f(i, v);
+/// Calls `f` with elements `start..end` of an integer or logical vector,
+/// reading an ALTREP vector without materialized data by region.
+fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, i32)) {
+    if let Some(s) = data::<i32>(x) {
+        for (i, &v) in s[start..end].iter().enumerate() {
+            f(start + i, v);
         }
         return;
     }
+    let logical = sexptype(x) == SEXPTYPE::LGLSXP;
     let mut buf = [0i32; 4096];
-    let mut i = 0;
-    while i < n {
-        let want = buf.len().min(n - i) as R_xlen_t;
+    let mut i = start;
+    while i < end {
+        let want = buf.len().min(end - i) as R_xlen_t;
         let got = unsafe {
             if logical {
                 LOGICAL_GET_REGION(x, i as R_xlen_t, want, buf.as_mut_ptr())
@@ -433,6 +436,20 @@ pub enum RView<'a> {
 }
 
 impl<'a> RView<'a> {
+    /// The R object the view reads, shared: a whole object or a list
+    /// element.
+    pub(crate) fn robj(self) -> extendr_api::Result<extendr_api::Robj> {
+        match self {
+            RView::Whole(x) | RView::Draft(x, _) => Ok(unsafe { extendr_api::Robj::from_sexp(x) }),
+            RView::Elem(x, i) if sexptype(x) == SEXPTYPE::VECSXP => {
+                Ok(unsafe { extendr_api::Robj::from_sexp(VECTOR_ELT(x, i as R_xlen_t)) })
+            }
+            _ => Err(extendr_api::Error::Other(
+                "a computed field names a value that is not an R object".to_string(),
+            )),
+        }
+    }
+
     fn sexp(self) -> Option<SEXP> {
         match self {
             RView::Whole(x) | RView::Draft(x, _) => Some(x),
@@ -603,32 +620,41 @@ impl<'a> Access<'a> for RView<'a> {
 
     fn f64_slice(self) -> Option<&'a [f64]> {
         let x = self.sexp()?;
-        (sexptype(x) == SEXPTYPE::REALSXP && !is_altrep(x)).then(|| reals(x))
+        (sexptype(x) == SEXPTYPE::REALSXP)
+            .then(|| data(x))
+            .flatten()
     }
 
     fn i32_slice(self) -> Option<&'a [i32]> {
         let x = self.sexp()?;
-        (sexptype(x) == SEXPTYPE::INTSXP && !is_altrep(x)).then(|| ints(x))
+        (sexptype(x) == SEXPTYPE::INTSXP).then(|| data(x)).flatten()
     }
 
-    fn each_double(self, n: usize, mut f: impl FnMut(usize, Read<Option<f64>>)) {
+    fn each_double_in(self, start: usize, end: usize, mut f: impl FnMut(usize, Read<Option<f64>>)) {
         let Some(x) = self.sexp() else { return };
         match sexptype(x) {
-            SEXPTYPE::REALSXP => for_reals(x, n, |i, d| f(i, Ok((!is_na_real(d)).then_some(d)))),
-            SEXPTYPE::INTSXP => {
-                for_ints(x, n, |i, v| f(i, Ok((v != NA_INT).then_some(f64::from(v)))))
-            }
-            _ => (0..n).for_each(|i| f(i, Err(r_type("expected a numeric vector")))),
+            SEXPTYPE::REALSXP => for_reals(x, start, end, |i, d| {
+                f(i, Ok((!is_na_real(d)).then_some(d)))
+            }),
+            SEXPTYPE::INTSXP => for_ints(x, start, end, |i, v| {
+                f(i, Ok((v != NA_INT).then_some(f64::from(v))))
+            }),
+            _ => (start..end).for_each(|i| f(i, Err(r_type("expected a numeric vector")))),
         }
     }
 
-    fn each_integer(self, n: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
+    fn each_integer_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<i64>>),
+    ) {
         let Some(x) = self.sexp() else { return };
         match sexptype(x) {
-            SEXPTYPE::INTSXP => {
-                for_ints(x, n, |i, v| f(i, Ok((v != NA_INT).then_some(i64::from(v)))))
-            }
-            SEXPTYPE::REALSXP => for_reals(x, n, |i, d| {
+            SEXPTYPE::INTSXP => for_ints(x, start, end, |i, v| {
+                f(i, Ok((v != NA_INT).then_some(i64::from(v))))
+            }),
+            SEXPTYPE::REALSXP => for_reals(x, start, end, |i, d| {
                 f(
                     i,
                     if d.is_nan() {
@@ -638,30 +664,42 @@ impl<'a> Access<'a> for RView<'a> {
                     },
                 )
             }),
-            _ => (0..n).for_each(|i| f(i, Err(r_type("expected an integer vector")))),
+            _ => (start..end).for_each(|i| f(i, Err(r_type("expected an integer vector")))),
         }
     }
 
-    fn each_logical(self, n: usize, mut f: impl FnMut(usize, Read<Option<bool>>)) {
+    fn each_logical_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<bool>>),
+    ) {
         let Some(x) = self.sexp() else { return };
         if sexptype(x) == SEXPTYPE::LGLSXP {
-            for_ints(x, n, |i, v| f(i, Ok((v != NA_INT).then_some(v != 0))));
+            for_ints(x, start, end, |i, v| {
+                f(i, Ok((v != NA_INT).then_some(v != 0)))
+            });
         }
     }
 
-    fn each_character(self, n: usize, mut f: impl FnMut(usize, Read<Option<Cow<'a, str>>>)) {
+    fn each_character_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<Cow<'a, str>>>),
+    ) {
         let Some(x) = self.sexp() else { return };
         if sexptype(x) == SEXPTYPE::STRSXP {
-            for i in 0..n {
+            for i in start..end.min(xlen(x)) {
                 f(i, Ok(string_elt(x, i)));
             }
         }
     }
 
-    fn each_date(self, n: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
+    fn each_date_in(self, start: usize, end: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
         let Some(x) = self.sexp() else { return };
         match sexptype(x) {
-            SEXPTYPE::REALSXP => for_reals(x, n, |i, d| {
+            SEXPTYPE::REALSXP => for_reals(x, start, end, |i, d| {
                 f(
                     i,
                     if d.is_nan() {
@@ -671,20 +709,25 @@ impl<'a> Access<'a> for RView<'a> {
                     },
                 )
             }),
-            SEXPTYPE::INTSXP => {
-                for_ints(x, n, |i, v| f(i, Ok((v != NA_INT).then_some(i64::from(v)))))
-            }
+            SEXPTYPE::INTSXP => for_ints(x, start, end, |i, v| {
+                f(i, Ok((v != NA_INT).then_some(i64::from(v))))
+            }),
             _ => {}
         }
     }
 
-    fn each_datetime(self, n: usize, mut f: impl FnMut(usize, Read<Option<i64>>)) {
+    fn each_datetime_in(
+        self,
+        start: usize,
+        end: usize,
+        mut f: impl FnMut(usize, Read<Option<i64>>),
+    ) {
         let Some(x) = self.sexp() else { return };
         match sexptype(x) {
-            SEXPTYPE::REALSXP => for_reals(x, n, |i, s| {
+            SEXPTYPE::REALSXP => for_reals(x, start, end, |i, s| {
                 f(i, Ok((!s.is_nan()).then(|| (s * 1e6).round() as i64)))
             }),
-            SEXPTYPE::INTSXP => for_ints(x, n, |i, v| {
+            SEXPTYPE::INTSXP => for_ints(x, start, end, |i, v| {
                 f(i, Ok((v != NA_INT).then_some(i64::from(v) * 1_000_000)))
             }),
             _ => {}

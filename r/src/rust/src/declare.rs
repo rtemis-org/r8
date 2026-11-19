@@ -138,7 +138,7 @@ fn r8_canonical_json(json: &str) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_type(type_json: &str, namespace: &str) -> Result<List> {
+pub(crate) fn r8_declare_type(type_json: &str, namespace: &str) -> Result<List> {
     let def: TypeDef = serde_json::from_str(type_json)
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
@@ -256,7 +256,7 @@ fn problems_list(problems: &[rtemis_r8::ir::DeclError], prefix: &str) -> List {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List> {
+pub(crate) fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List> {
     let def: rtemis_r8::ir::TraitDef = serde_json::from_str(trait_json)
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
@@ -295,7 +295,7 @@ fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_impl(impl_json: &str, namespace: &str) -> Result<()> {
+pub(crate) fn r8_declare_impl(impl_json: &str, namespace: &str) -> Result<()> {
     let def: rtemis_r8::ir::ImplDef = serde_json::from_str(impl_json)
         .map_err(|e| fail(format!("the impl does not read: {e}")))?;
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;

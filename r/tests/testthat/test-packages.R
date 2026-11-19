@@ -2,10 +2,11 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Installs two packages that declare R8 types at their top level and checks
-# them in fresh R sessions: registration at load, construction with rules,
-# dispatch across packages, documents, saveRDS(), and readRDS() in a session
-# without the packages. The installation takes minutes and uses the installed
+# Installs packages that declare R8 types at their top level, and one that
+# implements traits in C through R8's C interface, and checks them in fresh R
+# sessions: registration at load, construction with rules, dispatch across
+# packages and into compiled code, documents, saveRDS(), and readRDS() in a
+# session without the packages. The installation takes minutes and uses the installed
 # R8, so the test runs when R8_PACKAGE_TESTS is set (`just test-packages`).
 
 run_r <- function(lib, code) {
@@ -28,7 +29,7 @@ run_r <- function(lib, code) {
 install_test_packages <- function() {
   lib <- tempfile("r8lib")
   dir.create(lib)
-  for (p in c("r8pkgA", "r8pkgB")) {
+  for (p in c("r8pkgA", "r8pkgB", "r8pkgC")) {
     out <- system2(
       file.path(R.home("bin"), "R"),
       c(
@@ -169,4 +170,89 @@ test_that("load_all() twice replaces a package's declarations", {
   info <- paste(out, collapse = "\n")
   expect_true("area 6 " %in% out, info = info)
   expect_true("json TRUE " %in% out, info = info)
+})
+
+test_that("impls in C register through R8.h and dispatch", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages(library(r8pkgC))",
+      "p <- Point(x = 3, y = 4)",
+      "cat('magnitude', magnitude(p), '\\n')",
+      "cat('ratio', ratio(p, 2), '\\n')",
+      "e <- tryCatch(ratio(p, 0), error = function(e) conditionMessage(e))",
+      "cat('error', grepl('[zero_divisor]', e, fixed = TRUE), '\\n')",
+      "cat('display', format(p), '\\n')",
+      "cat('print', utils::capture.output(print(p)), '\\n')",
+      "cat('again', R8::r8_register('r8pkgC'), magnitude(Point(x = 6, y = 8)), '\\n')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("magnitude 5 " %in% out, info = info)
+  expect_true("ratio 1.5 " %in% out, info = info)
+  expect_true("error TRUE " %in% out, info = info)
+  expect_true("display Point(3, 4) " %in% out, info = info)
+  expect_true("print Point(3, 4) " %in% out, info = info)
+  expect_true("again 5 10 " %in% out, info = info)
+})
+
+test_that("roxygen2 documents R8 declarations and the package passes check", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("roxygen2")
+  # A copy, so the generated NAMESPACE, Rd files, and Collate field stay out
+  # of the source tree and every run generates them anew.
+  dir <- tempfile("r8doc")
+  dir.create(dir)
+  file.copy(test_path("packages", "r8pkgDoc"), dir, recursive = TRUE)
+  pkg <- file.path(dir, "r8pkgDoc")
+  out <- run_r(
+    character(),
+    c(
+      "options(warn = 1)",
+      sprintf("roxygen2::roxygenise(%s)", deparse(pkg))
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_false(any(grepl("warning", out, ignore.case = TRUE)), info = info)
+  expect_setequal(
+    list.files(file.path(pkg, "man")),
+    c(
+      "Method.Rd",
+      "Resample.Rd",
+      "Resampler.Rd",
+      "Summarize.Rd",
+      "as_resampler.Rd"
+    )
+  )
+  ns <- readLines(file.path(pkg, "NAMESPACE"))
+  expect_true("export(resample)" %in% ns, info = paste(ns, collapse = "\n"))
+  rbin <- file.path(R.home("bin"), "R")
+  old <- setwd(dir)
+  on.exit(setwd(old), add = TRUE)
+  built <- system2(
+    rbin,
+    c("CMD", "build", "r8pkgDoc"),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  tarball <- list.files(dir, pattern = "^r8pkgDoc_.*[.]tar[.]gz$")
+  expect_length(tarball, 1L)
+  check <- suppressWarnings(system2(
+    rbin,
+    c("CMD", "check", "--no-manual", tarball),
+    stdout = TRUE,
+    stderr = TRUE
+  ))
+  expect_true(
+    "Status: OK" %in% check,
+    info = paste(c(built, check), collapse = "\n")
+  )
 })

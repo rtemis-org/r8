@@ -354,3 +354,63 @@ test_that("r8_equal() compares normalized forms in place", {
   )
   same_identity(a)
 })
+
+test_that("== compares maps and matrices in place and keeps string literals", {
+  P <- declare_in(
+    "native",
+    new_struct(
+      "Pairs",
+      fields = list(
+        a = hashmap(type_double()),
+        b = hashmap(type_double()),
+        m = type_matrix(type_double()),
+        n = type_matrix(type_double()),
+        s = type_character()
+      ),
+      rules = list(
+        rule("SAME_MAP", a == b, "a equals b."),
+        rule("SAME_MATRIX", m == n, "m equals n."),
+        rule("NOT_NAN_TEXT", s != "NaN", "s is not the text NaN.")
+      )
+    )
+  )
+  base <- list(
+    a = c(x = 1, y = 2),
+    b = c(x = 1, y = 2),
+    m = matrix(as.numeric(1:4), 2),
+    n = matrix(as.numeric(1:4), 2),
+    s = "Infinity"
+  )
+  same_construction(P, base)
+  rules_of <- function(fields) {
+    sort(R8:::r8_new_value(fields, attr(P, "r8_name"), "")[["errors"]][[
+      "rule"
+    ]])
+  }
+  bad <- modifyList(
+    base,
+    list(b = c(x = 1, y = 3), n = matrix(as.numeric(4:1), 2), s = "NaN")
+  )
+  same_construction(P, bad)
+  expect_identical(rules_of(bad), c("NOT_NAN_TEXT", "SAME_MAP", "SAME_MATRIX"))
+})
+
+test_that("a computed field of a matrix type is the matrix it names", {
+  C <- declare_in(
+    "native",
+    new_struct(
+      "Computed",
+      fields = list(
+        m = type_matrix(type_double()),
+        n = option(
+          type_matrix(type_double()),
+          resolve = "computed",
+          compute = m
+        )
+      )
+    )
+  )
+  m <- matrix(as.numeric(1:6), 3)
+  x <- r8_resolve(C(m = m))
+  expect_identical(x$n, m)
+})

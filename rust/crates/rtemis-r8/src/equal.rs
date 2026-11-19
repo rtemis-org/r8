@@ -12,7 +12,7 @@
 
 use std::borrow::Cow;
 
-use crate::access::{Access, Json};
+use crate::access::{Access, Json, Read};
 use crate::emit::Emitter;
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use crate::name::QualifiedName;
@@ -41,17 +41,43 @@ pub fn equal_access<'a, A: Access<'a>>(
     Eq { lookup }.named(ty, a, b)
 }
 
+/// Whether two valid values of the field type `ft` are equal.
+pub fn equal_field_access<'a, A: Access<'a>>(
+    ft: &FieldType,
+    a: A,
+    b: A,
+    lookup: &dyn TypeLookup,
+) -> bool {
+    Eq { lookup }.value(ft, a, b)
+}
+
+/// Whether a value of `ta` and a value of `tb` have the same canonical
+/// form.
+pub(crate) fn canonical_equal<'a, A: Access<'a>>(
+    ta: &FieldType,
+    a: A,
+    tb: &FieldType,
+    b: A,
+    lookup: &dyn TypeLookup,
+) -> bool {
+    let e = Eq { lookup };
+    e.digest(ta, a) == e.digest(tb, b)
+}
+
 struct Eq<'l> {
     lookup: &'l dyn TypeLookup,
 }
 
 impl Eq<'_> {
-    /// The canonical text of a value of `ft`, for the comparisons that
-    /// compare text.
-    fn text<'a, B: Access<'a>>(&self, ft: &FieldType, v: B) -> String {
-        let mut e = Emitter::new(self.lookup, String::new(), true, false);
+    /// The SHA-256 digest of the canonical form of a value of `ft`,
+    /// streamed from the value, for the comparisons with no typed pairing:
+    /// JSON values, a default against a present value, and values of two
+    /// types.
+    fn digest<'a, B: Access<'a>>(&self, ft: &FieldType, v: B) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut e = Emitter::new(self.lookup, Sha256::new(), true, true);
         e.value(ft, v);
-        e.w.out
+        e.w.out.finalize().into()
     }
 
     fn value<'a, A: Access<'a>>(&self, ft: &FieldType, a: A, b: A) -> bool {
@@ -101,82 +127,200 @@ impl Eq<'_> {
                     _ => false,
                 }
             }
-            // Factors, sparse matrices, tables, maps, and JSON values compare
-            // as canonical text.
-            _ => self.text(ft, a) == self.text(ft, b),
+            FieldType::Factor { levels, ordered } => self.factor(levels.as_deref(), *ordered, a, b),
+            FieldType::SparseMatrix { element, .. } => self.sparse(element, a, b),
+            FieldType::Table { columns, open, .. } => self.table(columns, *open, a, b),
+            FieldType::TableOf { of } => match lookup.find(of) {
+                Some(TypeDef::Struct(s)) => self.table(&s.fields, false, a, b),
+                _ => false,
+            },
+            FieldType::Hashmap { value, .. } => self.map(value, false, a, b),
+            FieldType::OrderedMap { value, .. } => self.map(value, true, a, b),
+            // JSON values compare by the digest of their canonical form.
+            _ => self.digest(ft, a) == self.digest(ft, b),
         }
     }
 
-    /// Items `0..n` of two sequences of `element`.
+    /// Items `0..n` of two sequences of `element`: plain arrays compared as
+    /// slices, other host forms read block by block, stopping at the first
+    /// difference.
     fn sequence<'a, A: Access<'a>>(&self, element: &FieldType, a: A, b: A, n: usize) -> bool {
         let inner = unwrap_option(element);
         match inner {
             FieldType::Double(_) => {
                 if let (Some(x), Some(y)) = (a.f64_slice(), b.f64_slice()) {
-                    return x[..n].iter().zip(&y[..n]).all(|(&p, &q)| {
-                        let (na_p, na_q) =
-                            (crate::access::is_na_real(p), crate::access::is_na_real(q));
-                        if na_p || na_q {
-                            na_p && na_q
-                        } else {
-                            double_eq(p, q)
-                        }
-                    });
+                    return x.len() >= n
+                        && y.len() >= n
+                        && x[..n].iter().zip(&y[..n]).all(|(&p, &q)| {
+                            let (na_p, na_q) =
+                                (crate::access::is_na_real(p), crate::access::is_na_real(q));
+                            if na_p || na_q {
+                                na_p && na_q
+                            } else {
+                                double_eq(p, q)
+                            }
+                        });
                 }
-                collect_doubles(a, n)
-                    .iter()
-                    .zip(&collect_doubles(b, n))
-                    .all(|(p, q)| match (p, q) {
+                blocks(
+                    n,
+                    |s, e, out| a.each_double_in(s, e, |_, r| out.push(r)),
+                    |s, e, out| b.each_double_in(s, e, |_, r| out.push(r)),
+                    |p, q| match (p, q) {
                         (Some(p), Some(q)) => double_eq(*p, *q),
                         (None, None) => true,
                         _ => false,
-                    })
+                    },
+                )
             }
             FieldType::Integer(_) => {
                 if let (Some(x), Some(y)) = (a.i32_slice(), b.i32_slice()) {
-                    return x[..n] == y[..n];
+                    return x.len() >= n && y.len() >= n && x[..n] == y[..n];
                 }
-                let get = |v: A| {
-                    let mut out = Vec::with_capacity(n);
-                    v.each_integer(n, |_, r| out.push(r.ok().flatten()));
-                    out
-                };
-                get(a) == get(b)
+                blocks(
+                    n,
+                    |s, e, out| a.each_integer_in(s, e, |_, r| out.push(r)),
+                    |s, e, out| b.each_integer_in(s, e, |_, r| out.push(r)),
+                    |p, q| p == q,
+                )
             }
-            FieldType::Logical => {
-                let get = |v: A| {
-                    let mut out = Vec::with_capacity(n);
-                    v.each_logical(n, |_, r| out.push(r.ok().flatten()));
-                    out
-                };
-                get(a) == get(b)
-            }
-            FieldType::Character(_) => {
-                let get = |v: A| {
-                    let mut out: Vec<Option<Cow<'a, str>>> = Vec::with_capacity(n);
-                    v.each_character(n, |_, r| out.push(r.ok().flatten()));
-                    out
-                };
-                get(a) == get(b)
-            }
-            FieldType::Date => {
-                let get = |v: A| {
-                    let mut out = Vec::with_capacity(n);
-                    v.each_date(n, |_, r| out.push(r.ok().flatten()));
-                    out
-                };
-                get(a) == get(b)
-            }
-            FieldType::Posixct => {
-                let get = |v: A| {
-                    let mut out = Vec::with_capacity(n);
-                    v.each_datetime(n, |_, r| out.push(r.ok().flatten()));
-                    out
-                };
-                get(a) == get(b)
-            }
+            FieldType::Logical => blocks(
+                n,
+                |s, e, out| a.each_logical_in(s, e, |_, r| out.push(r)),
+                |s, e, out| b.each_logical_in(s, e, |_, r| out.push(r)),
+                |p, q| p == q,
+            ),
+            FieldType::Character(_) => blocks(
+                n,
+                |s, e, out| a.each_character_in(s, e, |_, r| out.push(r)),
+                |s, e, out| b.each_character_in(s, e, |_, r| out.push(r)),
+                |p: &Option<Cow<'a, str>>, q| p == q,
+            ),
+            FieldType::Date => blocks(
+                n,
+                |s, e, out| a.each_date_in(s, e, |_, r| out.push(r)),
+                |s, e, out| b.each_date_in(s, e, |_, r| out.push(r)),
+                |p, q| p == q,
+            ),
+            FieldType::Posixct => blocks(
+                n,
+                |s, e, out| a.each_datetime_in(s, e, |_, r| out.push(r)),
+                |s, e, out| b.each_datetime_in(s, e, |_, r| out.push(r)),
+                |p, q| p == q,
+            ),
             _ => (0..n).all(|i| self.value(element, a.item(i), b.item(i))),
         }
+    }
+
+    /// Two factors: by label per cell for declared levels, by levels and
+    /// codes otherwise, as their canonical forms are written.
+    fn factor<'a, A: Access<'a>>(
+        &self,
+        declared: Option<&[String]>,
+        ordered: bool,
+        a: A,
+        b: A,
+    ) -> bool {
+        let (Ok(x), Ok(y)) = (a.factor(declared, ordered), b.factor(declared, ordered)) else {
+            return false;
+        };
+        let n = x.codes.len();
+        if y.codes.len() != n {
+            return false;
+        }
+        if x.levels == y.levels {
+            if let (crate::access::Codes::I32(p), crate::access::Codes::I32(q)) =
+                (&x.codes, &y.codes)
+            {
+                return p == q;
+            }
+            return (0..n).all(|i| x.codes.get(i) == y.codes.get(i));
+        }
+        if declared.is_none() {
+            return false;
+        }
+        let label = |f: &crate::access::Factor<'_>, i: usize| -> Option<String> {
+            let c = f.codes.get(i)?;
+            f.levels
+                .get((c as usize).checked_sub(1)?)
+                .map(|l| l.to_string())
+        };
+        (0..n).all(|i| label(&x, i) == label(&y, i))
+    }
+
+    /// Two sparse matrices: shape, structure, and stored values.
+    fn sparse<'a, A: Access<'a>>(&self, element: &FieldType, a: A, b: A) -> bool {
+        match (a.sparse(element), b.sparse(element)) {
+            (Ok(x), Ok(y)) => {
+                x.shape == y.shape
+                    && x.len == y.len
+                    && x.indptr == y.indptr
+                    && x.indices == y.indices
+                    && self.sequence(element, x.data, y.data, x.len)
+            }
+            _ => false,
+        }
+    }
+
+    /// Two tables: rows, then each column by name, with equal types for the
+    /// extra columns of an open table.
+    fn table<'a, A: Access<'a>>(&self, columns: &[FieldDef], open: bool, a: A, b: A) -> bool {
+        let (Ok(x), Ok(y)) = (a.table(columns, open), b.table(columns, open)) else {
+            return false;
+        };
+        if x.rows != y.rows || x.columns.len() != y.columns.len() {
+            return false;
+        }
+        let n = x.rows as usize;
+        x.columns.iter().all(|(name, cx)| {
+            let Some((_, cy)) = y.columns.iter().find(|(k, _)| k == name) else {
+                return false;
+            };
+            let ty = match columns.iter().find(|c| c.name.as_str() == name.as_ref()) {
+                Some(c) => c.ty.clone(),
+                None => match (a.extra_column_type(name), b.extra_column_type(name)) {
+                    (Ok(p), Ok(q)) if p == q => p,
+                    _ => return false,
+                },
+            };
+            match unwrap_option(&ty) {
+                FieldType::Factor { .. } => self.value(&ty, *cx, *cy),
+                _ => self.sequence(&ty, *cx, *cy, n),
+            }
+        })
+    }
+
+    /// Two maps: an ordered map pairs entries by position, a hashmap by
+    /// name.
+    fn map<'a, A: Access<'a>>(&self, value: &FieldType, ordered: bool, a: A, b: A) -> bool {
+        let entries = |v: A| {
+            let mut out: Vec<(Cow<'a, str>, A)> = Vec::new();
+            let mut ok = true;
+            v.each_entry(|_, e| match e {
+                Ok(e) => out.push(e),
+                Err(_) => ok = false,
+            });
+            ok.then_some(out)
+        };
+        let (Some(x), Some(y)) = (entries(a), entries(b)) else {
+            return false;
+        };
+        if x.len() != y.len() {
+            return false;
+        }
+        if ordered {
+            return x
+                .iter()
+                .zip(&y)
+                .all(|((k, p), (l, q))| k == l && self.value(value, *p, *q));
+        }
+        let index: std::collections::HashMap<&str, A> =
+            y.iter().map(|(k, q)| (k.as_ref(), *q)).collect();
+        index.len() == y.len()
+            && x.iter().all(|(k, p)| {
+                index
+                    .get(k.as_ref())
+                    .is_some_and(|q| self.value(value, *p, *q))
+            })
     }
 
     fn dense<'a, A: Access<'a>>(&self, element: &FieldType, a: A, b: A) -> bool {
@@ -227,16 +371,45 @@ impl Eq<'_> {
                 b.member_at(i, f.name.as_str()),
             );
             match (&f.default, x.is_absent(), y.is_absent()) {
-                (Some(d), true, false) => self.text(&f.ty, Json::new(d)) == self.text(&f.ty, y),
-                (Some(d), false, true) => self.text(&f.ty, x) == self.text(&f.ty, Json::new(d)),
+                (Some(d), true, false) => self.digest(&f.ty, Json::new(d)) == self.digest(&f.ty, y),
+                (Some(d), false, true) => self.digest(&f.ty, x) == self.digest(&f.ty, Json::new(d)),
                 _ => self.value(&f.ty, x, y),
             }
         })
     }
 }
 
-fn collect_doubles<'a, A: Access<'a>>(v: A, n: usize) -> Vec<Option<f64>> {
-    let mut out = Vec::with_capacity(n);
-    v.each_double(n, |_, r| out.push(r.ok().flatten()));
-    out
+/// The number of items `blocks` reads from each side at a time.
+const BLOCK: usize = 4096;
+
+/// Items `0..n` of two sequences, read block by block with `read_a` and
+/// `read_b` and compared with `same`, stopping at the first difference. An
+/// item that does not read, or a block read short, is a difference. Peak
+/// memory is two blocks.
+fn blocks<T>(
+    n: usize,
+    mut read_a: impl FnMut(usize, usize, &mut Vec<Read<Option<T>>>),
+    mut read_b: impl FnMut(usize, usize, &mut Vec<Read<Option<T>>>),
+    same: impl Fn(&Option<T>, &Option<T>) -> bool,
+) -> bool {
+    let (mut x, mut y) = (Vec::with_capacity(BLOCK), Vec::with_capacity(BLOCK));
+    let mut start = 0;
+    while start < n {
+        let end = (start + BLOCK).min(n);
+        x.clear();
+        y.clear();
+        read_a(start, end, &mut x);
+        read_b(start, end, &mut y);
+        if x.len() != end - start || y.len() != end - start {
+            return false;
+        }
+        for (p, q) in x.iter().zip(&y) {
+            match (p, q) {
+                (Ok(p), Ok(q)) if same(p, q) => {}
+                _ => return false,
+            }
+        }
+        start = end;
+    }
+    true
 }

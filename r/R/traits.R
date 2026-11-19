@@ -6,6 +6,9 @@
 # a trait looks up the impl for the qualified type of its first argument.
 .r8_impls <- new.env(parent = emptyenv())
 
+# Trait objects by qualified name, for the impls of compiled code.
+.r8_traits <- new.env(parent = emptyenv())
+
 # Packages whose generics a trait method of the same name becomes a method
 # of, beside the imports of the declaring package.
 BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
@@ -352,6 +355,7 @@ register_trait <- function(trait, namespace) {
       class = "r8_declaration_error"
     )
   }
+  assign(t[["name"]], trait, envir = .r8_traits)
   for (m in names(t[["defaults"]])) {
     assign(
       paste(t[["name"]], m, "", sep = "|"),

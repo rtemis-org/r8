@@ -1,0 +1,14 @@
+Package: r8pkgC
+Title: Test Package with Impls in C
+Version: 0.0.1
+Authors@R: person("E.D.", "Gennatas", role = c("aut", "cre"), email = "gennatas@gmail.com")
+Description: Declares an R8 struct and trait in R and implements the trait,
+    and R8's Display, in C through the C interface of R8, for the tests of
+    R8.
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Imports:
+    R8
+LinkingTo:
+    R8
+Config/R8/namespace: pkgc

@@ -26,6 +26,7 @@ pub use compile::RuleError;
 pub use ty::{DocumentSet, Ty, TypeLookup};
 
 use compile::{Expr, Root, Step, compile, compile_computed};
+pub use eval::Scalar;
 use eval::{Absent, Env, Val};
 
 use crate::ir::{FieldDef, RuleDef};
@@ -173,7 +174,8 @@ impl CompiledRule {
             {
                 failing.push(format!("{base}{suffix}"));
             }
-            Ok(true)
+            // One path past the limit marks the list as truncated.
+            Ok(failing.len() <= crate::validate::ERROR_LIMIT)
         })?;
         Ok(failing)
     }
@@ -208,25 +210,22 @@ impl CompiledRule {
                     Some(c) => format!("/{}/{i}", c.replace('~', "~0").replace('/', "~1")),
                     None => format!("/{i}"),
                 });
+                // One path past the limit marks the list as truncated.
+                if paths.len() > crate::validate::ERROR_LIMIT {
+                    break;
+                }
             }
         }
         Ok(paths)
     }
 }
 
-/// A logical result, read without converting a reference to a logical
-/// field.
+/// A logical result; a reference to a logical field is read in place.
 fn truth<'a, A: Access<'a>>(env: &Env<'_, A>, v: Val<'_, A>) -> Option<bool> {
-    match v {
-        Val::V(Value::Bool(b)) => Some(b),
-        Val::V(_) => None,
-        Val::R(a, _) => a.logical().ok().or_else(|| env_json_bool(env, a)),
+    match env.scalar(v) {
+        Scalar::Bool(b) => Some(b),
+        _ => None,
     }
-}
-
-fn env_json_bool<'a, A: Access<'a>>(env: &Env<'_, A>, a: A) -> Option<bool> {
-    a.to_value(&crate::ir::FieldType::Logical, env.lookup)
-        .as_bool()
 }
 
 /// A lookup that holds no type, for expressions over JSON alone.
@@ -287,21 +286,23 @@ pub fn evaluate_computed(
         element: None,
     };
     Ok(env.eval(&expr)?.ok().map(|v| match v {
-        Val::V(v) => v,
-        Val::R(a, ty) => a.to_value(ty.unwrap_or(&crate::ir::FieldType::Json), lookup),
+        eval::Val::R(a, ft) if !ft.is_some_and(eval::readable) => {
+            a.to_value(ft.unwrap_or(&eval::UNTYPED), lookup)
+        }
+        v => env.scalar(v).to_value(),
     }))
 }
 
 /// Evaluates a computed field's expression over a value in any host form,
-/// in the scope of `fields`; the result is the field's value in its JSON
-/// form. `Ok(None)` when the expression reads an absent field.
+/// in the scope of `fields`. `Ok(None)` when the expression reads an absent
+/// field.
 pub fn evaluate_computed_access<'a, A: Access<'a>>(
     logic: &crate::ir::Logic,
     fields: &[FieldDef],
     lookup: &dyn TypeLookup,
     target: &FieldDef,
     value: A,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Computed<A>>, String> {
     let ty = Ty::of(&target.ty, target.unit.as_deref());
     let expr = compile_computed(logic, fields, lookup, &ty).map_err(|e| {
         e.into_iter()
@@ -315,10 +316,21 @@ pub fn evaluate_computed_access<'a, A: Access<'a>>(
         lookup,
         element: None,
     };
+    let declared = eval::unwrap_option(&target.ty);
     Ok(env.eval(&expr)?.ok().map(|v| match v {
-        Val::V(v) => v,
-        Val::R(a, ty) => a.to_value(ty.unwrap_or(&crate::ir::FieldType::Json), lookup),
+        // A field of the computed field's type: the value itself.
+        eval::Val::R(a, Some(ft)) if eval::unwrap_option(ft) == declared => Computed::Value(a),
+        v => Computed::Scalar(env.scalar(v)),
     }))
+}
+
+/// The result of a computed field's expression.
+pub enum Computed<A> {
+    /// A field of the value, of the computed field's declared type: the
+    /// host value, which the caller stores as it is.
+    Value(A),
+    /// A scalar, or an array from a vector or `levels()`.
+    Scalar(Scalar),
 }
 
 /// The fields a computed expression reads, by name, in the order the
