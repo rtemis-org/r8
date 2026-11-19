@@ -339,4 +339,36 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     ),
     info = paste(used, collapse = "\n")
   )
+  # The same methods in mirai and future workers, which load the package and
+  # register its declarations there.
+  skip_if_not_installed("mirai")
+  skip_if_not_installed("future")
+  task <- paste0(
+    "{ library(r8pkgDoc); c(describe(r, verbose = TRUE), describe(Method@Bootstrap), ",
+    "toString(r), n_resamples(r), utils::capture.output(print(Method@Bootstrap))) }"
+  )
+  workers <- run_r(
+    file.path(dir, "r8pkgDoc.Rcheck"),
+    c(
+      "library(r8pkgDoc)",
+      "r <- Resampler(method = Method@Bootstrap, n_resamples = 2L, seed = 1L)",
+      "mirai::daemons(1)",
+      sprintf("m <- mirai::mirai(%s, r = r)", task),
+      "cat('mirai', mirai::collect_mirai(m), sep = '|')",
+      "cat('\\n')",
+      "mirai::daemons(0)",
+      "future::plan(future::multisession, workers = 1)",
+      sprintf(
+        "f <- future::future(%s, globals = list(r = r), packages = character())",
+        task
+      ),
+      "cat('future', future::value(f), sep = '|')",
+      "cat('\\n')",
+      "future::plan(future::sequential)"
+    )
+  )
+  expected <- "2 resamples, seed 1|a resampling method|Resampler(2)|2|A resampling method"
+  info <- paste(workers, collapse = "\n")
+  expect_true(paste0("mirai|", expected) %in% workers, info = info)
+  expect_true(paste0("future|", expected) %in% workers, info = info)
 })
