@@ -1,5 +1,8 @@
+# Dev
+__dev/
+
 # Rust
-/target
+/rust/target
 
 # macOS
 .DS_Store
@@ -13,4 +16,4 @@
 .claude/
 AGENTS.md
 CLAUDE.md
-R8/src/rust/Cargo.lock.saved
+r/src/rust/Cargo.lock.saved

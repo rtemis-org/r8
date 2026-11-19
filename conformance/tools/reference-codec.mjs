@@ -1,7 +1,7 @@
 // reference-codec.mjs
 // An independent implementation of R8's canonical JSON form, canonical binary
 // form, declaration hash, and content hash, written from the specification in
-// crates/rtemis-r8/src/codec.rs. It fills the `expect` of every `canonical` and
+// rust/crates/rtemis-r8/src/codec.rs. It fills the `expect` of every `canonical` and
 // `hash` case of the suites given, which the Rust runner then compares with
 // its own results.
 //

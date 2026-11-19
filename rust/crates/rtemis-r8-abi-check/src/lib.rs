@@ -1,5 +1,5 @@
 //! Checks that the Rust ABI types of `rtemis_r8::abi` match the C header
-//! `R8/inst/include/R8.h`. The build script compiles `csrc/layout.c` against
+//! `r/inst/include/R8.h`. The build script compiles `csrc/layout.c` against
 //! the header; [`c_layout()`] reads the sizes and offsets the C compiler
 //! computed.
 

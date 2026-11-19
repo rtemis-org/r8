@@ -14,7 +14,7 @@ use rtemis_r8::validate::validate;
 use serde_json::Value;
 
 fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../conformance")
 }
 
 fn suites(dir: &Path) -> Vec<PathBuf> {

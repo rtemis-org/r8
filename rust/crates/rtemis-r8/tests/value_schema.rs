@@ -80,7 +80,7 @@ fn under_dyn(docs: &DocumentSet, ty: &QualifiedName, expect: &Value) -> bool {
 
 #[test]
 fn exported_schemas_agree_with_validation() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../conformance");
     let (mut accepted, mut rejected, mut failures) = (0, 0, Vec::new());
     for path in suites(&dir) {
         let suite: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();

@@ -11,9 +11,14 @@ homepage.workspace = true
 readme = "README.md"
 keywords = ["r8", "r", "rlang", "type-system", "validation"]
 categories = ["data-structures", "encoding"]
-# The conformance corpus lives at the repository root; its runner stays in
-# the repository.
-exclude = ["tests/conformance.rs"]
+# The tests that read the conformance corpus at the repository root or the R
+# package's fixtures stay in the repository.
+exclude = [
+    "tests/conformance.rs",
+    "tests/ir.rs",
+    "tests/rules.rs",
+    "tests/value_schema.rs",
+]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -8,7 +8,7 @@ rscript := env("RSCRIPT", "Rscript")
 tarball_glob := pkg + "_*.tar.gz"
 # The rtemis-r8 crate of this checkout; tools/config.R and `rust-check` patch the
 # crates.io release with it. Every recipe exports it to the build.
-export R8_CRATES_PATH := env("R8_CRATES_PATH", canonicalize(justfile_directory() / ".." / "crates"))
+export R8_CRATES_PATH := env("R8_CRATES_PATH", canonicalize(justfile_directory() / ".." / "rust" / "crates"))
 cargo_config := "--config 'patch.crates-io.rtemis-r8.path=\"" + R8_CRATES_PATH / "rtemis-r8" + "\"'"
 
 # List available recipes

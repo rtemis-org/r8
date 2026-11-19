@@ -14,7 +14,7 @@ env:
   CARGO_TERM_COLOR: always
   # tools/config.R patches the crates.io release of rtemis-r8 with this checkout's
   # crate.
-  R8_CRATES_PATH: ${{ github.workspace }}/crates
+  R8_CRATES_PATH: ${{ github.workspace }}/rust/crates
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,7 +39,7 @@ jobs:
           use-public-rspm: true
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          working-directory: R8
+          working-directory: r
           extra-packages: any::rcmdcheck
           needs: check
           # Save dependencies even when a later check fails.
@@ -48,11 +48,10 @@ jobs:
       - uses: r-lib/actions/check-r-package@v2
         timeout-minutes: 20
         with:
-          working-directory: R8
+          working-directory: r
           upload-snapshots: true
-          # R CMD check reports a WARNING for downloading Rust crates until the
-          # package vendors rtemis-r8 from a crates.io release; an error fails the
-          # job.
+          # The check builds against this checkout's rtemis-r8; an error fails
+          # the job.
           error-on: '"error"'
           args: 'c("--no-manual", "--as-cran")'
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
@@ -61,7 +60,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: check-diagnostics
-          path: R8/check
+          path: r/check
           if-no-files-found: ignore
 
   rust:
@@ -70,7 +69,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: R8/src/rust
+        working-directory: r/src/rust
     steps:
       - uses: actions/checkout@v6
       # extendr-ffi links against R, so R is present for the build.
@@ -89,7 +88,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: R8
+        working-directory: r
     steps:
       - uses: actions/checkout@v6
       # The minimum version is the rustc entry of SystemRequirements in DESCRIPTION.

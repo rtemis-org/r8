@@ -5,7 +5,7 @@ use rtemis_r8::rules::{CompiledRule, Outcome};
 use serde_json::{Value, json};
 
 const SVM: &str = include_str!("fixtures/svm.ir.json");
-const BIOC: &str = include_str!("../../../conformance/declare/exercise/bioconductor.json");
+const BIOC: &str = include_str!("../../../../conformance/declare/exercise/bioconductor.json");
 
 fn svm_doc() -> IrDocument {
     IrDocument::from_json(SVM).unwrap()

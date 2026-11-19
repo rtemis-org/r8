@@ -1,6 +1,6 @@
 //! The C interface between R packages and the R8 registry, ABI version 1.
 //!
-//! These `#[repr(C)]` types mirror `R8/inst/include/R8.h` field for field,
+//! These `#[repr(C)]` types mirror `r/inst/include/R8.h` field for field,
 //! which states the interface and its rules: every call on R's main thread,
 //! no R errors or panics across the boundary, unprotected `SEXP` results,
 //! each side freeing only what it allocated, and fields only appended within

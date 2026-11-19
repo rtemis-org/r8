@@ -59,7 +59,7 @@ fn the_r_fixtures_match_this_fixture() {
     let d = IrDocument::from_json(SVM).unwrap();
     for (file, index) in [("kernel.ir.json", 0), ("svm.ir.json", 1)] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../R8/tests/testthat/fixtures")
+            .join("../../../r/tests/testthat/fixtures")
             .join(file);
         let r = IrDocument::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(r.namespace, d.namespace, "{file}");
