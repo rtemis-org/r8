@@ -8,12 +8,20 @@
 # `just vendor` runs it after vendoring; it runs from the package root.
 
 # %% Crates without an authors field ----
-# Copyright holders as stated in each crate's license.
+# Copyright holders as stated in each crate's license; where the license names
+# no holder (equivalent, indexmap, serde_json), the contributors of the crate's
+# repository.
 crate_authors <- c(
+  "equivalent" = "The indexmap-rs contributors",
   "extendr-api" = "The extendr contributors",
   "extendr-ffi" = "The extendr contributors",
   "extendr-macros" = "The extendr contributors",
-  "rtemis-r8" = "E.D. Gennatas"
+  "hashbrown" = "Amanieu d'Antras",
+  "indexmap" = "The indexmap-rs contributors",
+  "libc" = "The Rust Project Developers",
+  "rtemis-r8" = "E.D. Gennatas",
+  "serde_json" = "The serde-rs contributors",
+  "typenum" = "Paho Lurie-Gregg"
 )
 
 # %% License notices ----

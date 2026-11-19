@@ -34,10 +34,16 @@ $(STATLIB):
 		cp rust/vendor-config.toml $(CARGOTMP)/config.toml; \
 	fi
 
+	# A build against a local rtemis-r8 (R8_CRATES_PATH set) rewrites the
+	# rtemis-r8 entry of Cargo.lock without its crates.io source; the lock is
+	# saved before and restored after each cargo command, so the committed lock
+	# keeps the crates.io release.
+	@SAVE_LOCK@
 	# Static library.
 	export CARGO_HOME=$(CARGOTMP) && \
 	export LIBRARY_PATH="$(LIBRARY_PATH);$(CURDIR)/$(TARGET_DIR)/libgcc_mock" && \
-	RUSTFLAGS="$(RUSTFLAGS) --print=native-static-libs" cargo build @CRAN_FLAGS@ @CARGO_CONFIG@ --target=$(TARGET) --lib @PROFILE@ --manifest-path=rust/Cargo.toml --target-dir=$(TARGET_DIR)
+	RUSTFLAGS="$(RUSTFLAGS) --print=native-static-libs" cargo build @CRAN_FLAGS@ @CARGO_CONFIG@ --target=$(TARGET) --lib @PROFILE@ --manifest-path=rust/Cargo.toml --target-dir=$(TARGET_DIR); \
+	status=$$?; @RESTORE_LOCK@ exit $$status
 
 	# R/extendr-wrappers.R, in development builds (NOT_CRAN or DEBUG set). CRAN builds
 	# (@RUN_DOCUMENT@ is "no") install the R/extendr-wrappers.R of the source
@@ -46,7 +52,9 @@ $(STATLIB):
 		export CARGO_HOME=$(CARGOTMP) && \
 		export PATH="$(PATH):$(HOME)/.cargo/bin" && \
 		cargo run @CRAN_FLAGS@ @CARGO_CONFIG@ --bin document --target $(TARGET) --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR); \
+		status=$$?; @RESTORE_LOCK@ exit $$status; \
 	fi
+	@DROP_LOCK@
 
 	# CARGOTMP is removed after every build.
 	rm -Rf $(CARGOTMP);

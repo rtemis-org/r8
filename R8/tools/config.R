@@ -55,6 +55,18 @@ crates_path <- Sys.getenv("R8_CRATES_PATH")
   ""
 }
 
+# With a local rtemis-r8, the Makevars save Cargo.lock before each cargo
+# command and restore it after, since the patch rewrites the lock's rtemis-r8
+# entry without its crates.io source.
+patched <- nzchar(.cargo_config)
+.save_lock <- ifelse(patched, "cp rust/Cargo.lock rust/Cargo.lock.saved", "")
+.restore_lock <- ifelse(
+  patched,
+  "cp rust/Cargo.lock.saved rust/Cargo.lock;",
+  ""
+)
+.drop_lock <- ifelse(patched, "rm -f rust/Cargo.lock.saved", "")
+
 # DEBUG selects the dev profile; otherwise the release profile.
 .profile <- ifelse(is_debug, "", "--release")
 .clean_targets <- ifelse(is_debug, "", "$(TARGET_DIR)")
@@ -125,7 +137,10 @@ new_txt <- gsub("@CRAN_FLAGS@", .cran_flags, mv_txt) |>
   gsub("@LIBDIR@", .libdir, x = _) |>
   gsub("@TARGET@", .target, x = _) |>
   gsub("@PANIC_EXPORTS@", .panic_exports, x = _) |>
-  gsub("@RUN_DOCUMENT@", .run_document, x = _, fixed = TRUE)
+  gsub("@RUN_DOCUMENT@", .run_document, x = _, fixed = TRUE) |>
+  gsub("@SAVE_LOCK@", .save_lock, x = _, fixed = TRUE) |>
+  gsub("@RESTORE_LOCK@", .restore_lock, x = _, fixed = TRUE) |>
+  gsub("@DROP_LOCK@", .drop_lock, x = _, fixed = TRUE)
 
 message("Writing `", mv_ofp, "`.")
 con <- file(mv_ofp, open = "wb")

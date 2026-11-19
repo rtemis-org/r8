@@ -44,3 +44,18 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - run: cargo test --workspace --all-features --locked
+
+  wasm32:
+    name: rtemis-r8 for wasm32-unknown-emscripten
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      # webR builds R packages for wasm32-unknown-emscripten, where usize and
+      # isize have 32 bits; the job compiles and lints rtemis-r8 for that
+      # target. webR's own build uses nightly Rust with -Z build-std.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+          components: clippy
+      - run: cargo clippy -p rtemis-r8 --all-features --target wasm32-unknown-emscripten --locked -- -D warnings

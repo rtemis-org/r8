@@ -1,0 +1,252 @@
+The compiled code of R8 includes the following Rust crates, bundled
+as source in src/rust/vendor.tar.xz. The license files that a crate ships
+are part of that archive; the notices of crates that ship none follow the
+list.
+
+------------------------------------------------------------------------
+
+Name:        aho-corasick
+Version:     1.1.5
+Authors:     Andrew Gallant
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/aho-corasick
+
+Name:        block-buffer
+Version:     0.12.1
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/utils
+
+Name:        cfg-if
+Version:     1.0.5
+Authors:     Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/cfg-if
+
+Name:        const-oid
+Version:     0.10.3
+Authors:     RustCrypto Developers
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/RustCrypto/formats
+
+Name:        cpufeatures
+Version:     0.3.1
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/utils
+
+Name:        crypto-common
+Version:     0.2.2
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/traits
+
+Name:        digest
+Version:     0.11.3
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/traits
+
+Name:        equivalent
+Version:     1.0.3
+Authors:     The indexmap-rs contributors
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/indexmap-rs/equivalent
+
+Name:        extendr-api
+Version:     0.9.0
+Authors:     The extendr contributors
+License:     MIT
+Repository:  https://github.com/extendr/extendr
+
+Name:        extendr-ffi
+Version:     0.9.0
+Authors:     The extendr contributors
+License:     MIT
+Repository:  https://github.com/extendr/extendr
+
+Name:        extendr-macros
+Version:     0.9.0
+Authors:     The extendr contributors
+License:     MIT
+Repository:  https://github.com/extendr/extendr
+
+Name:        foldhash
+Version:     0.2.0
+Authors:     Orson Peters
+License:     Zlib
+Repository:  https://github.com/orlp/foldhash
+
+Name:        hashbrown
+Version:     0.17.1
+Authors:     Amanieu d'Antras
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/hashbrown
+
+Name:        hybrid-array
+Version:     0.4.15
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/hybrid-array
+
+Name:        indexmap
+Version:     2.14.2
+Authors:     The indexmap-rs contributors
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/indexmap-rs/indexmap
+
+Name:        itoa
+Version:     1.0.19
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/itoa
+
+Name:        lazy_static
+Version:     1.5.1
+Authors:     Marvin Löbel
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang-nursery/lazy-static.rs
+
+Name:        libc
+Version:     0.2.191
+Authors:     The Rust Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/libc
+
+Name:        memchr
+Version:     2.8.3
+Authors:     Andrew Gallant, bluss
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/memchr
+
+Name:        once_cell
+Version:     1.21.4
+Authors:     Aleksey Kladov
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/matklad/once_cell
+
+Name:        paste
+Version:     1.0.15
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/paste
+
+Name:        proc-macro2
+Version:     1.0.107
+Authors:     David Tolnay, Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/proc-macro2
+
+Name:        quote
+Version:     1.0.47
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/quote
+
+Name:        readonly
+Version:     0.2.14
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/readonly
+
+Name:        regex
+Version:     1.13.2
+Authors:     The Rust Project Developers, Andrew Gallant
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/regex
+
+Name:        regex-automata
+Version:     0.4.19
+Authors:     The Rust Project Developers, Andrew Gallant
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/regex
+
+Name:        regex-syntax
+Version:     0.8.12
+Authors:     The Rust Project Developers, Andrew Gallant
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/regex
+
+Name:        rtemis-r8
+Version:     0.1.0
+Authors:     E.D. Gennatas
+License:     BSD-3-Clause
+Repository:  https://github.com/rtemis-org/r8
+
+Name:        ryu-js
+Version:     0.2.2
+Authors:     David Tolnay, boa-dev
+License:     Apache-2.0 OR BSL-1.0
+Repository:  https://github.com/boa-dev/ryu-js
+
+Name:        serde
+Version:     1.0.229
+Authors:     Erick Tryzelaar, David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/serde
+
+Name:        serde_core
+Version:     1.0.229
+Authors:     Erick Tryzelaar, David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/serde
+
+Name:        serde_derive
+Version:     1.0.229
+Authors:     Erick Tryzelaar, David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/serde
+
+Name:        serde_json
+Version:     1.0.154
+Authors:     The serde-rs contributors
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/json
+
+Name:        sha2
+Version:     0.11.1
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/hashes
+
+Name:        syn
+Version:     2.0.119
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/syn
+
+Name:        syn
+Version:     3.0.10
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/syn
+
+Name:        typenum
+Version:     1.20.1
+Authors:     Paho Lurie-Gregg
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/paholg/typenum
+
+Name:        unicode-ident
+Version:     1.0.27
+Authors:     David Tolnay
+License:     (MIT OR Apache-2.0) AND Unicode-3.0
+Repository:  https://github.com/dtolnay/unicode-ident
+
+Name:        zmij
+Version:     1.0.23
+Authors:     David Tolnay
+License:     MIT
+Repository:  https://github.com/dtolnay/zmij
+
+------------------------------------------------------------------------
+License notice of extendr-api, extendr-ffi, extendr-macros:
+
+Copyright (c) 2021 The Extendr contributors (See CONTRIBUTORS.md)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
