@@ -16,9 +16,10 @@ Character: The hash.
 The SHA-256 of the RFC 8785 canonical JSON of the type's name, its
 declaration hash, and the value, written \verb{sha256:<hex>}. Values that differ
 only in member order or in defaults written out hash the same. A matrix,
-sparse matrix, or table enters through the digest of its canonical binary
-form. A runtime-only field's value stays out of the hash; its presence
-enters it.
+an array, a sparse matrix, a table, and a \code{vec()} of logical, integer,
+double, date, or date-time values enter through the digest of their
+canonical binary form. A runtime-only field's value stays out of the hash;
+its presence enters it. The hash is computed from the R objects in place.
 }
 \examples{
 op <- options(r8.namespace = "demo")

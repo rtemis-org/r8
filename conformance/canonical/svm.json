@@ -52,121 +52,93 @@
   "description": "RFC 8785 canonical text of normalized values: defaults filled, absent fields null, the envelope removed.",
   "ir": {
     "$ir": 1,
-    "impls": [
-      {
-        "methods": [
-          "fit"
-        ],
-        "target": {
-          "kind": "type",
-          "name": "rtemis::Svm"
-        },
-        "trait": "rtemis::Fit"
-      }
-    ],
     "namespace": "rtemis",
-    "traits": [
-      {
-        "description": "Trains a model from its settings.",
-        "methods": [
-          {
-            "description": "Trains a model.",
-            "name": "fit",
-            "params": [
-              "spec",
-              "x",
-              "y"
-            ]
-          }
-        ],
-        "name": "Fit"
-      }
-    ],
     "types": [
       {
-        "description": "Kernel function.",
         "kind": "enum",
         "name": "Kernel",
+        "description": "Kernel function.",
         "tag": "type",
+        "version": 1,
         "variants": [
           {
-            "description": "",
             "name": "Linear",
+            "description": "",
             "shape": "unit"
           },
           {
+            "name": "Rbf",
             "description": "",
+            "shape": "struct",
             "fields": [
               {
-                "description": "Kernel width.",
                 "name": "gamma",
                 "type": {
-                  "exclusive_min": 0,
-                  "kind": "double"
-                }
+                  "kind": "double",
+                  "exclusive_min": 0.0
+                },
+                "description": "Kernel width."
               }
-            ],
-            "name": "Rbf",
-            "shape": "struct"
+            ]
           }
-        ],
-        "version": 1
+        ]
       },
       {
+        "kind": "struct",
+        "name": "Svm",
         "description": "Support vector machine settings.",
+        "version": 1,
         "fields": [
           {
-            "default": 1,
-            "description": "Cost of a margin violation.",
             "name": "cost",
             "type": {
-              "exclusive_min": 0,
-              "kind": "double"
-            }
+              "kind": "double",
+              "exclusive_min": 0.0
+            },
+            "default": 1,
+            "description": "Cost of a margin violation."
           },
           {
-            "default": {
-              "type": "Linear"
-            },
-            "description": "Kernel function.",
             "name": "kernel",
             "type": {
               "kind": "named",
               "name": "rtemis::Kernel"
-            }
+            },
+            "default": {
+              "type": "Linear"
+            },
+            "description": "Kernel function."
           },
           {
-            "description": "Case weights.",
-            "external": true,
             "name": "weights",
             "type": {
+              "kind": "option",
               "inner": {
+                "kind": "vec",
                 "element": {
                   "kind": "double",
-                  "min": 0
-                },
-                "kind": "vec"
-              },
-              "kind": "option"
-            }
+                  "min": 0.0
+                }
+              }
+            },
+            "description": "Case weights.",
+            "external": true
           },
           {
-            "description": "Variables per split.",
             "name": "mtry",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "integer",
                 "min": 1
               },
-              "kind": "option",
               "resolve": {
                 "policy": "runtime"
               }
-            }
+            },
+            "description": "Variables per split."
           }
         ],
-        "kind": "struct",
-        "name": "Svm",
         "rules": [
           {
             "id": "RBF_GAMMA",
@@ -190,7 +162,6 @@
                 100
               ]
             },
-            "message": "cost is at most 100 with the Rbf kernel.",
             "when": {
               "is_variant": [
                 {
@@ -198,10 +169,39 @@
                 },
                 "Rbf"
               ]
-            }
+            },
+            "message": "cost is at most 100 with the Rbf kernel."
           }
-        ],
-        "version": 1
+        ]
+      }
+    ],
+    "traits": [
+      {
+        "name": "Fit",
+        "description": "Trains a model from its settings.",
+        "methods": [
+          {
+            "name": "fit",
+            "description": "Trains a model.",
+            "params": [
+              "spec",
+              "x",
+              "y"
+            ]
+          }
+        ]
+      }
+    ],
+    "impls": [
+      {
+        "trait": "rtemis::Fit",
+        "target": {
+          "kind": "type",
+          "name": "rtemis::Svm"
+        },
+        "methods": [
+          "fit"
+        ]
       }
     ]
   }

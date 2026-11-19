@@ -1,18 +1,43 @@
 //! Runtime of the R8 type system.
 //!
-//! `r8-core` holds the declaration IR of structs, enums, traits, and impls;
-//! validation of values against a declaration; the rule dialect and its
-//! evaluator; the JSON codec; content hashing; provenance; and the dispatch
-//! table. The R package `R8` binds it through extendr, and other hosts bind it
-//! through their own bindings.
+//! R8 declares structs, enums, traits, and impls once, in an intermediate
+//! representation (IR) that every host language reads. `r8-core` holds:
 //!
-//! Design: `~/Code/spec/R8/class-system/plan.md` in the specification
-//! repository of rtemis-org.
+//! - [`ir`]: the IR of declarations, its JSON form, and the declaration
+//!   checks;
+//! - [`name`]: names and qualified names, with the reserved words of each
+//!   host;
+//! - [`validate`]: validation of a value against its type, every error with a
+//!   stable code and a JSON Pointer;
+//! - [`rules`]: the rule dialect, strict JSONLogic, compiled against the
+//!   declared types, and its evaluator;
+//! - [`access`]: the value-access trait, through which validation, rules,
+//!   encoding, and hashing read a value in any host form; [`access::Json`]
+//!   reads the JSON form, and a host binding implements the trait for its own
+//!   values;
+//! - [`codec`]: the canonical form (RFC 8785), documents, and content hashes,
+//!   with the canonical binary forms of matrices, tables, and vectors;
+//! - [`equal`]: equality of two values by their normalized forms;
+//! - [`value_schema`]: the JSON Schema of a type's values;
+//! - [`derive`](mod@derive): the traits behind `#[derive(R8)]`, with the `derive`
+//!   feature;
+//! - [`abi`]: the Rust mirror of `R8.h`, the C interface between R packages
+//!   and the R8 registry.
+//!
+//! The R package `R8` binds the crate through extendr. The [`access`]
+//! module's trait is unstable until the release that adds Rust-native values.
+//!
+//! Features: `derive` re-exports `#[derive(R8)]` from `r8-derive`; `schema`
+//! generates the JSON Schema of the IR document with `schemars`.
+
+#![warn(missing_docs)]
 
 pub mod abi;
 pub mod access;
 pub mod codec;
 pub mod derive;
+mod emit;
+pub mod equal;
 pub mod ir;
 pub mod name;
 pub mod rules;

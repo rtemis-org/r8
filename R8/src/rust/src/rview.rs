@@ -18,10 +18,10 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use extendr_api::SEXP;
 use extendr_ffi::{
     ALTREP, INTEGER, INTEGER_GET_REGION, LENGTH, LOGICAL, LOGICAL_GET_REGION, R_CHAR, R_NaString,
-    R_NilValue, R_xlen_t, REAL, REAL_GET_REGION, Rf_getAttrib, Rf_install, SEXPTYPE, STRING_ELT,
-    TYPEOF, VECTOR_ELT, XLENGTH,
+    R_NilValue, R_compute_identical, R_xlen_t, RAW, REAL, REAL_GET_REGION, Rf_getAttrib,
+    Rf_install, SEXPTYPE, STRING_ELT, TYPEOF, VECTOR_ELT, XLENGTH,
 };
-use r8_core::access::{Access, Codes, Dense, Factor, Form, Read, Sparse, Table};
+use r8_core::access::{Access, Codes, Dense, Dimnames, Factor, Form, Read, Sparse, Table};
 use r8_core::ir::{EnumDef, FieldDef, FieldType};
 use r8_core::name::QualifiedName;
 use r8_core::rules::TypeLookup;
@@ -548,6 +548,18 @@ impl<'a> Access<'a> for RView<'a> {
         }
     }
 
+    fn bytes(self) -> Read<Cow<'a, [u8]>> {
+        self.raw()?;
+        let x = self.sexp().unwrap_or(nil());
+        let n = xlen(x);
+        if n == 0 {
+            return Ok(Cow::Borrowed(&[]));
+        }
+        Ok(Cow::Borrowed(unsafe {
+            std::slice::from_raw_parts(RAW(x), n)
+        }))
+    }
+
     fn json(self) -> Read<()> {
         match self.sexp() {
             Some(x) => json_form(x, ""),
@@ -747,7 +759,7 @@ impl<'a> Access<'a> for RView<'a> {
         })
     }
 
-    fn dense(self, element: &FieldType) -> Read<Dense<Self>> {
+    fn dense(self, element: &FieldType) -> Read<Dense<'a, Self>> {
         let Some(x) = self.sexp() else {
             return Err(r_type("expected a matrix or an array"));
         };
@@ -778,10 +790,25 @@ impl<'a> Access<'a> for RView<'a> {
                 );
             }
         }
+        let dimnames: Option<Dimnames<'a>> = (!is_null(dn) && sexptype(dn) == SEXPTYPE::VECSXP)
+            .then(|| {
+                (0..xlen(dn))
+                    .map(|i| {
+                        let names = unsafe { VECTOR_ELT(dn, i as R_xlen_t) };
+                        (!is_null(names)).then(|| {
+                            strings(names)
+                                .into_iter()
+                                .map(|s| s.unwrap_or(Cow::Borrowed("NA")))
+                                .collect()
+                        })
+                    })
+                    .collect()
+            });
         Ok(Dense {
             shape,
             data: RView::Whole(x),
             len: xlen(x),
+            dimnames,
             problems,
         })
     }
@@ -837,6 +864,8 @@ impl<'a> Access<'a> for RView<'a> {
             shape,
             data: RView::Whole(xs),
             len: nnz,
+            indptr: p.iter().map(|&v| v as u64).collect(),
+            indices: idx.iter().map(|&v| v as u64).collect(),
         })
     }
 
@@ -954,6 +983,24 @@ impl<'a> Access<'a> for RView<'a> {
         ty.and_then(|t| QualifiedName::parse(&t).ok())
             .map(|q| (q, None))
             .ok_or_else(|| "a dyn() field holds an R8 value".to_string())
+    }
+
+    fn same(self, other: Self) -> bool {
+        match (self, other) {
+            (RView::Whole(a), RView::Whole(b)) => a == b,
+            (RView::Elem(a, i), RView::Elem(b, j)) => a == b && i == j,
+            _ => false,
+        }
+    }
+
+    fn identical(self, other: Self) -> bool {
+        match (self.sexp(), other.sexp()) {
+            // Flags 16: identical()'s defaults.
+            (Some(a), Some(b)) => unsafe {
+                R_compute_identical(a, b, 16) == extendr_ffi::Rboolean::TRUE
+            },
+            _ => false,
+        }
     }
 
     fn to_value(self, ft: &FieldType, lookup: &dyn TypeLookup) -> Value {

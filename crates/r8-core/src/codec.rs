@@ -47,8 +47,13 @@
 //!   the element tag, the bitmap, and the values. A factor column writes its
 //!   levels between the tag and the bitmap.
 
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+use crate::access::{Access, Json};
+use crate::emit::{self, Emitter, Writer};
+
+pub use crate::emit::runtime_paths;
 
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use crate::name::QualifiedName;
@@ -57,71 +62,11 @@ use crate::validate::{ValueError, validate};
 
 // ---------------------------------------------------------------- RFC 8785
 
-/// A number in ECMAScript's `Number.prototype.toString` form.
-fn number_text(x: f64) -> String {
-    if x == 0.0 {
-        return "0".to_string();
-    }
-    let mut buf = ryu_js::Buffer::new();
-    buf.format(x).to_string()
-}
-
-fn string_text(s: &str, out: &mut String) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-fn write_canonical(v: &Value, out: &mut String) {
-    match v {
-        Value::Null => out.push_str("null"),
-        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        Value::Number(n) => out.push_str(&number_text(n.as_f64().unwrap_or(f64::NAN))),
-        Value::String(s) => string_text(s, out),
-        Value::Array(items) => {
-            out.push('[');
-            for (i, x) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_canonical(x, out);
-            }
-            out.push(']');
-        }
-        Value::Object(m) => {
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-            out.push('{');
-            for (i, k) in keys.into_iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                string_text(k, out);
-                out.push(':');
-                write_canonical(&m[k], out);
-            }
-            out.push('}');
-        }
-    }
-}
-
 /// Writes a JSON value in the RFC 8785 canonical form.
 pub fn canonical_text(v: &Value) -> String {
-    let mut out = String::new();
-    write_canonical(v, &mut out);
-    out
+    let mut w = Writer::new(String::new(), true);
+    w.value(v);
+    w.out
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -129,150 +74,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
     d.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// ------------------------------------------------------------ normalization
-
-struct Normalizer<'a> {
-    lookup: &'a dyn TypeLookup,
-    /// Replace matrices, arrays, sparse matrices, and tables with digests.
-    digest: bool,
-    /// The named types the value contains, with their versions.
-    contained: std::cell::RefCell<std::collections::BTreeMap<String, u32>>,
+fn hex(d: impl AsRef<[u8]>) -> String {
+    d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-impl<'a> Normalizer<'a> {
-    fn new(lookup: &'a dyn TypeLookup, digest: bool) -> Self {
-        Normalizer {
-            lookup,
-            digest,
-            contained: Default::default(),
-        }
-    }
-}
-
-impl Normalizer<'_> {
-    fn value(&self, ft: &FieldType, v: &Value) -> Value {
-        match ft {
-            _ if v.is_null() => Value::Null,
-            FieldType::Option { inner, .. } => self.value(inner, v),
-            FieldType::Matrix { element, .. } | FieldType::Array { element, .. } if self.digest => {
-                digest(&dense_binary(element, v))
-            }
-            FieldType::MatrixOf { of } if self.digest => {
-                let element = self.struct_fields(of).and_then(|f| f.first().map(|f| f.ty.clone())).unwrap_or(FieldType::Logical);
-                digest(&dense_binary(&element, v))
-            }
-            FieldType::SparseMatrix { element, .. } if self.digest => digest(&sparse_binary(element, v)),
-            FieldType::Table { columns, .. } if self.digest => digest(&table_binary(columns, v)),
-            FieldType::TableOf { of } if self.digest => {
-                digest(&table_binary(&self.struct_fields(of).unwrap_or_default(), v))
-            }
-            FieldType::Vec { element, .. } => {
-                Value::Array(v.as_array().map(|a| a.iter().map(|x| self.value(element, x)).collect()).unwrap_or_default())
-            }
-            FieldType::Hashmap { value, .. } => Value::Object(
-                v.as_object().map(|m| m.iter().map(|(k, x)| (k.clone(), self.value(value, x))).collect()).unwrap_or_default(),
-            ),
-            FieldType::OrderedMap { value, .. } => Value::Array(
-                v.as_array()
-                    .map(|a| a.iter().map(|p| json!({"name": p["name"], "value": self.value(value, &p["value"])})).collect())
-                    .unwrap_or_default(),
-            ),
-            FieldType::Named { name } => self.named(name, v),
-            FieldType::Dyn { r#trait } => match self.lookup.implementor(r#trait, v) {
-                Ok((ty, member)) => {
-                    let mut out = self.named(&ty, v);
-                    if let (Value::Object(o), Some(tag)) = (&mut out, v.get(&member)) {
-                        o.insert(member, tag.clone());
-                    }
-                    out
-                }
-                Err(_) => v.clone(),
-            },
-            _ => v.clone(),
-        }
-    }
-
-    fn struct_fields(&self, name: &QualifiedName) -> Option<Vec<FieldDef>> {
-        match self.lookup.find(name)? {
-            TypeDef::Struct(s) => Some(s.fields.clone()),
-            TypeDef::Enum(_) => None,
-        }
-    }
-
-    /// The declared fields of an object, in declaration order; an absent
-    /// field takes its default, or `null`.
-    fn fields(&self, fields: &[FieldDef], v: &Value) -> Map<String, Value> {
-        let mut out = Map::new();
-        for f in fields {
-            let x = match v.get(f.name.as_str()) {
-                None | Some(Value::Null) => f
-                    .default
-                    .as_ref()
-                    .map(|d| self.value(&f.ty, d))
-                    .unwrap_or(Value::Null),
-                Some(x) => self.value(&f.ty, x),
-            };
-            out.insert(f.name.to_string(), x);
-        }
-        out
-    }
-
-    fn named(&self, name: &QualifiedName, v: &Value) -> Value {
-        if let Some(def) = self.lookup.find(name) {
-            let version = match def {
-                TypeDef::Struct(s) => s.version,
-                TypeDef::Enum(e) => e.version,
-            };
-            self.contained
-                .borrow_mut()
-                .insert(name.to_string(), version);
-        }
-        match self.lookup.find(name) {
-            Some(TypeDef::Struct(s)) => Value::Object(self.fields(&s.fields, v)),
-            Some(TypeDef::Enum(e)) => {
-                if e.variants
-                    .iter()
-                    .all(|x| matches!(x.shape, VariantShape::Unit))
-                {
-                    return v.clone();
-                }
-                let tag = e.tag.as_str();
-                let variant = v.get(tag).and_then(Value::as_str).unwrap_or_default();
-                let mut out = match e
-                    .variants
-                    .iter()
-                    .find(|x| x.name.as_str() == variant)
-                    .map(|x| &x.shape)
-                {
-                    Some(VariantShape::Struct { fields, .. }) => self.fields(fields, v),
-                    // The wrapped struct is a type the value contains.
-                    Some(VariantShape::Newtype { of }) => match self.lookup.find(of) {
-                        Some(TypeDef::Struct(s)) => {
-                            self.contained
-                                .borrow_mut()
-                                .insert(of.to_string(), s.version);
-                            self.fields(&s.fields, v)
-                        }
-                        _ => Map::new(),
-                    },
-                    _ => Map::new(),
-                };
-                out.insert(tag.to_string(), Value::from(variant));
-                Value::Object(out)
-            }
-            None => v.clone(),
-        }
-    }
-}
-
-fn digest(bytes: &[u8]) -> Value {
-    json!({"$digest": format!("sha256:{}", sha256_hex(bytes))})
-}
-
-// ------------------------------------------------------------ binary forms
-
-/// Days from 1970-01-01 to a proleptic Gregorian date (Hinnant's
-/// `days_from_civil`).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
@@ -335,234 +140,27 @@ pub fn datetime_micros(s: &str) -> i64 {
     secs * 1_000_000 + n(20..26)
 }
 
-fn element_tag(ft: &FieldType) -> (u8, &FieldType) {
-    let inner = match ft {
-        FieldType::Option { inner, .. } => inner.as_ref(),
-        other => other,
-    };
-    let tag = match inner {
-        FieldType::Logical => 1,
-        FieldType::Integer(_) => 2,
-        FieldType::Double(_) => 3,
-        FieldType::Character(_) => 4,
-        FieldType::Date => 5,
-        FieldType::Posixct => 6,
-        FieldType::Factor { .. } => 7,
-        _ => 0,
-    };
-    (tag, inner)
-}
-
-fn put_str(out: &mut Vec<u8>, s: &str) {
-    out.extend_from_slice(&(s.len() as u64).to_le_bytes());
-    out.extend_from_slice(s.as_bytes());
-}
-
-fn put_value(out: &mut Vec<u8>, tag: u8, v: &Value) {
-    let present = !v.is_null();
-    match tag {
-        1 => out.push(u8::from(present && v.as_bool() == Some(true))),
-        2 => out.extend_from_slice(
-            &(if present {
-                v.as_f64().unwrap_or(0.0) as i32
-            } else {
-                0
-            })
-            .to_le_bytes(),
-        ),
-        3 => {
-            let x = if present {
-                crate::rules::number_value(v).unwrap_or(0.0)
-            } else {
-                0.0
-            };
-            let bits = if x.is_nan() {
-                0x7FF8_0000_0000_0000
-            } else if x == 0.0 {
-                0
-            } else {
-                x.to_bits()
-            };
-            out.extend_from_slice(&bits.to_le_bytes());
-        }
-        4 => put_str(
-            out,
-            if present {
-                v.as_str().unwrap_or_default()
-            } else {
-                ""
-            },
-        ),
-        5 => out.extend_from_slice(
-            &(if present {
-                date_days(v.as_str().unwrap_or_default()) as i32
-            } else {
-                0
-            })
-            .to_le_bytes(),
-        ),
-        6 => out.extend_from_slice(
-            &(if present {
-                datetime_micros(v.as_str().unwrap_or_default())
-            } else {
-                0
-            })
-            .to_le_bytes(),
-        ),
-        _ => {}
-    }
-}
-
-fn put_bitmap(out: &mut Vec<u8>, items: &[Value]) {
-    let mut bytes = vec![0u8; items.len().div_ceil(8)];
-    for (i, x) in items.iter().enumerate() {
-        if !x.is_null() {
-            bytes[i / 8] |= 1 << (i % 8);
-        }
-    }
-    out.extend_from_slice(&bytes);
-}
-
-/// The canonical binary form of a dense matrix or array.
+/// The canonical binary form of a dense matrix or array, from its JSON form.
 pub fn dense_binary(element: &FieldType, v: &Value) -> Vec<u8> {
-    let (tag, _) = element_tag(element);
-    let shape: Vec<u64> = v["shape"]
-        .as_array()
-        .map(|a| a.iter().filter_map(Value::as_u64).collect())
-        .unwrap_or_default();
-    let data = v["data"].as_array().cloned().unwrap_or_default();
-    let mut out = b"R8M1".to_vec();
-    out.push(tag);
-    out.extend_from_slice(&(shape.len() as u32).to_le_bytes());
-    for d in &shape {
-        out.extend_from_slice(&d.to_le_bytes());
-    }
-    put_bitmap(&mut out, &data);
-    for x in &data {
-        put_value(&mut out, tag, x);
-    }
-    let dimnames = v.get("dimnames").and_then(Value::as_array);
-    for i in 0..shape.len() {
-        match dimnames.and_then(|d| d.get(i)).and_then(Value::as_array) {
-            Some(names) => {
-                out.push(1);
-                for n in names {
-                    put_str(&mut out, n.as_str().unwrap_or_default());
-                }
-            }
-            None => out.push(0),
-        }
-    }
+    let mut out = Vec::new();
+    emit::dense_binary_access(element, Json::new(v), &mut out);
     out
 }
 
-/// The canonical binary form of a sparse matrix.
+/// The canonical binary form of a sparse matrix, from its JSON form.
 pub fn sparse_binary(element: &FieldType, v: &Value) -> Vec<u8> {
-    let (tag, _) = element_tag(element);
-    let ints = |k: &str| -> Vec<u64> {
-        v[k].as_array()
-            .map(|a| a.iter().filter_map(Value::as_u64).collect())
-            .unwrap_or_default()
-    };
-    let shape = ints("shape");
-    let data = v["data"].as_array().cloned().unwrap_or_default();
-    let mut out = b"R8S1".to_vec();
-    out.push(tag);
-    for d in shape.iter().take(2) {
-        out.extend_from_slice(&d.to_le_bytes());
-    }
-    out.extend_from_slice(&(data.len() as u64).to_le_bytes());
-    for k in ["indptr", "indices"] {
-        for x in ints(k) {
-            out.extend_from_slice(&x.to_le_bytes());
-        }
-    }
-    for x in &data {
-        put_value(&mut out, tag, x);
-    }
+    let mut out = Vec::new();
+    emit::sparse_binary_access(element, Json::new(v), &mut out);
     out
 }
 
-/// The canonical binary form of a table, with `columns` the declared columns
-/// and the extra columns' types read from `"$columns"`.
+/// The canonical binary form of a table, from its JSON form, with `columns`
+/// the declared columns and the extra columns' types read from
+/// `"$columns"`.
 pub fn table_binary(columns: &[FieldDef], v: &Value) -> Vec<u8> {
-    let m = v.as_object().cloned().unwrap_or_default();
-    let n = m.get("$length").and_then(Value::as_u64).unwrap_or(0);
-    let extra = m
-        .get("$columns")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let mut names: Vec<&String> = m.keys().filter(|k| !k.starts_with('$')).collect();
-    names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-    let mut out = b"R8T1".to_vec();
-    out.extend_from_slice(&n.to_le_bytes());
-    out.extend_from_slice(&(names.len() as u32).to_le_bytes());
-    for name in names {
-        let ft = columns
-            .iter()
-            .find(|c| c.name.as_str() == name.as_str())
-            .map(|c| c.ty.clone())
-            .or_else(|| {
-                extra
-                    .get(name.as_str())
-                    .and_then(|t| serde_json::from_value(t.clone()).ok())
-            })
-            .unwrap_or(FieldType::Json);
-        let (tag, inner) = element_tag(&ft);
-        put_str(&mut out, name);
-        out.push(tag);
-        let cells = &m[name.as_str()];
-        if tag == 7 {
-            let declared = match inner {
-                FieldType::Factor { levels, .. } => levels.clone(),
-                _ => None,
-            };
-            let (levels, codes): (Vec<String>, Vec<Value>) = match (cells, declared) {
-                (Value::Object(o), _) => (
-                    o.get("levels")
-                        .and_then(Value::as_array)
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|x| x.as_str().map(str::to_string))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    o.get("codes")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default(),
-                ),
-                (Value::Array(a), Some(levels)) => {
-                    let codes = a
-                        .iter()
-                        .map(|x| {
-                            match x.as_str().and_then(|s| levels.iter().position(|l| l == s)) {
-                                Some(i) => Value::from(i + 1),
-                                None => Value::Null,
-                            }
-                        })
-                        .collect();
-                    (levels, codes)
-                }
-                _ => (Vec::new(), Vec::new()),
-            };
-            out.extend_from_slice(&(levels.len() as u64).to_le_bytes());
-            for l in &levels {
-                put_str(&mut out, l);
-            }
-            put_bitmap(&mut out, &codes);
-            for c in &codes {
-                out.extend_from_slice(&(c.as_i64().unwrap_or(0) as i32).to_le_bytes());
-            }
-            continue;
-        }
-        let items = cells.as_array().cloned().unwrap_or_default();
-        put_bitmap(&mut out, &items);
-        for x in &items {
-            put_value(&mut out, tag, x);
-        }
-    }
+    let mut out = Vec::new();
+    let open = v.get("$columns").is_some();
+    emit::table_binary_access(columns, open, Json::new(v), &mut out);
     out
 }
 
@@ -579,7 +177,9 @@ pub fn normalize(
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(Normalizer::new(lookup, false).named(ty, value))
+    let mut e = Emitter::new(lookup, String::new(), false, false);
+    e.named(ty, Json::new(value), None);
+    Ok(serde_json::from_str(&e.w.out).expect("the emitter writes JSON"))
 }
 
 /// The RFC 8785 canonical text of a valid value's normalized form.
@@ -588,7 +188,23 @@ pub fn canonical(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
 ) -> Result<String, Vec<ValueError>> {
-    normalize(value, ty, lookup).map(|v| canonical_text(&v))
+    let errors = validate(value, ty, lookup);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    Ok(canonical_access(Json::new(value), ty, lookup))
+}
+
+/// The RFC 8785 canonical text of the normalized form of a valid value in
+/// any host form.
+pub fn canonical_access<'a, A: Access<'a>>(
+    value: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+) -> String {
+    let mut e = Emitter::new(lookup, String::new(), true, false);
+    e.named(ty, value, None);
+    e.w.out
 }
 
 /// Collects the named types `ty` reaches through its fields, variants, and
@@ -719,17 +335,52 @@ pub fn content_hash_with_runtime(
     if !errors.is_empty() {
         return Err(errors);
     }
-    let hashed = Normalizer::new(lookup, true).named(ty, value);
-    let mut obj = json!({"type": ty.to_string(), "declaration": declaration_hash(ty, lookup), "value": hashed});
-    if !runtime.is_empty() {
-        let mut paths = runtime.to_vec();
-        paths.sort();
-        obj["runtime"] = json!(paths);
+    Ok(hash_with(Json::new(value), ty, lookup, runtime.to_vec()))
+}
+
+/// The content hash of a valid value in any host form, streamed into
+/// SHA-256 without building its text: the hashed object's members in RFC
+/// 8785 order are `declaration`, `runtime` (the JSON Pointers of the
+/// runtime-only fields that hold a value, when there are any), `type`, and
+/// `value`.
+pub fn content_hash_access<'a, A: Access<'a>>(
+    value: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+) -> String {
+    hash_with(value, ty, lookup, Vec::new())
+}
+
+fn hash_with<'a, A: Access<'a>>(
+    value: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    runtime: Vec<String>,
+) -> String {
+    let mut paths = runtime;
+    paths.extend(emit::runtime_paths(ty, value, lookup));
+    paths.sort();
+    paths.dedup();
+    let mut w = Writer::new(Sha256::new(), true);
+    w.begin_object();
+    w.key("declaration");
+    w.string(&declaration_hash(ty, lookup));
+    if !paths.is_empty() {
+        w.key("runtime");
+        w.begin_array();
+        for p in &paths {
+            w.string(p);
+        }
+        w.end_array();
     }
-    Ok(format!(
-        "sha256:{}",
-        sha256_hex(canonical_text(&obj).as_bytes())
-    ))
+    w.key("type");
+    w.string(&ty.to_string());
+    w.key("value");
+    let mut e = Emitter::new(lookup, w.out, true, true);
+    e.named(ty, value, None);
+    let mut h = e.w.out;
+    h.update(b"}");
+    format!("sha256:{}", hex(h.finalize()))
 }
 
 // --------------------------------------------------------------- documents
@@ -746,29 +397,44 @@ pub fn to_document(
     if !errors.is_empty() {
         return Err(errors);
     }
-    let n = Normalizer::new(lookup, false);
-    let body = n.named(ty, value);
-    let mut doc = Map::new();
-    doc.insert("$type".into(), Value::from(ty.to_string()));
-    doc.insert(
-        "$types".into(),
-        Value::Object(
-            n.contained
-                .into_inner()
-                .into_iter()
-                .map(|(k, v)| (k, Value::from(v)))
-                .collect(),
-        ),
-    );
-    match body {
-        Value::Object(fields) => doc.extend(fields),
+    Ok(document_access(Json::new(value), ty, lookup))
+}
+
+/// Writes a valid value in any host form as a document, streamed.
+pub fn document_access<'a, A: Access<'a>>(
+    value: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+) -> String {
+    // The body first, which collects the contained types.
+    let mut e = Emitter::new(lookup, String::new(), false, false);
+    e.named(ty, value, None);
+    let body = e.w.out;
+    let mut w = Writer::new(String::new(), false);
+    w.begin_object();
+    w.key("$type");
+    w.string(&ty.to_string());
+    w.key("$types");
+    w.begin_object();
+    for (k, v) in &e.contained {
+        w.key(k);
+        w.number(f64::from(*v));
+    }
+    w.end_object();
+    let mut out = w.out;
+    if let Some(fields) = body.strip_prefix('{').and_then(|b| b.strip_suffix('}')) {
+        if !fields.is_empty() {
+            out.push(',');
+            out.push_str(fields);
+        }
+    } else {
         // An enum value of unit variants is a string; the document holds it
         // under `"$value"`.
-        other => {
-            doc.insert("$value".into(), other);
-        }
+        out.push_str(",\"$value\":");
+        out.push_str(&body);
     }
-    Ok(serde_json::to_string(&Value::Object(doc)).expect("a document serializes"))
+    out.push('}');
+    out
 }
 
 fn document_error(code: &'static str, path: &str, message: String) -> ValueError {
@@ -829,14 +495,15 @@ pub fn read_document(
         Some(v) => v.clone(),
         None => doc.clone(),
     };
-    let n = Normalizer::new(lookup, false);
     let validation = validate(&value, ty, lookup);
     if !validation.is_empty() {
         errors.extend(validation);
         return Err(errors);
     }
-    let normalized = n.named(ty, &value);
-    for (name, current) in n.contained.into_inner() {
+    let mut e = Emitter::new(lookup, String::new(), false, false);
+    e.named(ty, Json::new(&value), None);
+    let normalized: Value = serde_json::from_str(&e.w.out).expect("the emitter writes JSON");
+    for (name, current) in e.contained {
         let path = format!("/$types/{}", name.replace('~', "~0").replace('/', "~1"));
         match versions.get(&name).and_then(Value::as_u64) {
             None => errors.push(document_error("version_missing", &path, format!("`$types` does not record the version of `{name}`"))),

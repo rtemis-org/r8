@@ -14,8 +14,11 @@ use crate::ir::{FieldDef, Logic};
 /// expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleError {
+    /// A stable code, such as `unknown_field`.
     pub code: &'static str,
+    /// A JSON Pointer into the expression.
     pub path: String,
+    /// The message.
     pub message: String,
 }
 

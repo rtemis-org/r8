@@ -66,7 +66,7 @@ mod documents {
         .unwrap();
         assert_eq!(
             text,
-            r#"{"$type":"rtemis::Svm","$types":{"rtemis::Kernel":1,"rtemis::Svm":1},"cost":1.0,"kernel":{"gamma":0.5,"type":"Rbf"},"weights":null,"mtry":3}"#
+            r#"{"$type":"rtemis::Svm","$types":{"rtemis::Kernel":1,"rtemis::Svm":1},"cost":1,"kernel":{"gamma":0.5,"type":"Rbf"},"weights":null,"mtry":3}"#
         );
     }
 

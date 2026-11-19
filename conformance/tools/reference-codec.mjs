@@ -81,6 +81,18 @@ function dense(element, v) {
   return out.done();
 }
 
+// A vec() of a logical, integer, double, date, or date-time element: R8M1
+// with one dimension and no names.
+function vecBinary(element, v) {
+  const out = new Bytes(), tag = tagOf(element);
+  out.ascii("R8M1"); out.u8(tag); out.u32(1); out.u64(v.length);
+  bitmap(out, v);
+  v.forEach((x) => value(out, tag, x));
+  out.u8(0);
+  return out.done();
+}
+const DIGESTED_VEC = new Set([1, 2, 3, 5, 6]);
+
 function sparse(element, v) {
   const out = new Bytes(), tag = tagOf(element);
   out.ascii("R8S1"); out.u8(tag); out.u64(v.shape[0]); out.u64(v.shape[1]); out.u64(v.data.length);
@@ -140,7 +152,10 @@ function normalizer(find, digest) {
       case "matrix": case "array": return digest ? { $digest: sha256(dense(t.element, v)) } : v;
       case "sparse_matrix": return digest ? { $digest: sha256(sparse(t.element, v)) } : v;
       case "table": return digest ? { $digest: sha256(table(t.columns, v)) } : v;
-      case "vec": return v.map((x) => val(t.element, x));
+      case "vec":
+        return digest && DIGESTED_VEC.has(tagOf(t.element))
+          ? { $digest: sha256(vecBinary(t.element, v)) }
+          : v.map((x) => val(t.element, x));
       case "hashmap": return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, val(t.value, x)]));
       case "ordered_map": return v.map((p) => ({ name: p.name, value: val(t.value, p.value) }));
       case "named": return named(t.name, v);

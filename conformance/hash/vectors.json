@@ -1,0 +1,238 @@
+{
+  "$corpus": 1,
+  "description": "Vectors in the content hash: a vec() of a logical, integer, double, date, or date-time element is a digest of its R8M1 form with one dimension.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "vecs",
+    "types": [
+      {
+        "kind": "struct",
+        "name": "Vecs",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "d",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "double"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "i",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "integer"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "l",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "logical"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "dt",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "date"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "ct",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "posixct"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "od",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "option",
+                "inner": {
+                  "kind": "double",
+                  "finite": false
+                }
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "s",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "character"
+              }
+            },
+            "description": ""
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "vec-all-types",
+      "description": "A digest for each vec() of a logical, integer, double, date, or date-time element; a character vec() inline.",
+      "op": "hash",
+      "type": "vecs::Vecs",
+      "input": {
+        "d": [
+          0.5,
+          0,
+          1e+21
+        ],
+        "i": [
+          1,
+          -2,
+          3
+        ],
+        "l": [
+          true,
+          false
+        ],
+        "dt": [
+          "2024-01-02",
+          "1969-12-31"
+        ],
+        "ct": [
+          "2024-01-02T03:04:05.123456Z"
+        ],
+        "od": [
+          1.5,
+          null,
+          "NaN",
+          "-Infinity"
+        ],
+        "s": [
+          "a",
+          "b"
+        ]
+      },
+      "expect": {
+        "hash": "sha256:b9aa53cf727639bfdc8223a1ca76d50236546fa648e6f1f426ed7e2c007bc2f4"
+      }
+    },
+    {
+      "id": "vec-empty",
+      "description": "Empty vectors.",
+      "op": "hash",
+      "type": "vecs::Vecs",
+      "input": {
+        "d": [],
+        "i": [],
+        "l": [],
+        "dt": [],
+        "ct": [],
+        "od": [],
+        "s": []
+      },
+      "expect": {
+        "hash": "sha256:300479559c18b4761a7434a27fd0bba3abc04d284ee15a35b8ca7378e736995a"
+      }
+    },
+    {
+      "id": "vec-negative-zero",
+      "description": "-0 and 0 have one binary form.",
+      "op": "hash",
+      "type": "vecs::Vecs",
+      "input": {
+        "d": [
+          0.5,
+          0,
+          1e+21
+        ],
+        "i": [
+          1,
+          -2,
+          3
+        ],
+        "l": [
+          true,
+          false
+        ],
+        "dt": [
+          "2024-01-02",
+          "1969-12-31"
+        ],
+        "ct": [
+          "2024-01-02T03:04:05.123456Z"
+        ],
+        "od": [
+          1.5,
+          null,
+          "NaN",
+          "-Infinity"
+        ],
+        "s": [
+          "a",
+          "b"
+        ]
+      },
+      "expect": {
+        "hash": "sha256:b9aa53cf727639bfdc8223a1ca76d50236546fa648e6f1f426ed7e2c007bc2f4"
+      }
+    },
+    {
+      "id": "vec-canonical-inline",
+      "description": "The canonical form writes vectors inline.",
+      "op": "canonical",
+      "type": "vecs::Vecs",
+      "input": {
+        "d": [
+          0.5,
+          0,
+          1e+21
+        ],
+        "i": [
+          1,
+          -2,
+          3
+        ],
+        "l": [
+          true,
+          false
+        ],
+        "dt": [
+          "2024-01-02",
+          "1969-12-31"
+        ],
+        "ct": [
+          "2024-01-02T03:04:05.123456Z"
+        ],
+        "od": [
+          1.5,
+          null,
+          "NaN",
+          "-Infinity"
+        ],
+        "s": [
+          "a",
+          "b"
+        ]
+      },
+      "expect": {
+        "json": "{\"ct\":[\"2024-01-02T03:04:05.123456Z\"],\"d\":[0.5,0,1e+21],\"dt\":[\"2024-01-02\",\"1969-12-31\"],\"i\":[1,-2,3],\"l\":[true,false],\"od\":[1.5,null,\"NaN\",\"-Infinity\"],\"s\":[\"a\",\"b\"]}"
+      }
+    }
+  ]
+}

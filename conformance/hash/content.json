@@ -182,127 +182,116 @@
       },
       "op": "hash",
       "type": "h::Fd"
+    },
+    {
+      "id": "svm-weights",
+      "description": "Case weights, a vec() of doubles, enter the hash as a digest.",
+      "op": "hash",
+      "type": "rtemis::Svm",
+      "input": {
+        "cost": 2,
+        "weights": [
+          0.5,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "hash": "sha256:3ab738c3660785361fa4c645c749d0e8aff5576a87312431bbd7207a59dc4099"
+      }
     }
   ],
   "description": "Content hashes: the declaration hash and the normalized value, with matrices, sparse matrices, and tables entering as digests of their canonical binary form.",
   "ir": [
     {
       "$ir": 1,
-      "impls": [
-        {
-          "methods": [
-            "fit"
-          ],
-          "target": {
-            "kind": "type",
-            "name": "rtemis::Svm"
-          },
-          "trait": "rtemis::Fit"
-        }
-      ],
       "namespace": "rtemis",
-      "traits": [
-        {
-          "description": "Trains a model from its settings.",
-          "methods": [
-            {
-              "description": "Trains a model.",
-              "name": "fit",
-              "params": [
-                "spec",
-                "x",
-                "y"
-              ]
-            }
-          ],
-          "name": "Fit"
-        }
-      ],
       "types": [
         {
-          "description": "Kernel function.",
           "kind": "enum",
           "name": "Kernel",
+          "description": "Kernel function.",
           "tag": "type",
+          "version": 1,
           "variants": [
             {
-              "description": "",
               "name": "Linear",
+              "description": "",
               "shape": "unit"
             },
             {
+              "name": "Rbf",
               "description": "",
+              "shape": "struct",
               "fields": [
                 {
-                  "description": "Kernel width.",
                   "name": "gamma",
                   "type": {
-                    "exclusive_min": 0,
-                    "kind": "double"
-                  }
+                    "kind": "double",
+                    "exclusive_min": 0.0
+                  },
+                  "description": "Kernel width."
                 }
-              ],
-              "name": "Rbf",
-              "shape": "struct"
+              ]
             }
-          ],
-          "version": 1
+          ]
         },
         {
+          "kind": "struct",
+          "name": "Svm",
           "description": "Support vector machine settings.",
+          "version": 1,
           "fields": [
             {
-              "default": 1,
-              "description": "Cost of a margin violation.",
               "name": "cost",
               "type": {
-                "exclusive_min": 0,
-                "kind": "double"
-              }
+                "kind": "double",
+                "exclusive_min": 0.0
+              },
+              "default": 1,
+              "description": "Cost of a margin violation."
             },
             {
-              "default": {
-                "type": "Linear"
-              },
-              "description": "Kernel function.",
               "name": "kernel",
               "type": {
                 "kind": "named",
                 "name": "rtemis::Kernel"
-              }
+              },
+              "default": {
+                "type": "Linear"
+              },
+              "description": "Kernel function."
             },
             {
-              "description": "Case weights.",
-              "external": true,
               "name": "weights",
               "type": {
+                "kind": "option",
                 "inner": {
+                  "kind": "vec",
                   "element": {
                     "kind": "double",
-                    "min": 0
-                  },
-                  "kind": "vec"
-                },
-                "kind": "option"
-              }
+                    "min": 0.0
+                  }
+                }
+              },
+              "description": "Case weights.",
+              "external": true
             },
             {
-              "description": "Variables per split.",
               "name": "mtry",
               "type": {
+                "kind": "option",
                 "inner": {
                   "kind": "integer",
                   "min": 1
                 },
-                "kind": "option",
                 "resolve": {
                   "policy": "runtime"
                 }
-              }
+              },
+              "description": "Variables per split."
             }
           ],
-          "kind": "struct",
-          "name": "Svm",
           "rules": [
             {
               "id": "RBF_GAMMA",
@@ -326,7 +315,6 @@
                   100
                 ]
               },
-              "message": "cost is at most 100 with the Rbf kernel.",
               "when": {
                 "is_variant": [
                   {
@@ -334,10 +322,39 @@
                   },
                   "Rbf"
                 ]
-              }
+              },
+              "message": "cost is at most 100 with the Rbf kernel."
             }
-          ],
-          "version": 1
+          ]
+        }
+      ],
+      "traits": [
+        {
+          "name": "Fit",
+          "description": "Trains a model from its settings.",
+          "methods": [
+            {
+              "name": "fit",
+              "description": "Trains a model.",
+              "params": [
+                "spec",
+                "x",
+                "y"
+              ]
+            }
+          ]
+        }
+      ],
+      "impls": [
+        {
+          "trait": "rtemis::Fit",
+          "target": {
+            "kind": "type",
+            "name": "rtemis::Svm"
+          },
+          "methods": [
+            "fit"
+          ]
         }
       ]
     },
@@ -346,82 +363,84 @@
       "namespace": "h",
       "types": [
         {
+          "kind": "struct",
+          "name": "M",
           "description": "Matrix, dates, and defaults.",
+          "version": 1,
           "fields": [
             {
-              "description": "A matrix.",
               "name": "m",
               "type": {
+                "kind": "matrix",
                 "element": {
+                  "kind": "option",
                   "inner": {
-                    "finite": false,
-                    "kind": "double"
-                  },
-                  "kind": "option"
-                },
-                "kind": "matrix"
-              }
+                    "kind": "double",
+                    "finite": false
+                  }
+                }
+              },
+              "description": "A matrix."
             },
             {
-              "description": "",
               "name": "d",
               "type": {
                 "kind": "date"
-              }
+              },
+              "description": ""
             },
             {
-              "description": "",
               "name": "t",
               "type": {
                 "kind": "posixct"
-              }
+              },
+              "description": ""
             },
             {
+              "name": "tags",
+              "type": {
+                "kind": "vec",
+                "element": {
+                  "kind": "character"
+                }
+              },
               "default": [
                 "x"
               ],
-              "description": "",
-              "name": "tags",
-              "type": {
-                "element": {
-                  "kind": "character"
-                },
-                "kind": "vec"
-              }
+              "description": ""
             },
             {
-              "default": true,
-              "description": "",
               "name": "flag",
               "type": {
                 "kind": "logical"
-              }
+              },
+              "default": true,
+              "description": ""
             },
             {
-              "description": "",
               "name": "note",
               "type": {
+                "kind": "option",
                 "inner": {
                   "kind": "character"
-                },
-                "kind": "option"
-              }
+                }
+              },
+              "description": ""
             }
-          ],
-          "kind": "struct",
-          "name": "M",
-          "version": 1
+          ]
         },
         {
+          "kind": "struct",
+          "name": "Tab",
           "description": "",
+          "version": 1,
           "fields": [
             {
-              "description": "",
               "name": "tb",
               "type": {
+                "kind": "table",
                 "columns": [
                   {
-                    "description": "",
                     "name": "g",
                     "type": {
                       "kind": "factor",
@@ -429,90 +448,88 @@
                         "lo",
                         "hi"
                       ]
-                    }
+                    },
+                    "description": ""
                   },
                   {
-                    "description": "",
                     "name": "n",
                     "type": {
+                      "kind": "option",
                       "inner": {
                         "kind": "integer"
-                      },
-                      "kind": "option"
-                    }
+                      }
+                    },
+                    "description": ""
                   },
                   {
-                    "description": "",
                     "name": "when",
                     "type": {
                       "kind": "date"
-                    }
+                    },
+                    "description": ""
                   },
                   {
-                    "description": "",
                     "name": "id",
                     "type": {
                       "kind": "character"
-                    }
+                    },
+                    "description": ""
                   }
                 ],
-                "kind": "table",
                 "open": true
-              }
+              },
+              "description": ""
             }
-          ],
-          "kind": "struct",
-          "name": "Tab",
-          "version": 1
+          ]
         },
         {
-          "description": "",
-          "fields": [
-            {
-              "description": "",
-              "name": "s",
-              "type": {
-                "element": {
-                  "kind": "double"
-                },
-                "kind": "sparse_matrix"
-              }
-            }
-          ],
           "kind": "struct",
           "name": "Sp",
-          "version": 1
-        },
-        {
           "description": "",
+          "version": 1,
           "fields": [
             {
-              "description": "",
+              "name": "s",
+              "type": {
+                "kind": "sparse_matrix",
+                "element": {
+                  "kind": "double"
+                }
+              },
+              "description": ""
+            }
+          ]
+        },
+        {
+          "kind": "struct",
+          "name": "Fd",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
               "name": "tb",
               "type": {
+                "kind": "table",
                 "columns": [
                   {
-                    "description": "",
                     "name": "f",
                     "type": {
                       "kind": "factor"
-                    }
+                    },
+                    "description": ""
                   },
                   {
-                    "description": "",
                     "name": "ok",
                     "type": {
                       "kind": "logical"
-                    }
+                    },
+                    "description": ""
                   }
-                ],
-                "kind": "table"
-              }
+                ]
+              },
+              "description": ""
             }
-          ],
-          "kind": "struct",
-          "name": "Fd",
-          "version": 1
+          ]
         }
       ]
     }

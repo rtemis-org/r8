@@ -34,7 +34,9 @@ use crate::name::Name;
 /// A rule compiled against its scope.
 #[derive(Debug, Clone)]
 pub struct CompiledRule {
+    /// The rule's ID.
     pub id: Name,
+    /// The message of a violation.
     pub message: String,
     invariant: Expr,
     when: Option<Expr>,
@@ -43,6 +45,7 @@ pub struct CompiledRule {
 /// The result of checking one rule against one value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
+    /// The rule holds.
     Holds,
     /// The rule is violated; each path is a JSON Pointer relative to the
     /// value checked: `""` for the value itself, and for an invariant that is
@@ -279,6 +282,35 @@ pub fn evaluate_computed(
     })?;
     let env = Env {
         data: Json::new(value),
+        scope: fields,
+        lookup,
+        element: None,
+    };
+    Ok(env.eval(&expr)?.ok().map(|v| match v {
+        Val::V(v) => v,
+        Val::R(a, ty) => a.to_value(ty.unwrap_or(&crate::ir::FieldType::Json), lookup),
+    }))
+}
+
+/// Evaluates a computed field's expression over a value in any host form,
+/// in the scope of `fields`; the result is the field's value in its JSON
+/// form. `Ok(None)` when the expression reads an absent field.
+pub fn evaluate_computed_access<'a, A: Access<'a>>(
+    logic: &crate::ir::Logic,
+    fields: &[FieldDef],
+    lookup: &dyn TypeLookup,
+    target: &FieldDef,
+    value: A,
+) -> Result<Option<Value>, String> {
+    let ty = Ty::of(&target.ty, target.unit.as_deref());
+    let expr = compile_computed(logic, fields, lookup, &ty).map_err(|e| {
+        e.into_iter()
+            .map(|x| x.message)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    let env = Env {
+        data: value,
         scope: fields,
         lookup,
         element: None,

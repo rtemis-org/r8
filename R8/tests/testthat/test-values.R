@@ -121,7 +121,7 @@ test_that("a document round trips to an identical value", {
   json <- to_json(x)
   expect_identical(
     json,
-    '{"$type":"rtemis::Svm","$types":{"rtemis::Kernel":1,"rtemis::Svm":1},"cost":2.0,"kernel":{"gamma":0.5,"type":"Rbf"},"weights":[1.0,2.5],"mtry":null}'
+    '{"$type":"rtemis::Svm","$types":{"rtemis::Kernel":1,"rtemis::Svm":1},"cost":2,"kernel":{"gamma":0.5,"type":"Rbf"},"weights":[1,2.5],"mtry":null}'
   )
   expect_identical(r8_from_json(t[["Svm"]], json), x)
   expect_error(

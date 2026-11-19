@@ -185,6 +185,7 @@ impl Name {
         Ok(Name(s))
     }
 
+    /// The name as text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -212,11 +213,14 @@ impl<'de> Deserialize<'de> for Name {
 /// A type's or trait's identity in every host, `namespace::Name`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QualifiedName {
+    /// The namespace.
     pub namespace: Name,
+    /// The name within the namespace.
     pub name: Name,
 }
 
 impl QualifiedName {
+    /// The qualified name `namespace::name`.
     pub fn new(namespace: Name, name: Name) -> Self {
         QualifiedName { namespace, name }
     }
@@ -262,6 +266,7 @@ impl<'de> Deserialize<'de> for QualifiedName {
 pub struct MethodName(String);
 
 impl MethodName {
+    /// A method name: a name, `...`, or an R function name.
     pub fn new(s: impl Into<String>) -> Result<Self, NameError> {
         let s = s.into();
         if s == "[" {
@@ -274,6 +279,7 @@ impl MethodName {
         Ok(MethodName(s))
     }
 
+    /// The name as text.
     pub fn as_str(&self) -> &str {
         &self.0
     }

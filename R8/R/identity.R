@@ -2,42 +2,16 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# %% value_identity ----
-#' The canonical text, content hash, and runtime-only paths of a value
-#'
-#' @param x An R8 value.
-#'
-#' @return List: `canonical`, `hash`, and `runtime`.
-#'
-#' @keywords internal
-#' @noRd
-value_identity <- function(x) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort("`x` is an R8 value.", class = "r8_type_error")
-  }
-  res <- r8_value_identity(x)
-  if (!is.null(res[["errors"]])) {
-    r8_abort(
-      "Invalid `",
-      attr(x, "r8_type"),
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = "r8_value_error"
-    )
-  }
-  res
-} # /R8::value_identity
-
-
 # %% r8_hash ----
 #' Content hash of an R8 value
 #'
 #' The SHA-256 of the RFC 8785 canonical JSON of the type's name, its
 #' declaration hash, and the value, written `sha256:<hex>`. Values that differ
 #' only in member order or in defaults written out hash the same. A matrix,
-#' sparse matrix, or table enters through the digest of its canonical binary
-#' form. A runtime-only field's value stays out of the hash; its presence
-#' enters it.
+#' an array, a sparse matrix, a table, and a `vec()` of logical, integer,
+#' double, date, or date-time values enter through the digest of their
+#' canonical binary form. A runtime-only field's value stays out of the hash;
+#' its presence enters it. The hash is computed from the R objects in place.
 #'
 #' @param x An R8 value.
 #'
@@ -51,33 +25,21 @@ value_identity <- function(x) {
 #'
 #' @export
 r8_hash <- function(x) {
-  value_identity(x)[["hash"]]
-} # /R8::r8_hash
-
-
-# %% path_get ----
-#' The element of a value at a JSON Pointer
-#'
-#' @param x An R8 value or a list.
-#' @param path Character: A JSON Pointer of field names and positions.
-#'
-#' @return The element.
-#'
-#' @keywords internal
-#' @noRd
-path_get <- function(x, path) {
-  parts <- strsplit(sub("^/", "", path), "/", fixed = TRUE)[[1L]]
-  for (p in parts) {
-    p <- gsub("~1", "/", gsub("~0", "~", p, fixed = TRUE), fixed = TRUE)
-    x <- unclass(x)
-    x <- if (grepl("^[0-9]+$", p) && is.null(names(x))) {
-      x[[as.integer(p) + 1L]]
-    } else {
-      x[[p]]
-    }
+  if (!inherits(x, "r8_value")) {
+    r8_abort("`x` is an R8 value.", class = "r8_type_error")
   }
-  x
-} # /R8::path_get
+  res <- r8_value_hash(x)
+  if (is.list(res)) {
+    r8_abort(
+      "Invalid `",
+      attr(x, "r8_type"),
+      "`:\n",
+      problems_message(res[["errors"]]),
+      class = "r8_value_error"
+    )
+  }
+  res
+} # /R8::r8_hash
 
 
 # %% r8_equal ----
@@ -103,22 +65,7 @@ r8_equal <- function(x, y) {
   if (!inherits(x, "r8_value") || !inherits(y, "r8_value")) {
     r8_abort("`x` and `y` are R8 values.", class = "r8_type_error")
   }
-  if (!identical(attr(x, "r8_type"), attr(y, "r8_type"))) {
-    return(FALSE)
-  }
-  a <- value_identity(x)
-  b <- value_identity(y)
-  if (
-    !identical(a[["canonical"]], b[["canonical"]]) ||
-      !identical(sort(a[["runtime"]]), sort(b[["runtime"]]))
-  ) {
-    return(FALSE)
-  }
-  all(vapply(
-    a[["runtime"]],
-    function(p) identical(path_get(x, p), path_get(y, p)),
-    logical(1)
-  ))
+  r8_values_equal(x, y)
 } # /R8::r8_equal
 
 

@@ -14,11 +14,14 @@ pub const IR_VERSION: u32 = 1;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TypeDef {
+    /// A struct.
     Struct(StructDef),
+    /// An enum.
     Enum(EnumDef),
 }
 
 impl TypeDef {
+    /// The declared name.
     pub fn name(&self) -> &Name {
         match self {
             TypeDef::Struct(s) => &s.name,
@@ -36,12 +39,16 @@ pub struct IrDocument {
     #[serde(rename = "$ir")]
     #[cfg_attr(feature = "schema", schemars(extend("const" = 1)))]
     pub ir_version: u32,
+    /// The namespace the declarations belong to.
     pub namespace: Name,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The structs and enums.
     pub types: Vec<TypeDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The traits.
     pub traits: Vec<TraitDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The impls.
     pub impls: Vec<ImplDef>,
 }
 
@@ -51,7 +58,10 @@ pub enum ReadError {
     /// The text is not a well-formed IR document.
     Json(serde_json::Error),
     /// The document's format version is not [`IR_VERSION`].
-    Version { found: u32 },
+    Version {
+        /// The version the document states.
+        found: u32,
+    },
 }
 
 impl std::fmt::Display for ReadError {

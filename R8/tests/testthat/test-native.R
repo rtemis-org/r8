@@ -21,6 +21,7 @@ same_construction <- function(type, fields, variant = "") {
   if (is.null(ref[["errors"]])) {
     expect_false(inherits(native, "r8_problems"), info = qname)
     expect_identical(native, ref[["value"]], info = qname)
+    same_identity(native)
     return(invisible(native))
   }
   expect_s3_class(native, "r8_problems")
@@ -43,6 +44,22 @@ same_construction <- function(type, fields, variant = "") {
   )
   invisible(native)
 }
+
+# The canonical text and content hash written from the R objects equal
+# those of the value's document read through the JSON form.
+same_identity <- function(x) {
+  native <- R8:::r8_value_identity(x)
+  ref <- R8:::r8_document_identity(to_json(x), attr(x, "r8_type"))
+  expect_identical(
+    native[["canonical"]],
+    ref[["canonical"]],
+    info = attr(x, "r8_type")
+  )
+  expect_identical(native[["hash"]], ref[["hash"]], info = attr(x, "r8_type"))
+  expect_true(r8_equal(x, r8_from_json(get_type(x), to_json(x))))
+}
+
+get_type <- function(x) R8:::.r8_types[[attr(x, "r8_type")]]
 
 test_that("scalars construct identically on both paths", {
   S <- declare_in(
@@ -308,4 +325,32 @@ test_that("$<- validates the field and the rules that read it", {
   expect_error(r$nope <- 1, class = "r8_value_error")
   r$hi <- 5L
   expect_identical(r$hi, 5)
+})
+
+test_that("r8_equal() compares normalized forms in place", {
+  E <- declare_in(
+    "native",
+    new_struct(
+      "Eq",
+      fields = list(
+        d = vec(option(type_double(finite = FALSE))),
+        h = hashmap(type_integer()),
+        n = field(type_double(), default = 1)
+      )
+    )
+  )
+  a <- E(d = c(0, NA, NaN), h = c(a = 1L, b = 2L))
+  expect_true(r8_equal(a, E(d = c(-0, NA, NaN), h = c(b = 2L, a = 1L))))
+  expect_true(r8_equal(
+    a,
+    E(d = c(0L, NA, NaN), h = list(a = 1L, b = 2L), n = 1)
+  ))
+  expect_false(r8_equal(a, E(d = c(0, NaN, NaN), h = c(a = 1L, b = 2L))))
+  expect_false(r8_equal(a, E(d = c(0, NA, NaN), h = c(a = 1L, b = 3L))))
+  expect_false(r8_equal(a, E(d = c(0, NA, NaN), h = c(a = 1L, b = 2L), n = 2)))
+  expect_identical(
+    r8_hash(a),
+    r8_hash(E(d = c(-0, NA, NaN), h = c(b = 2L, a = 1L)))
+  )
+  same_identity(a)
 })

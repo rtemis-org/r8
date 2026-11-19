@@ -10,25 +10,29 @@
       "const": 1
     },
     "namespace": {
-      "$ref": "#/$defs/Name"
+      "$ref": "#/$defs/Name",
+      "description": "The namespace the declarations belong to."
     },
     "types": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/TypeDef"
-      }
+      },
+      "description": "The structs and enums."
     },
     "traits": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/TraitDef"
-      }
+      },
+      "description": "The traits."
     },
     "impls": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/ImplDef"
-      }
+      },
+      "description": "The impls."
     }
   },
   "required": [
@@ -82,22 +86,26 @@
               "const": "struct"
             },
             "name": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The struct's name."
             },
             "description": {
               "type": "string",
+              "description": "The struct's description.",
               "default": ""
             },
             "version": {
               "type": "integer",
               "format": "uint32",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The struct's version, which a migration increments."
             },
             "fields": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/FieldDef"
-              }
+              },
+              "description": "The fields, in declaration order."
             },
             "extends": {
               "anyOf": [
@@ -114,13 +122,15 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/RuleDef"
-              }
+              },
+              "description": "The rules every value satisfies."
             },
             "migrations": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/Migration"
-              }
+              },
+              "description": "The migrations from earlier versions."
             },
             "aliases": {
               "type": "array",
@@ -149,7 +159,7 @@
             "version",
             "fields"
           ],
-          "description": "`new_struct()`: a product type."
+          "description": "A struct."
         },
         {
           "type": "object",
@@ -160,10 +170,12 @@
               "const": "enum"
             },
             "name": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The enum's name."
             },
             "description": {
               "type": "string",
+              "description": "The enum's description.",
               "default": ""
             },
             "tag": {
@@ -174,19 +186,22 @@
             "version": {
               "type": "integer",
               "format": "uint32",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The enum's version, which a migration increments."
             },
             "variants": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/VariantDef"
-              }
+              },
+              "description": "The variants, in declaration order."
             },
             "migrations": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/Migration"
-              }
+              },
+              "description": "The migrations from earlier versions."
             },
             "aliases": {
               "type": "array",
@@ -197,7 +212,8 @@
             },
             "extensions": {
               "type": "object",
-              "additionalProperties": true
+              "additionalProperties": true,
+              "description": "Namespaced extensions that R8 stores and exports and does not interpret."
             }
           },
           "required": [
@@ -206,7 +222,7 @@
             "version",
             "variants"
           ],
-          "description": "`new_enum()`: a sum type."
+          "description": "An enum."
         }
       ],
       "description": "A struct or an enum."
@@ -216,20 +232,24 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "$ref": "#/$defs/Name"
+          "$ref": "#/$defs/Name",
+          "description": "The field's name."
         },
         "type": {
-          "$ref": "#/$defs/FieldType"
+          "$ref": "#/$defs/FieldType",
+          "description": "The field's type."
         },
         "default": {
           "description": "A literal default in the field's JSON form, filled by the constructor\nand by `r8_from_json()`."
         },
         "description": {
           "type": "string",
+          "description": "The field's description.",
           "default": ""
         },
         "sensitive": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "The value is withheld from logs, prints, and exports."
         },
         "unit": {
           "type": [
@@ -302,28 +322,32 @@
                 "integer",
                 "null"
               ],
-              "format": "int32"
+              "format": "int32",
+              "description": "The smallest value."
             },
             "max": {
               "type": [
                 "integer",
                 "null"
               ],
-              "format": "int32"
+              "format": "int32",
+              "description": "The largest value."
             },
             "exclusive_min": {
               "type": [
                 "integer",
                 "null"
               ],
-              "format": "int32"
+              "format": "int32",
+              "description": "Values are above this."
             },
             "exclusive_max": {
               "type": [
                 "integer",
                 "null"
               ],
-              "format": "int32"
+              "format": "int32",
+              "description": "Values are below this."
             },
             "enum": {
               "type": [
@@ -355,31 +379,36 @@
                 "number",
                 "null"
               ],
-              "format": "double"
+              "format": "double",
+              "description": "The smallest value."
             },
             "max": {
               "type": [
                 "number",
                 "null"
               ],
-              "format": "double"
+              "format": "double",
+              "description": "The largest value."
             },
             "exclusive_min": {
               "type": [
                 "number",
                 "null"
               ],
-              "format": "double"
+              "format": "double",
+              "description": "Values are above this."
             },
             "exclusive_max": {
               "type": [
                 "number",
                 "null"
               ],
-              "format": "double"
+              "format": "double",
+              "description": "Values are below this."
             },
             "finite": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Values are finite: no `Inf`, `-Inf`, or `NaN`."
             },
             "enum": {
               "type": [
@@ -389,7 +418,8 @@
               "items": {
                 "type": "number",
                 "format": "double"
-              }
+              },
+              "description": "The admitted values."
             }
           },
           "description": "`type_double()`.",
@@ -419,7 +449,8 @@
               ],
               "items": {
                 "type": "string"
-              }
+              },
+              "description": "The admitted values."
             }
           },
           "description": "`type_character()`: a string without U+0000, not `NA`.",
@@ -484,10 +515,12 @@
               ],
               "items": {
                 "type": "string"
-              }
+              },
+              "description": "The declared levels, or `None` for levels from the data."
             },
             "ordered": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "An ordered factor."
             }
           },
           "required": [
@@ -504,7 +537,8 @@
               "const": "matrix"
             },
             "element": {
-              "$ref": "#/$defs/FieldType"
+              "$ref": "#/$defs/FieldType",
+              "description": "The element type."
             },
             "nrow": {
               "type": [
@@ -512,7 +546,8 @@
                 "null"
               ],
               "format": "uint32",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The number of rows, when declared."
             },
             "ncol": {
               "type": [
@@ -520,7 +555,8 @@
                 "null"
               ],
               "format": "uint32",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The number of columns, when declared."
             }
           },
           "required": [
@@ -538,7 +574,8 @@
               "const": "array"
             },
             "element": {
-              "$ref": "#/$defs/FieldType"
+              "$ref": "#/$defs/FieldType",
+              "description": "The element type."
             },
             "dim": {
               "type": [
@@ -549,7 +586,8 @@
                 "type": "integer",
                 "format": "uint32",
                 "minimum": 0
-              }
+              },
+              "description": "The extent of each dimension, when declared."
             }
           },
           "required": [
@@ -567,7 +605,8 @@
               "const": "sparse_matrix"
             },
             "element": {
-              "$ref": "#/$defs/FieldType"
+              "$ref": "#/$defs/FieldType",
+              "description": "The element type."
             },
             "nrow": {
               "type": [
@@ -575,7 +614,8 @@
                 "null"
               ],
               "format": "uint32",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The number of rows, when declared."
             },
             "ncol": {
               "type": [
@@ -583,7 +623,8 @@
                 "null"
               ],
               "format": "uint32",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The number of columns, when declared."
             }
           },
           "required": [
@@ -601,7 +642,8 @@
               "const": "matrix_of"
             },
             "of": {
-              "$ref": "#/$defs/QualifiedName"
+              "$ref": "#/$defs/QualifiedName",
+              "description": "The struct whose fields are the columns."
             }
           },
           "required": [
@@ -622,16 +664,19 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/FieldDef"
-              }
+              },
+              "description": "The declared columns."
             },
             "open": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Columns the declaration does not list are admitted."
             },
             "rules": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/RuleDef"
-              }
+              },
+              "description": "The rules every row satisfies."
             }
           },
           "required": [
@@ -649,7 +694,8 @@
               "const": "table_of"
             },
             "of": {
-              "$ref": "#/$defs/QualifiedName"
+              "$ref": "#/$defs/QualifiedName",
+              "description": "The struct whose fields are the columns."
             }
           },
           "required": [
@@ -681,7 +727,8 @@
               "const": "r"
             },
             "class": {
-              "type": "string"
+              "type": "string",
+              "description": "The R class."
             }
           },
           "required": [
@@ -699,7 +746,8 @@
               "const": "vec"
             },
             "element": {
-              "$ref": "#/$defs/FieldType"
+              "$ref": "#/$defs/FieldType",
+              "description": "The element type."
             },
             "min_length": {
               "type": [
@@ -707,7 +755,8 @@
                 "null"
               ],
               "format": "uint64",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The fewest elements."
             },
             "max_length": {
               "type": [
@@ -715,10 +764,12 @@
                 "null"
               ],
               "format": "uint64",
-              "minimum": 0
+              "minimum": 0,
+              "description": "The most elements."
             },
             "unique": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "The elements are distinct."
             }
           },
           "required": [
@@ -736,10 +787,12 @@
               "const": "option"
             },
             "inner": {
-              "$ref": "#/$defs/FieldType"
+              "$ref": "#/$defs/FieldType",
+              "description": "The type of a present value."
             },
             "resolve": {
-              "$ref": "#/$defs/Resolve"
+              "$ref": "#/$defs/Resolve",
+              "description": "Who fills an absent value."
             }
           },
           "required": [
@@ -757,10 +810,12 @@
               "const": "hashmap"
             },
             "value": {
-              "$ref": "#/$defs/FieldType"
+              "$ref": "#/$defs/FieldType",
+              "description": "The value type."
             },
             "keys": {
-              "$ref": "#/$defs/CharacterType"
+              "$ref": "#/$defs/CharacterType",
+              "description": "The constraints on keys."
             }
           },
           "required": [
@@ -778,10 +833,12 @@
               "const": "ordered_map"
             },
             "value": {
-              "$ref": "#/$defs/FieldType"
+              "$ref": "#/$defs/FieldType",
+              "description": "The value type."
             },
             "keys": {
-              "$ref": "#/$defs/CharacterType"
+              "$ref": "#/$defs/CharacterType",
+              "description": "The constraints on keys."
             }
           },
           "required": [
@@ -799,7 +856,8 @@
               "const": "named"
             },
             "name": {
-              "$ref": "#/$defs/QualifiedName"
+              "$ref": "#/$defs/QualifiedName",
+              "description": "The type's qualified name."
             }
           },
           "required": [
@@ -817,7 +875,8 @@
               "const": "dyn"
             },
             "trait": {
-              "$ref": "#/$defs/QualifiedName"
+              "$ref": "#/$defs/QualifiedName",
+              "description": "The trait."
             }
           },
           "required": [
@@ -842,10 +901,12 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "$ref": "#/$defs/Name"
+          "$ref": "#/$defs/Name",
+          "description": "The rule's ID, unique within its type."
         },
         "invariant": {
-          "$ref": "#/$defs/Logic"
+          "$ref": "#/$defs/Logic",
+          "description": "The condition that holds for a valid value."
         },
         "when": {
           "anyOf": [
@@ -855,10 +916,12 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "The condition under which the rule applies."
         },
         "message": {
-          "type": "string"
+          "type": "string",
+          "description": "The message of a violation."
         }
       },
       "required": [
@@ -896,7 +959,8 @@
               "const": "computed"
             },
             "expr": {
-              "$ref": "#/$defs/Logic"
+              "$ref": "#/$defs/Logic",
+              "description": "The expression over the other fields."
             }
           },
           "required": [
@@ -940,7 +1004,8 @@
           ],
           "items": {
             "type": "string"
-          }
+          },
+          "description": "The admitted values."
         }
       },
       "description": "Constraints of `type_character()`, and of the keys of `hashmap()`."
@@ -952,13 +1017,15 @@
         "from_version": {
           "type": "integer",
           "format": "uint32",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The version the steps start from."
         },
         "steps": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/MigrationStep"
-          }
+          },
+          "description": "The steps, in order."
         }
       },
       "required": [
@@ -978,10 +1045,12 @@
               "const": "rename"
             },
             "from": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The old name."
             },
             "to": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The new name."
             }
           },
           "required": [
@@ -1000,9 +1069,12 @@
               "const": "add"
             },
             "field": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The new field."
             },
-            "value": true
+            "value": {
+              "description": "Its value."
+            }
           },
           "required": [
             "op",
@@ -1020,7 +1092,8 @@
               "const": "remove"
             },
             "field": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The field."
             }
           },
           "required": [
@@ -1038,13 +1111,15 @@
               "const": "split"
             },
             "field": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The field split."
             },
             "into": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/SplitTarget"
-              }
+              },
+              "description": "The new fields."
             }
           },
           "required": [
@@ -1066,13 +1141,16 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/Name"
-              }
+              },
+              "description": "The fields merged."
             },
             "into": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The new field."
             },
             "expr": {
-              "$ref": "#/$defs/Logic"
+              "$ref": "#/$defs/Logic",
+              "description": "The new field's value, computed from the old document."
             }
           },
           "required": [
@@ -1092,10 +1170,12 @@
               "const": "change_type"
             },
             "field": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The field."
             },
             "expr": {
-              "$ref": "#/$defs/Logic"
+              "$ref": "#/$defs/Logic",
+              "description": "The new value, computed from the old."
             }
           },
           "required": [
@@ -1114,10 +1194,12 @@
               "const": "rename_variant"
             },
             "from": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The old name."
             },
             "to": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The new name."
             }
           },
           "required": [
@@ -1136,12 +1218,16 @@
               "const": "add_variant_field"
             },
             "variant": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The variant."
             },
             "field": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The new field."
             },
-            "value": true
+            "value": {
+              "description": "The new field's value."
+            }
           },
           "required": [
             "op",
@@ -1160,14 +1246,16 @@
               "const": "unit_to_struct"
             },
             "variant": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The variant."
             },
             "values": {
               "type": "object",
               "additionalProperties": false,
               "patternProperties": {
                 "^[A-Za-z][A-Za-z0-9_]*$": true
-              }
+              },
+              "description": "The new fields' values, by name."
             }
           },
           "required": [
@@ -1189,10 +1277,12 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/Name"
-              }
+              },
+              "description": "The fields moved."
             },
             "into": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The new struct field."
             }
           },
           "required": [
@@ -1211,17 +1301,21 @@
               "const": "convert_unit"
             },
             "field": {
-              "$ref": "#/$defs/Name"
+              "$ref": "#/$defs/Name",
+              "description": "The field."
             },
             "from": {
-              "type": "string"
+              "type": "string",
+              "description": "The UCUM code of the old unit."
             },
             "to": {
-              "type": "string"
+              "type": "string",
+              "description": "The UCUM code of the new unit."
             },
             "factor": {
               "type": "number",
-              "format": "double"
+              "format": "double",
+              "description": "The factor that converts a value to the new unit."
             }
           },
           "required": [
@@ -1241,10 +1335,12 @@
       "additionalProperties": false,
       "properties": {
         "field": {
-          "$ref": "#/$defs/Name"
+          "$ref": "#/$defs/Name",
+          "description": "The new field."
         },
         "expr": {
-          "$ref": "#/$defs/Logic"
+          "$ref": "#/$defs/Logic",
+          "description": "Its value, computed from the old document."
         }
       },
       "required": [
@@ -1257,10 +1353,12 @@
       "type": "object",
       "properties": {
         "name": {
-          "$ref": "#/$defs/Name"
+          "$ref": "#/$defs/Name",
+          "description": "The variant's name."
         },
         "description": {
           "type": "string",
+          "description": "The variant's description.",
           "default": ""
         }
       },
@@ -1293,13 +1391,15 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/FieldDef"
-              }
+              },
+              "description": "The variant's fields."
             },
             "rules": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/RuleDef"
-              }
+              },
+              "description": "The rules every value of the variant satisfies."
             }
           },
           "required": [
@@ -1316,7 +1416,8 @@
               "const": "newtype"
             },
             "of": {
-              "$ref": "#/$defs/QualifiedName"
+              "$ref": "#/$defs/QualifiedName",
+              "description": "The wrapped struct."
             }
           },
           "required": [
@@ -1332,17 +1433,20 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "$ref": "#/$defs/Name"
+          "$ref": "#/$defs/Name",
+          "description": "The trait's name."
         },
         "description": {
           "type": "string",
+          "description": "The trait's description.",
           "default": ""
         },
         "methods": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/MethodDef"
-          }
+          },
+          "description": "The methods."
         },
         "required_fields": {
           "type": "array",
@@ -1355,7 +1459,8 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/QualifiedName"
-          }
+          },
+          "description": "The traits every implementor also implements."
         },
         "tag": {
           "anyOf": [
@@ -1380,10 +1485,12 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "$ref": "#/$defs/MethodName"
+          "$ref": "#/$defs/MethodName",
+          "description": "The method's name."
         },
         "description": {
           "type": "string",
+          "description": "The method's description.",
           "default": ""
         },
         "params": {
@@ -1428,7 +1535,8 @@
       "additionalProperties": false,
       "properties": {
         "trait": {
-          "$ref": "#/$defs/QualifiedName"
+          "$ref": "#/$defs/QualifiedName",
+          "description": "The implemented trait."
         },
         "type_args": {
           "type": "array",
@@ -1438,7 +1546,8 @@
           "description": "The trait's type arguments, for a standard trait with a type\nparameter, such as `From(source)`: `[\"data.frame\"]`."
         },
         "target": {
-          "$ref": "#/$defs/ImplTarget"
+          "$ref": "#/$defs/ImplTarget",
+          "description": "What the trait is implemented for."
         },
         "tag_value": {
           "type": [
@@ -1477,7 +1586,8 @@
               "const": "type"
             },
             "name": {
-              "$ref": "#/$defs/QualifiedName"
+              "$ref": "#/$defs/QualifiedName",
+              "description": "The type's qualified name."
             }
           },
           "required": [
@@ -1495,16 +1605,20 @@
               "const": "host_class"
             },
             "host": {
-              "type": "string"
+              "type": "string",
+              "description": "The host language, such as `\"r\"`."
             },
             "package": {
-              "type": "string"
+              "type": "string",
+              "description": "The package that defines the class."
             },
             "class": {
-              "type": "string"
+              "type": "string",
+              "description": "The class name."
             },
             "system": {
-              "$ref": "#/$defs/ClassSystem"
+              "$ref": "#/$defs/ClassSystem",
+              "description": "The class system."
             }
           },
           "required": [
@@ -1520,10 +1634,17 @@
       "description": "What an impl implements its trait for."
     },
     "ClassSystem": {
-      "type": "string",
-      "enum": [
-        "s3",
-        "s4"
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "s3",
+          "description": "An S3 class."
+        },
+        {
+          "type": "string",
+          "const": "s4",
+          "description": "An S4 class."
+        }
       ],
       "description": "The class system of a host class."
     }

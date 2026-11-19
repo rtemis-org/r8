@@ -20,9 +20,7 @@
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result, SEXP};
-use r8_core::codec::{
-    date_days, date_text, datetime_micros, datetime_text, read_document, to_document,
-};
+use r8_core::codec::{date_days, date_text, datetime_micros, datetime_text, read_document};
 use r8_core::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use r8_core::name::QualifiedName;
 use r8_core::rules::{DocumentSet, TypeLookup};
@@ -1293,7 +1291,7 @@ fn encode_with_runtime(
 
 /// The identity of an R8 value: the canonical text of its normalized form,
 /// its content hash, and the paths of its runtime-only fields that hold a
-/// value.
+/// value, written from the R objects in place.
 ///
 /// @param x An R8 value.
 /// @return List: `canonical`, `hash`, and `runtime`, or `errors`.
@@ -1301,26 +1299,77 @@ fn encode_with_runtime(
 /// @noRd
 #[extendr]
 fn r8_value_identity(x: Robj) -> Result<List> {
-    let type_name = x
-        .get_attrib("r8_type")
-        .and_then(|t| t.as_str().map(str::to_string))
+    let xs = unsafe { x.get() };
+    let (q, docs) = value_type(xs)?;
+    let lookup: &dyn TypeLookup = &*docs;
+    let v = crate::rview::RView::Whole(xs);
+    let errors = crate::construct::with_cache(|cache| {
+        r8_core::validate::validate_access(v, &q, lookup, cache)
+    });
+    if !errors.is_empty() {
+        return Ok(list!(errors = errors_list(&errors)));
+    }
+    let canonical = r8_core::codec::canonical_access(v, &q, lookup);
+    let hash = r8_core::codec::content_hash_access(v, &q, lookup);
+    let runtime = r8_core::codec::runtime_paths(&q, v, lookup);
+    Ok(list!(canonical = canonical, hash = hash, runtime = runtime))
+}
+
+/// The content hash of an R8 value, streamed from the R objects in place.
+///
+/// @param x An R8 value.
+/// @return Character: The hash, or `list(errors = <problems>)`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_value_hash(x: Robj) -> Result<Robj> {
+    let xs = unsafe { x.get() };
+    let (q, docs) = value_type(xs)?;
+    let lookup: &dyn TypeLookup = &*docs;
+    let v = crate::rview::RView::Whole(xs);
+    let errors = crate::construct::with_cache(|cache| {
+        r8_core::validate::validate_access(v, &q, lookup, cache)
+    });
+    if !errors.is_empty() {
+        return Ok(list!(errors = errors_list(&errors)).into());
+    }
+    Ok(r8_core::codec::content_hash_access(v, &q, lookup).into())
+}
+
+/// Whether two R8 values of one type are equal: the same normalized form,
+/// and identical runtime-only fields, compared in place.
+///
+/// @param x,y R8 values.
+/// @return Logical: One value.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
+    let (xs, ys) = unsafe { (x.get(), y.get()) };
+    let (q, docs) = value_type(xs)?;
+    if crate::rview::attr_string(ys, crate::rview::sym_r8_type()).as_deref() != Some(&q.to_string())
+    {
+        return Ok(false.into());
+    }
+    let lookup: &dyn TypeLookup = &*docs;
+    let eq = r8_core::equal::equal_access(
+        &q,
+        crate::rview::RView::Whole(xs),
+        crate::rview::RView::Whole(ys),
+        lookup,
+    );
+    Ok(eq.into())
+}
+
+/// The qualified type of an R8 value, with the registry locked.
+fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::MutexGuard<'static, DocumentSet>)> {
+    let type_name = crate::rview::attr_string(x, crate::rview::sym_r8_type())
         .ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry()
         .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    let result = encode_with_runtime(&x, &q, &docs).and_then(|(v, runtime)| {
-        let canonical = r8_core::codec::canonical(&v, &q, &docs)?;
-        let hash = r8_core::codec::content_hash_with_runtime(&v, &q, &docs, &runtime)?;
-        Ok((canonical, hash, runtime))
-    });
-    match result {
-        Ok((canonical, hash, runtime)) => {
-            Ok(list!(canonical = canonical, hash = hash, runtime = runtime))
-        }
-        Err(errors) => Ok(list!(errors = errors_list(&errors))),
-    }
+        .map_err(|_| fail("the registry is unavailable"))?;
+    Ok((q, docs))
 }
 
 /// The reference construction, through the JSON form: the fields are
@@ -1360,7 +1409,32 @@ fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<Lis
     }
 }
 
-/// Writes an R8 value as a document.
+/// The canonical text and content hash of a document, computed on its JSON
+/// form; the differential test compares them with `r8_value_identity()`.
+///
+/// @param text Character: The document.
+/// @param type_name Character: The qualified type name.
+/// @return List: `canonical` and `hash`, or `errors`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
+    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+    let docs = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let result = read_document(text, &q, &*docs).and_then(|v| {
+        let canonical = r8_core::codec::canonical(&v, &q, &*docs)?;
+        let hash = r8_core::codec::content_hash(&v, &q, &*docs)?;
+        Ok((canonical, hash))
+    });
+    match result {
+        Ok((canonical, hash)) => Ok(list!(canonical = canonical, hash = hash)),
+        Err(errors) => Ok(list!(errors = errors_list(&errors))),
+    }
+}
+
+/// Writes an R8 value as a document, from the R objects in place.
 ///
 /// @param x An R8 value.
 /// @return List: `list(json = <text>)` or `list(errors = <problems>)`.
@@ -1368,19 +1442,17 @@ fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<Lis
 /// @noRd
 #[extendr]
 fn r8_value_to_document(x: Robj) -> Result<List> {
-    let type_name = x
-        .get_attrib("r8_type")
-        .and_then(|t| t.as_str().map(str::to_string))
-        .ok_or_else(|| fail("not an R8 value"))?;
-    let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    match encode_and_validate(&x, &q, &docs).and_then(|v| to_document(&v, &q, &docs)) {
-        Ok(text) => Ok(list!(json = text)),
-        Err(errors) => Ok(list!(errors = errors_list(&errors))),
+    let xs = unsafe { x.get() };
+    let (q, docs) = value_type(xs)?;
+    let lookup: &dyn TypeLookup = &*docs;
+    let v = crate::rview::RView::Whole(xs);
+    let errors = crate::construct::with_cache(|cache| {
+        r8_core::validate::validate_access(v, &q, lookup, cache)
+    });
+    if !errors.is_empty() {
+        return Ok(list!(errors = errors_list(&errors)));
     }
+    Ok(list!(json = r8_core::codec::document_access(v, &q, lookup)))
 }
 
 /// Reads a document of a type into an R8 value.
@@ -1406,8 +1478,8 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
 }
 
 /// Resolves a struct value: given its fields, with runtime fields filled by
-/// the caller, evaluates each absent computed field in dependency order,
-/// validates, and decodes the new value.
+/// the caller, evaluates each absent computed field in dependency order over
+/// the R objects in place, then constructs the value natively.
 ///
 /// @param fields List: The fields, by name.
 /// @param type_name Character: The qualified struct name.
@@ -1416,74 +1488,102 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
 /// @noRd
 #[extendr]
 fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
+    use extendr_ffi::{
+        R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_VECTOR_ELT, SEXPTYPE, VECTOR_ELT,
+    };
+    use r8_core::ir::Resolve;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry()
         .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    let Some(TypeDef::Struct(def)) = docs.find(&q).cloned() else {
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let lookup: &dyn TypeLookup = &*docs;
+    let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
         return Err(fail(format!("`{type_name}` is not a registered struct")));
     };
-    let mut input = fields.duplicate();
-    input.set_class([type_name, "r8_value"])?;
-    input.set_attrib("r8_type", type_name)?;
-    let mut enc = Encoder {
-        lookup: &docs,
-        errors: Vec::new(),
-        runtime: Vec::new(),
+    // A working copy of the fields list, which the computed values fill.
+    let fs = unsafe { fields.get() };
+    let n = crate::rview::xlen(fs);
+    let work = unsafe {
+        let w = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
+        for i in 0..n {
+            SET_VECTOR_ELT(w, i as R_xlen_t, VECTOR_ELT(fs, i as R_xlen_t));
+        }
+        let r = Robj::from_sexp(w);
+        Rf_unprotect(1);
+        r
     };
-    let mut v = enc.value(&input, &FieldType::Named { name: q.clone() }, "");
-    if !enc.errors.is_empty() {
-        return Ok(list!(errors = errors_list(&enc.errors)));
+    let ws = unsafe { work.get() };
+    unsafe {
+        extendr_ffi::Rf_setAttrib(
+            ws,
+            crate::rview::sym_names(),
+            crate::rview::attr(fs, crate::rview::sym_names()),
+        );
     }
+    let names: Vec<String> =
+        crate::rview::strings(crate::rview::attr(fs, crate::rview::sym_names()))
+            .into_iter()
+            .map(|k| k.map(|s| s.into_owned()).unwrap_or_default())
+            .collect();
+    let computed = |f: &FieldDef| match &f.ty {
+        FieldType::Option {
+            resolve: Resolve::Computed { expr },
+            ..
+        } => Some(expr.clone()),
+        _ => None,
+    };
     let mut pending: Vec<&FieldDef> = def
         .fields
         .iter()
+        .filter(|f| computed(f).is_some())
         .filter(|f| {
-            matches!(
-                &f.ty,
-                FieldType::Option {
-                    resolve: r8_core::ir::Resolve::Computed { .. },
-                    ..
-                }
-            )
+            crate::rview::list_member(ws, f.name.as_str()).is_none_or(crate::rview::is_null)
         })
-        .filter(|f| v.get(f.name.as_str()).is_none_or(Value::is_null))
         .collect();
     let mut errors = Vec::new();
+    let mut kept: Vec<Robj> = Vec::new();
     while !pending.is_empty() {
         let pending_names: Vec<String> = pending.iter().map(|f| f.name.to_string()).collect();
         // A field is ready when no field it reads is still pending.
         let ready = pending.iter().position(|f| {
-            let FieldType::Option {
-                resolve: r8_core::ir::Resolve::Computed { expr },
-                ..
-            } = &f.ty
-            else {
-                return false;
-            };
-            r8_core::rules::reads(expr)
-                .iter()
-                .all(|r| !pending_names.contains(r) || r == f.name.as_str())
+            computed(f).is_some_and(|expr| {
+                r8_core::rules::reads(&expr)
+                    .iter()
+                    .all(|r| !pending_names.contains(r) || r == f.name.as_str())
+            })
         });
         let Some(k) = ready else { break };
         let f = pending.remove(k);
-        let FieldType::Option {
-            resolve: r8_core::ir::Resolve::Computed { expr },
-            ..
-        } = &f.ty
-        else {
-            continue;
-        };
-        match r8_core::rules::evaluate_computed(expr, &def.fields, &docs, f, &v) {
+        let Some(expr) = computed(f) else { continue };
+        let at = format!("/{}", esc(f.name.as_str()));
+        match r8_core::rules::evaluate_computed_access(
+            &expr,
+            &def.fields,
+            lookup,
+            f,
+            crate::rview::RView::Draft(ws, ""),
+        ) {
             Ok(Some(x)) => {
-                if let Value::Object(m) = &mut v {
-                    m.insert(f.name.to_string(), x);
+                let r = decode_field(&x, &f.ty, lookup)?;
+                match names.iter().position(|k| k == f.name.as_str()) {
+                    Some(i) => unsafe {
+                        SET_VECTOR_ELT(ws, i as R_xlen_t, r.get());
+                    },
+                    None => {
+                        errors.push(ValueError {
+                            code: "computed_error",
+                            path: at,
+                            rule: None,
+                            message: format!("the fields list has no member `{}`", f.name),
+                        });
+                        continue;
+                    }
                 }
+                kept.push(r);
             }
             Ok(None) => errors.push(ValueError {
                 code: "computed_absent",
-                path: format!("/{}", esc(f.name.as_str())),
+                path: at,
                 rule: None,
                 message: format!(
                     "computed field `{}` reads a field that is absent; resolve that field first",
@@ -1492,7 +1592,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
             }),
             Err(e) => errors.push(ValueError {
                 code: "computed_error",
-                path: format!("/{}", esc(f.name.as_str())),
+                path: at,
                 rule: None,
                 message: e,
             }),
@@ -1501,18 +1601,46 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
     if !errors.is_empty() {
         return Ok(list!(errors = errors_list(&errors)));
     }
-    let problems = validate(&v, &q, &docs);
+    let problems = crate::construct::with_cache(|cache| {
+        r8_core::validate::validate_access(crate::rview::RView::Draft(ws, ""), &q, lookup, cache)
+    });
     if !problems.is_empty() {
         return Ok(list!(errors = errors_list(&problems)));
     }
-    let value = Decoder { lookup: &docs }.named(&v, &q, Some(&input))?;
+    let value = crate::construct::assemble(ws, &q, "", lookup)?;
+    drop(kept);
     Ok(list!(value = value))
+}
+
+/// Validates an R8 value in place.
+///
+/// @param x An R8 value.
+/// @return `NULL`, or `list(errors = <problems>)`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_value_check(x: Robj) -> Result<Robj> {
+    let xs = unsafe { x.get() };
+    let (q, docs) = value_type(xs)?;
+    let lookup: &dyn TypeLookup = &*docs;
+    let errors = crate::construct::with_cache(|cache| {
+        r8_core::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
+    });
+    if errors.is_empty() {
+        Ok(().into())
+    } else {
+        Ok(list!(errors = errors_list(&errors)).into())
+    }
 }
 
 extendr_module! {
     mod values;
     fn r8_resolve_value;
     fn r8_value_identity;
+    fn r8_values_equal;
+    fn r8_value_hash;
+    fn r8_value_check;
+    fn r8_document_identity;
     fn r8_new_value_json;
     fn r8_value_to_document;
     fn r8_value_from_document;

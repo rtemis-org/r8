@@ -6,6 +6,7 @@ use crate::name::QualifiedName;
 /// Finds the declaration of a named type. A type that the lookup does not
 /// hold compiles as [`Ty::Any`], and its checks wait for the registry.
 pub trait TypeLookup {
+    /// The declaration of the named type, if the lookup holds it.
     fn find(&self, name: &QualifiedName) -> Option<&TypeDef>;
 
     /// The concrete type of a `dyn(trait)` value, and the member of the value
@@ -97,17 +98,23 @@ impl TypeLookup for crate::ir::IrDocument {
 /// The static type of an expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
+    /// A logical.
     Bool,
     /// A number, with its declared unit, if any. `None` is exempt from the
     /// unit check.
     Number {
+        /// The declared unit.
         unit: Option<String>,
     },
+    /// A string.
     String,
+    /// A date.
     Date,
+    /// A date-time.
     Posixct,
     /// A factor; `levels` holds the declared levels.
     Factor {
+        /// The declared levels.
         levels: Option<Vec<String>>,
     },
     /// An array of the element type (`vec()`, and `levels()` and `dim()`
@@ -115,7 +122,9 @@ pub enum Ty {
     Array(Box<Ty>),
     /// A table's columns, in declaration order.
     Table {
+        /// The declared columns.
         columns: Vec<FieldDef>,
+        /// Other columns are admitted.
         open: bool,
     },
     /// A matrix, array, or sparse matrix of the element type.
@@ -123,7 +132,9 @@ pub enum Ty {
     /// A map; `ordered` for `ordered_map()`, whose JSON is an array of
     /// `{"name", "value"}` pairs.
     Map {
+        /// The value type.
         value: Box<Ty>,
+        /// An `ordered_map()`.
         ordered: bool,
     },
     /// A named struct or enum.

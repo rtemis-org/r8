@@ -37,6 +37,7 @@ pub struct ValueError {
     pub path: String,
     /// The ID of the violated rule, for `rule_violation` and `rule_error`.
     pub rule: Option<Name>,
+    /// The message.
     pub message: String,
 }
 
@@ -58,10 +59,12 @@ pub struct RuleCache {
 }
 
 impl RuleCache {
+    /// An empty cache.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Removes every compiled rule and pattern.
     pub fn clear(&mut self) {
         self.patterns.clear();
         self.rules.clear();

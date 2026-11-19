@@ -108,8 +108,8 @@ r8_declare_type <- function(type_json, namespace) .Call(wrap__r8_declare_type, t
 r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 
 #' Resolves a struct value: given its fields, with runtime fields filled by
-#' the caller, evaluates each absent computed field in dependency order,
-#' validates, and decodes the new value.
+#' the caller, evaluates each absent computed field in dependency order over
+#' the R objects in place, then constructs the value natively.
 #'
 #' @param fields List: The fields, by name.
 #' @param type_name Character: The qualified struct name.
@@ -120,13 +120,48 @@ r8_resolve_value <- function(fields, type_name) .Call(wrap__r8_resolve_value, fi
 
 #' The identity of an R8 value: the canonical text of its normalized form,
 #' its content hash, and the paths of its runtime-only fields that hold a
-#' value.
+#' value, written from the R objects in place.
 #'
 #' @param x An R8 value.
 #' @return List: `canonical`, `hash`, and `runtime`, or `errors`.
 #' @keywords internal
 #' @noRd
 r8_value_identity <- function(x) .Call(wrap__r8_value_identity, x)
+
+#' Whether two R8 values of one type are equal: the same normalized form,
+#' and identical runtime-only fields, compared in place.
+#'
+#' @param x,y R8 values.
+#' @return Logical: One value.
+#' @keywords internal
+#' @noRd
+r8_values_equal <- function(x, y) .Call(wrap__r8_values_equal, x, y)
+
+#' The content hash of an R8 value, streamed from the R objects in place.
+#'
+#' @param x An R8 value.
+#' @return Character: The hash, or `list(errors = <problems>)`.
+#' @keywords internal
+#' @noRd
+r8_value_hash <- function(x) .Call(wrap__r8_value_hash, x)
+
+#' Validates an R8 value in place.
+#'
+#' @param x An R8 value.
+#' @return `NULL`, or `list(errors = <problems>)`.
+#' @keywords internal
+#' @noRd
+r8_value_check <- function(x) .Call(wrap__r8_value_check, x)
+
+#' The canonical text and content hash of a document, computed on its JSON
+#' form; the differential test compares them with `r8_value_identity()`.
+#'
+#' @param text Character: The document.
+#' @param type_name Character: The qualified type name.
+#' @return List: `canonical` and `hash`, or `errors`.
+#' @keywords internal
+#' @noRd
+r8_document_identity <- function(text, type_name) .Call(wrap__r8_document_identity, text, type_name)
 
 #' The reference construction, through the JSON form: the fields are
 #' encoded to JSON, validated, normalized (an absent field takes its
@@ -143,7 +178,7 @@ r8_value_identity <- function(x) .Call(wrap__r8_value_identity, x)
 #' @noRd
 r8_new_value_json <- function(fields, type_name, variant) .Call(wrap__r8_new_value_json, fields, type_name, variant)
 
-#' Writes an R8 value as a document.
+#' Writes an R8 value as a document, from the R objects in place.
 #'
 #' @param x An R8 value.
 #' @return List: `list(json = <text>)` or `list(errors = <problems>)`.

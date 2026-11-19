@@ -34,10 +34,12 @@ pub struct Form {
     pub code: &'static str,
     /// A JSON Pointer suffix below the value read, empty for the value itself.
     pub suffix: String,
+    /// The message.
     pub message: String,
 }
 
 impl Form {
+    /// A problem with the value itself, with the code `code`.
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Form {
             code,
@@ -61,11 +63,19 @@ impl Form {
 /// A read from a host form.
 pub type Read<T> = Result<T, Form>;
 
+/// The names of each dimension of a matrix or array, `None` for a dimension
+/// without names.
+pub type Dimnames<'a> = Vec<Option<Vec<Cow<'a, str>>>>;
+
 /// A dense matrix or array: its shape and a sequence handle over its values
 /// in column-major order.
-pub struct Dense<A> {
+pub struct Dense<'a, A> {
+    /// The extent of each dimension.
     pub shape: Vec<u64>,
+    /// A sequence handle over the values.
     pub data: A,
+    /// The names of the dimensions, when the matrix has them.
+    pub dimnames: Option<Dimnames<'a>>,
     /// The number of values `data` holds.
     pub len: usize,
     /// Problems with the host form that leave the data readable.
@@ -76,15 +86,24 @@ pub struct Dense<A> {
 /// implementation has checked: its shape and a sequence handle over its
 /// stored values.
 pub struct Sparse<A> {
+    /// The number of rows and columns.
     pub shape: [u64; 2],
+    /// A sequence handle over the stored values.
     pub data: A,
+    /// The number of stored values.
     pub len: usize,
+    /// The `ncol + 1` offsets of the columns' values.
+    pub indptr: Vec<u64>,
+    /// The row index of each value.
+    pub indices: Vec<u64>,
 }
 
 /// A table: its number of rows and its columns, each a sequence handle over
 /// the column's cells, in the host's order.
 pub struct Table<'a, A> {
+    /// The number of rows.
     pub rows: u64,
+    /// Each column's name and a sequence handle over its cells.
     pub columns: Vec<(Cow<'a, str>, A)>,
     /// Problems with the host form of the table as a whole.
     pub problems: Vec<Form>,
@@ -100,6 +119,7 @@ pub enum Codes<'a> {
 }
 
 impl Codes<'_> {
+    /// The number of cells.
     pub fn len(&self) -> usize {
         match self {
             Codes::I32(s) => s.len(),
@@ -107,6 +127,7 @@ impl Codes<'_> {
         }
     }
 
+    /// Whether the factor has no cells.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -122,7 +143,9 @@ impl Codes<'_> {
 
 /// A factor: its levels and the code of each cell.
 pub struct Factor<'a> {
+    /// The levels, in order.
     pub levels: Vec<Cow<'a, str>>,
+    /// The code of each cell.
     pub codes: Codes<'a>,
     /// Problems with the host form that leave the other cells readable.
     pub problems: Vec<Form>,
@@ -134,17 +157,22 @@ pub trait Access<'a>: Copy + 'a {
     /// `NA` as an element of a vector, in R.
     fn is_absent(self) -> bool;
 
+    /// A logical.
     fn logical(self) -> Read<bool>;
     /// A whole number; the validator checks the integer range.
     fn integer(self) -> Read<i64>;
     /// A double, non-finite values included; the validator checks `finite`.
     fn double(self) -> Read<f64>;
+    /// A string.
     fn character(self) -> Read<Cow<'a, str>>;
     /// Days since 1970-01-01.
     fn date(self) -> Read<i64>;
     /// Microseconds since 1970-01-01T00:00:00Z.
     fn datetime(self) -> Read<i64>;
+    /// A `type_raw()` value in its host form.
     fn raw(self) -> Read<()>;
+    /// The bytes of a `type_raw()` value.
+    fn bytes(self) -> Read<Cow<'a, [u8]>>;
     /// A value of `type_json()`.
     fn json(self) -> Read<()>;
     /// A present value of a runtime-only field.
@@ -269,7 +297,9 @@ pub trait Access<'a>: Copy + 'a {
     /// A factor; `declared` holds the levels its type declares, and
     /// `ordered` whether it is an ordered factor.
     fn factor(self, declared: Option<&[String]>, ordered: bool) -> Read<Factor<'a>>;
-    fn dense(self, element: &FieldType) -> Read<Dense<Self>>;
+    /// A matrix or an array of `element`.
+    fn dense(self, element: &FieldType) -> Read<Dense<'a, Self>>;
+    /// A sparse matrix of `element`.
     fn sparse(self, element: &FieldType) -> Read<Sparse<Self>>;
     /// A table whose type declares `columns`; `open` admits other columns.
     fn table(self, columns: &[FieldDef], open: bool) -> Read<Table<'a, Self>>;
@@ -301,8 +331,28 @@ pub trait Access<'a>: Copy + 'a {
         lookup: &dyn TypeLookup,
     ) -> Result<(QualifiedName, Option<String>), String>;
 
+    /// Whether two handles name the same object, which is then equal to
+    /// itself without a read.
+    fn same(self, _other: Self) -> bool {
+        false
+    }
+
+    /// Whether two values of a runtime-only field are identical in the host.
+    fn identical(self, other: Self) -> bool {
+        self.to_value(&FieldType::Json, &NoTypes) == other.to_value(&FieldType::Json, &NoTypes)
+    }
+
     /// The value's JSON form, for the rule evaluator and for export.
     fn to_value(self, ft: &FieldType, lookup: &dyn TypeLookup) -> Value;
+}
+
+/// A lookup that holds no type.
+struct NoTypes;
+
+impl TypeLookup for NoTypes {
+    fn find(&self, _name: &QualifiedName) -> Option<&crate::ir::TypeDef> {
+        None
+    }
 }
 
 /// R's `NA_real_`: a `NaN` whose low word is 1954.
@@ -334,11 +384,13 @@ fn digits(s: &str) -> Option<u32> {
 /// The range of `type_posixct()`: microsecond counts of magnitude below 2^52,
 /// which a double holds exactly as seconds.
 pub const POSIXCT_MIN: &str = "1827-04-16T00:06:12.629505Z";
+/// The latest value of `type_posixct()`.
 pub const POSIXCT_MAX: &str = "2112-09-17T23:53:47.370495Z";
 /// The largest magnitude of a `type_posixct()` value in microseconds.
 pub const POSIXCT_MICROS: i64 = (1 << 52) - 1;
 /// The days of 0000-01-01 and 9999-12-31, the range of `type_date()`.
 pub const DATE_MIN_DAYS: i64 = -719_528;
+/// The day of 9999-12-31.
 pub const DATE_MAX_DAYS: i64 = 2_932_896;
 
 /// A full-date `YYYY-MM-DD` in the proleptic Gregorian calendar, year 0000 to
@@ -427,6 +479,50 @@ pub fn csc_well_formed(shape: [u64; 2], indptr: &[u64], indices: &[u64], nnz: u6
         })
 }
 
+/// The bytes of canonical padded base64 text, which [`valid_base64`] has
+/// checked.
+pub fn base64_decode(s: &str) -> Vec<u8> {
+    let val = |c: u8| -> u32 {
+        match c {
+            b'A'..=b'Z' => u32::from(c - b'A'),
+            b'a'..=b'z' => u32::from(c - b'a' + 26),
+            b'0'..=b'9' => u32::from(c - b'0' + 52),
+            b'+' => 62,
+            b'/' => 63,
+            _ => 0,
+        }
+    };
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len() / 4 * 3);
+    for chunk in b.chunks(4) {
+        let pad = chunk.iter().filter(|&&c| c == b'=').count();
+        let n = chunk.iter().fold(0u32, |acc, &c| (acc << 6) | val(c));
+        let bytes = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+        out.extend_from_slice(&bytes[..3 - pad]);
+    }
+    out
+}
+
+/// Canonical padded base64 text of `bytes` (RFC 4648 section 4).
+pub fn base64_encode(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, &c)| acc | (u32::from(c) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 fn esc(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
 }
@@ -448,6 +544,7 @@ pub enum Json<'a> {
 }
 
 impl<'a> Json<'a> {
+    /// A handle to a JSON value.
     pub fn new(v: &'a Value) -> Self {
         Json::V(v)
     }
@@ -570,6 +667,12 @@ impl<'a> Access<'a> for Json<'a> {
                 "bytes are written in canonical padded base64 (RFC 4648 section 4)",
             ))
         }
+    }
+
+    fn bytes(self) -> Read<Cow<'a, [u8]>> {
+        self.raw()?;
+        let s = self.string("a base64 string")?;
+        Ok(Cow::Owned(base64_decode(s)))
     }
 
     fn json(self) -> Read<()> {
@@ -730,7 +833,7 @@ impl<'a> Access<'a> for Json<'a> {
         }
     }
 
-    fn dense(self, _element: &FieldType) -> Read<Dense<Self>> {
+    fn dense(self, _element: &FieldType) -> Read<Dense<'a, Self>> {
         let m = self
             .val()
             .and_then(Value::as_object)
@@ -778,10 +881,22 @@ impl<'a> Access<'a> for Json<'a> {
                 );
             }
         }
+        let dimnames = m.get("dimnames").and_then(Value::as_array).map(|d| {
+            d.iter()
+                .map(|names| {
+                    names.as_array().map(|a| {
+                        a.iter()
+                            .map(|x| Cow::Borrowed(x.as_str().unwrap_or_default()))
+                            .collect()
+                    })
+                })
+                .collect()
+        });
         Ok(Dense {
             shape,
             len: data.as_array().map_or(0, Vec::len),
             data: Json::V(data),
+            dimnames,
             problems,
         })
     }
@@ -829,6 +944,8 @@ impl<'a> Access<'a> for Json<'a> {
             shape,
             data: Json::V(data),
             len: nnz,
+            indptr,
+            indices,
         })
     }
 
@@ -961,6 +1078,13 @@ impl<'a> Access<'a> for Json<'a> {
         lookup
             .implementor(r#trait, v)
             .map(|(ty, member)| (ty, Some(member)))
+    }
+
+    fn same(self, other: Self) -> bool {
+        match (self, other) {
+            (Json::V(a), Json::V(b)) => std::ptr::eq(a, b),
+            _ => false,
+        }
     }
 
     fn to_value(self, _ft: &FieldType, _lookup: &dyn TypeLookup) -> Value {

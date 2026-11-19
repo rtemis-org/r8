@@ -1045,170 +1045,133 @@
   "description": "The JSON form of each field type.",
   "ir": {
     "$ir": 1,
-    "impls": [
-      {
-        "methods": [],
-        "tag_value": "GLMNET",
-        "target": {
-          "kind": "type",
-          "name": "ns::Glmnet"
-        },
-        "trait": "ns::Algorithm"
-      },
-      {
-        "methods": [],
-        "target": {
-          "kind": "type",
-          "name": "ns::Cart"
-        },
-        "trait": "ns::Algorithm"
-      },
-      {
-        "methods": [],
-        "target": {
-          "kind": "type",
-          "name": "ns::Cart"
-        },
-        "trait": "ns::Plain"
-      }
-    ],
     "namespace": "ns",
-    "traits": [
-      {
-        "description": "",
-        "methods": [],
-        "name": "Algorithm",
-        "tag": "algorithm"
-      },
-      {
-        "description": "",
-        "methods": [],
-        "name": "Plain"
-      }
-    ],
     "types": [
       {
+        "kind": "struct",
+        "name": "T",
         "description": "",
+        "version": 1,
         "fields": [
           {
-            "description": "",
             "name": "d",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "date"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "t",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "posixct"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "b",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "raw"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "fl",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "factor",
                 "levels": [
                   "a",
                   "b"
                 ]
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "fd",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "factor"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "m",
             "type": {
+              "kind": "option",
               "inner": {
+                "kind": "matrix",
                 "element": {
+                  "kind": "option",
                   "inner": {
                     "kind": "double"
-                  },
-                  "kind": "option"
+                  }
                 },
-                "kind": "matrix",
                 "nrow": 2
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "s",
             "type": {
+              "kind": "option",
               "inner": {
+                "kind": "sparse_matrix",
                 "element": {
                   "kind": "double"
-                },
-                "kind": "sparse_matrix"
-              },
-              "kind": "option"
-            }
+                }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "tb",
             "type": {
+              "kind": "option",
               "inner": {
+                "kind": "table",
                 "columns": [
                   {
-                    "description": "",
                     "name": "id",
                     "type": {
                       "kind": "character"
                     },
+                    "description": "",
                     "unique": true
                   },
                   {
-                    "description": "",
                     "name": "x",
                     "type": {
                       "kind": "integer",
                       "min": 0
-                    }
+                    },
+                    "description": ""
                   },
                   {
-                    "description": "",
                     "name": "auc",
-                    "optional": true,
                     "type": {
+                      "kind": "option",
                       "inner": {
                         "kind": "double"
-                      },
-                      "kind": "option"
-                    }
+                      }
+                    },
+                    "description": "",
+                    "optional": true
                   }
                 ],
-                "kind": "table",
                 "open": true,
                 "rules": [
                   {
@@ -1224,198 +1187,235 @@
                     "message": "x is at most 100."
                   }
                 ]
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "om",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "ordered_map",
                 "value": {
                   "kind": "double"
                 }
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "hm",
             "type": {
+              "kind": "option",
               "inner": {
-                "keys": {
-                  "pattern": "^[a-z]+$"
-                },
                 "kind": "hashmap",
                 "value": {
                   "kind": "integer"
+                },
+                "keys": {
+                  "pattern": "^[a-z]+$"
                 }
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "default": {},
-            "description": "",
             "name": "j",
             "type": {
               "kind": "json"
-            }
+            },
+            "default": {},
+            "description": ""
           },
           {
-            "description": "",
             "name": "r",
             "type": {
-              "inner": {
-                "class": "lm",
-                "kind": "r"
-              },
               "kind": "option",
+              "inner": {
+                "kind": "r",
+                "class": "lm"
+              },
               "resolve": {
                 "policy": "runtime"
               }
-            }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "v",
             "type": {
+              "kind": "option",
               "inner": {
+                "kind": "vec",
                 "element": {
                   "kind": "integer"
                 },
-                "kind": "vec",
-                "max_length": 3,
                 "min_length": 1,
+                "max_length": 3,
                 "unique": true
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "inf",
             "type": {
+              "kind": "option",
               "inner": {
-                "finite": false,
-                "kind": "double"
-              },
-              "kind": "option"
-            }
+                "kind": "double",
+                "finite": false
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "fin",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "double"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "code",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "character",
                 "pattern": "^[A-Z]{3}$"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "shape",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "named",
                 "name": "ns::Shape"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "algo",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "dyn",
                 "trait": "ns::Algorithm"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           },
           {
-            "description": "",
             "name": "plain",
             "type": {
+              "kind": "option",
               "inner": {
                 "kind": "dyn",
                 "trait": "ns::Plain"
-              },
-              "kind": "option"
-            }
+              }
+            },
+            "description": ""
           }
-        ],
-        "kind": "struct",
-        "name": "T",
-        "version": 1
+        ]
       },
       {
-        "description": "",
         "kind": "enum",
         "name": "Shape",
+        "description": "",
         "tag": "type",
+        "version": 1,
         "variants": [
           {
-            "description": "",
             "name": "Circle",
+            "description": "",
             "shape": "unit"
           },
           {
-            "description": "",
             "name": "Square",
+            "description": "",
             "shape": "unit"
           }
-        ],
-        "version": 1
+        ]
       },
       {
+        "kind": "struct",
+        "name": "Glmnet",
         "description": "",
+        "version": 1,
         "fields": [
           {
-            "description": "",
             "name": "alpha",
             "type": {
               "kind": "double",
-              "max": 1.0,
-              "min": 0.0
-            }
+              "min": 0.0,
+              "max": 1.0
+            },
+            "description": ""
           }
-        ],
-        "kind": "struct",
-        "name": "Glmnet",
-        "version": 1
+        ]
       },
       {
+        "kind": "struct",
+        "name": "Cart",
         "description": "",
+        "version": 1,
         "fields": [
           {
-            "description": "",
             "name": "depth",
             "type": {
               "kind": "integer",
               "min": 1
-            }
+            },
+            "description": ""
           }
-        ],
-        "kind": "struct",
-        "name": "Cart",
-        "version": 1
+        ]
+      }
+    ],
+    "traits": [
+      {
+        "name": "Algorithm",
+        "description": "",
+        "methods": [],
+        "tag": "algorithm"
+      },
+      {
+        "name": "Plain",
+        "description": "",
+        "methods": []
+      }
+    ],
+    "impls": [
+      {
+        "trait": "ns::Algorithm",
+        "target": {
+          "kind": "type",
+          "name": "ns::Glmnet"
+        },
+        "tag_value": "GLMNET",
+        "methods": []
+      },
+      {
+        "trait": "ns::Algorithm",
+        "target": {
+          "kind": "type",
+          "name": "ns::Cart"
+        },
+        "methods": []
+      },
+      {
+        "trait": "ns::Plain",
+        "target": {
+          "kind": "type",
+          "name": "ns::Cart"
+        },
+        "methods": []
       }
     ]
   }

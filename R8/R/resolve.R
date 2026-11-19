@@ -125,7 +125,19 @@ r8_resolve <- function(x, context = list()) {
 #'
 #' @export
 r8_validate <- function(x, complete = FALSE) {
-  value_identity(x)
+  if (!inherits(x, "r8_value")) {
+    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  }
+  res <- r8_value_check(x)
+  if (!is.null(res)) {
+    r8_abort(
+      "Invalid `",
+      attr(x, "r8_type"),
+      "`:\n",
+      problems_message(res[["errors"]]),
+      class = "r8_value_error"
+    )
+  }
   if (isTRUE(complete)) {
     pending <- pending_fields(x)
     if (length(pending) > 0L) {

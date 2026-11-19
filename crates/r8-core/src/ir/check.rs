@@ -22,6 +22,7 @@ pub struct DeclError {
     pub code: &'static str,
     /// A JSON Pointer to the offending member.
     pub path: String,
+    /// The message.
     pub message: String,
 }
 
