@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "r8-r"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "extendr-api",
  "extendr-ffi",
@@ -235,9 +235,9 @@ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rtemis-r8"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "724d568ef29bdfabf9df41e9760d0a5bf99ce06ebbb0fd82e8437e8656ba9a9d"
+checksum = "dd8481551bfe0bb326abf61cc20998d24f64c033f879e67b89f2906e9fbfc9cc"
 dependencies = [
  "regex",
  "ryu-js",

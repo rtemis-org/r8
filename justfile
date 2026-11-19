@@ -24,3 +24,13 @@ rust-format:
 [working-directory: "rust"]
 msrv:
     cargo +1.88 test --workspace --all-features --locked
+
+# Check that the R package, its binding crate, and the workspace crates share a major and minor version
+check-versions:
+    bash tools/check-versions.sh
+
+# Publish rtemis-r8-macros and rtemis-r8 to crates.io from a committed tree; then run `just update-crates` in r/
+publish-crates: check-versions rust-check msrv
+    @git diff --quiet && git diff --cached --quiet || (echo "Commit the working tree before publishing." && exit 1)
+    cd rust && cargo publish --workspace --dry-run
+    cd rust && cargo publish --workspace

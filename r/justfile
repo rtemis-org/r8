@@ -154,6 +154,14 @@ rust-check:
     @just _msg "Done"
 
 # Vendor Rust crates into src/rust/vendor.tar.xz, and write LICENSE.note and inst/AUTHORS
+# Lock the crates.io release of rtemis-r8 that Cargo.toml requires, vendor it, and check the package against it
+update-crates:
+    @just _msg "─── Locking the crates.io release of rtemis-r8 for {{ pkg }}... ───"
+    cd src/rust && cargo update -p rtemis-r8
+    R8_CRATES_PATH= just vendor
+    R8_CRATES_PATH= just check-cran
+    @just _msg "Done"
+
 vendor:
     @just _msg "─── Vendoring Rust crates for {{ pkg }}... ───"
     {{ rscript }} -e "rextendr::vendor_crates(overwrite = TRUE, clean = TRUE)"
