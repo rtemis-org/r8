@@ -541,6 +541,70 @@ impl Checker<'_> {
                 format!("required field `{tag}` has the name of the trait's tag member"),
             );
         }
+        if t.generic {
+            self.generic_def(t, path);
+        }
+    }
+
+    /// Checks the trait of a generic: exactly one method, named as the trait,
+    /// and no tag, required fields, or supertraits.
+    fn generic_def(&mut self, t: &TraitDef, path: &str) {
+        if t.methods.len() != 1 || t.methods[0].name.as_str() != t.name.as_str() {
+            self.report(
+                "generic_methods",
+                &format!("{path}/methods"),
+                format!(
+                    "the trait of generic `{}` has exactly one method, named `{}`",
+                    t.name, t.name
+                ),
+            );
+        }
+        for (member, present) in [
+            ("tag", t.tag.is_some()),
+            ("required_fields", !t.required_fields.is_empty()),
+            ("supertraits", !t.supertraits.is_empty()),
+        ] {
+            if present {
+                self.report(
+                    "generic_member",
+                    &format!("{path}/{member}"),
+                    format!("the trait of generic `{}` has no `{member}`", t.name),
+                );
+            }
+        }
+    }
+
+    /// Reports every method whose name a method of another trait in the
+    /// document holds: a package namespace has one generic per name.
+    fn method_names(&mut self, traits: &[TraitDef]) {
+        for (i, t) in traits.iter().enumerate() {
+            for (j, m) in t.methods.iter().enumerate() {
+                if let Some(other) = traits
+                    .iter()
+                    .enumerate()
+                    .find(|(k, o)| *k != i && o.methods.iter().any(|om| om.name == m.name))
+                    .map(|(_, o)| o)
+                {
+                    let what = |x: &TraitDef| {
+                        if x.generic {
+                            format!("generic `{}`", x.name)
+                        } else {
+                            format!("trait `{}`", x.name)
+                        }
+                    };
+                    self.report(
+                        "duplicate_generic",
+                        &format!("/traits/{i}/methods/{j}/name"),
+                        format!(
+                            "`{}` of {} is also a method of {}; a namespace has one generic per name",
+                            m.name,
+                            what(t),
+                            what(other)
+                        ),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -622,5 +686,6 @@ pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
     for (i, t) in doc.traits.iter().enumerate() {
         c.trait_def(t, &format!("/traits/{i}"));
     }
+    c.method_names(&doc.traits);
     c.errors
 }

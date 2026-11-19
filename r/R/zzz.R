@@ -12,7 +12,10 @@
 #' Traits that R8 declares in its namespace `R8`, which a type implements
 #' with `impl()` like any trait:
 #'
-#' - `Display`: `format(x, ...)`, which `print()` uses.
+#' - `Display`: `format(x, ...)`, which `print()` shows for a type without
+#'   a `Print` impl.
+#' - `Print`: `print(x, ...)`, which `print()` calls before it returns `x`
+#'   invisibly; `format()` keeps the `Display` text.
 #' - `Debug`: `str(object, ...)`.
 #' - `Dim`: `dim(x)`; `nrow()` and `ncol()` follow.
 #' - `PartialOrd`: `cmp(x, y)`, which returns a negative number, zero, or a
@@ -99,6 +102,22 @@ PartialOrd <- build_trait(
     )
   ),
   "An order between values of a type.",
+  NULL,
+  "R8",
+  environment()
+)
+
+#' @rdname standard_traits
+#' @export
+Print <- build_trait(
+  "Print",
+  list(
+    print = trait_method(
+      function(x, ...) NULL,
+      description = "Writes the value to the console."
+    )
+  ),
+  "A value's console output, in place of its format().",
   NULL,
   "R8",
   environment()
@@ -315,7 +334,7 @@ str.r8_value <- function(object, ...) {
 # %% .onLoad ----
 .onLoad <- function(libname, pkgname) {
   claim_namespace("R8", "R8")
-  for (t in list(Display, Debug, Dim, PartialOrd)) {
+  for (t in list(Display, Debug, Dim, PartialOrd, Print)) {
     register_trait(t, "R8")
   }
   register_trait(

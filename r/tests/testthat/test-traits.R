@@ -47,7 +47,7 @@ test_that("a method named as an existing S3 generic becomes its method", {
   T <- declare_in("tr", {
     Show <- new_trait(
       "Show",
-      methods = list(format = trait_method(function(x, ...) NULL))
+      methods = list(summary = trait_method(function(object, ...) NULL))
     )
     Point <- new_struct(
       "Point",
@@ -56,11 +56,47 @@ test_that("a method named as an existing S3 generic becomes its method", {
     impl(
       Show,
       Point,
-      methods = list(format = function(x, ...) sprintf("(%g, %g)", x$x, x$y))
+      methods = list(
+        summary = function(object, ...) sprintf("(%g, %g)", object$x, object$y)
+      )
     )
     Point
   })
-  expect_identical(format(T(x = 1, y = 2)), "(1, 2)")
+  expect_identical(summary(T(x = 1, y = 2)), "(1, 2)")
+})
+
+test_that("the methods of R8 and its standard traits are reserved", {
+  for (m in c("print", "format", "str", "$", "as.list")) {
+    expect_error(
+      declare_in(
+        "tr",
+        new_trait(
+          "Reserved",
+          methods = stats::setNames(
+            list(trait_method(function(x, ...) NULL)),
+            m
+          )
+        )
+      ),
+      "reserved for R8",
+      class = "r8_declaration_error"
+    )
+  }
+})
+
+test_that("two traits of one namespace declare no method of one name", {
+  declare_in(
+    "dupgen",
+    new_trait("Fit", methods = list(fit = trait_method(function(x) NULL)))
+  )
+  expect_error(
+    declare_in(
+      "dupgen",
+      new_trait("Train", methods = list(fit = trait_method(function(x) NULL)))
+    ),
+    "duplicate_generic",
+    class = "r8_declaration_error"
+  )
 })
 
 test_that("plain functions, mismatched signatures, and orphan impls are refused", {
@@ -76,8 +112,8 @@ test_that("plain functions, mismatched signatures, and orphan impls are refused"
     declare_in(
       "tr",
       new_trait(
-        "Fmt",
-        methods = list(format = trait_method(function(self) NULL))
+        "Summ",
+        methods = list(summary = trait_method(function(self) NULL))
       )
     ),
     "begin with",
@@ -114,19 +150,19 @@ test_that("an impl of the same trait for the same type replaces it", {
     list(
       Tr = new_trait(
         "Again",
-        methods = list(go = trait_method(function(x) NULL))
+        methods = list(again = trait_method(function(x) NULL))
       ),
       Ty = new_struct("Twice", fields = list(a = type_double()))
     )
   )
   declare_in(
     "tr",
-    impl(parts[["Tr"]], parts[["Ty"]], methods = list(go = function(x) 1))
+    impl(parts[["Tr"]], parts[["Ty"]], methods = list(again = function(x) 1))
   )
   declare_in(
     "tr",
-    impl(parts[["Tr"]], parts[["Ty"]], methods = list(go = function(x) 2))
+    impl(parts[["Tr"]], parts[["Ty"]], methods = list(again = function(x) 2))
   )
-  go <- parts[["Tr"]]@go
-  expect_identical(go(parts[["Ty"]](a = 0)), 2)
+  again <- parts[["Tr"]]@again
+  expect_identical(again(parts[["Ty"]](a = 0)), 2)
 })

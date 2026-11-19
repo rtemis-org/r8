@@ -1931,6 +1931,346 @@
           }
         ]
       }
+    },
+    {
+      "id": "generic",
+      "description": "The trait of a generic: one method, named as the trait.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "describe",
+            "methods": [
+              {
+                "name": "describe",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "generic-two-methods",
+      "description": "The trait of a generic has exactly one method.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "describe",
+            "methods": [
+              {
+                "name": "describe",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              },
+              {
+                "name": "summarize",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "generic_methods",
+            "path": "/traits/0/methods"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generic-method-named-otherwise",
+      "description": "The method of a generic's trait is named as the trait.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "describe",
+            "methods": [
+              {
+                "name": "explain",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "generic_methods",
+            "path": "/traits/0/methods"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generic-with-tag",
+      "description": "The trait of a generic has no tag member.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "describe",
+            "methods": [
+              {
+                "name": "describe",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true,
+            "tag": "kind"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "generic_member",
+            "path": "/traits/0/tag"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generic-with-supertraits",
+      "description": "The trait of a generic has no supertraits.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "describe",
+            "methods": [
+              {
+                "name": "describe",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true,
+            "supertraits": [
+              "ns::Fit"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "generic_member",
+            "path": "/traits/0/supertraits"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generic-host-keyword",
+      "description": "A generic's name becomes a class name in Rust, Python, and TypeScript.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "match",
+            "methods": [
+              {
+                "name": "match",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "name_host_keyword",
+            "path": "/traits/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-generic",
+      "description": "Two traits of one namespace declare a method of one name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Fit",
+            "methods": [
+              {
+                "name": "fit",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Train",
+            "methods": [
+              {
+                "name": "fit",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/0/methods/0/name"
+          },
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/1/methods/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generic-is-a-trait-method",
+      "description": "A generic holds the name of a declared trait's method.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Describe",
+            "methods": [
+              {
+                "name": "describe",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ]
+          },
+          {
+            "name": "describe",
+            "methods": [
+              {
+                "name": "describe",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/0/methods/0/name"
+          },
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/1/methods/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generic-and-type",
+      "description": "A generic and a type share one name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "describe",
+            "methods": [
+              {
+                "name": "describe",
+                "params": [
+                  "x",
+                  "..."
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ],
+        "types": [
+          {
+            "kind": "struct",
+            "name": "describe",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_type",
+            "path": "/traits/0/name"
+          }
+        ]
+      }
     }
   ]
 }

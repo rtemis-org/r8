@@ -46,7 +46,8 @@ r8_register <- function(pkgname = NULL) {
       e[["kind"]],
       type = register_type(e[["type"]], e[["namespace"]]),
       trait = register_trait(e[["trait"]], e[["namespace"]]),
-      impl = register_impl(e)
+      impl = register_impl(e),
+      s3method = register_s3_method(e)
     )
   }
   n_compiled <- register_exports(pkg)
@@ -142,14 +143,16 @@ compiled_method <- function(trait_name, type_name, method) {
     envir = asNamespace("R8")
   )
   generic <- t[["generics"]][[method]]
-  if (inherits(generic, "r8_generic")) {
-    assign(
-      paste(trait_name, method, type_name, sep = "|"),
-      fn,
-      envir = .r8_impls
-    )
-  } else {
-    registerS3method(method, type_name, fn, envir = asNamespace("R8"))
+  assign(
+    paste(trait_name, method, type_name, sep = "|"),
+    fn,
+    envir = .r8_impls
+  )
+  if (!inherits(generic, "r8_generic")) {
+    if (identical(trait_name, "R8::Print")) {
+      fn <- print_method(fn)
+    }
+    registerS3method(method, type_name, fn, envir = s3_envir(generic))
   }
   invisible(NULL)
 } # /R8::compiled_method

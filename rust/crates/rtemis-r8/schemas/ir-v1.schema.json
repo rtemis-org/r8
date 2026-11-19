@@ -1472,6 +1472,10 @@
             }
           ],
           "description": "The member that names an implementor in JSON; without it, `\"$type\"`."
+        },
+        "generic": {
+          "type": "boolean",
+          "description": "The trait of a generic declared by `generic()`: one method, named as\nthe trait."
         }
       },
       "required": [

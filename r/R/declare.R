@@ -277,6 +277,51 @@ check_members <- function(x, what, owner) {
 } # /R8::check_members
 
 
+# %% ctor_formals ----
+#' The formals of a constructor, from the IR fields
+#'
+#' A required field, neither an option nor with a default, has no default
+#' argument; every other field defaults to `NULL`, which construction reads as
+#' the field's default or as none.
+#'
+#' @param fields List: The IR fields.
+#'
+#' @return List: The formals.
+#'
+#' @keywords internal
+#' @noRd
+ctor_formals <- function(fields) {
+  names <- vapply(fields, function(f) f[["name"]], character(1))
+  out <- stats::setNames(rep(list(NULL), length(fields)), names)
+  for (f in fields) {
+    if (
+      !identical(f[["type"]][["kind"]], "option") && is.null(f[["default"]])
+    ) {
+      out[f[["name"]]] <- list(quote(expr = ))
+    }
+  }
+  out
+} # /R8::ctor_formals
+
+
+# %% required_formals ----
+#' The names of formals without a default
+#'
+#' @param formals List: Formals.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+required_formals <- function(formals) {
+  names(formals)[vapply(
+    formals,
+    function(a) identical(a, quote(expr = )),
+    logical(1)
+  )]
+} # /R8::required_formals
+
+
 # %% declare ----
 #' Check and register a declaration, and make its type object
 #'
@@ -298,7 +343,7 @@ declare <- function(ir, env, class, formals) {
   ctor <- as.function(
     c(
       formals,
-      constructor_body(qname, field_names)
+      constructor_body(qname, field_names, required = required_formals(formals))
     ),
     envir = asNamespace("R8")
   )
@@ -407,10 +452,13 @@ new_struct <- function(
   if (length(rules) > 0L) {
     ir[["rules"]] <- lapply(rules, function(r) unclass(r))
   }
-  formals <- lapply(fields, function(f) {
-    f <- as_field(f)
-    if (isTRUE(f[["has_default"]])) f[["default"]] else NULL
-  })
+  formals <- ctor_formals(ir[["fields"]])
+  for (n in names(fields)) {
+    f <- as_field(fields[[n]])
+    if (isTRUE(f[["has_default"]]) && !is.null(f[["default"]])) {
+      formals[n] <- list(f[["default"]])
+    }
+  }
   declare(ir, parent.frame(), "r8_struct_type", formals)
 } # /R8::new_struct
 
@@ -568,17 +616,25 @@ new_enum <- function(
   if (v[[1L]][["shape"]] == "unit") {
     return(r8_construct(qname, list(), name))
   }
-  # A struct or newtype variant: its constructor, with the fields as formals.
-  fields <- if (v[[1L]][["shape"]] == "struct") {
-    vapply(v[[1L]][["fields"]], function(f) f[["name"]], character(1))
+  # A struct or newtype variant: its constructor, with the fields as formals;
+  # a field with a default receives NULL, which construction fills.
+  formals <- if (v[[1L]][["shape"]] == "struct") {
+    ctor_formals(v[[1L]][["fields"]])
   } else {
-    names(formals(.r8_types[[v[[1L]][["of"]]]]))
+    of <- formals(.r8_types[[v[[1L]][["of"]]]])
+    required <- required_formals(of)
+    of[!names(of) %in% required] <- list(NULL)
+    of
   }
-  defaults <- stats::setNames(rep(list(NULL), length(fields)), fields)
   as.function(
     c(
-      defaults,
-      constructor_body(qname, fields, name)
+      formals,
+      constructor_body(
+        qname,
+        names(formals),
+        name,
+        required = required_formals(formals)
+      )
     ),
     envir = asNamespace("R8")
   )

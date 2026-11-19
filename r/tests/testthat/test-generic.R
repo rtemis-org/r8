@@ -1,0 +1,219 @@
+# test-generic.R
+# ::R8::
+# 2026- EDG rtemis.org
+
+# The R-familiar layer: generic(), implement<-, and r8_method().
+# spec: R8/class-system#r-familiar-layer
+
+gbm_types <- function(ns) {
+  declare_in(ns, {
+    GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
+    Kernel <- new_enum(
+      "Kernel",
+      variants = list(
+        Linear = variant(),
+        Rbf = variant(fields = list(gamma = type_double()))
+      )
+    )
+    list(GBM = GBM, Kernel = Kernel)
+  })
+}
+
+test_that("generic() declares a generic and implement() its methods", {
+  ty <- gbm_types("gen1")
+  GBM <- ty[["GBM"]]
+  Kernel <- ty[["Kernel"]]
+  out <- declare_in("gen1", {
+    describe <- generic("describe", "x", description = "Describes x.")
+    d0 <- describe
+    implement(describe, GBM) <- function(x, ...) paste(x$n_trees, "trees")
+    implement(describe, Kernel) <- function(x, ...) "a kernel"
+    list(describe = describe, unchanged = identical(describe, d0))
+  })
+  describe <- out[["describe"]]
+  expect_true(out[["unchanged"]])
+  expect_s3_class(describe, "r8_generic")
+  expect_identical(names(formals(describe)), c("x", "..."))
+  expect_identical(attr(describe, "r8_trait"), "gen1::describe")
+  expect_identical(describe(GBM(n_trees = 5L)), "5 trees")
+  expect_identical(describe(Kernel@Rbf(gamma = 0.1)), "a kernel")
+  expect_identical(describe(Kernel@Linear), "a kernel")
+  expect_error(describe(1), "does not implement", class = "r8_dispatch_error")
+  ir <- unclass(R8:::.r8_traits[["gen1::describe"]])[["ir"]]
+  expect_true(ir[["generic"]])
+  expect_identical(ir[["methods"]][[1L]][["name"]], "describe")
+  expect_identical(unlist(ir[["methods"]][[1L]][["params"]]), c("x", "..."))
+  expect_identical(r8_method(describe, GBM)(GBM(n_trees = 2L)), "2 trees")
+  expect_output(print(describe), "<R8 generic gen1::describe>")
+  expect_output(print(describe), "Methods for: gen1::GBM, gen1::Kernel")
+})
+
+test_that("generic() takes its arguments by name and appends ...", {
+  g <- declare_in("gen2", generic("score", c("model", "data")))
+  expect_identical(names(formals(g)), c("model", "data", "..."))
+  g2 <- declare_in("gen2", generic("rescore", c("model", "...", "data")))
+  expect_identical(names(formals(g2)), c("model", "...", "data"))
+})
+
+test_that("generic() refuses names and arguments outside the rules", {
+  for (bad in c("describe.gbm", "describe<-", "1st", "")) {
+    expect_error(
+      declare_in("gen3", generic(bad, "x")),
+      "rule of trait names",
+      class = "r8_declaration_error"
+    )
+  }
+  expect_error(
+    declare_in("gen3", generic("default", "x")),
+    "name_host_keyword",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    declare_in("gen3", generic("g", "...")),
+    "dispatches on",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    declare_in("gen3", generic("g", c("x", "x"))),
+    "distinct syntactic",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    declare_in("gen3", generic("summary", "object")),
+    "implement\\(summary, Type\\)",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    declare_in("gen3", generic("nrow", "x")),
+    "name the generic otherwise",
+    class = "r8_declaration_error"
+  )
+})
+
+test_that("a generic shares the namespace's names with types and trait methods", {
+  declare_in("gen4", {
+    new_struct("describe", fields = list(a = type_double()))
+    new_trait(
+      "Explain",
+      methods = list(explain = trait_method(function(x) NULL))
+    )
+  })
+  expect_error(
+    declare_in("gen4", generic("describe", "x")),
+    "duplicate_type",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    declare_in("gen4", generic("explain", "x")),
+    "duplicate_generic",
+    class = "r8_declaration_error"
+  )
+})
+
+test_that("implement() lowers format, str, dim, and r8_cmp to standard traits", {
+  GBM <- gbm_types("gen5")[["GBM"]]
+  declare_in("gen5", {
+    implement(format, GBM) <- function(x, ...) paste0("GBM(", x$n_trees, ")")
+    implement(str, GBM) <- function(object, ...) cat("GBM str\n")
+    implement(dim, GBM) <- function(x) c(x$n_trees, 2L)
+    implement(r8_cmp, GBM) <- function(x, y) x$n_trees - y$n_trees
+  })
+  g <- GBM(n_trees = 3L)
+  expect_identical(format(g), "GBM(3)")
+  expect_output(print(g), "^GBM\\(3\\)$")
+  expect_output(str(g), "GBM str")
+  expect_identical(nrow(g), 3L)
+  expect_true(g < GBM(n_trees = 4L))
+  expect_identical(r8_method(format, GBM)(g), "GBM(3)")
+})
+
+test_that("implement(print) is a Print impl, stated in a message", {
+  GBM <- gbm_types("gen6")[["GBM"]]
+  expect_message(
+    declare_in("gen6", {
+      implement(print, GBM) <- function(x, ...) {
+        cat("A GBM of", x$n_trees, "trees\n")
+      }
+    }),
+    "implements R8's `Print` trait"
+  )
+  g <- GBM(n_trees = 7L)
+  expect_output(out <- withVisible(print(g)), "^A GBM of 7 trees$")
+  expect_false(out[["visible"]])
+  expect_identical(out[["value"]], g)
+  expect_identical(format(g)[[1L]], "<gen6::GBM>")
+  expect_true(is.function(r8_method(print, GBM)))
+})
+
+test_that("implement() on another S3 generic registers a method for the qualified class", {
+  GBM <- gbm_types("gen7")[["GBM"]]
+  declare_in("gen7", {
+    implement(summary, GBM) <- function(object, ...) object$n_trees * 2L
+  })
+  expect_identical(summary(GBM(n_trees = 4L)), 8L)
+  expect_error(
+    declare_in("gen7", {
+      implement(summary, GBM) <- function(x, ...) NULL
+    }),
+    "function\\(object, \\.\\.\\.\\)",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    declare_in("gen7b", {
+      implement(summary, GBM) <- function(object, ...) NULL
+    }),
+    "orphan rule",
+    class = "r8_declaration_error"
+  )
+})
+
+test_that("implement() registers methods of a generic of a package R8 does not import", {
+  skip_if_not_installed("generics")
+  GBM <- gbm_types("gen8")[["GBM"]]
+  declare_in("gen8", {
+    tidy <- generics::tidy
+    implement(tidy, GBM) <- function(x, ...) data.frame(n_trees = x$n_trees)
+  })
+  expect_identical(generics::tidy(GBM(n_trees = 9L))$n_trees, 9L)
+})
+
+test_that("implement() takes the method of a trait", {
+  GBM <- gbm_types("gen9")[["GBM"]]
+  fit <- declare_in("gen9", {
+    Fit <- new_trait(
+      "Fit",
+      methods = list(fit = trait_method(function(spec, x) NULL))
+    )
+    fit <- Fit@fit
+    implement(fit, GBM) <- function(spec, x) sum(x) + spec$n_trees
+    fit
+  })
+  expect_identical(fit(GBM(n_trees = 1L), 1:3), 7L)
+})
+
+test_that("implement() refuses the functions R8 owns, operators, and non-generics", {
+  GBM <- gbm_types("gen10")[["GBM"]]
+  refuse <- function(expr, pattern) {
+    expect_error(
+      eval.parent(substitute(expr)),
+      pattern,
+      class = "r8_declaration_error"
+    )
+  }
+  env <- new.env(parent = globalenv())
+  env$GBM <- GBM
+  try_impl <- function(g) {
+    env$g <- g
+    evalq(implement(g, GBM) <- function(x, ...) NULL, env)
+  }
+  refuse(try_impl(`$`), "reads the fields")
+  refuse(try_impl(`[[<-`), "validates every change")
+  refuse(try_impl(`==`), "r8_equal")
+  refuse(try_impl(`<`), "implement\\(r8_cmp, GBM\\)")
+  refuse(try_impl(`+`), "operators")
+  refuse(try_impl(Ops), "operators")
+  refuse(try_impl(nrow), "implement\\(dim, GBM\\)")
+  refuse(try_impl(function(x) x), "not a generic")
+  refuse(try_impl(methods::show), "S4 generic")
+  refuse(try_impl(1), "takes a generic")
+})

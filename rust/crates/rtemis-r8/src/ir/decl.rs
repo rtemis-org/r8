@@ -339,6 +339,10 @@ pub struct TraitDef {
     /// The member that names an implementor in JSON; without it, `"$type"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<Name>,
+    /// The trait of a generic declared by `generic()`: one method, named as
+    /// the trait.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub generic: bool,
 }
 
 /// The class system of a host class.

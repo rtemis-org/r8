@@ -6,6 +6,7 @@
 \alias{Debug}
 \alias{Dim}
 \alias{PartialOrd}
+\alias{Print}
 \alias{r8_cmp}
 \alias{From}
 \title{Standard traits}
@@ -17,6 +18,8 @@ Debug
 Dim
 
 PartialOrd
+
+Print
 
 r8_cmp(x, y)
 
@@ -36,7 +39,10 @@ with \code{impl()} like any trait:
 }
 \details{
 \itemize{
-\item \code{Display}: \code{format(x, ...)}, which \code{print()} uses.
+\item \code{Display}: \code{format(x, ...)}, which \code{print()} shows for a type without
+a \code{Print} impl.
+\item \code{Print}: \code{print(x, ...)}, which \code{print()} calls before it returns \code{x}
+invisibly; \code{format()} keeps the \code{Display} text.
 \item \code{Debug}: \code{str(object, ...)}.
 \item \code{Dim}: \code{dim(x)}; \code{nrow()} and \code{ncol()} follow.
 \item \code{PartialOrd}: \code{cmp(x, y)}, which returns a negative number, zero, or a

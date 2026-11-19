@@ -97,11 +97,43 @@ existing_generic <- function(name, env) {
 #' @keywords internal
 #' @noRd
 is_s3_generic <- function(f) {
-  if (is.primitive(f)) {
-    return(TRUE)
-  }
-  any(grepl("UseMethod|standardGeneric", deparse(body(f))))
+  !is.null(s3_generic_info(f)) || is_s4_generic(f)
 } # /R8::is_s3_generic
+
+
+# %% s3_envir ----
+#' The environment in which an S3 generic's name is found
+#'
+#' @param f Function: An S3 generic.
+#'
+#' @return Environment: The namespace of the generic's package.
+#'
+#' @keywords internal
+#' @noRd
+s3_envir <- function(f) {
+  info <- s3_generic_info(f)
+  if (!is.null(info) && nzchar(info[["package"]])) {
+    return(asNamespace(info[["package"]]))
+  }
+  env <- environment(f)
+  if (is.null(env)) baseenv() else env
+} # /R8::s3_envir
+
+
+# Methods reserved for R8 and its standard traits, with the declaration that
+# defines each for a type.
+RESERVED_METHODS <- c(
+  print = "impl(Print, Type, ...) or implement(print, Type)",
+  format = "impl(Display, Type, ...) or implement(format, Type)",
+  str = "impl(Debug, Type, ...) or implement(str, Type)",
+  `==` = "",
+  `$` = "",
+  `[[` = "",
+  `$<-` = "",
+  `[[<-` = "",
+  `@` = "",
+  as.list = ""
+)
 
 
 # %% make_generic ----
@@ -200,6 +232,18 @@ new_trait <- function(name, methods = list(), description = "", tag = NULL) {
   if (!is_name(name)) {
     r8_abort(
       "A trait name is an R8 name, such as \"Fit\".",
+      class = "r8_declaration_error"
+    )
+  }
+  reserved <- intersect(names(methods), names(RESERVED_METHODS))
+  if (length(reserved) > 0L) {
+    how <- RESERVED_METHODS[[reserved[[1L]]]]
+    r8_abort(
+      "The method name `",
+      reserved[[1L]],
+      "` is reserved for R8",
+      if (nzchar(how)) paste0("; a type defines it with ", how) else "",
+      ".",
       class = "r8_declaration_error"
     )
   }
@@ -415,6 +459,24 @@ register_trait <- function(trait, namespace) {
 #'
 #' @export
 impl <- function(trait, type, methods = list(), tag_value = NULL) {
+  impl_declare(trait, type, methods, tag_value, parent.frame())
+} # /R8::impl
+
+
+# %% impl_declare ----
+#' Check, register, and record an impl
+#'
+#' @param trait A trait object.
+#' @param type An R8 type object.
+#' @param methods Named list: One function per method.
+#' @param tag_value Optional Character: The tag value.
+#' @param env Environment: Where the impl is declared.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+impl_declare <- function(trait, type, methods, tag_value, env) {
   if (!inherits(trait, "r8_trait")) {
     r8_abort("`trait` is a trait object.", class = "r8_declaration_error")
   }
@@ -423,7 +485,6 @@ impl <- function(trait, type, methods = list(), tag_value = NULL) {
   }
   t <- unclass(trait)
   type_name <- attr(type, "r8_name")
-  env <- parent.frame()
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
   trait_ns <- sub("::.*", "", t[["name"]])
@@ -500,7 +561,7 @@ impl <- function(trait, type, methods = list(), tag_value = NULL) {
   register_impl(entry)
   record_declaration(env, entry)
   invisible(NULL)
-} # /R8::impl
+} # /R8::impl_declare
 
 
 # %% register_impl ----
@@ -525,24 +586,43 @@ register_impl <- function(entry) {
   }
   for (m in names(entry[["fns"]])) {
     generic <- t[["generics"]][[m]]
-    if (inherits(generic, "r8_generic")) {
-      assign(
-        paste(t[["name"]], m, entry[["type_name"]], sep = "|"),
-        entry[["fns"]][[m]],
-        envir = .r8_impls
-      )
-    } else {
-      registerS3method(
-        m,
-        entry[["type_name"]],
-        entry[["fns"]][[m]],
-        envir = asNamespace("R8")
-      )
+    fn <- entry[["fns"]][[m]]
+    assign(
+      paste(t[["name"]], m, entry[["type_name"]], sep = "|"),
+      fn,
+      envir = .r8_impls
+    )
+    if (!inherits(generic, "r8_generic")) {
+      if (identical(t[["name"]], "R8::Print")) {
+        fn <- print_method(fn)
+      }
+      registerS3method(m, entry[["type_name"]], fn, envir = s3_envir(generic))
     }
   }
   r8_declare_impl(r8_ir_json(entry[["ir"]]), entry[["namespace"]])
   invisible(NULL)
 } # /R8::register_impl
+
+
+# %% print_method ----
+#' The S3 print method of a `Print` impl
+#'
+#' Calls the impl and returns the value invisibly, so that `print()` writes
+#' once at the console.
+#'
+#' @param f Function: The impl's `print` method.
+#'
+#' @return Function.
+#'
+#' @keywords internal
+#' @noRd
+print_method <- function(f) {
+  force(f)
+  function(x, ...) {
+    f(x, ...)
+    invisible(x)
+  }
+} # /R8::print_method
 
 
 # %% print.r8_trait ----

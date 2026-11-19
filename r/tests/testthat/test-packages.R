@@ -229,11 +229,62 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "Resample.Rd",
       "Resampler.Rd",
       "Summarize.Rd",
-      "as_resampler.Rd"
+      "as_resampler.Rd",
+      "describe.Rd"
     )
   )
   ns <- readLines(file.path(pkg, "NAMESPACE"))
   expect_true("export(resample)" %in% ns, info = paste(ns, collapse = "\n"))
+  expect_true("export(describe)" %in% ns, info = paste(ns, collapse = "\n"))
+  rd <- function(name) {
+    paste(readLines(file.path(pkg, "man", name)), collapse = "\n")
+  }
+  # The struct's usage from its constructor's formals; the enum's from the
+  # roclet, one line per variant.
+  expect_match(
+    rd("Resampler.Rd"),
+    "Resampler(method, n_resamples, seed = NULL)",
+    fixed = TRUE
+  )
+  expect_match(rd("Method.Rd"), "\\special{Method@KFold(k)}", fixed = TRUE)
+  expect_match(rd("Method.Rd"), "\\special{Method@Bootstrap}", fixed = TRUE)
+  # The methods of the package's generic go to the generic's Rd file, the
+  # methods of base generics to the type's; one method of each has no roxygen
+  # block.
+  expect_match(
+    rd("describe.Rd"),
+    "## R8 method for struct 'Resampler'\n\\special{describe(x, ..., verbose = FALSE)}",
+    fixed = TRUE
+  )
+  expect_match(
+    rd("describe.Rd"),
+    "## R8 method for enum 'Method'\n\\special{describe(x, ...)}",
+    fixed = TRUE
+  )
+  expect_match(
+    rd("describe.Rd"),
+    "\\item{verbose}{Logical: Include the seed.}",
+    fixed = TRUE
+  )
+  expect_match(
+    rd("Resampler.Rd"),
+    "## R8 method for struct 'Resampler'\n\\special{toString(x, ...)}",
+    fixed = TRUE
+  )
+  expect_match(
+    rd("Method.Rd"),
+    "## R8 method for enum 'Method'\n\\special{print(x, ...)}",
+    fixed = TRUE
+  )
+  # A second run writes nothing.
+  again <- run_r(
+    character(),
+    sprintf("roxygen2::roxygenise(%s)", deparse(pkg))
+  )
+  expect_false(
+    any(grepl("^Writing", again)),
+    info = paste(again, collapse = "\n")
+  )
   rbin <- file.path(R.home("bin"), "R")
   old <- setwd(dir)
   on.exit(setwd(old), add = TRUE)
@@ -254,5 +305,28 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
   expect_true(
     "Status: OK" %in% check,
     info = paste(c(built, check), collapse = "\n")
+  )
+  # In a fresh session, r8_register() restores the generic's methods, the S3
+  # method of a base generic, and the Print impl.
+  used <- run_r(
+    file.path(dir, "r8pkgDoc.Rcheck"),
+    c(
+      "library(r8pkgDoc)",
+      "r <- Resampler(method = Method@Bootstrap, n_resamples = 2L, seed = 1L)",
+      "cat(describe(r, verbose = TRUE), '\\n')",
+      "cat(describe(Method@Bootstrap), '\\n')",
+      "cat(toString(r), '\\n')",
+      "print(Method@Bootstrap)"
+    )
+  )
+  expect_identical(
+    trimws(used),
+    c(
+      "2 resamples, seed 1",
+      "a resampling method",
+      "Resampler(2)",
+      "A resampling method"
+    ),
+    info = paste(used, collapse = "\n")
   )
 })

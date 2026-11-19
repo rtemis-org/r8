@@ -92,15 +92,32 @@ construct_error <- function(res, type_name, variant) {
 #' @param qname Character: The qualified type name.
 #' @param fields Character: The field names, in declaration order.
 #' @param variant Character: The enum variant, or `""` for a struct.
+#' @param required Character: The fields without a default argument.
 #'
 #' @return A call.
 #'
 #' @keywords internal
 #' @noRd
-constructor_body <- function(qname, fields, variant = "") {
+constructor_body <- function(
+  qname,
+  fields,
+  variant = "",
+  required = character()
+) {
+  # A required field without an argument reaches construction as NULL, which
+  # reports it as missing.
   args <- as.call(c(
     as.name("list"),
-    stats::setNames(lapply(fields, as.name), fields)
+    stats::setNames(
+      lapply(fields, function(n) {
+        if (n %in% required) {
+          bquote(if (missing(.(as.name(n)))) NULL else .(as.name(n)))
+        } else {
+          as.name(n)
+        }
+      }),
+      fields
+    )
   ))
   bquote({
     res <- .Call(wrap__r8_new_value, .(args), .(qname), .(variant))
