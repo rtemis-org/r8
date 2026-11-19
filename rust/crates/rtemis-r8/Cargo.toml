@@ -30,7 +30,7 @@ schema = ["dep:schemars"]
 macros = ["dep:rtemis-r8-macros"]
 
 [dependencies]
-rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.1", optional = true }
+rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.2", optional = true }
 schemars = { version = "1", optional = true }
 regex = "1"
 ryu-js = "0.2"
