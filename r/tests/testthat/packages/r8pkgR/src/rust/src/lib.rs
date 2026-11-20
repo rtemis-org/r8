@@ -17,11 +17,12 @@ pub struct Signal {
     pub values: Buffer<f64>,
 }
 
-/// The Rust side of `pkgr::Norm`, declared in R with `magnitude(x)` and
-/// `ratio(x, by)`.
+/// The Rust side of `pkgr::Norm`, declared in R with `magnitude(x)`,
+/// `ratio(x, by)`, and `distance(x, y)`.
 pub trait Norm {
     fn magnitude(&self) -> f64;
     fn ratio(&self, by: f64) -> r8::Result<f64>;
+    fn distance(&self, y: &Signal) -> r8::Result<f64>;
 }
 
 #[r8::methods(trait = "pkgr::Norm")]
@@ -34,6 +35,21 @@ impl Norm for Signal {
             return Err(r8::Error::new("zero_divisor", "`by` is not 0"));
         }
         Ok(self.values.first().copied().unwrap_or(f64::NAN) / by)
+    }
+    fn distance(&self, y: &Signal) -> r8::Result<f64> {
+        if self.values.len() != y.values.len() {
+            return Err(r8::Error::new(
+                "length_mismatch",
+                "`x` and `y` have values of the same length",
+            ));
+        }
+        Ok(self
+            .values
+            .iter()
+            .zip(y.values.iter())
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum::<f64>()
+            .sqrt())
     }
 }
 

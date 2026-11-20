@@ -23,7 +23,9 @@ file of the generic when the package declares and documents the generic,
 an R8 generic or an S3 generic, and otherwise to the Rd file of the type. A roxygen block above the call
 adds its \verb{@param} entries to that file; a call without a block is found by
 scanning \verb{R/}, and is left out when neither the generic nor the type has an
-Rd file in the package. The usage of an enum lists its variants, such as
+Rd file in the package. A method the package implements in compiled code
+(\code{R8.h}), registered when roxygen2 loads the package, takes an entry by the
+same rules, with the formals of the trait's method. The usage of an enum lists its variants, such as
 \code{Method@KFold(k)} and \code{Method@Bootstrap}.
 }
 \examples{

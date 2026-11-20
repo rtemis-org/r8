@@ -2,6 +2,12 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
+# The methods each package implements in compiled code, by package: a data
+# frame of `trait_name`, `type_name`, and `method`, which the roclet `r8_rd`
+# documents.
+.r8_compiled_methods <- new.env(parent = emptyenv())
+
+
 # %% r8_register ----
 #' Register a package's R8 declarations
 #'
@@ -102,6 +108,15 @@ register_exports <- function(pkg, entries = list()) {
   compared <- r8_exports_compare(ptr)
   check_exports(pkg, compared, native)
   fns <- r8_register_exports(ptr, pkg)
+  assign(
+    pkg,
+    data.frame(
+      trait_name = as.character(fns[["trait_name"]]),
+      type_name = as.character(fns[["type_name"]]),
+      method = as.character(fns[["method"]])
+    ),
+    envir = .r8_compiled_methods
+  )
   for (n in ls(.r8_codecs)) {
     if (identical(.r8_codecs[[n]], pkg)) {
       rm(list = n, envir = .r8_codecs)

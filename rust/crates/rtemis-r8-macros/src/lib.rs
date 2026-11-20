@@ -760,7 +760,8 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
 /// Rust-native struct: keeps the impl, and generates one function per
 /// method that R8 calls (`R8MethodFn`), and the constant
 /// `__R8_IMPL_<Type>_<Trait>` that `r8::exports!` lists. A method takes
-/// `&self` and arguments that implement `rtemis_r8_api::FromR`, and returns
+/// `&self` and arguments that implement `rtemis_r8_api::FromR` or are `&T`
+/// of a Rust-native type `T` (`rtemis_r8_api::Receiver`), and returns
 /// a type that implements `rtemis_r8_api::IntoR`; the trait is declared in
 /// R, whose method has `x` and the other parameters by the same names.
 #[proc_macro_attribute]
@@ -851,10 +852,30 @@ fn methods_impl(trait_name: Option<syn::LitStr>, item: &syn::ItemImpl) -> Result
             let pident = format_ident!("__r8_arg_{}", k);
             let ty = &pt.ty;
             let index = k + 1;
-            convert.push(quote! {
-                let #pident: #ty = unsafe { <#ty as #api::FromR>::from_arg(__r8_args[#index], #pname) }?;
-            });
-            args.push(pident);
+            match &**ty {
+                // `&T`: a value of a Rust-native type, borrowed from its
+                // state, or built from an R-native value of the type.
+                syn::Type::Reference(r) => {
+                    let is_str = matches!(&*r.elem, syn::Type::Path(p) if p.path.is_ident("str"));
+                    if r.mutability.is_some() || is_str {
+                        return Err(Error::new_spanned(
+                            ty,
+                            "a reference parameter is `&T` of a Rust-native type `T`; a string is `String`",
+                        ));
+                    }
+                    let inner = &r.elem;
+                    convert.push(quote! {
+                        let #pident = unsafe { #api::Receiver::<#inner>::from_named_arg(__r8_args[#index], #pname) }?;
+                    });
+                    args.push(quote! { &*#pident });
+                }
+                _ => {
+                    convert.push(quote! {
+                        let #pident: #ty = unsafe { <#ty as #api::FromR>::from_arg(__r8_args[#index], #pname) }?;
+                    });
+                    args.push(quote! { #pident });
+                }
+            }
         }
         let n_params = args.len() + 1;
         let fn_ident = format_ident!("__r8_{}_{}_{}", type_ident, trait_ident, sig.ident);

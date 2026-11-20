@@ -5,6 +5,7 @@
 - `r8_register()` refuses a codec whose shape does not match its type, and a codec whose enum declares a runtime-only field in any variant.
 - `r8::exports!` declares every type of the package's namespace that its listed types reach, such as the struct of a newtype variant.
 - `print()` and `str()` of a Rust-native value show its size in the header, in IEC units (`<pkgc::Signal> 7.63 MiB`); `str()` adds the fields read into R (`+ 112 B read`).
+- A method of `#[r8::methods]` takes another value of a Rust-native type as `&T`, borrowed from its state, or built from an R-native value of the type.
 - The package builds against `rtemis-r8` 0.4.0.
 
 # R8 0.3.0

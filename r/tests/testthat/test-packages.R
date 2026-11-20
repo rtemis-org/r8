@@ -325,6 +325,10 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "e <- tryCatch(ratio(s, 0), error = function(e) conditionMessage(e))",
       "cat('error', grepl('[zero_divisor]', e, fixed = TRUE), '\\n')",
       "cat('display', format(s), '\\n')",
+      "a <- Signal(name = 'a', values = c(0, 0)); b <- Signal(name = 'b', values = c(3, 4))",
+      "rn <- unserialize(serialize(b, NULL, version = 2))",
+      "e <- tryCatch(distance(a, 1), error = function(e) conditionMessage(e))",
+      "cat('distance', distance(a, b), distance(a, rn), grepl('`y` is not a `pkgr::Signal`', e, fixed = TRUE), '\\n')",
       "r <- R8::r8_from_json(Signal, R8::to_json(s))",
       "cat('json', R8::r8_equal(r, s), '\\n')",
       "u <- unserialize(serialize(s, NULL))",
@@ -346,6 +350,8 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   expect_true("ratio 1.5 " %in% out, info = info)
   expect_true("error TRUE " %in% out, info = info)
   expect_true("display Signal a (2 values) " %in% out, info = info)
+  # A `&Signal` parameter takes a Rust-native value or an R-native one.
+  expect_true("distance 5 5 TRUE " %in% out, info = info)
   expect_true("json TRUE " %in% out, info = info)
   expect_true("serialize TRUE " %in% out, info = info)
   expect_true("mirai 5 w 6 8 " %in% out, info = info)

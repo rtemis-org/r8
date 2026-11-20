@@ -22,7 +22,9 @@
 #' an R8 generic or an S3 generic, and otherwise to the Rd file of the type. A roxygen block above the call
 #' adds its `@param` entries to that file; a call without a block is found by
 #' scanning `R/`, and is left out when neither the generic nor the type has an
-#' Rd file in the package. The usage of an enum lists its variants, such as
+#' Rd file in the package. A method the package implements in compiled code
+#' (`R8.h`), registered when roxygen2 loads the package, takes an entry by the
+#' same rules, with the formals of the trait's method. The usage of an enum lists its variants, such as
 #' `Method@KFold(k)` and `Method@Bootstrap`.
 #'
 #' @return A roxygen2 roclet, of class `roclet_r8_rd`.
@@ -290,6 +292,84 @@ method_block <- function(block, blocks, env) {
 } # /R8::method_block
 
 
+# %% compiled_blocks ----
+#' Blocks of the methods a package implements in compiled code
+#'
+#' One block per compiled method that the package registered: its usage
+#' entry goes to the Rd file of the generic when the trait belongs to the
+#' package's namespace and the package documents the generic, and otherwise
+#' to the Rd file of the type; a method neither has a file for is left out.
+#'
+#' @param blocks List: The package's roxygen2 blocks.
+#' @param env Environment: The package's namespace.
+#' @param base_path Character: The package's root directory.
+#'
+#' @return List: The blocks.
+#'
+#' @keywords internal
+#' @noRd
+compiled_blocks <- function(blocks, env, base_path) {
+  methods <- .r8_compiled_methods[[declaring_package(env)]]
+  if (is.null(methods)) {
+    return(list())
+  }
+  ns <- declaring_namespace(env)
+  out <- list()
+  for (i in seq_len(nrow(methods))) {
+    trait <- .r8_traits[[methods[["trait_name"]][[i]]]]
+    type <- .r8_types[[methods[["type_name"]][[i]]]]
+    if (is.null(trait) || is.null(type)) {
+      next
+    }
+    t <- unclass(trait)
+    method <- methods[["method"]][[i]]
+    decl <- Filter(
+      function(m) identical(m[["name"]], method),
+      t[["ir"]][["methods"]]
+    )
+    params <- unlist(decl[[1L]][["params"]])
+    formals <- stats::setNames(
+      rep(list(quote(expr = )), length(params)),
+      params
+    )
+    topic <- NULL
+    if (identical(sub("::.*", "", methods[["trait_name"]][[i]]), ns)) {
+      topic <- topic_of(blocks, t[["generics"]][[method]])
+    }
+    if (is.null(topic)) {
+      topic <- topic_of(blocks, type)
+    }
+    if (is.null(topic)) {
+      next
+    }
+    tname <- sub("^.*::", "", methods[["type_name"]][[i]])
+    block <- roxygen2::roxy_block(
+      list(),
+      file = file.path(base_path, "src"),
+      line = 1L,
+      call = NULL
+    )
+    usage <- paste0(
+      "## R8 method for ",
+      type_kind(type),
+      " '",
+      tname,
+      "'\n\\special{",
+      call_text(method, formals),
+      "}"
+    )
+    block$tags <- list(
+      roxy_tag_of(block, "usage", structure(usage, class = "rd")),
+      roxy_tag_of(block, ".formals", params),
+      roxy_tag_of(block, "name", topic),
+      roxy_tag_of(block, "rdname", topic)
+    )
+    out <- c(out, list(block))
+  }
+  out
+} # /R8::compiled_blocks
+
+
 # %% enum_block ----
 #' Add the usage of an enum's variants to its block
 #'
@@ -336,6 +416,7 @@ enum_block <- function(block) {
 #' @exportS3Method roxygen2::roclet_process
 roclet_process.roclet_r8_rd <- function(x, blocks, env, base_path) {
   blocks <- c(blocks, scan_unblocked(blocks, base_path))
+  compiled <- compiled_blocks(blocks, env, base_path)
   out <- list()
   for (block in blocks) {
     if (is_implement_call(block$call)) {
@@ -358,6 +439,7 @@ roclet_process.roclet_r8_rd <- function(x, blocks, env, base_path) {
       out <- c(out, list(block))
     }
   }
+  out <- c(out, compiled)
   roxygen2::roclet_process(roxygen2::rd_roclet(), out, env, base_path)
 } # /R8::roclet_process.roclet_r8_rd
 

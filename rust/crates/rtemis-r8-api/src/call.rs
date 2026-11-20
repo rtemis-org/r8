@@ -126,6 +126,19 @@ impl<T: Codec> Receiver<'_, T> {
     /// On R's main thread, with a valid `x` that stays protected while the
     /// receiver lives.
     pub unsafe fn from_arg(x: SEXP) -> Result<Self> {
+        unsafe { Self::from_named_arg(x, "x") }
+    }
+
+    /// The value of the argument `name`, a parameter `&T` of a method:
+    /// borrowed from a Rust-native value, or built from an R-native value of
+    /// the type; an object of another type returns `type_mismatch`, naming
+    /// the argument.
+    ///
+    /// # Safety
+    ///
+    /// On R's main thread, with a valid `x` that stays protected while the
+    /// value lives.
+    pub unsafe fn from_named_arg(x: SEXP, name: &str) -> Result<Self> {
         let a = api::api()?;
         let mut state: *const c_void = std::ptr::null();
         let mut err = abi::Error {
@@ -143,7 +156,7 @@ impl<T: Codec> Receiver<'_, T> {
         if e.code != "not_native" || !is_r_native::<T>(x) {
             return Err(Error::new(
                 "type_mismatch",
-                format!("`x` is not a `{}`", T::NAME),
+                format!("`{name}` is not a `{}`", T::NAME),
             ));
         }
         let n = unsafe { sys::Rf_xlength(x) } as usize;
