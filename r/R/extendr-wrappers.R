@@ -223,6 +223,93 @@ r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
 #' @noRd
 r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
 
+#' The default layout of an R8 value, as the lists of an `r8_text`.
+#'
+#' Nested values whose type is in `display_types` show the text that
+#' `display` returns for them, the lists of an `r8_text`, or the default
+#' layout when it returns `NULL`. The registry is copied before the layout
+#' reads the value, so that `display` may declare and construct values.
+#'
+#' @param x An R8 value.
+#' @param display_types Character: The qualified names of the types whose
+#'   values show the text of `display`.
+#' @param display Function: The text of a nested value.
+#' @param summary Character or `NULL`: Text after the header, as a
+#'   `summary` span.
+#' @param head Integer: The number of items a vector's head shows.
+#' @return List: The lists of an `r8_text`.
+#' @keywords internal
+#' @noRd
+r8_layout_value <- function(x, display_types, display, summary, head) .Call(wrap__r8_layout_value, x, display_types, display, summary, head)
+
+#' The default layout of a list or a data frame, as the lists of an
+#' `r8_text`: a header naming the class with the number of elements, or
+#' rows x columns, then a line per element or column, its field type
+#' inferred from the R object.
+#'
+#' @param x A list or a data frame.
+#' @param display_types Character: The qualified names of the types whose
+#'   values show the text of `display`.
+#' @param display Function: The text of a nested R8 value.
+#' @param head Integer: The number of items a vector's head shows.
+#' @return List: The lists of an `r8_text`.
+#' @keywords internal
+#' @noRd
+r8_layout_object <- function(x, display_types, display, head) .Call(wrap__r8_layout_object, x, display_types, display, head)
+
+#' R8's theme with the styles of `overrides` in place of its own: each
+#' member a role, whose `color`, `bold`, and `italic` replace the default
+#' style's.
+#'
+#' @param overrides List: Styles by role, each a list of `color`, `bold`,
+#'   and `italic`, any of which may be absent.
+#' @return List: A style per role: `color`, `index`, `bold`, and `italic`.
+#' @keywords internal
+#' @noRd
+r8_theme_table <- function(overrides) .Call(wrap__r8_theme_table, overrides)
+
+#' The names of R8's roles.
+#'
+#' @return Character.
+#' @keywords internal
+#' @noRd
+r8_roles <- function() .Call(wrap__r8_roles)
+
+#' An `r8_text` encoded as one output type.
+#'
+#' @param text List: The lists of an `r8_text`.
+#' @param output_type Character: `plain`, `ansi`, `html`, or `markdown`.
+#' @param theme List: A theme table, or `NULL` for R8's theme.
+#' @param depth Character: The color depth of `ansi`, `256` or `24bit`.
+#' @param html_classes Logical: `html` marks styles by class only.
+#' @param inline Logical: `markdown` writes one line.
+#' @return Character: One string, lines joined by line breaks.
+#' @keywords internal
+#' @noRd
+r8_text_encode <- function(text, output_type, theme, depth, html_classes, inline) .Call(wrap__r8_text_encode, text, output_type, theme, depth, html_classes, inline)
+
+#' The stylesheet of the html classes mode: the rules of `theme`, and
+#' those of R8's light and dark themes that differ from them, for the roles
+#' outside `named`.
+#'
+#' @param theme List: A theme table, or `NULL` for R8's theme.
+#' @param named Character: The roles the theme names.
+#' @return Character: The stylesheet.
+#' @keywords internal
+#' @noRd
+r8_css_text <- function(theme, named) .Call(wrap__r8_css_text, theme, named)
+
+#' The output type and color depth of `print()` from the facts R gathers.
+#'
+#' @param facts List: `explicit`, `option`, and `env` (an output type or
+#'   `NULL`); `no_color`, `knitr`, `terminal`, and `truecolor` (logical);
+#'   and `host` (`positron`, `rstudio`, `rstudio_color`, `no_ansi_gui`, or
+#'   `other`).
+#' @return Character: The output type and the color depth, `256` or `24bit`.
+#' @keywords internal
+#' @noRd
+r8_resolve_output <- function(facts) .Call(wrap__r8_resolve_output, facts)
+
 #' Resolves a struct value: given its fields, with runtime fields filled by
 #' the caller, evaluates each absent computed field in dependency order over
 #' the R objects in place, then constructs the value natively.

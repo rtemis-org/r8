@@ -249,6 +249,8 @@ compiled_method <- function(trait_name, type_name, method) {
   if (!inherits(generic, "r8_generic")) {
     if (identical(trait_name, "R8::Print")) {
       fn <- print_method(fn)
+    } else if (identical(trait_name, "R8::Display")) {
+      fn <- display_method(fn)
     }
     registerS3method(method, type_name, fn, envir = s3_envir(generic))
   }

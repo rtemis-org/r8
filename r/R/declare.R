@@ -794,18 +794,3 @@ print.r8_type <- function(x, ...) {
   }
   invisible(x)
 } # /R8::print.r8_type
-
-
-# %% print.r8_value ----
-#' Print an R8 value
-#'
-#' @param x An R8 value.
-#' @param ... Not used.
-#'
-#' @return `x`, invisibly.
-#'
-#' @export
-print.r8_value <- function(x, ...) {
-  cat(format(x), sep = "\n")
-  invisible(x)
-} # /R8::print.r8_value

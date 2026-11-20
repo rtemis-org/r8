@@ -346,8 +346,42 @@ fn allowed_attributes(ft: &FieldType) -> &'static [fn() -> SEXP] {
     }
 }
 
+thread_local! {
+    /// Set while the layout of a list or a data frame reads its elements,
+    /// which carry attributes such as names that a typed field excludes.
+    static ATTRIBUTES_UNCHECKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with the attribute check of [`plain`] off when `unchecked`, and
+/// on otherwise, restoring the setting after.
+fn with_attribute_check<R>(unchecked: bool, f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ATTRIBUTES_UNCHECKED.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(ATTRIBUTES_UNCHECKED.with(|c| c.replace(unchecked)));
+    f()
+}
+
+/// Runs `f` with the attribute check of [`plain`] off, for reading the
+/// elements of an object without an R8 type for display.
+pub(crate) fn attributes_unchecked<R>(f: impl FnOnce() -> R) -> R {
+    with_attribute_check(true, f)
+}
+
+/// Runs `f` with the attribute check of [`plain`] on: R code that a layout
+/// calls, such as a `Display` impl, validates the values it constructs.
+pub(crate) fn attributes_checked<R>(f: impl FnOnce() -> R) -> R {
+    with_attribute_check(false, f)
+}
+
 /// Rejects attributes of `x` beyond `allowed`, naming them.
 fn plain(x: SEXP, allowed: &[fn() -> SEXP]) -> Read<()> {
+    if ATTRIBUTES_UNCHECKED.with(|c| c.get()) {
+        return Ok(());
+    }
     let n = attrib_count(x);
     if n == 0 {
         return Ok(());
@@ -1182,6 +1216,13 @@ pub(crate) fn table_rows(x: SEXP) -> Read<u64> {
         if n == 2 && int_elt(rn, 0) == NA_INT {
             return Ok(int_elt(rn, 1).unsigned_abs() as u64);
         }
+    }
+    // For display, any row names count the rows, without a pass over them.
+    if ATTRIBUTES_UNCHECKED.with(|c| c.get()) {
+        return Ok(xlen(rn) as u64);
+    }
+    if sexptype(rn) == SEXPTYPE::INTSXP {
+        let n = xlen(rn);
         let mut sequential = true;
         for_ints(rn, 0, n, |i, v| sequential &= v == i as i32 + 1);
         if sequential {

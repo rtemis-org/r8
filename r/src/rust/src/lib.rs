@@ -17,6 +17,7 @@ mod native;
 #[cfg(feature = "oracle")]
 mod oracle;
 mod rview;
+mod text;
 mod values;
 mod version;
 
@@ -28,6 +29,7 @@ extendr_module! {
     use declare;
     use exports;
     use native;
+    use text;
     use values;
     use version;
 }
@@ -40,6 +42,7 @@ extendr_module! {
     use exports;
     use native;
     use oracle;
+    use text;
     use values;
     use version;
 }

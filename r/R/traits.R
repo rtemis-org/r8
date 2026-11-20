@@ -595,6 +595,8 @@ register_impl <- function(entry) {
     if (!inherits(generic, "r8_generic")) {
       if (identical(t[["name"]], "R8::Print")) {
         fn <- print_method(fn)
+      } else if (identical(t[["name"]], "R8::Display")) {
+        fn <- display_method(fn)
       }
       registerS3method(m, entry[["type_name"]], fn, envir = s3_envir(generic))
     }
@@ -602,27 +604,6 @@ register_impl <- function(entry) {
   r8_declare_impl(r8_ir_json(entry[["ir"]]), entry[["namespace"]])
   invisible(NULL)
 } # /R8::register_impl
-
-
-# %% print_method ----
-#' The S3 print method of a `Print` impl
-#'
-#' Calls the impl and returns the value invisibly, so that `print()` writes
-#' once at the console.
-#'
-#' @param f Function: The impl's `print` method.
-#'
-#' @return Function.
-#'
-#' @keywords internal
-#' @noRd
-print_method <- function(f) {
-  force(f)
-  function(x, ...) {
-    f(x, ...)
-    invisible(x)
-  }
-} # /R8::print_method
 
 
 # %% print.r8_trait ----

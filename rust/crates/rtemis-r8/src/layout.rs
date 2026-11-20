@@ -23,6 +23,13 @@ pub struct LayoutOptions {
     /// Text after the top-level header, such as a Rust-native value's size,
     /// as a `summary` span.
     pub summary: Option<String>,
+    /// The number of entries a level of a [`Record`] shows.
+    pub max_entries: usize,
+    /// The number of lines the layout of a [`Record`] shows.
+    pub max_lines: usize,
+    /// The depth of the deepest entries of a [`Record`] that its layout
+    /// shows.
+    pub max_depth: usize,
 }
 
 impl Default for LayoutOptions {
@@ -30,9 +37,17 @@ impl Default for LayoutOptions {
         LayoutOptions {
             head: 8,
             summary: None,
+            max_entries: 32,
+            max_lines: 128,
+            max_depth: 3,
         }
     }
 }
+
+/// The text of a nested value that its host supplies in place of the
+/// default layout, such as the text of a `Display` impl: `None` for the
+/// default layout.
+pub type DisplayText<'d, A> = dyn FnMut(A, &QualifiedName) -> Option<Text> + 'd;
 
 /// The layout of the value `v` of the named type `ty`.
 pub fn layout<'a, A: Access<'a>>(
@@ -41,6 +56,19 @@ pub fn layout<'a, A: Access<'a>>(
     lookup: &dyn TypeLookup,
     options: &LayoutOptions,
 ) -> Text {
+    layout_with(v, ty, lookup, options, &mut |_, _| None)
+}
+
+/// The layout of the value `v` of the named type `ty`, where `display`
+/// supplies the text of nested values: its first line follows the field's
+/// name, and its other lines follow the field, one level deeper.
+pub fn layout_with<'a, A: Access<'a>>(
+    v: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    options: &LayoutOptions,
+    display: &mut DisplayText<'_, A>,
+) -> Text {
     let mut lines = Vec::new();
     let mut header = header_spans(v, ty, lookup);
     if let Some(s) = &options.summary {
@@ -48,7 +76,7 @@ pub fn layout<'a, A: Access<'a>>(
         header.push(Span::new(s.clone(), Role::Summary));
     }
     lines.push(Line::new(0, header));
-    fields(v, ty, lookup, options, 1, &mut lines);
+    fields(v, ty, lookup, options, display, 1, &mut lines);
     Text { lines }
 }
 
@@ -77,6 +105,7 @@ fn fields<'a, A: Access<'a>>(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
     options: &LayoutOptions,
+    display: &mut DisplayText<'_, A>,
     depth: usize,
     lines: &mut Vec<Line>,
 ) {
@@ -102,30 +131,258 @@ fn fields<'a, A: Access<'a>>(
     };
     for (i, f) in defs.iter().enumerate() {
         let x = v.member_at(i, f.name.as_str());
-        let mut line = vec![
+        field_lines(
             Span::new(f.name.to_string(), Role::FieldName),
-            Span::new(": ", Role::Plain),
-        ];
-        let nested = value(&f.ty, x, lookup, options, &mut line);
-        lines.push(Line::new(depth, line));
-        if let Some(name) = nested {
-            fields(x, &name, lookup, options, depth + 1, lines);
+            &f.ty,
+            x,
+            lookup,
+            options,
+            display,
+            depth,
+            lines,
+        );
+    }
+}
+
+/// The lines of the field `name` of the type `ft` whose value is `x`, at
+/// `depth`: `name: value`, then the fields of a nested value one level
+/// deeper, or the other lines of the text `display` supplies for it.
+#[allow(clippy::too_many_arguments)]
+fn field_lines<'a, A: Access<'a>>(
+    name: Span,
+    ft: &FieldType,
+    x: A,
+    lookup: &dyn TypeLookup,
+    options: &LayoutOptions,
+    display: &mut DisplayText<'_, A>,
+    depth: usize,
+    lines: &mut Vec<Line>,
+) {
+    let mut line = vec![name, Span::new(": ", Role::Plain)];
+    let nested = value(ft, x, lookup, options, display, &mut line);
+    lines.push(Line::new(depth, line));
+    match nested {
+        Nested::Fields(name) => {
+            fields(x, &name, lookup, options, display, depth + 1, lines);
+        }
+        Nested::Lines(more) => lines.extend(
+            more.into_iter()
+                .map(|l| Line::new(depth + 1 + l.depth, l.spans)),
+        ),
+        Nested::None => {}
+    }
+}
+
+/// The name of an entry of a [`Record`]: a key, or a position, which the
+/// layout shows as `muted`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryName {
+    /// The name's text, such as `model` or `[[2]]`.
+    pub text: String,
+    /// The name is a position, not a key.
+    pub positional: bool,
+}
+
+impl EntryName {
+    /// The name's span: `field_name` for a key, `muted` for a position.
+    fn span(&self) -> Span {
+        let role = if self.positional {
+            Role::Muted
+        } else {
+            Role::FieldName
+        };
+        Span::new(self.text.clone(), role)
+    }
+}
+
+/// An entry of a [`Record`].
+pub enum Entry<'a, A: Access<'a>> {
+    /// A field: `value`, of the type `ty`, which the host infers.
+    Field {
+        /// The entry's name.
+        name: EntryName,
+        /// The field type of the value.
+        ty: FieldType,
+        /// The value.
+        value: A,
+    },
+    /// A nested record, shown as `name: label shape` with its entries one
+    /// level deeper, such as `params: list[3]`.
+    Record {
+        /// The entry's name.
+        name: EntryName,
+        /// The record's kind, such as `list`, as `type_other`.
+        label: String,
+        /// The record's shape, such as `[3]`, as `summary`.
+        shape: String,
+        /// The record's entries.
+        record: Box<dyn Record<'a, A> + 'a>,
+    },
+}
+
+/// A host object without an R8 type whose entries the host classifies,
+/// such as an R list, a data frame, or a Python dictionary. The layout reads
+/// only the entries it shows.
+pub trait Record<'a, A: Access<'a>> {
+    /// The number of entries.
+    fn len(&self) -> usize;
+    /// Whether the record has no entries.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// The entry at `index`, from 0.
+    fn entry(&self, index: usize) -> Entry<'a, A>;
+}
+
+/// The layout of a record: a header, `<label>` and `summary`, then a line
+/// per entry. A level shows at most `max_entries` entries, then a `muted`
+/// line counting the rest; nested records at `max_depth` show their label
+/// and shape alone; and the layout ends with a `muted` line `...` after
+/// `max_lines` lines.
+pub fn layout_record<'a, A: Access<'a>>(
+    label: &str,
+    summary: &str,
+    record: &dyn Record<'a, A>,
+    lookup: &dyn TypeLookup,
+    options: &LayoutOptions,
+    display: &mut DisplayText<'_, A>,
+) -> Text {
+    let mut lines = vec![Line::new(
+        0,
+        vec![
+            Span::new("<", Role::Bracket),
+            Span::new(label.to_string(), Role::TypeOther),
+            Span::new(">", Role::Bracket),
+            Span::new(" ", Role::Plain),
+            Span::new(summary.to_string(), Role::Summary),
+        ],
+    )];
+    record_lines(record, lookup, options, display, 1, &mut lines);
+    Text { lines }
+}
+
+/// Ends a layout at `max_lines` lines with a `muted` line `...` at `depth`.
+fn cap(lines: &mut Vec<Line>, options: &LayoutOptions, depth: usize) {
+    lines.truncate(options.max_lines);
+    lines.push(Line::new(depth, vec![Span::new("...", Role::Muted)]));
+}
+
+/// The lines of the entries of `record` at `depth`; `false` once the layout
+/// reaches `max_lines`.
+fn record_lines<'a, A: Access<'a>>(
+    record: &dyn Record<'a, A>,
+    lookup: &dyn TypeLookup,
+    options: &LayoutOptions,
+    display: &mut DisplayText<'_, A>,
+    depth: usize,
+    lines: &mut Vec<Line>,
+) -> bool {
+    let n = record.len();
+    let shown = n.min(options.max_entries);
+    for i in 0..shown {
+        if lines.len() >= options.max_lines {
+            cap(lines, options, depth);
+            return false;
+        }
+        match record.entry(i) {
+            Entry::Field { name, ty, value } => {
+                field_lines(
+                    name.span(),
+                    &ty,
+                    value,
+                    lookup,
+                    options,
+                    display,
+                    depth,
+                    lines,
+                );
+            }
+            Entry::Record {
+                name,
+                label,
+                shape,
+                record: child,
+            } => {
+                lines.push(Line::new(
+                    depth,
+                    vec![
+                        name.span(),
+                        Span::new(": ", Role::Plain),
+                        Span::new(label, Role::TypeOther),
+                        Span::new(shape, Role::Summary),
+                    ],
+                ));
+                if depth < options.max_depth
+                    && !record_lines(child.as_ref(), lookup, options, display, depth + 1, lines)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    if lines.len() > options.max_lines {
+        cap(lines, options, depth);
+        return false;
+    }
+    if shown < n {
+        lines.push(Line::new(
+            depth,
+            vec![Span::new(
+                format!("... {} more", count((n - shown) as u64)),
+                Role::Muted,
+            )],
+        ));
+    }
+    true
+}
+
+/// What follows a field's line.
+enum Nested {
+    /// Nothing.
+    None,
+    /// The fields of a nested value of the named type.
+    Fields(QualifiedName),
+    /// The lines of a nested value's text after its first.
+    Lines(Vec<Line>),
+}
+
+/// The header of the nested value `x` of the named type `name` appended to
+/// `line`, or the first line of the text `display` supplies for it.
+fn nested<'a, A: Access<'a>>(
+    x: A,
+    name: QualifiedName,
+    lookup: &dyn TypeLookup,
+    display: &mut DisplayText<'_, A>,
+    line: &mut Vec<Span>,
+) -> Nested {
+    match display(x, &name) {
+        Some(t) => {
+            let mut it = t.lines.into_iter();
+            if let Some(first) = it.next() {
+                line.extend(first.spans);
+            }
+            Nested::Lines(it.collect())
+        }
+        None => {
+            line.extend(header_spans(x, &name, lookup));
+            Nested::Fields(name)
         }
     }
 }
 
-/// Appends the spans of a field's value to `line`; returns the named type
-/// of a nested value, whose fields follow on their own lines.
+/// Appends the spans of a field's value to `line`, and returns what follows
+/// the line.
 fn value<'a, A: Access<'a>>(
     ft: &FieldType,
     x: A,
     lookup: &dyn TypeLookup,
     options: &LayoutOptions,
+    display: &mut DisplayText<'_, A>,
     line: &mut Vec<Span>,
-) -> Option<QualifiedName> {
+) -> Nested {
     if x.is_absent() {
         line.push(Span::new("NULL", Role::Muted));
-        return None;
+        return Nested::None;
     }
     let ft = match ft {
         FieldType::Option { inner, .. } => inner.as_ref(),
@@ -133,18 +390,14 @@ fn value<'a, A: Access<'a>>(
     };
     match ft {
         FieldType::Named { name } => {
-            line.extend(header_spans(x, name, lookup));
-            return Some(name.clone());
+            return nested(x, name.clone(), lookup, display, line);
         }
         FieldType::Dyn { r#trait } => {
             return match x.implementor(r#trait, lookup) {
-                Ok((name, _)) => {
-                    line.extend(header_spans(x, &name, lookup));
-                    Some(name)
-                }
+                Ok((name, _)) => nested(x, name, lookup, display, line),
                 Err(_) => {
                     line.push(Span::new(format!("dyn {}", r#trait), Role::Muted));
-                    None
+                    Nested::None
                 }
             };
         }
@@ -158,20 +411,23 @@ fn value<'a, A: Access<'a>>(
         }
         FieldType::Raw => {
             let n = x.bytes().map(|b| b.len()).unwrap_or(0);
-            line.push(Span::new(
-                format!("raw[{}]", count(n as u64)),
-                Role::Summary,
-            ));
+            label(
+                line,
+                "raw",
+                Role::TypeOther,
+                format!("[{}]", count(n as u64)),
+            );
         }
-        FieldType::Json => line.push(Span::new("json", Role::Muted)),
-        FieldType::R { class } => line.push(Span::new(format!("<{class}>"), Role::Muted)),
+        FieldType::Json => line.push(Span::new("json", Role::TypeOther)),
+        FieldType::R { class } => line.push(Span::new(class.clone(), Role::TypeOther)),
         FieldType::Vec { element, .. } => {
             let n = x.vec(element).unwrap_or(0);
-            let label = element_label(element);
-            line.push(Span::new(
-                format!("{label}[{}]", count(n as u64)),
-                Role::Summary,
-            ));
+            label(
+                line,
+                &element_label(element),
+                type_role(element),
+                format!("[{}]", count(n as u64)),
+            );
             if is_scalar(element) && n > 0 {
                 line.push(Span::new(" ", Role::Plain));
                 line.push(Span::new(head(element, x, n, options.head), Role::Scalar));
@@ -180,10 +436,12 @@ fn value<'a, A: Access<'a>>(
         FieldType::Factor { levels, ordered } => match x.factor(levels.as_deref(), *ordered) {
             Ok(f) => {
                 let n = f.codes.len();
-                line.push(Span::new(
-                    format!("factor[{}]", count(n as u64)),
-                    Role::Summary,
-                ));
+                label(
+                    line,
+                    "factor",
+                    Role::TypeCategorical,
+                    format!("[{}]", count(n as u64)),
+                );
                 let k = n.min(options.head);
                 let mut shown = Vec::with_capacity(k);
                 f.codes.each_in(0, k, |_, c| {
@@ -205,16 +463,18 @@ fn value<'a, A: Access<'a>>(
                     Role::Muted,
                 ));
             }
-            Err(_) => line.push(Span::new("factor", Role::Summary)),
+            Err(_) => line.push(Span::new("factor", Role::TypeCategorical)),
         },
         FieldType::Matrix { element, .. } | FieldType::Array { element, .. } => {
             match x.dense(element) {
                 Ok(d) => {
                     let shape: Vec<String> = d.shape.iter().map(|s| count(*s)).collect();
-                    line.push(Span::new(
-                        format!("{}[{}]", element_label(element), shape.join(" x ")),
-                        Role::Summary,
-                    ));
+                    label(
+                        line,
+                        &element_label(element),
+                        type_role(element),
+                        format!("[{}]", shape.join(" x ")),
+                    );
                     if d.len > 0 {
                         line.push(Span::new(" ", Role::Plain));
                         line.push(Span::new(
@@ -223,36 +483,38 @@ fn value<'a, A: Access<'a>>(
                         ));
                     }
                 }
-                Err(_) => line.push(Span::new(element_label(element), Role::Summary)),
+                Err(_) => line.push(Span::new(element_label(element), type_role(element))),
             }
         }
         FieldType::MatrixOf { of } => {
             line.push(Span::new(format!("matrix of {of}"), Role::Summary));
         }
         FieldType::SparseMatrix { element, .. } => match x.sparse(element) {
-            Ok(sp) => line.push(Span::new(
-                format!(
-                    "sparse {}[{} x {}], {} stored",
-                    element_label(element),
-                    count(sp.shape[0]),
-                    count(sp.shape[1]),
-                    count(sp.len as u64)
-                ),
-                Role::Summary,
-            )),
-            Err(_) => line.push(Span::new("sparse matrix", Role::Summary)),
+            Ok(sp) => {
+                line.push(Span::new("sparse ", Role::Summary));
+                label(
+                    line,
+                    &element_label(element),
+                    type_role(element),
+                    format!(
+                        "[{} x {}], {} stored",
+                        count(sp.shape[0]),
+                        count(sp.shape[1]),
+                        count(sp.len as u64)
+                    ),
+                );
+            }
+            Err(_) => line.push(Span::new("sparse matrix", Role::TypeOther)),
         },
         FieldType::Table { columns, open, .. } => match x.table(columns, *open) {
             Ok(t) => {
                 let names: Vec<String> = t.columns.iter().map(|(n, _)| n.to_string()).collect();
-                line.push(Span::new(
-                    format!(
-                        "table[{} x {}]",
-                        count(t.rows),
-                        count(t.columns.len() as u64)
-                    ),
-                    Role::Summary,
-                ));
+                label(
+                    line,
+                    "table",
+                    Role::TypeOther,
+                    format!("[{} x {}]", count(t.rows), count(t.columns.len() as u64)),
+                );
                 if !names.is_empty() {
                     line.push(Span::new(" ", Role::Plain));
                     let k = names.len();
@@ -262,7 +524,7 @@ fn value<'a, A: Access<'a>>(
                     ));
                 }
             }
-            Err(_) => line.push(Span::new("table", Role::Summary)),
+            Err(_) => line.push(Span::new("table", Role::TypeOther)),
         },
         FieldType::TableOf { of } => {
             line.push(Span::new(format!("table of {of}"), Role::Summary));
@@ -270,14 +532,12 @@ fn value<'a, A: Access<'a>>(
         FieldType::Hashmap { value: vt, .. } | FieldType::OrderedMap { value: vt, .. } => {
             let ordered = matches!(ft, FieldType::OrderedMap { .. });
             let n = x.map(vt, ordered).unwrap_or(0);
-            line.push(Span::new(
-                format!(
-                    "{}[{}]",
-                    if ordered { "ordered_map" } else { "hashmap" },
-                    count(n as u64)
-                ),
-                Role::Summary,
-            ));
+            label(
+                line,
+                if ordered { "ordered_map" } else { "hashmap" },
+                Role::TypeOther,
+                format!("[{}]", count(n as u64)),
+            );
             if is_scalar(vt) && n > 0 {
                 let mut shown = Vec::new();
                 x.each_entry(|i, e| {
@@ -293,7 +553,7 @@ fn value<'a, A: Access<'a>>(
         }
         FieldType::Option { .. } => {}
     }
-    None
+    Nested::None
 }
 
 /// Whether a type is a scalar, or `option()` of one.
@@ -301,6 +561,31 @@ fn is_scalar(ft: &FieldType) -> bool {
     match ft {
         FieldType::Option { inner, .. } => inner.is_scalar(),
         other => other.is_scalar(),
+    }
+}
+
+/// Appends a base-type label: the type's name with `role`, then its shape
+/// as a `summary` span.
+fn label(line: &mut Vec<Span>, name: &str, role: Role, shape: String) {
+    line.push(Span::new(name.to_string(), role));
+    line.push(Span::new(shape, Role::Summary));
+}
+
+/// The role of the name of the base type `ft`, after rtemislive's column
+/// types: `type_number` for double, `type_integer` for integer,
+/// `type_categorical` for factor, `type_string` for character,
+/// `type_boolean` for logical, `type_datetime` for Date or POSIXct, and
+/// `type_other` for every other type.
+fn type_role(ft: &FieldType) -> Role {
+    match ft {
+        FieldType::Option { inner, .. } => type_role(inner),
+        FieldType::Double(_) => Role::TypeNumber,
+        FieldType::Integer(_) => Role::TypeInteger,
+        FieldType::Factor { .. } => Role::TypeCategorical,
+        FieldType::Character(_) => Role::TypeString,
+        FieldType::Logical => Role::TypeBoolean,
+        FieldType::Date | FieldType::Posixct => Role::TypeDatetime,
+        _ => Role::TypeOther,
     }
 }
 
@@ -313,8 +598,8 @@ fn element_label(ft: &FieldType) -> String {
         FieldType::Double(_) => "double".into(),
         FieldType::Character(_) => "character".into(),
         FieldType::Raw => "raw".into(),
-        FieldType::Date => "date".into(),
-        FieldType::Posixct => "posixct".into(),
+        FieldType::Date => "Date".into(),
+        FieldType::Posixct => "POSIXct".into(),
         FieldType::Factor { .. } => "factor".into(),
         FieldType::Json => "json".into(),
         FieldType::Named { name } => name.to_string(),
@@ -458,7 +743,7 @@ fn quote(s: &str) -> String {
 }
 
 /// A count with commas between thousands: `1,000,000`.
-fn count(n: u64) -> String {
+pub fn count(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, c) in s.chars().enumerate() {
@@ -565,8 +850,126 @@ mod tests {
         );
         assert_eq!(t.lines[0].spans[1], Span::new("demo::", Role::Muted));
         assert_eq!(t.lines[4].spans[5], Span::new("@", Role::Bracket));
+        assert_eq!(t.lines[2].spans[2], Span::new("double", Role::TypeNumber));
+        assert_eq!(t.lines[2].spans[3], Span::new("[10]", Role::Summary));
         let depths: Vec<usize> = t.lines.iter().map(|l| l.depth).collect();
         assert_eq!(depths, [0, 1, 1, 1, 1, 2]);
+        let mut calls = Vec::new();
+        let shown = layout_with(
+            Json::new(&v),
+            &q,
+            &set,
+            &LayoutOptions::default(),
+            &mut |_, name| {
+                calls.push(name.to_string());
+                Some(Text {
+                    lines: vec![
+                        vec![Span::new("RBF kernel", Role::UserText)].into(),
+                        Line::new(1, vec![Span::new("gamma = 0.5", Role::UserText)]),
+                    ],
+                })
+            },
+        );
+        assert_eq!(calls, ["demo::Kernel"]);
+        assert_eq!(
+            crate::text::encode_plain(&shown),
+            "<demo::Fit>\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  kernel: RBF kernel\n      gamma = 0.5"
+        );
+    }
+
+    /// A record over a JSON array of entries, each `[name, value]`, with
+    /// `null` names as positions.
+    struct JsonRecord<'a>(&'a [serde_json::Value]);
+
+    impl<'a> Record<'a, crate::access::Json<'a>> for JsonRecord<'a> {
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        fn entry(&self, index: usize) -> Entry<'a, crate::access::Json<'a>> {
+            use crate::ir::DoubleType;
+            let pair = self.0[index].as_array().expect("an entry is [name, value]");
+            let name = match pair[0].as_str() {
+                Some(n) => EntryName {
+                    text: n.to_string(),
+                    positional: false,
+                },
+                None => EntryName {
+                    text: format!("[[{}]]", index + 1),
+                    positional: true,
+                },
+            };
+            match &pair[1] {
+                serde_json::Value::Array(items) if items.iter().all(|i| i.is_array()) => {
+                    Entry::Record {
+                        name,
+                        label: "list".into(),
+                        shape: format!("[{}]", items.len()),
+                        record: Box::new(JsonRecord(items)),
+                    }
+                }
+                serde_json::Value::Array(_) => Entry::Field {
+                    name,
+                    ty: FieldType::Vec {
+                        element: Box::new(FieldType::Double(DoubleType::default())),
+                        min_length: None,
+                        max_length: None,
+                        unique: false,
+                    },
+                    value: crate::access::Json::new(&pair[1]),
+                },
+                _ => Entry::Field {
+                    name,
+                    ty: FieldType::Double(DoubleType::default()),
+                    value: crate::access::Json::new(&pair[1]),
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn a_record_lays_out_its_entries_within_its_limits() {
+        let no_types = crate::rules::DocumentSet::default();
+        let v: serde_json::Value = serde_json::from_str(
+            r#"[["n_trees", 500], ["auc", [0.81, 0.84, 0.79]],
+                [null, [["a", 1], ["b", [["c", [["d", 4]]]]]]],
+                ["x", 1], ["y", 2], ["z", 3]]"#,
+        )
+        .expect("the entries read");
+        let entries = v.as_array().expect("an array");
+        let options = LayoutOptions {
+            max_entries: 5,
+            ..LayoutOptions::default()
+        };
+        let t = layout_record(
+            "list",
+            "6 elements",
+            &JsonRecord(entries),
+            &no_types,
+            &options,
+            &mut |_, _| None,
+        );
+        assert_eq!(
+            crate::text::encode_plain(&t),
+            "<list> 6 elements\n  n_trees: 500\n  auc: double[3] 0.81 0.84 0.79\n  [[3]]: list[2]\n    a: 1\n    b: list[1]\n      c: list[1]\n  x: 1\n  y: 2\n  ... 1 more"
+        );
+        assert_eq!(t.lines[0].spans[1], Span::new("list", Role::TypeOther));
+        assert_eq!(t.lines[3].spans[0], Span::new("[[3]]", Role::Muted));
+        let short = layout_record(
+            "list",
+            "6 elements",
+            &JsonRecord(entries),
+            &no_types,
+            &LayoutOptions {
+                max_lines: 3,
+                ..options
+            },
+            &mut |_, _| None,
+        );
+        assert_eq!(
+            crate::text::encode_plain(&short),
+            "<list> 6 elements\n  n_trees: 500\n  auc: double[3] 0.81 0.84 0.79\n  ..."
+        );
     }
 
     #[test]

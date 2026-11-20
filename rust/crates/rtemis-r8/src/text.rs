@@ -20,6 +20,20 @@ pub enum Role {
     Scalar,
     /// A measurement or count, such as a size or a length.
     Summary,
+    /// The name of a double type.
+    TypeNumber,
+    /// The name of an integer type.
+    TypeInteger,
+    /// The name of a factor type.
+    TypeCategorical,
+    /// The name of a character type.
+    TypeString,
+    /// The name of a logical type.
+    TypeBoolean,
+    /// The name of a Date or POSIXct type.
+    TypeDatetime,
+    /// The name of any other base type: table, list, raw, JSON, maps, and R objects.
+    TypeOther,
     /// Text an impl returns, which each encoder escapes.
     UserText,
     /// Emphasis for an impl's text, strong.
@@ -44,6 +58,13 @@ impl Role {
             Role::FieldName => "field_name",
             Role::Scalar => "scalar",
             Role::Summary => "summary",
+            Role::TypeNumber => "type_number",
+            Role::TypeInteger => "type_integer",
+            Role::TypeCategorical => "type_categorical",
+            Role::TypeString => "type_string",
+            Role::TypeBoolean => "type_boolean",
+            Role::TypeDatetime => "type_datetime",
+            Role::TypeOther => "type_other",
             Role::UserText => "user_text",
             Role::Strong => "strong",
             Role::Emphasis => "emphasis",
@@ -62,6 +83,13 @@ impl Role {
             "field_name" => Role::FieldName,
             "scalar" => Role::Scalar,
             "summary" => Role::Summary,
+            "type_number" => Role::TypeNumber,
+            "type_integer" => Role::TypeInteger,
+            "type_categorical" => Role::TypeCategorical,
+            "type_string" => Role::TypeString,
+            "type_boolean" => Role::TypeBoolean,
+            "type_datetime" => Role::TypeDatetime,
+            "type_other" => Role::TypeOther,
             "user_text" => Role::UserText,
             "strong" => Role::Strong,
             "emphasis" => Role::Emphasis,
@@ -89,6 +117,11 @@ impl Span {
             text: text.into(),
             role,
         }
+    }
+
+    /// The span's text as plain text: user text loses control characters.
+    pub fn plain(&self) -> String {
+        plain_text(&self.text, self.role)
     }
 }
 
@@ -342,7 +375,8 @@ pub struct Style {
 }
 
 impl Style {
-    fn is_plain(self) -> bool {
+    /// Whether the style leaves text unstyled.
+    pub fn is_plain(self) -> bool {
         self.color.is_none() && !self.bold && !self.italic
     }
 }
@@ -369,12 +403,62 @@ const GREEN: Color = Color {
     index: 23,
 };
 
+/// The roles of base-type names with a color, in the order of the colors
+/// of [`TYPE_COLORS`], [`TYPE_COLORS_LIGHT`], and [`TYPE_COLORS_DARK`].
+const TYPE_ROLES: [Role; 6] = [
+    Role::TypeNumber,
+    Role::TypeInteger,
+    Role::TypeCategorical,
+    Role::TypeString,
+    Role::TypeBoolean,
+    Role::TypeDatetime,
+];
+
+/// The colors of base-type names, after rtemislive's column types at OKLCH
+/// lightness of about 0.6, each with WCAG contrast of 4.06 to 4.12 on white
+/// and on `#1E1E1E`.
+const TYPE_COLORS: [&str; 6] = [
+    "#2E81CC", "#008C92", "#128F5A", "#CC566E", "#866BD8", "#C056AC",
+];
+
+/// rtemislive's colors of column types on light pages.
+const TYPE_COLORS_LIGHT: [&str; 6] = [
+    "#006BB9", "#00757A", "#00784A", "#7D0830", "#7550D1", "#AE379B",
+];
+
+/// rtemislive's colors of column types on dark pages.
+const TYPE_COLORS_DARK: [&str; 6] = [
+    "#69AAEA", "#00BDC5", "#45BF82", "#B94960", "#A696EB", "#DA81C7",
+];
+
 impl Theme {
     /// R8's theme, which reads on light and dark backgrounds: brackets,
     /// variants, and highlights in rtemis teal; type names and strong text
-    /// bold; summaries and muted text in gray; emphasis in italic; and the
-    /// default color elsewhere.
+    /// bold; summaries and muted text in gray; emphasis in italic; the names
+    /// of base types in rtemislive's colors of column types; and the default
+    /// color elsewhere.
     pub fn rtemis() -> Theme {
+        Theme::rtemis_base().with_type_colors(&TYPE_COLORS)
+    }
+
+    /// The theme with the base-type roles in `colors`, in the order of
+    /// [`TYPE_ROLES`].
+    fn with_type_colors(mut self, colors: &[&str; 6]) -> Theme {
+        for (role, hex) in TYPE_ROLES.iter().zip(colors) {
+            let color = Color::from_hex(hex).expect("a type color is a hex code");
+            self = self.with(
+                *role,
+                Style {
+                    color: Some(color),
+                    ..Style::default()
+                },
+            );
+        }
+        self
+    }
+
+    /// R8's theme without the colors of base types.
+    fn rtemis_base() -> Theme {
         let teal = Style {
             color: Some(TEAL),
             ..Style::default()
@@ -407,15 +491,22 @@ impl Theme {
         }
     }
 
-    /// R8's theme with rtemis green in place of teal, for light pages.
+    /// R8's theme for light pages: rtemis green in place of teal, and
+    /// rtemislive's colors of column types on light pages.
     pub fn rtemis_light() -> Theme {
-        let mut t = Theme::rtemis();
+        let mut t = Theme::rtemis_base();
         for (_, style) in &mut t.styles {
             if style.color == Some(TEAL) {
                 style.color = Some(GREEN);
             }
         }
-        t
+        t.with_type_colors(&TYPE_COLORS_LIGHT)
+    }
+
+    /// R8's theme for dark pages: rtemislive's colors of column types on
+    /// dark pages.
+    pub fn rtemis_dark() -> Theme {
+        Theme::rtemis_base().with_type_colors(&TYPE_COLORS_DARK)
     }
 
     /// The style of a role; unstyled for a role the theme leaves out.
@@ -551,40 +642,46 @@ pub fn encode_html(text: &Text, theme: &Theme, mode: HtmlStyle) -> String {
 }
 
 /// The stylesheet of the html encoder's `classes` mode: a rule per styled
-/// role of `theme`, and the rules of `light` under
-/// `@media (prefers-color-scheme: light)`.
-pub fn css(theme: &Theme, light: &Theme) -> String {
-    let rules = |t: &Theme| -> Vec<String> {
-        ALL_ROLES
-            .iter()
-            .filter(|r| !t.style(**r).is_plain())
-            .map(|r| {
-                format!(
-                    ".r8 .r8-{} {{ {} }}",
-                    r.name(),
-                    css_declarations(*r, t.style(*r))
-                )
-            })
-            .collect()
+/// role of `theme`, then the rules of `light` that differ from it under
+/// `@media (prefers-color-scheme: light)`, and those of `dark` under
+/// `@media (prefers-color-scheme: dark)`.
+pub fn css(theme: &Theme, light: &Theme, dark: &Theme) -> String {
+    let rule = |t: &Theme, r: Role| -> Option<String> {
+        let style = t.style(r);
+        (!style.is_plain())
+            .then(|| format!(".r8 .r8-{} {{ {} }}", r.name(), css_declarations(r, style)))
     };
-    let mut out = rules(theme);
-    let light_rules = rules(light);
-    if light_rules != out {
-        out.push("@media (prefers-color-scheme: light) {".to_string());
-        out.extend(light_rules.into_iter().map(|r| format!("  {r}")));
-        out.push("}".to_string());
+    let mut out: Vec<String> = ALL_ROLES.iter().filter_map(|r| rule(theme, *r)).collect();
+    for (scheme, t) in [("light", light), ("dark", dark)] {
+        let differing: Vec<String> = ALL_ROLES
+            .iter()
+            .filter(|r| rule(t, **r) != rule(theme, **r))
+            .filter_map(|r| rule(t, *r))
+            .collect();
+        if !differing.is_empty() {
+            out.push(format!("@media (prefers-color-scheme: {scheme}) {{"));
+            out.extend(differing.into_iter().map(|r| format!("  {r}")));
+            out.push("}".to_string());
+        }
     }
     out.join("\n")
 }
 
 /// Every role, in declaration order.
-const ALL_ROLES: [Role; 12] = [
+pub const ALL_ROLES: [Role; 19] = [
     Role::Bracket,
     Role::TypeName,
     Role::Variant,
     Role::FieldName,
     Role::Scalar,
     Role::Summary,
+    Role::TypeNumber,
+    Role::TypeInteger,
+    Role::TypeCategorical,
+    Role::TypeString,
+    Role::TypeBoolean,
+    Role::TypeDatetime,
+    Role::TypeOther,
     Role::UserText,
     Role::Strong,
     Role::Emphasis,
@@ -619,6 +716,13 @@ fn has_layout(text: &Text) -> bool {
                 | Role::FieldName
                 | Role::Scalar
                 | Role::Summary
+                | Role::TypeNumber
+                | Role::TypeInteger
+                | Role::TypeCategorical
+                | Role::TypeString
+                | Role::TypeBoolean
+                | Role::TypeDatetime
+                | Role::TypeOther
         )
     })
 }
@@ -772,6 +876,31 @@ mod tests {
     }
 
     #[test]
+    fn base_types_take_rtemislive_colors_by_kind() {
+        let t = Theme::rtemis();
+        let index = |r: Role| t.style(r).color.map(|c| c.index);
+        assert_eq!(
+            TYPE_ROLES.map(index),
+            [Some(32), Some(30), Some(29), Some(167), Some(98), Some(133)]
+        );
+        assert_eq!(t.style(Role::TypeOther), Style::default());
+        assert!(
+            TYPE_ROLES
+                .iter()
+                .all(|r| !t.style(*r).bold && !t.style(*r).italic)
+        );
+        let sheet = css(&t, &Theme::rtemis_light(), &Theme::rtemis_dark());
+        assert!(sheet.contains("@media (prefers-color-scheme: dark) {"));
+        let dark_block = &sheet[sheet
+            .find("(prefers-color-scheme: dark)")
+            .expect("a dark block")..];
+        assert!(!dark_block.contains("r8-bracket"));
+        assert!(sheet.contains("  .r8 .r8-type_number { color:var(--r8-type_number,#69AAEA) }"));
+        assert!(sheet.contains("  .r8 .r8-type_number { color:var(--r8-type_number,#006BB9) }"));
+        assert!(sheet.contains(".r8 .r8-type_number { color:var(--r8-type_number,#2E81CC) }"));
+    }
+
+    #[test]
     fn ansi_wraps_each_styled_span_and_reduces_to_plain() {
         let t = header();
         let a = encode_ansi(&t, &Theme::rtemis(), ColorDepth::Colors256);
@@ -817,7 +946,11 @@ mod tests {
         );
         let classes = encode_html(&t, &Theme::rtemis(), HtmlStyle::Classes);
         assert!(classes.contains("<span class=\"r8-bracket\">&lt;</span>"));
-        let sheet = css(&Theme::rtemis(), &Theme::rtemis_light());
+        let sheet = css(
+            &Theme::rtemis(),
+            &Theme::rtemis_light(),
+            &Theme::rtemis_dark(),
+        );
         assert!(sheet.contains(".r8 .r8-bracket { color:var(--r8-bracket,#6CA3A0) }"));
         assert!(sheet.contains("@media (prefers-color-scheme: light) {"));
         assert!(sheet.contains("  .r8 .r8-bracket { color:var(--r8-bracket,#0F6A66) }"));
