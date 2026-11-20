@@ -72,14 +72,19 @@ static R8Status format_impl(const R8CallContext *ctx, const SEXP *args, size_t n
   return R8_OK;
 }
 
-// pkgc::Signal is declared in R (R/types.R) and here, identically, since a
-// codec needs a declaration in the exports' IR document.
+// pkgc::Signal and pkgc::Resampler are declared in R (R/types.R) and here,
+// identically, since a codec needs a declaration in the exports' IR
+// document.
 static const char ir_json[] =
     "{\"$ir\":1,\"namespace\":\"pkgc\","
     "\"types\":[{\"kind\":\"struct\",\"name\":\"Signal\",\"description\":\"\",\"version\":1,"
     "\"fields\":[{\"name\":\"name\",\"type\":{\"kind\":\"character\"},\"description\":\"\"},"
     "{\"name\":\"values\",\"type\":{\"kind\":\"vec\",\"element\":{\"kind\":\"double\"}},"
-    "\"description\":\"\"}]}],"
+    "\"description\":\"\"}]},"
+    "{\"kind\":\"enum\",\"name\":\"Resampler\",\"description\":\"\",\"tag\":\"type\",\"version\":1,"
+    "\"variants\":[{\"name\":\"KFold\",\"description\":\"\",\"shape\":\"struct\","
+    "\"fields\":[{\"name\":\"k\",\"type\":{\"kind\":\"integer\"},\"description\":\"\"}]},"
+    "{\"name\":\"Loocv\",\"description\":\"\",\"shape\":\"unit\"}]}],"
     "\"impls\":["
     "{\"trait\":\"pkgc::Norm\",\"target\":{\"kind\":\"type\",\"name\":\"pkgc::Point\"},"
     "\"methods\":[\"magnitude\",\"ratio\"]},"
@@ -92,15 +97,20 @@ static const R8ImplEntry impls[] = {
     {"R8::Display", "pkgc::Point", "format", format_impl, 2},
 };
 
-// The codec of pkgc::Signal (signal.c).
+// The codecs of pkgc::Signal (signal.c) and pkgc::Resampler (resampler.c),
+// copied into one array at initialization, since R8 reads the codec tables
+// as an array.
 extern const R8TypeVTable pkgc_signal_codec;
+extern const R8TypeVTable pkgc_resampler_codec;
+static R8TypeVTable codecs[2];
+SEXP pkgc_bad_exports(void);
 SEXP pkgc_live_signals(void);
 SEXP pkgc_signal_peek(SEXP x);
 SEXP pkgc_signal_make(SEXP name, SEXP n);
 
 static const R8Exports exports = {
     R8_ABI_VERSION, sizeof(R8Exports), "r8pkgC", ir_json, sizeof(ir_json) - 1,
-    &pkgc_signal_codec, 1,             impls,    sizeof(impls) / sizeof(impls[0]),
+    codecs,               2,           impls,    sizeof(impls) / sizeof(impls[0]),
 };
 
 // The status R8Api.protect returns for a callback that raises an R error,
@@ -122,10 +132,13 @@ static const R_CallMethodDef call_methods[] = {
     {"pkgc_signal_peek", (DL_FUNC) &pkgc_signal_peek, 1},
     {"pkgc_signal_make", (DL_FUNC) &pkgc_signal_make, 2},
     {"pkgc_protect_status", (DL_FUNC) &pkgc_protect_status, 0},
+    {"pkgc_bad_exports", (DL_FUNC) &pkgc_bad_exports, 0},
     {NULL, NULL, 0},
 };
 
 void R_init_r8pkgC(DllInfo *dll) {
+  codecs[0] = pkgc_signal_codec;
+  codecs[1] = pkgc_resampler_codec;
   R_registerRoutines(dll, NULL, call_methods, NULL, NULL);
   R_useDynamicSymbols(dll, FALSE);
   R_RegisterCCallable("r8pkgC", "r8_exports", (DL_FUNC) r8_exports);

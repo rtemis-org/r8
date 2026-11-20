@@ -1,5 +1,6 @@
 useDynLib(r8pkgC, .registration = TRUE)
 export(Point)
+export(Resampler)
 export(Signal)
 export(live_signals)
 export(signal_make)

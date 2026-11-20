@@ -202,7 +202,7 @@ test_that("impls in C register through R8.h and dispatch", {
   expect_true("error TRUE " %in% out, info = info)
   expect_true("display Point(3, 4) " %in% out, info = info)
   expect_true("print Point(3, 4) " %in% out, info = info)
-  expect_true("again 6 10 " %in% out, info = info)
+  expect_true("again 7 10 " %in% out, info = info)
   # An R error raised under R8Api.protect reaches the caller after the impl
   # function returns.
   expect_true("unwind `by` is NA " %in% out, info = info)
@@ -461,6 +461,43 @@ test_that("Rust-native enums construct, read, change, persist, and cross workers
     info = info
   )
   expect_true("future 1 2 " %in% out, info = info)
+})
+
+test_that("an enum declared in R takes a codec in C, and a misshaped codec is refused", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages(library(r8pkgC))",
+      "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
+      "native <- function(x) grepl('r8 native pkgc::Resampler', inspect(x))",
+      "k <- Resampler@KFold(k = 3L)",
+      "k2 <- k; k2$k <- 7L",
+      "cat('kfold', native(k), k$k, native(k2), k2$k, '\\n')",
+      "l <- Resampler@Loocv",
+      "cat('unit', native(l), length(l), attr(l, 'r8_variant'), '\\n')",
+      "r <- R8::r8_from_json(Resampler, R8::to_json(k))",
+      "cat('json', native(r), R8::r8_equal(r, k), '\\n')",
+      "u <- unserialize(serialize(l, NULL))",
+      "cat('serialize', native(u), attr(u, 'r8_variant'), '\\n')",
+      "e <- tryCatch(R8:::r8_register_exports(r8pkgC:::bad_exports(), 'r8pkgC'), error = function(e) conditionMessage(e))",
+      "cat('misshaped', grepl('does not match its type', e), '\\n')",
+      "s <- Signal(name = 'a', values = 1)",
+      "cat('after', grepl('r8 native pkgc::Signal', inspect(s)), '\\n')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("kfold TRUE 3 TRUE 7 " %in% out, info = info)
+  expect_true("unit TRUE 0 Loocv " %in% out, info = info)
+  expect_true("json TRUE TRUE " %in% out, info = info)
+  expect_true("serialize TRUE Loocv " %in% out, info = info)
+  # The refused table leaves the registered codecs as they were.
+  expect_true("misshaped TRUE " %in% out, info = info)
+  expect_true("after TRUE " %in% out, info = info)
 })
 
 test_that("roxygen2 documents R8 declarations and the package passes check", {
