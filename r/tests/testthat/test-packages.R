@@ -29,7 +29,7 @@ run_r <- function(lib, code) {
 install_test_packages <- function() {
   lib <- tempfile("r8lib")
   dir.create(lib)
-  for (p in c("r8pkgA", "r8pkgB", "r8pkgC")) {
+  for (p in c("r8pkgA", "r8pkgB", "r8pkgC", "r8pkgR")) {
     out <- system2(
       file.path(R.home("bin"), "R"),
       c(
@@ -291,6 +291,88 @@ test_that("Rust-native values read, change, persist, and cross workers", {
   expect_true("resolved a 1.5 2 3 " %in% out, info = info)
   expect_true("mirai 6.5 w 3 4 6 " %in% out, info = info)
   expect_true("future f 2.5 3 4 " %in% out, info = info)
+})
+
+test_that("types and impls in Rust register, dispatch, persist, and cross workers", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("mirai")
+  skip_if_not_installed("future")
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages(library(r8pkgR))",
+      "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
+      "x <- c(3, 4)",
+      "s <- Signal(name = 'a', values = x)",
+      "cat('native', grepl('r8 native pkgr::Signal', inspect(s)), isTRUE(attr(Signal, 'r8_native')), '\\n')",
+      "cat('fields', s$name, s$values, '\\n')",
+      "cat('magnitude', magnitude(s), '\\n')",
+      "cat('ratio', ratio(s, 2), '\\n')",
+      "e <- tryCatch(ratio(s, 0), error = function(e) conditionMessage(e))",
+      "cat('error', grepl('[zero_divisor]', e, fixed = TRUE), '\\n')",
+      "cat('display', format(s), '\\n')",
+      "r <- R8::r8_from_json(Signal, R8::to_json(s))",
+      "cat('json', R8::r8_equal(r, s), '\\n')",
+      "u <- unserialize(serialize(s, NULL))",
+      "cat('serialize', R8::r8_equal(u, s), '\\n')",
+      "mirai::daemons(1)",
+      "m <- mirai::mirai({ library(r8pkgR); list(magnitude(s), Signal(name = 'w', values = s$values * 2)) }, s = s)[]",
+      "cat('mirai', m[[1]], m[[2]]$name, m[[2]]$values, '\\n')",
+      "invisible(mirai::daemons(0))",
+      "future::plan(future::multisession, workers = 1)",
+      "f <- future::value(future::future({ library(r8pkgR); Signal(name = 'f', values = s$values + 1) }, globals = list(s = s)))",
+      "cat('future', f$name, f$values, '\\n')",
+      "future::plan(future::sequential)"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("native TRUE TRUE " %in% out, info = info)
+  expect_true("fields a 3 4 " %in% out, info = info)
+  expect_true("magnitude 5 " %in% out, info = info)
+  expect_true("ratio 1.5 " %in% out, info = info)
+  expect_true("error TRUE " %in% out, info = info)
+  expect_true("display Signal a (2 values) " %in% out, info = info)
+  expect_true("json TRUE " %in% out, info = info)
+  expect_true("serialize TRUE " %in% out, info = info)
+  expect_true("mirai 5 w 6 8 " %in% out, info = info)
+  expect_true("future f 4 5 " %in% out, info = info)
+  # R/r8-types.R is current with the Rust declarations, and a stale copy is
+  # detected and regenerated.
+  pkg <- test_path("packages", "r8pkgR")
+  out <- run_r(
+    lib,
+    sprintf(
+      "R8::r8_document_native(%s, check = TRUE); cat('current\\n')",
+      deparse(normalizePath(pkg))
+    )
+  )
+  expect_true("current" %in% out, info = paste(out, collapse = "\n"))
+  copy <- tempfile("r8pkgR")
+  dir.create(file.path(copy, "R"), recursive = TRUE)
+  dir.create(file.path(copy, "src"))
+  file.copy(file.path(pkg, "DESCRIPTION"), copy)
+  file.copy(file.path(pkg, "src", "r8pkgR.so"), file.path(copy, "src"))
+  generated <- readLines(file.path(pkg, "R", "r8-types.R"))
+  writeLines(
+    sub("native = TRUE", "native = FALSE", generated),
+    file.path(copy, "R", "r8-types.R")
+  )
+  out <- run_r(
+    lib,
+    c(
+      sprintf("p <- %s", deparse(copy)),
+      "e <- tryCatch(R8::r8_document_native(p, check = TRUE), error = function(e) conditionMessage(e))",
+      "cat('stale', grepl('differs from the declarations', e), '\\n')",
+      "R8::r8_document_native(p)",
+      "cat('written\\n')"
+    )
+  )
+  expect_true("stale TRUE " %in% out, info = paste(out, collapse = "\n"))
+  expect_identical(readLines(file.path(copy, "R", "r8-types.R")), generated)
 })
 
 test_that("roxygen2 documents R8 declarations and the package passes check", {

@@ -1,1 +1,2 @@
 INFORMAL rust/crates/rtemis-r8-macros/src/lib.rs:763  # "exports!" is the name of the function-like macro r8::exports!, not an exclamation
+INFORMAL r/tests/testthat/packages/r8pkgR/src/entrypoint.c:6  # "exports!" is the name of the function-like macro r8::exports!, not an exclamation

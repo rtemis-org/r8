@@ -125,6 +125,16 @@ compile_rule_expr <- function(e) {
   }
   fn <- as.character(fn)
   args <- as.list(e)[-1L]
+  if (fn == "json_ir") {
+    # JSONLogic as text, carried into the IR as written.
+    if (length(args) != 1L || !is.character(args[[1L]])) {
+      r8_abort(
+        "json_ir() in a rule holds one string of JSONLogic.",
+        class = "r8_declaration_error"
+      )
+    }
+    return(json_ir(args[[1L]]))
+  }
   if (fn == "(") {
     return(compile_rule_expr(args[[1L]]))
   }
@@ -182,7 +192,9 @@ compile_rule_expr <- function(e) {
 #' `kernel$gamma <= 10`, `is.null(a) || !is.null(b)`. R's `==` and `!=` are
 #' strict equality. A rule holds when its `when` condition is `FALSE`, or when
 #' a field it reads is absent; `is.null()` tests presence and is not a read.
-#' Inside `all()` and `any()`, `.x` is the element.
+#' Inside `all()` and `any()`, `.x` is the element. `json_ir()` gives an
+#' invariant or a condition as JSONLogic text, for JSONLogic without an R
+#' form.
 #'
 #' @param id Character: The rule's ID, an R8 name such as `"RBF_GAMMA"`.
 #' @param invariant Expression: What must hold.

@@ -159,3 +159,19 @@ record_declaration <- function(env, entry) {
   table[["entries"]] <- c(table[["entries"]], list(entry))
   invisible(NULL)
 } # /R8::record_declaration
+
+
+# %% %||% ----
+#' The left value, or the right one when the left is `NULL`
+#'
+#' Base R defines it from R 4.4.0; R8 supports R 4.3.
+#'
+#' @param x,y Values.
+#'
+#' @return `x`, or `y` when `x` is `NULL`.
+#'
+#' @keywords internal
+#' @noRd
+`%||%` <- function(x, y) {
+  if (is.null(x)) y else x
+} # /R8::%||%

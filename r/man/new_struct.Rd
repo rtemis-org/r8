@@ -10,7 +10,8 @@ new_struct(
   fields = list(),
   description = "",
   version = 1L,
-  rules = list()
+  rules = list(),
+  native = FALSE
 )
 
 \method{@}{r8_struct_type}(object, name)
@@ -26,6 +27,13 @@ types.}
 \item{version}{Integer: The type's version, from 1.}
 
 \item{rules}{List: \code{rule()} calls over the fields.}
+
+\item{native}{Logical: A Rust-native type, whose values the codec in the
+package's compiled exports builds and holds (\code{R8.h}). Its constructor
+signals \code{r8_codec_missing} until the codec is registered, and
+\code{r8_register()} checks that the exports carry the codec. A package whose
+types are declared in Rust generates these declarations with
+\code{r8_document_native()}.}
 
 \item{object}{A struct type object.}
 }

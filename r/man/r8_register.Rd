@@ -21,6 +21,15 @@ the package's namespace. \code{r8_register()}, called from the package's
 again and makes its types, traits, and impls available. Registering a
 package again replaces its declarations.
 }
+\details{
+A package with compiled exports (\code{R8.h}) registers them after its R
+declarations. Every type of the exports has an R declaration with the same
+declaration hash, the type of every codec is declared with
+\code{native = TRUE}, and every type declared with \code{native = TRUE} has a codec;
+otherwise registration signals \code{r8_declaration_error} and lists each
+difference. \code{r8_document_native()} generates the R declarations of types
+declared in Rust.
+}
 \examples{
 \dontrun{
 .onLoad <- function(libname, pkgname) {

@@ -93,6 +93,8 @@ construct_error <- function(res, type_name, variant) {
 #' @param fields Character: The field names, in declaration order.
 #' @param variant Character: The enum variant, or `""` for a struct.
 #' @param required Character: The fields without a default argument.
+#' @param native Logical: A Rust-native type, whose constructor first checks
+#'   that its codec is registered.
 #'
 #' @return A call.
 #'
@@ -102,7 +104,8 @@ constructor_body <- function(
   qname,
   fields,
   variant = "",
-  required = character()
+  required = character(),
+  native = FALSE
 ) {
   # A required field without an argument reaches construction as NULL, which
   # reports it as missing.
@@ -119,14 +122,54 @@ constructor_body <- function(
       fields
     )
   ))
-  bquote({
+  body <- bquote({
     res <- .Call(wrap__r8_new_value, .(args), .(qname), .(variant))
     if (inherits(res, "r8_problems")) {
       construct_error(res, .(qname), .(variant))
     }
     res
   })
+  if (native) {
+    body <- as.call(c(
+      as.name("{"),
+      bquote(check_codec(.(qname))),
+      as.list(body)[-1L]
+    ))
+  }
+  body
 } # /R8::constructor_body
+
+
+# %% check_codec ----
+#' Check that the codec of a Rust-native type is registered
+#'
+#' @param qname Character: The qualified type name.
+#'
+#' @return `NULL`, invisibly; signals `r8_codec_missing` when the codec is not
+#'   registered.
+#'
+#' @keywords internal
+#' @noRd
+check_codec <- function(qname) {
+  if (is.null(.r8_codecs[[qname]])) {
+    package <- attr(.r8_types[[qname]], "r8_package") %||% ""
+    r8_abort(
+      "`",
+      qname,
+      "` is a Rust-native type, whose values the codec in a package's ",
+      "compiled exports builds; no codec of it is registered.",
+      if (nzchar(package)) {
+        paste0(
+          " Loading '",
+          package,
+          "' registers it (its .onLoad() calls r8_register())."
+        )
+      },
+      class = c("r8_codec_missing", "r8_value_error")
+    )
+  }
+  invisible(NULL)
+} # /R8::check_codec
 
 
 # %% new_dgc ----
@@ -408,6 +451,9 @@ to_json <- function(x) {
 r8_from_json <- function(type, json) {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
+  }
+  if (isTRUE(attr(type, "r8_native"))) {
+    check_codec(attr(type, "r8_name"))
   }
   res <- r8_value_from_document(
     paste(json, collapse = "\n"),

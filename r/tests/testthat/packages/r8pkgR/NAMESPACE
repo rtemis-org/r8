@@ -1,0 +1,5 @@
+useDynLib(r8pkgR, .registration = TRUE)
+export(Signal)
+export(Norm)
+export(magnitude)
+export(ratio)

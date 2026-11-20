@@ -25,7 +25,9 @@ expression over the type's fields, captured unevaluated: \code{cost <= 100},
 \code{kernel$gamma <= 10}, \code{is.null(a) || !is.null(b)}. R's \code{==} and \code{!=} are
 strict equality. A rule holds when its \code{when} condition is \code{FALSE}, or when
 a field it reads is absent; \code{is.null()} tests presence and is not a read.
-Inside \code{all()} and \code{any()}, \code{.x} is the element.
+Inside \code{all()} and \code{any()}, \code{.x} is the element. \code{json_ir()} gives an
+invariant or a condition as JSONLogic text, for JSONLogic without an R
+form.
 }
 \examples{
 rule("COST_MAX", cost <= 100, "cost is at most 100.")

@@ -36,6 +36,14 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
             Value::Array(items)
         }
     };
+    // `json_ir()`: JSON text spliced into the IR as written.
+    if x.inherits("r8_json_ir") {
+        let text = x
+            .as_str()
+            .ok_or_else(|| fail(format!("{path}: json_ir() holds one string")))?;
+        return serde_json::from_str(text)
+            .map_err(|e| fail(format!("{path}: the text of json_ir() is not JSON: {e}")));
+    }
     match x.rtype() {
         Rtype::Null => Ok(Value::Null),
         Rtype::Logicals => {
@@ -113,6 +121,49 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
 #[extendr]
 fn r8_ir_json(x: Robj) -> Result<String> {
     to_json(&x, "").map(|v| v.to_string())
+}
+
+/// JSON text as R objects: `null` as `NULL`, a boolean as a logical, an
+/// integer of 32 bits as an integer, another integer as its JSON text of class
+/// `r8_json_ir` (which `r8_ir_json()` writes back unchanged), any other number
+/// as a double, a string as a character, an array as an unnamed list, and an
+/// object as a named list. Each number reads back through `r8_ir_json()` as
+/// written.
+///
+/// @param json Character: JSON text.
+/// @return The R object.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_json_parse(json: &str) -> Result<Robj> {
+    let v: Value = serde_json::from_str(json).map_err(|e| fail(format!("not JSON: {e}")))?;
+    Ok(from_json(&v))
+}
+
+/// The R object of a JSON value, as [`r8_json_parse`] describes.
+fn from_json(v: &Value) -> Robj {
+    match v {
+        Value::Null => Robj::from(()),
+        Value::Bool(b) => Robj::from(*b),
+        Value::Number(n) => {
+            if n.is_f64() {
+                Robj::from(n.as_f64().unwrap_or(f64::NAN))
+            } else if let Some(i) = n.as_i64().and_then(|i| i32::try_from(i).ok())
+                && i != i32::MIN
+            {
+                Robj::from(i)
+            } else {
+                let mut r = Robj::from(n.to_string());
+                let _ = r.set_class(["r8_json_ir"]);
+                r
+            }
+        }
+        Value::String(s) => Robj::from(s.as_str()),
+        Value::Array(items) => List::from_values(items.iter().map(from_json)).into(),
+        Value::Object(m) => List::from_names_and_values(m.keys(), m.values().map(from_json))
+            .map(Robj::from)
+            .unwrap_or_else(|_| Robj::from(())),
+    }
 }
 
 /// The RFC 8785 canonical text of JSON text.
@@ -353,6 +404,7 @@ extendr_module! {
     fn r8_declare_impl;
     fn r8_ir_json;
     fn r8_canonical_json;
+    fn r8_json_parse;
     fn r8_declare_type;
     fn r8_type_document;
 }

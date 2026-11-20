@@ -5,6 +5,7 @@
 // R calls R_init_r8pkgR when it loads the package; r8_init(), which
 // r8::exports! emits, registers the package's exports with R8.
 
+#include <stddef.h>
 #include <R_ext/Rdynload.h>
 
 void r8_init(void *dll);

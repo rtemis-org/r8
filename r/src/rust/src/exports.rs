@@ -226,6 +226,78 @@ fn r8_exports_info(ptr: Robj) -> Result<List> {
     ))
 }
 
+/// The IR document of an exports table, as JSON text.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @return Character: The IR document.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_exports_document(ptr: Robj) -> Result<String> {
+    let e = exports_of(&ptr)?;
+    let doc = ir_document(e)?;
+    serde_json::to_string(&doc).map_err(|e| fail(e.to_string()))
+}
+
+/// Compares each type of an exports table with the registered declaration of
+/// the same qualified name, by declaration hash. The Rust hash reads the
+/// registry with the exports' IR document in place of its namespace's types
+/// of the same names; the R hash reads the registry alone.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @return List: `type_name`, the qualified names; `status`, `"same"`,
+///   `"differs"`, or `"missing"` (no registered declaration); and `codec`,
+///   whether the table carries the type's codec.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_exports_compare(ptr: Robj) -> Result<List> {
+    let e = exports_of(&ptr)?;
+    let doc = ir_document(e)?;
+    let codecs = type_tables(e)?
+        .into_iter()
+        .map(|v| text(unsafe { (*v).type_name }, "type name"))
+        .collect::<Result<Vec<String>>>()?;
+    let reg = crate::declare::registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?
+        .clone();
+    let mut overlay = reg.clone();
+    match overlay.0.iter_mut().find(|d| d.namespace == doc.namespace) {
+        Some(d) => {
+            for t in &doc.types {
+                match d.types.iter().position(|x| x.name() == t.name()) {
+                    Some(i) => d.types[i] = t.clone(),
+                    None => d.types.push(t.clone()),
+                }
+            }
+        }
+        None => overlay.0.push(doc.clone()),
+    }
+    let lookup_r: &dyn rtemis_r8::rules::TypeLookup = &reg;
+    let lookup_rust: &dyn rtemis_r8::rules::TypeLookup = &overlay;
+    let mut names = Vec::new();
+    let mut status = Vec::new();
+    let mut codec = Vec::new();
+    for t in &doc.types {
+        let name = format!("{}::{}", doc.namespace, t.name());
+        let q = QualifiedName::parse(&name).map_err(|e| fail(e.to_string()))?;
+        let s = if lookup_r.find(&q).is_none() {
+            "missing"
+        } else if rtemis_r8::codec::declaration_hash(&q, lookup_r)
+            == rtemis_r8::codec::declaration_hash(&q, lookup_rust)
+        {
+            "same"
+        } else {
+            "differs"
+        };
+        codec.push(codecs.contains(&name));
+        names.push(name);
+        status.push(s);
+    }
+    Ok(list!(type_name = names, status = status, codec = codec))
+}
+
 /// Registers an exports table: declares its IR document's types, traits, and
 /// impls, and keeps the codecs of its Rust-native types and its impl
 /// functions, replacing the package's earlier entries.
@@ -451,6 +523,8 @@ fn r8_impl_fn(trait_name: &str, type_name: &str, method: &str) -> Result<Robj> {
 extendr_module! {
     mod exports;
     fn r8_exports_info;
+    fn r8_exports_document;
+    fn r8_exports_compare;
     fn r8_register_exports;
     fn r8_impl_fn;
     fn r8_compiled_types;

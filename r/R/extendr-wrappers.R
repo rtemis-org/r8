@@ -86,6 +86,19 @@ r8_ir_json <- function(x) .Call(wrap__r8_ir_json, x)
 #' @noRd
 r8_canonical_json <- function(json) .Call(wrap__r8_canonical_json, json)
 
+#' JSON text as R objects: `null` as `NULL`, a boolean as a logical, an
+#' integer of 32 bits as an integer, another integer as its JSON text of class
+#' `r8_json_ir` (which `r8_ir_json()` writes back unchanged), any other number
+#' as a double, a string as a character, an array as an unnamed list, and an
+#' object as a named list. Each number reads back through `r8_ir_json()` as
+#' written.
+#'
+#' @param json Character: JSON text.
+#' @return The R object.
+#' @keywords internal
+#' @noRd
+r8_json_parse <- function(json) .Call(wrap__r8_json_parse, json)
+
 #' Checks a type declaration in its namespace and registers it.
 #'
 #' Returns a list with the code, path, and message of each problem; an empty
@@ -114,6 +127,27 @@ r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 #' @keywords internal
 #' @noRd
 r8_exports_info <- function(ptr) .Call(wrap__r8_exports_info, ptr)
+
+#' The IR document of an exports table, as JSON text.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @return Character: The IR document.
+#' @keywords internal
+#' @noRd
+r8_exports_document <- function(ptr) .Call(wrap__r8_exports_document, ptr)
+
+#' Compares each type of an exports table with the registered declaration of
+#' the same qualified name, by declaration hash. The Rust hash reads the
+#' registry with the exports' IR document in place of its namespace's types
+#' of the same names; the R hash reads the registry alone.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @return List: `type_name`, the qualified names; `status`, `"same"`,
+#'   `"differs"`, or `"missing"` (no registered declaration); and `codec`,
+#'   whether the table carries the type's codec.
+#' @keywords internal
+#' @noRd
+r8_exports_compare <- function(ptr) .Call(wrap__r8_exports_compare, ptr)
 
 #' Registers an exports table: declares its IR document's types, traits, and
 #' impls, and keeps the codecs of its Rust-native types and its impl

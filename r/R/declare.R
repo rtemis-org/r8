@@ -7,6 +7,10 @@
 # type objects that refer to it.
 .r8_types <- new.env(parent = emptyenv())
 
+# The registered codecs of Rust-native types: qualified name to the package
+# whose exports carry the codec.
+.r8_codecs <- new.env(parent = emptyenv())
+
 
 # %% field ----
 #' Declare a field
@@ -62,6 +66,60 @@ field <- function(
 } # /R8::field
 
 
+# %% json_ir ----
+#' IR as JSON text
+#'
+#' JSON text that a declaration carries into its IR as written: a rule's
+#' `invariant` or `when` as JSONLogic, or a field's `default` as the value's
+#' JSON form. It holds what the R forms do not express, such as an `and` of
+#' three operands, a default that is an enum variant with fields or a struct,
+#' and a number that a double does not hold exactly. `r8_document_native()`
+#' writes it where a Rust declaration has no R form.
+#'
+#' @param text Character: One JSON text.
+#'
+#' @return An `r8_json_ir`: the text, of that class.
+#'
+#' @examples
+#' rule("COST_RANGE", json_ir('{"and": [{">": [{"var": "cost"}, 0]},
+#'   {"<=": [{"var": "cost"}, 100]}, {"!==": [{"var": "name"}, ""]}]}'),
+#'   "cost is in (0, 100] and name is not empty.")
+#' field(type_double(), default = json_ir("0.5"))
+#'
+#' @export
+json_ir <- function(text) {
+  if (!is.character(text) || length(text) != 1L || is.na(text)) {
+    r8_abort("`text` is one string of JSON.", class = "r8_declaration_error")
+  }
+  tryCatch(
+    r8_canonical_json(text),
+    error = function(e) {
+      r8_abort(
+        "The text of json_ir() is JSON: ",
+        conditionMessage(e),
+        class = "r8_declaration_error"
+      )
+    }
+  )
+  structure(text, class = "r8_json_ir")
+} # /R8::json_ir
+
+
+# %% print.r8_json_ir ----
+#' Print IR as JSON text
+#'
+#' @param x An `r8_json_ir`.
+#' @param ... Not used.
+#'
+#' @return `x`, invisibly.
+#'
+#' @export
+print.r8_json_ir <- function(x, ...) {
+  cat("<r8_json_ir>", unclass(x), "\n")
+  invisible(x)
+} # /R8::print.r8_json_ir
+
+
 # %% as_field ----
 #' A field from a field object or a field type
 #'
@@ -88,8 +146,8 @@ as_field <- function(x) {
 #' @noRd
 default_json <- function(x, type) {
   kind <- type[["kind"]]
-  if (is.null(x)) {
-    return(NULL)
+  if (is.null(x) || inherits(x, "r8_json_ir")) {
+    return(x)
   }
   if (kind == "option") {
     return(default_json(x, type[["inner"]]))
@@ -329,12 +387,13 @@ required_formals <- function(formals) {
 #' @param namespace Character: The namespace.
 #' @param class Character: The type object's class.
 #' @param formals List: The constructor's formals.
+#' @param native Logical: A Rust-native type.
 #'
 #' @return The type object.
 #'
 #' @keywords internal
 #' @noRd
-declare <- function(ir, env, class, formals) {
+declare <- function(ir, env, class, formals, native = FALSE) {
   namespace <- declaring_namespace(env)
   package <- declaring_package(env)
   claim_namespace(namespace, package)
@@ -343,7 +402,12 @@ declare <- function(ir, env, class, formals) {
   ctor <- as.function(
     c(
       formals,
-      constructor_body(qname, field_names, required = required_formals(formals))
+      constructor_body(
+        qname,
+        field_names,
+        required = required_formals(formals),
+        native = native
+      )
     ),
     envir = asNamespace("R8")
   )
@@ -351,7 +415,9 @@ declare <- function(ir, env, class, formals) {
     ctor,
     class = c(class, "r8_type", "function"),
     r8_name = qname,
-    r8_ir = ir
+    r8_ir = ir,
+    r8_native = if (native) TRUE,
+    r8_package = if (native) package
   )
   register_type(type, namespace)
   record_declaration(
@@ -418,6 +484,12 @@ register_type <- function(type, namespace) {
 #' @param description Character: What the type is.
 #' @param version Integer: The type's version, from 1.
 #' @param rules List: `rule()` calls over the fields.
+#' @param native Logical: A Rust-native type, whose values the codec in the
+#'   package's compiled exports builds and holds (`R8.h`). Its constructor
+#'   signals `r8_codec_missing` until the codec is registered, and
+#'   `r8_register()` checks that the exports carry the codec. A package whose
+#'   types are declared in Rust generates these declarations with
+#'   `r8_document_native()`.
 #'
 #' @return The type object, of class `r8_struct_type`.
 #'
@@ -433,7 +505,8 @@ new_struct <- function(
   fields = list(),
   description = "",
   version = 1L,
-  rules = list()
+  rules = list(),
+  native = FALSE
 ) {
   if (!is_name(name)) {
     r8_abort(
@@ -455,11 +528,21 @@ new_struct <- function(
   formals <- ctor_formals(ir[["fields"]])
   for (n in names(fields)) {
     f <- as_field(fields[[n]])
-    if (isTRUE(f[["has_default"]]) && !is.null(f[["default"]])) {
+    if (
+      isTRUE(f[["has_default"]]) &&
+        !is.null(f[["default"]]) &&
+        !inherits(f[["default"]], "r8_json_ir")
+    ) {
       formals[n] <- list(f[["default"]])
     }
   }
-  declare(ir, parent.frame(), "r8_struct_type", formals)
+  declare(
+    ir,
+    parent.frame(),
+    "r8_struct_type",
+    formals,
+    native = isTRUE(native)
+  )
 } # /R8::new_struct
 
 

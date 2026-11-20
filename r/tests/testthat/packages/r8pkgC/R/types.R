@@ -27,7 +27,8 @@ Signal <- R8::new_struct(
   fields = list(
     name = R8::type_character(),
     values = R8::vec(R8::type_double())
-  )
+  ),
+  native = TRUE
 )
 
 # The number of live Signal states.

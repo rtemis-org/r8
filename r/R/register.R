@@ -12,6 +12,14 @@
 #' again and makes its types, traits, and impls available. Registering a
 #' package again replaces its declarations.
 #'
+#' A package with compiled exports (`R8.h`) registers them after its R
+#' declarations. Every type of the exports has an R declaration with the same
+#' declaration hash, the type of every codec is declared with
+#' `native = TRUE`, and every type declared with `native = TRUE` has a codec;
+#' otherwise registration signals `r8_declaration_error` and lists each
+#' difference. `r8_document_native()` generates the R declarations of types
+#' declared in Rust.
+#'
 #' @param pkgname Optional Character: The package; by default, the package
 #'   whose code calls `r8_register()`.
 #'
@@ -50,7 +58,7 @@ r8_register <- function(pkgname = NULL) {
       s3method = register_s3_method(e)
     )
   }
-  n_compiled <- register_exports(pkg)
+  n_compiled <- register_exports(pkg, entries)
   invisible(length(entries) + n_compiled)
 } # /R8::r8_register
 
@@ -65,12 +73,20 @@ r8_register <- function(pkgname = NULL) {
 #' the R method of its trait for its type.
 #'
 #' @param pkg Character: The package.
+#' @param entries List: The package's recorded declarations.
 #'
 #' @return The number of impl functions registered.
 #'
 #' @keywords internal
 #' @noRd
-register_exports <- function(pkg) {
+register_exports <- function(pkg, entries = list()) {
+  native <- unlist(lapply(entries, function(e) {
+    if (
+      identical(e[["kind"]], "type") && isTRUE(attr(e[["type"]], "r8_native"))
+    ) {
+      attr(e[["type"]], "r8_name")
+    }
+  }))
   # R_GetCCallable() raises an error for a package that registered no
   # exports.
   ptr <- tryCatch(
@@ -78,11 +94,22 @@ register_exports <- function(pkg) {
     error = function(e) NULL
   )
   if (is.null(ptr)) {
+    check_exports(pkg, NULL, native)
     return(0L)
   }
   info <- r8_exports_info(ptr)
   claim_namespace(info[["namespace"]], pkg)
+  compared <- r8_exports_compare(ptr)
+  check_exports(pkg, compared, native)
   fns <- r8_register_exports(ptr, pkg)
+  for (n in ls(.r8_codecs)) {
+    if (identical(.r8_codecs[[n]], pkg)) {
+      rm(list = n, envir = .r8_codecs)
+    }
+  }
+  for (n in compared[["type_name"]][compared[["codec"]]]) {
+    assign(n, pkg, envir = .r8_codecs)
+  }
   for (i in seq_along(fns[["method"]])) {
     compiled_method(
       fns[["trait_name"]][[i]],
@@ -92,6 +119,62 @@ register_exports <- function(pkg) {
   }
   length(fns[["method"]])
 } # /R8::register_exports
+
+
+# %% check_exports ----
+#' Check a package's compiled exports against its R declarations
+#'
+#' @param pkg Character: The package.
+#' @param compared Optional list: `r8_exports_compare()` of the package's
+#'   exports, or `NULL` for a package without exports.
+#' @param native Character: The qualified names the package declares with
+#'   `native = TRUE`.
+#'
+#' @return `NULL`, invisibly; signals `r8_declaration_error` listing each
+#'   difference.
+#'
+#' @keywords internal
+#' @noRd
+check_exports <- function(pkg, compared, native) {
+  names <- compared[["type_name"]]
+  status <- compared[["status"]]
+  codec <- compared[["codec"]]
+  problems <- c(
+    sprintf(
+      "`%s` is declared in the compiled exports and has no R declaration.",
+      names[status == "missing"]
+    ),
+    sprintf(
+      "The R declaration of `%s` differs from its declaration in the compiled exports.",
+      names[status == "differs"]
+    ),
+    sprintf(
+      "`%s` has a codec in the compiled exports; its R declaration takes native = TRUE.",
+      names[codec & status != "missing" & !names %in% native]
+    ),
+    sprintf(
+      "`%s` is declared with native = TRUE; the compiled exports carry no codec for it.",
+      setdiff(native, names[codec])
+    )
+  )
+  if (length(problems) > 0L) {
+    regenerate <- any(status %in% c("missing", "differs"))
+    r8_abort(
+      "The R8 declarations of package '",
+      pkg,
+      "' do not match its compiled exports:\n",
+      paste0("- ", problems, collapse = "\n"),
+      if (regenerate) {
+        paste0(
+          "\nR8::r8_document_native() regenerates R/r8-types.R from the ",
+          "declarations in Rust."
+        )
+      },
+      class = "r8_declaration_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::check_exports
 
 
 # %% compiled_method ----
