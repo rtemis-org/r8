@@ -40,6 +40,7 @@ pub mod derive;
 mod emit;
 pub mod equal;
 pub mod ir;
+pub mod layout;
 pub mod name;
 pub mod rules;
 pub mod text;
