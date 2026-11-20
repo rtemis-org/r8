@@ -516,6 +516,89 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
   expect_true("after TRUE " %in% out, info = info)
 })
 
+test_that("the generator names a type of another namespace by its package's export", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "p <- tempfile(); dir.create(p)",
+      "desc <- function(imports) writeLines(c('Package: x', paste0('Imports: ', imports)), file.path(p, 'DESCRIPTION'))",
+      "field_t <- list(name = 'shape', type = list(kind = 'named', name = 'pkga::Shape'), description = '')",
+      "doc <- list(namespace = 'model', types = list(list(kind = 'struct', name = 'Fit', description = '', version = 1L, fields = list(field_t))))",
+      "desc('R8, r8pkgA (>= 0.0.1)')",
+      "refs <- R8:::foreign_refs(doc, p)",
+      "assign('map', refs, envir = R8:::.r8_render_refs)",
+      "cat('ref', refs[['pkga::Shape']], R8:::render_type(field_t$type, 'model'), '\\n')",
+      "op <- options(r8.namespace = 'model')",
+      "Fit <- R8::new_struct('Fit', fields = list(shape = r8pkgA::Shape))",
+      "options(op)",
+      "ir <- R8:::r8_json_parse(R8:::r8_ir_json(attr(Fit, 'r8_ir')))",
+      "lines <- R8:::render_struct(ir, 'model', native = FALSE)",
+      "cat('rendered', any(grepl('shape = r8pkgA::Shape', lines, fixed = TRUE)), '\\n')",
+      "desc('R8')",
+      "e <- tryCatch(R8:::foreign_refs(doc, p), error = function(e) conditionMessage(e))",
+      "cat('unimported', grepl('listed in Imports', e), '\\n')",
+      "doc$types[[1]]$fields[[1]]$type$name <- 'pkga::Absent'",
+      "desc('r8pkgA')",
+      "e <- tryCatch(R8:::foreign_refs(doc, p), error = function(e) conditionMessage(e))",
+      "cat('unexported', grepl('exports no type object', e), '\\n')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("ref r8pkgA::Shape r8pkgA::Shape " %in% out, info = info)
+  expect_true("rendered TRUE " %in% out, info = info)
+  expect_true("unimported TRUE " %in% out, info = info)
+  expect_true("unexported TRUE " %in% out, info = info)
+})
+
+test_that("the roclet r8_rd documents the methods a package implements in Rust", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("roxygen2")
+  lib <- install_test_packages()
+  # A copy of r8pkgR whose crates are the absolute paths of this checkout's.
+  copy <- file.path(tempfile("roclet"), "r8pkgR")
+  dir.create(dirname(copy))
+  file.copy(test_path("packages", "r8pkgR"), dirname(copy), recursive = TRUE)
+  unlink(Sys.glob(file.path(copy, "src", c("*.o", "*.so"))))
+  cargo <- file.path(copy, "src", "rust", "Cargo.toml")
+  crates <- normalizePath(test_path("..", "..", "..", "rust", "crates"))
+  writeLines(
+    gsub(
+      "../../../../../../../rust/crates",
+      crates,
+      readLines(cargo),
+      fixed = TRUE
+    ),
+    cargo
+  )
+  out <- run_r(
+    lib,
+    c(
+      sprintf("roxygen2::roxygenise(%s, roclets = 'R8::r8_rd')", deparse(copy)),
+      sprintf(
+        "rd <- readLines(file.path(%s, 'man', 'Signal.Rd'))",
+        deparse(copy)
+      ),
+      "cat('signal', sum(grepl(\"R8 method for struct 'Signal'\", rd, fixed = TRUE)), any(grepl('special{distance(x, y)}', rd, fixed = TRUE)), '\\n')",
+      sprintf(
+        "rd <- readLines(file.path(%s, 'man', 'Resampler.Rd'))",
+        deparse(copy)
+      ),
+      "cat('resampler', any(grepl(\"R8 method for enum 'Resampler'\", rd, fixed = TRUE)), any(grepl('special{format(x, ...)}', rd, fixed = TRUE)), '\\n')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("signal 4 TRUE " %in% out, info = info)
+  expect_true("resampler TRUE TRUE " %in% out, info = info)
+})
+
 test_that("roxygen2 documents R8 declarations and the package passes check", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),

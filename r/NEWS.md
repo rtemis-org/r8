@@ -6,6 +6,8 @@
 - `r8::exports!` declares every type of the package's namespace that its listed types reach, such as the struct of a newtype variant.
 - `print()` and `str()` of a Rust-native value show its size in the header, in IEC units (`<pkgc::Signal> 7.63 MiB`); `str()` adds the fields read into R (`+ 112 B read`).
 - A method of `#[r8::methods]` takes another value of a Rust-native type as `&T`, borrowed from its state, or built from an R-native value of the type.
+- `r8_document_native()` writes a field whose type belongs to another package's namespace as that package's exported type object (`r8resample::Resampler`); the package lists it in `Imports`.
+- The roclet `r8_rd()` documents the methods a package implements in compiled code, as it documents `implement()` calls.
 - The package builds against `rtemis-r8` 0.4.0.
 
 # R8 0.3.0

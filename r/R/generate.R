@@ -93,6 +93,8 @@ r8_document_native <- function(path = ".", check = FALSE) {
     )
   }
   doc <- r8_json_parse(r8_exports_document(ptr))
+  .r8_render_refs[["map"]] <- foreign_refs(doc, path)
+  on.exit(.r8_render_refs[["map"]] <- NULL, add = TRUE)
   codecs <- r8_exports_compare(ptr)
   codecs <- codecs[["type_name"]][codecs[["codec"]]]
   native_enums <- vapply(
@@ -127,6 +129,84 @@ r8_document_native <- function(path = ".", check = FALSE) {
   }
   invisible(file)
 } # /R8::r8_document_native
+
+
+# The R objects of the types of other namespaces that the rendered file
+# names, by qualified name, while r8_document_native() renders.
+.r8_render_refs <- new.env(parent = emptyenv())
+
+
+# %% foreign_refs ----
+#' The R objects of the types of other namespaces that a document names
+#'
+#' For each type of another namespace that the document's types reach, the
+#' exported binding of the package that owns the namespace, as R source:
+#' `"r8resample::Resampler"`. The owner is found among the packages of the
+#' `Imports` and `Depends` of the package's `DESCRIPTION`, each loaded, by
+#' R8's registry of namespace claims.
+#'
+#' @param doc List: The IR document.
+#' @param path Character: The package's root directory.
+#'
+#' @return Named character: R source by qualified name.
+#'
+#' @keywords internal
+#' @noRd
+foreign_refs <- function(doc, path) {
+  prefix <- paste0(doc[["namespace"]], "::")
+  refs <- unique(unlist(lapply(doc[["types"]], named_refs)))
+  refs <- refs[!startsWith(refs, prefix)]
+  if (length(refs) == 0L) {
+    return(character())
+  }
+  fields <- read.dcf(
+    file.path(path, "DESCRIPTION"),
+    fields = c("Imports", "Depends")
+  )
+  deps <- unlist(strsplit(paste(fields[!is.na(fields)], collapse = ","), ","))
+  deps <- trimws(sub("\\(.*", "", deps))
+  deps <- setdiff(deps[nzchar(deps)], "R")
+  for (d in deps) {
+    loadNamespace(d)
+  }
+  out <- character()
+  for (q in refs) {
+    ns <- sub("::.*", "", q)
+    owner <- r8_namespace_owner(ns)
+    if (!nzchar(owner) || !owner %in% deps) {
+      r8_abort(
+        "The type `",
+        q,
+        "` belongs to the namespace `",
+        ns,
+        "`, which no package of the Imports of the package's DESCRIPTION owns; ",
+        "the package that declares it is listed in Imports.",
+        class = "r8_declaration_error"
+      )
+    }
+    binding <- Filter(
+      function(e) {
+        v <- getExportedValue(owner, e)
+        inherits(v, "r8_type") && identical(attr(v, "r8_name"), q)
+      },
+      getNamespaceExports(owner)
+    )
+    if (length(binding) == 0L) {
+      r8_abort(
+        "Package '",
+        owner,
+        "' owns the namespace `",
+        ns,
+        "` and exports no type object of `",
+        q,
+        "`.",
+        class = "r8_declaration_error"
+      )
+    }
+    out[[q]] <- paste0(owner, "::", backtick(sort(binding)[[1L]]))
+  }
+  out
+} # /R8::foreign_refs
 
 
 # %% check_r8_requirement ----
@@ -469,7 +549,23 @@ render_enum <- function(t, ns, native = FALSE) {
             paste0("rules = ", render_rules(v[["rules"]], "      "))
           }
         ),
-        newtype = paste0("of = ", type_ref(v[["of"]], ns))
+        newtype = {
+          # The core's declaration check resolves a newtype's struct within
+          # the document's namespace only.
+          if (!startsWith(v[["of"]], paste0(ns, "::"))) {
+            r8_abort(
+              "The variant `",
+              v[["name"]],
+              "` of `",
+              qname,
+              "` holds `",
+              v[["of"]],
+              "`, a struct of another namespace; a newtype variant holds a struct of its enum's namespace.",
+              class = "r8_declaration_error"
+            )
+          }
+          paste0("of = ", type_ref(v[["of"]], ns))
+        }
       )
       if (nzchar(v[["description"]] %||% "")) {
         args <- c(
@@ -769,29 +865,35 @@ render_type <- function(t, ns) {
 
 
 # %% type_ref ----
-#' The R object of a type of the same namespace
+#' The R object of a named type
+#'
+#' A type of the namespace `ns` is the object the rendered file defines; a
+#' type of another namespace is the exported object that `foreign_refs()`
+#' found, such as `r8resample::Resampler`.
 #'
 #' @param qname Character: The qualified name.
 #' @param ns Character: The namespace.
 #'
-#' @return Character: The object's name.
+#' @return Character: The object as R source.
 #'
 #' @keywords internal
 #' @noRd
 type_ref <- function(qname, ns) {
   prefix <- paste0(ns, "::")
-  if (!startsWith(qname, prefix)) {
-    r8_abort(
-      "The type `",
-      qname,
-      "` belongs to another namespace; the generated declarations name ",
-      "types of the namespace `",
-      ns,
-      "`.",
-      class = "r8_declaration_error"
-    )
+  if (startsWith(qname, prefix)) {
+    return(backtick(substring(qname, nchar(prefix) + 1L)))
   }
-  backtick(substring(qname, nchar(prefix) + 1L))
+  foreign <- .r8_render_refs[["map"]]
+  if (qname %in% names(foreign)) {
+    return(foreign[[qname]])
+  }
+  r8_abort(
+    "The type `",
+    qname,
+    "` belongs to another namespace, whose package r8_document_native() ",
+    "finds among the Imports of the package's DESCRIPTION.",
+    class = "r8_declaration_error"
+  )
 } # /R8::type_ref
 
 

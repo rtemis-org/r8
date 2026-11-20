@@ -51,6 +51,14 @@ r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, valu
 #' @noRd
 r8_claim_namespace <- function(namespace, package) .Call(wrap__r8_claim_namespace, namespace, package)
 
+#' The package that owns a namespace, without claiming it.
+#'
+#' @param namespace Character: The namespace.
+#' @return Character: The owning package, or `""` when no package owns it.
+#' @keywords internal
+#' @noRd
+r8_namespace_owner <- function(namespace) .Call(wrap__r8_namespace_owner, namespace)
+
 #' Checks a trait declaration in its namespace and registers it.
 #'
 #' @param trait_json Character: The trait's IR declaration as JSON text.

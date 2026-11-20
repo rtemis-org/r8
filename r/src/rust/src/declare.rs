@@ -397,9 +397,24 @@ fn r8_claim_namespace(namespace: &str, package: &str) -> Result<String> {
     }
 }
 
+/// The package that owns a namespace, without claiming it.
+///
+/// @param namespace Character: The namespace.
+/// @return Character: The owning package, or `""` when no package owns it.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_namespace_owner(namespace: &str) -> Result<String> {
+    let map = owners()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    Ok(map.get(namespace).cloned().unwrap_or_default())
+}
+
 extendr_module! {
     mod declare;
     fn r8_claim_namespace;
+    fn r8_namespace_owner;
     fn r8_declare_trait;
     fn r8_declare_impl;
     fn r8_ir_json;
