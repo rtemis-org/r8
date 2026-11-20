@@ -144,6 +144,23 @@ r8_call_impl <- function(trait_name, type_name, method, args) .Call(wrap__r8_cal
 #' @noRd
 r8_compiled_types <- function() .Call(wrap__r8_compiled_types)
 
+#' The parts of a Rust-native value that `r8_size()` adds up: the bytes of
+#' its state and the cached fields that are not views of the state.
+#'
+#' @param x An R8 value.
+#' @return List: `state` and `fields`, or `NULL` for an R-native value.
+#' @keywords internal
+#' @noRd
+r8_native_parts <- function(x) .Call(wrap__r8_native_parts, x)
+
+#' The bytes of the states of Rust-native values reachable from R, and the
+#' level at which R8 requests a collection.
+#'
+#' @return Double: `c(live, threshold)`.
+#' @keywords internal
+#' @noRd
+r8_native_memory <- function() .Call(wrap__r8_native_memory)
+
 #' Resolves a struct value: given its fields, with runtime fields filled by
 #' the caller, evaluates each absent computed field in dependency order over
 #' the R objects in place, then constructs the value natively.
@@ -189,31 +206,6 @@ r8_value_hash <- function(x) .Call(wrap__r8_value_hash, x)
 #' @keywords internal
 #' @noRd
 r8_value_check <- function(x) .Call(wrap__r8_value_check, x)
-
-#' The canonical text and content hash of a document, computed on its JSON
-#' form; the differential test compares them with `r8_value_identity()`.
-#'
-#' @param text Character: The document.
-#' @param type_name Character: The qualified type name.
-#' @return List: `canonical` and `hash`, or `errors`.
-#' @keywords internal
-#' @noRd
-r8_document_identity <- function(text, type_name) .Call(wrap__r8_document_identity, text, type_name)
-
-#' The reference construction, through the JSON form: the fields are
-#' encoded to JSON, validated, normalized (an absent field takes its
-#' default), and decoded. The differential test compares `r8_new_value()`
-#' with it.
-#'
-#' Returns `list(value = <R8 value>)` or `list(errors = <problems>)`.
-#'
-#' @param fields List: The fields, by name.
-#' @param type_name Character: The qualified type name.
-#' @param variant Character: The enum variant, or `""` for a struct.
-#' @return List: The value or the problems.
-#' @keywords internal
-#' @noRd
-r8_new_value_json <- function(fields, type_name, variant) .Call(wrap__r8_new_value_json, fields, type_name, variant)
 
 #' Writes an R8 value as a document, from the R objects in place.
 #'

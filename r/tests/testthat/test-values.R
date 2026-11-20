@@ -295,3 +295,23 @@ test_that("a runtime-only field enters equality and the hash by presence", {
   expect_false(identical(r8_hash(bare), r8_hash(with1)))
   expect_identical(r8_hash(with1), r8_hash(with2))
 })
+
+test_that("matrices compare, hash, and write their dimension names", {
+  M <- declare_in(
+    "demo",
+    new_struct("Named", fields = list(m = type_matrix(type_double())))
+  )
+  n <- 10000L
+  rows <- paste0("r", seq_len(n))
+  x <- matrix(seq_len(2L * n) / 2, n, dimnames = list(rows, c("a", "b")))
+  y <- x
+  rownames(y)[n] <- "other"
+  z <- x
+  rownames(z)[n] <- NA
+  vx <- M(m = x)
+  expect_true(r8_equal(vx, M(m = x)))
+  expect_false(r8_equal(vx, M(m = y)))
+  expect_false(r8_equal(vx, M(m = z)))
+  expect_false(identical(r8_hash(vx), r8_hash(M(m = y))))
+  expect_identical(r8_from_json(M, to_json(vx)), vx)
+})

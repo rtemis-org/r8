@@ -97,7 +97,7 @@ fn own(x: SEXP) -> Robj {
     unsafe { Robj::from_sexp(x) }
 }
 
-fn mkchar(s: &str) -> SEXP {
+pub(crate) fn mkchar(s: &str) -> SEXP {
     unsafe { Rf_mkCharLenCE(s.as_ptr() as *const _, s.len() as i32, cetype_t::CE_UTF8) }
 }
 
@@ -130,14 +130,15 @@ fn unwrap_option(ft: &FieldType) -> &FieldType {
 /// Whether every value of a date-time vector is a whole number of
 /// microseconds, as the stored form holds it, and no value is `NaN`.
 fn micros_exact(x: SEXP) -> bool {
-    let s = unsafe { std::slice::from_raw_parts(REAL(x), xlen(x)) };
-    s.iter().all(|&v| {
-        if v.is_nan() {
+    let mut exact = true;
+    for_reals(x, 0, xlen(x), |_, v| {
+        exact &= if v.is_nan() {
             is_na_real(v)
         } else {
             ((v * 1e6).round() as i64) as f64 / 1e6 == v
-        }
-    })
+        };
+    });
+    exact
 }
 
 /// Whether `x` is an atomic vector in the stored form of the scalar type
@@ -166,26 +167,14 @@ fn atomic_ok(x: SEXP, inner: &FieldType, extra: usize) -> bool {
 /// elements of atomic vectors.
 fn build_atomic(inner: &FieldType, items: &[(SEXP, usize)]) -> Robj {
     let n = items.len() as R_xlen_t;
-    let number = |x: SEXP, i: usize| -> Option<f64> {
-        match sexptype(x) {
-            SEXPTYPE::REALSXP => {
-                let d = unsafe { *REAL(x).add(i) };
-                (!is_na_real(d)).then_some(d)
-            }
-            SEXPTYPE::INTSXP | SEXPTYPE::LGLSXP => {
-                let v = unsafe { *INTEGER(x).add(i) };
-                (v != NA_INT).then_some(f64::from(v))
-            }
-            _ => None,
-        }
-    };
+    let number = number_elt;
     unsafe {
         let v = match inner {
             FieldType::Logical => {
                 let v = Rf_protect(Rf_allocVector(SEXPTYPE::LGLSXP, n));
                 for (k, &(x, i)) in items.iter().enumerate() {
                     *LOGICAL(v).add(k) = if sexptype(x) == SEXPTYPE::LGLSXP {
-                        *LOGICAL(x).add(i)
+                        int_elt(x, i)
                     } else {
                         NA_INT
                     };
@@ -220,7 +209,7 @@ fn build_atomic(inner: &FieldType, items: &[(SEXP, usize)]) -> Robj {
                 let v = Rf_protect(Rf_allocVector(SEXPTYPE::REALSXP, n));
                 for (k, &(x, i)) in items.iter().enumerate() {
                     *REAL(v).add(k) = match sexptype(x) {
-                        SEXPTYPE::REALSXP => *REAL(x).add(i),
+                        SEXPTYPE::REALSXP => real_elt(x, i),
                         _ => number(x, i).unwrap_or(NA_REAL),
                     };
                 }
@@ -417,27 +406,31 @@ fn factor(x: SEXP, declared: Option<&[String]>, ordered: bool) -> Option<Robj> {
     if same_levels && class_is(x, class) && attrib_count(x) == 2 {
         return None;
     }
-    let codes = ints(x);
     let map: Vec<i32> = match declared {
-        Some(d) => current
-            .iter()
-            .map(|l| {
-                d.iter()
-                    .position(|x| x == l)
-                    .map_or(NA_INT, |k| k as i32 + 1)
-            })
-            .collect(),
+        Some(d) => {
+            let index: std::collections::HashMap<&str, i32> = d
+                .iter()
+                .enumerate()
+                .map(|(k, l)| (l.as_str(), k as i32 + 1))
+                .collect();
+            current
+                .iter()
+                .map(|l| index.get(l.as_str()).copied().unwrap_or(NA_INT))
+                .collect()
+        }
         None => (1..=current.len() as i32).collect(),
     };
+    let n = xlen(x);
     unsafe {
-        let v = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, codes.len() as R_xlen_t));
-        for (k, &c) in codes.iter().enumerate() {
-            *INTEGER(v).add(k) = if c == NA_INT {
-                NA_INT
-            } else {
-                map[(c - 1) as usize]
-            };
-        }
+        let v = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, n as R_xlen_t));
+        let out = std::slice::from_raw_parts_mut(INTEGER(v), n);
+        for_ints(x, 0, n, |k, c| {
+            out[k] = c
+                .checked_sub(1)
+                .and_then(|i| usize::try_from(i).ok())
+                .and_then(|i| map.get(i).copied())
+                .unwrap_or(NA_INT);
+        });
         let r = own(v);
         Rf_unprotect(1);
         let lv: Vec<&str> = match declared {
@@ -645,7 +638,10 @@ fn table(x: SEXP, columns: &[FieldDef]) -> Result<Option<Robj>> {
         }
     }
     let rn = attrib_raw(x, sym_row_names());
-    let compact = sexptype(rn) == SEXPTYPE::INTSXP && ints(rn) == [NA_INT, -n];
+    let compact = sexptype(rn) == SEXPTYPE::INTSXP
+        && xlen(rn) == 2
+        && int_elt(rn, 0) == NA_INT
+        && int_elt(rn, 1) == -n;
     if changed.is_empty() && compact && class_is(x, &["data.frame"]) && attrib_count(x) == 3 {
         return Ok(None);
     }
@@ -679,6 +675,43 @@ pub(crate) fn errors_list(errors: &[ValueError]) -> List {
         .collect();
     let message: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
     list!(code = code, path = path, rule = rule, message = message)
+}
+
+/// Sets the attributes of a value of the type `q` on the list `out`: the
+/// class `c(<q>, "r8_value")`, `r8_type`, `r8_version`, and for an enum
+/// variant `r8_variant`.
+///
+/// # Safety
+///
+/// `out` is a protected list.
+pub(crate) unsafe fn set_value_attributes(
+    out: SEXP,
+    q: &QualifiedName,
+    version: u32,
+    variant: Option<&str>,
+) {
+    unsafe {
+        let qname = q.to_string();
+        let class = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 2));
+        let qchar = mkchar(&qname);
+        SET_STRING_ELT(class, 0, qchar);
+        SET_STRING_ELT(class, 1, mkchar("r8_value"));
+        Rf_setAttrib(out, sym_class(), class);
+        let ty = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 1));
+        SET_STRING_ELT(ty, 0, qchar);
+        Rf_setAttrib(out, sym_r8_type(), ty);
+        let ver = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, 1));
+        *INTEGER(ver) = version as i32;
+        Rf_setAttrib(out, crate::rview::sym_r8_version(), ver);
+        let mut protected = 3;
+        if let Some(v) = variant {
+            let s = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 1));
+            SET_STRING_ELT(s, 0, mkchar(v));
+            Rf_setAttrib(out, sym_r8_variant(), s);
+            protected += 1;
+        }
+        Rf_unprotect(protected);
+    }
 }
 
 /// Assembles a value of the type `q` from validated fields: each field in
@@ -739,27 +772,17 @@ pub(crate) fn assemble(
             SET_VECTOR_ELT(out, k as R_xlen_t, value);
         }
         Rf_setAttrib(out, sym_names(), names);
-        let qname = q.to_string();
-        let class = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 2));
-        let qchar = mkchar(&qname);
-        SET_STRING_ELT(class, 0, qchar);
-        SET_STRING_ELT(class, 1, mkchar("r8_value"));
-        Rf_setAttrib(out, sym_class(), class);
-        let ty = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 1));
-        SET_STRING_ELT(ty, 0, qchar);
-        Rf_setAttrib(out, sym_r8_type(), ty);
-        let ver = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, 1));
-        *INTEGER(ver) = version as i32;
-        Rf_setAttrib(out, crate::rview::sym_r8_version(), ver);
-        let mut protected = 5;
-        if let Some(v) = variant {
-            let s = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 1));
-            SET_STRING_ELT(s, 0, mkchar(v));
-            Rf_setAttrib(out, sym_r8_variant(), s);
-            protected += 1;
-        }
-        let r = own(out);
-        Rf_unprotect(protected);
+        set_value_attributes(out, q, version, variant);
+        // A Rust-native type's value is the codec's state behind an ALTLIST
+        // with the same attributes (`native.rs`).
+        let r = match (def, crate::exports::codec(&q.to_string())) {
+            (TypeDef::Struct(_), Some(vt)) => {
+                let state = crate::native::from_fields(vt, out).map_err(fail)?;
+                own(crate::native::wrap(vt, state, out))
+            }
+            _ => own(out),
+        };
+        Rf_unprotect(2);
         drop(created);
         Ok(r)
     }
@@ -958,6 +981,20 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
         if !errors.is_empty() {
             return problems(&errors);
         }
+    }
+    // A Rust-native value: the codec builds the new state, and the new
+    // value keeps the other fields already read.
+    if let Some((state, vt)) = crate::native::state_of(xs) {
+        let os = unsafe { out.get() };
+        let field = unsafe { VECTOR_ELT(os, k as R_xlen_t) };
+        let new_state = crate::native::with_field(vt, state, name, field).map_err(fail)?;
+        return Ok(own(crate::native::wrap_from(
+            vt,
+            new_state,
+            os,
+            xs,
+            k as R_xlen_t,
+        )));
     }
     Ok(out)
 }

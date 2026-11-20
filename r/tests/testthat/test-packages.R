@@ -198,7 +198,90 @@ test_that("impls in C register through R8.h and dispatch", {
   expect_true("error TRUE " %in% out, info = info)
   expect_true("display Point(3, 4) " %in% out, info = info)
   expect_true("print Point(3, 4) " %in% out, info = info)
-  expect_true("again 5 10 " %in% out, info = info)
+  expect_true("again 6 10 " %in% out, info = info)
+})
+
+test_that("Rust-native values read, change, persist, and cross workers", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("mirai")
+  skip_if_not_installed("future")
+  lib <- install_test_packages()
+  rds <- tempfile(fileext = ".rds")
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages(library(r8pkgC))",
+      "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
+      "s <- Signal(name = 'a', values = c(1.5, 2, 3))",
+      "cat('native', grepl('r8 native pkgc::Signal', inspect(s)), '\\n')",
+      "v <- s$values",
+      "cat('view', grepl('r8 view', inspect(v)), grepl('in place', inspect(v)), v, '\\n')",
+      "w <- v; w[1] <- 99",
+      "cat('copy', w[1], s$values[1], '\\n')",
+      "cat('equal', R8::r8_equal(s, Signal(name = 'a', values = c(1.5, 2, 3))), '\\n')",
+      "cat('hash', R8::r8_hash(s) == R8::r8_hash(Signal(name = 'a', values = c(1.5, 2, 3))), '\\n')",
+      "r <- R8::r8_from_json(Signal, R8::to_json(s))",
+      "cat('json', grepl('r8 native', inspect(r)), R8::r8_equal(r, s), '\\n')",
+      "t <- s; t$name <- 'b'",
+      "cat('set', t$name, s$name, t$values, '\\n')",
+      "e <- tryCatch({u <- s; u$values <- 'x'}, error = function(e) 'r_type')",
+      "cat('set_error', e, '\\n')",
+      "cat('state', unlist(signal_peek(t)), '\\n')",
+      "m <- signal_make('made', 3)",
+      "cat('made', m$name, m$values, '\\n')",
+      "x <- unserialize(serialize(s, NULL))",
+      "cat('serialize', grepl('r8 native', inspect(x)), R8::r8_equal(x, s), '\\n')",
+      sprintf("saveRDS(s, %s)", deparse(rds)),
+      "cat('size', R8::r8_size(s) > 3 * 8, '\\n')",
+      "rm(s, u, v, w, r, t, m, x); invisible(gc())",
+      "cat('dropped', live_signals(), '\\n')",
+      "peak <- 0",
+      "for (i in 1:40) { y <- Signal(name = 'b', values = as.numeric(seq_len(1e6))); peak <- max(peak, live_signals()) }",
+      "cat('bounded', peak <= 9, '\\n')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("native TRUE " %in% out, info = info)
+  expect_true("view TRUE TRUE 1.5 2 3 " %in% out, info = info)
+  expect_true("copy 99 1.5 " %in% out, info = info)
+  expect_true("equal TRUE " %in% out, info = info)
+  expect_true("hash TRUE " %in% out, info = info)
+  expect_true("json TRUE TRUE " %in% out, info = info)
+  expect_true("set b a 1.5 2 3 " %in% out, info = info)
+  expect_true("set_error r_type " %in% out, info = info)
+  expect_true("state b 1.5 " %in% out, info = info)
+  expect_true("made made 0 1 2 " %in% out, info = info)
+  expect_true("serialize TRUE TRUE " %in% out, info = info)
+  expect_true("size TRUE " %in% out, info = info)
+  expect_true("dropped 0 " %in% out, info = info)
+  expect_true("bounded TRUE " %in% out, info = info)
+  # A session that reads the value before loading the codec's package.
+  out <- run_r(
+    lib,
+    c(
+      sprintf("s <- readRDS(%s)", deparse(rds)),
+      "e <- tryCatch(s$values, error = function(e) conditionMessage(e))",
+      "cat('lazy', grepl('library(r8pkgC)', e, fixed = TRUE), '\\n')",
+      "suppressPackageStartupMessages(library(r8pkgC))",
+      "cat('resolved', s$name, s$values, '\\n')",
+      "mirai::daemons(1)",
+      "m <- mirai::mirai({ library(r8pkgC); list(sum(s$values), Signal(name = 'w', values = s$values * 2)) }, s = s)[]",
+      "cat('mirai', m[[1]], m[[2]]$name, m[[2]]$values, '\\n')",
+      "invisible(mirai::daemons(0))",
+      "future::plan(future::multisession, workers = 1)",
+      "f <- future::value(future::future({ library(r8pkgC); Signal(name = 'f', values = s$values + 1) }, globals = list(s = s)))",
+      "cat('future', f$name, f$values, '\\n')",
+      "future::plan(future::sequential)"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("lazy TRUE " %in% out, info = info)
+  expect_true("resolved a 1.5 2 3 " %in% out, info = info)
+  expect_true("mirai 6.5 w 3 4 6 " %in% out, info = info)
+  expect_true("future f 2.5 3 4 " %in% out, info = info)
 })
 
 test_that("roxygen2 documents R8 declarations and the package passes check", {

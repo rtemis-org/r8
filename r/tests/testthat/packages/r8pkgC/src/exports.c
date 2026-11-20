@@ -60,8 +60,15 @@ static R8Status format_impl(const R8CallContext *ctx, const SEXP *args, size_t n
   return R8_OK;
 }
 
+// pkgc::Signal is declared in R (R/types.R) and here, identically, since a
+// codec needs a declaration in the exports' IR document.
 static const char ir_json[] =
-    "{\"$ir\":1,\"namespace\":\"pkgc\",\"impls\":["
+    "{\"$ir\":1,\"namespace\":\"pkgc\","
+    "\"types\":[{\"kind\":\"struct\",\"name\":\"Signal\",\"description\":\"\",\"version\":1,"
+    "\"fields\":[{\"name\":\"name\",\"type\":{\"kind\":\"character\"},\"description\":\"\"},"
+    "{\"name\":\"values\",\"type\":{\"kind\":\"vec\",\"element\":{\"kind\":\"double\"}},"
+    "\"description\":\"\"}]}],"
+    "\"impls\":["
     "{\"trait\":\"pkgc::Norm\",\"target\":{\"kind\":\"type\",\"name\":\"pkgc::Point\"},"
     "\"methods\":[\"magnitude\",\"ratio\"]},"
     "{\"trait\":\"R8::Display\",\"target\":{\"kind\":\"type\",\"name\":\"pkgc::Point\"},"
@@ -73,9 +80,15 @@ static const R8ImplEntry impls[] = {
     {"R8::Display", "pkgc::Point", "format", format_impl},
 };
 
+// The codec of pkgc::Signal (signal.c).
+extern const R8TypeVTable pkgc_signal_codec;
+SEXP pkgc_live_signals(void);
+SEXP pkgc_signal_peek(SEXP x);
+SEXP pkgc_signal_make(SEXP name, SEXP n);
+
 static const R8Exports exports = {
     R8_ABI_VERSION, sizeof(R8Exports), "r8pkgC", ir_json, sizeof(ir_json) - 1,
-    NULL,           0,                 impls,    sizeof(impls) / sizeof(impls[0]),
+    &pkgc_signal_codec, 1,             impls,    sizeof(impls) / sizeof(impls[0]),
 };
 
 static SEXP r8_exports(void) {
@@ -84,6 +97,9 @@ static SEXP r8_exports(void) {
 
 static const R_CallMethodDef call_methods[] = {
     {"r8_exports", (DL_FUNC) &r8_exports, 0},
+    {"pkgc_live_signals", (DL_FUNC) &pkgc_live_signals, 0},
+    {"pkgc_signal_peek", (DL_FUNC) &pkgc_signal_peek, 1},
+    {"pkgc_signal_make", (DL_FUNC) &pkgc_signal_make, 2},
     {NULL, NULL, 0},
 };
 

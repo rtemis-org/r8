@@ -455,14 +455,14 @@ pub fn read_document(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
 ) -> Result<Value, Vec<ValueError>> {
-    let doc: Value = serde_json::from_str(text).map_err(|e| {
+    let mut doc: Value = serde_json::from_str(text).map_err(|e| {
         vec![document_error(
             "document_json",
             "",
             format!("not a JSON document: {e}"),
         )]
     })?;
-    let Some(m) = doc.as_object() else {
+    let Some(m) = doc.as_object_mut() else {
         return Err(vec![document_error(
             "document_form",
             "",
@@ -483,7 +483,7 @@ pub fn read_document(
             "a document names its type in `$type`".to_string(),
         )),
     }
-    let Some(versions) = m.get("$types").and_then(Value::as_object) else {
+    let Some(versions) = m.get("$types").and_then(Value::as_object).cloned() else {
         errors.push(document_error(
             "document_form",
             "/$types",
@@ -491,9 +491,10 @@ pub fn read_document(
         ));
         return Err(errors);
     };
-    let value = match m.get("$value") {
-        Some(v) => v.clone(),
-        None => doc.clone(),
+    // The value moves out of the document: `$value`, or the document itself.
+    let value = match m.remove("$value") {
+        Some(v) => v,
+        None => doc,
     };
     let validation = validate(&value, ty, lookup);
     if !validation.is_empty() {
@@ -502,7 +503,11 @@ pub fn read_document(
     }
     let mut e = Emitter::new(lookup, String::new(), false, false);
     e.named(ty, Json::new(&value), None);
+    // One tree at a time: the source is freed before the normalized text is
+    // read.
+    drop(value);
     let normalized: Value = serde_json::from_str(&e.w.out).expect("the emitter writes JSON");
+    drop(std::mem::take(&mut e.w.out));
     for (name, current) in e.contained {
         let path = format!("/$types/{}", name.replace('~', "~0").replace('/', "~1"));
         match versions.get(&name).and_then(Value::as_u64) {

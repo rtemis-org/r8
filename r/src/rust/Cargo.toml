@@ -17,6 +17,12 @@ name = 'r8_r'
 name = 'document'
 path = 'document.rs'
 
+# `oracle`: the differential oracle that the tests compare native
+# construction with (src/oracle.rs); tools/config.R enables it when R8_ORACLE is
+# set.
+[features]
+oracle = []
+
 [dependencies]
 extendr-api = '0.9'
 extendr-ffi = '0.9'

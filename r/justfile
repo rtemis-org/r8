@@ -9,6 +9,10 @@ tarball_glob := pkg + "_*.tar.gz"
 # The rtemis-r8 crate of this checkout; tools/config.R and `rust-check` patch the
 # crates.io release with it. Every recipe exports it to the build.
 export R8_CRATES_PATH := env("R8_CRATES_PATH", canonicalize(justfile_directory() / ".." / "rust" / "crates"))
+# R8_ORACLE builds the differential oracle that test-native.R compares native
+# construction with (src/rust/src/oracle.rs); every recipe exports it. Set it to
+# the empty string for a build without the oracle, as CRAN builds are.
+export R8_ORACLE := env("R8_ORACLE", "true")
 cargo_config := "--config 'patch.crates-io.rtemis-r8.path=\"" + R8_CRATES_PATH / "rtemis-r8" + "\"'"
 
 # List available recipes
@@ -150,7 +154,7 @@ revdep:
 rust-check:
     @just _msg "─── Checking Rust code of {{ pkg }}... ───"
     # The patch rewrites the lock's rtemis-r8 entry; the committed lock keeps the crates.io release.
-    cd src/rust && cp Cargo.lock Cargo.lock.saved && (cargo fmt --check && cargo clippy --all-targets {{ cargo_config }} -- -D warnings && cargo test {{ cargo_config }}); status=$?; cp Cargo.lock.saved Cargo.lock; rm -f Cargo.lock.saved; exit $status
+    cd src/rust && cp Cargo.lock Cargo.lock.saved && (cargo fmt --check && cargo clippy --all-targets {{ cargo_config }} -- -D warnings && cargo clippy --all-targets --features oracle {{ cargo_config }} -- -D warnings && cargo test {{ cargo_config }}); status=$?; cp Cargo.lock.saved Cargo.lock; rm -f Cargo.lock.saved; exit $status
     @just _msg "Done"
 
 # Vendor Rust crates into src/rust/vendor.tar.xz, and write LICENSE.note and inst/AUTHORS

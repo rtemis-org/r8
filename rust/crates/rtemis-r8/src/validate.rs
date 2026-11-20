@@ -19,8 +19,8 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::access::{
-    Access, Codes, DATE_MAX_DAYS, DATE_MIN_DAYS, Form, Json, POSIXCT_MAX, POSIXCT_MICROS,
-    POSIXCT_MIN,
+    Access, CSC_FORM, Codes, DATE_MAX_DAYS, DATE_MIN_DAYS, Form, Json, MISSING_CODE, POSIXCT_MAX,
+    POSIXCT_MICROS, POSIXCT_MIN, csc_well_formed,
 };
 use crate::ir::{
     CharacterType, DoubleType, FieldDef, FieldType, IntegerType, RuleDef, TypeDef, VariantShape,
@@ -767,44 +767,65 @@ impl<'l> Validator<'l, '_> {
             }
         }
         let known: Vec<bool> = match declared {
-            Some(d) => f.levels.iter().map(|l| d.iter().any(|x| x == l)).collect(),
+            Some(d) => {
+                let d: HashSet<&str> = d.iter().map(String::as_str).collect();
+                f.levels.iter().map(|l| d.contains(l.as_ref())).collect()
+            }
             None => vec![true; f.levels.len()],
         };
+        let all_known = known.iter().all(|&k| k);
+        let k = f.levels.len();
+        // Codes read from another form mark a cell whose problem is among
+        // `problems` with 0; a host's code 0 is out of range.
+        let reported = matches!(f.codes, Codes::Owned(_));
         let n = f.codes.len();
-        let fast = matches!(f.codes, Codes::I32(_)) && known.iter().all(|&k| k);
-        for i in 0..n {
-            match f.codes.get(i) {
-                None if cells_optional => {}
-                None if declared.is_some() => self.error(
-                    "type_mismatch",
-                    &P::Idx(cell_base, i),
-                    "expected a level, found null".to_string(),
-                ),
-                None => self.error(
-                    "invalid_code",
-                    &P::Idx(cell_base, i),
-                    format!("a code is an integer from 1 to {}", f.levels.len()),
-                ),
-                Some(_) if fast => {}
-                Some(0) => {}
-                Some(c) => match known.get((c as usize).wrapping_sub(1)) {
-                    Some(true) => {}
-                    Some(false) => self.error(
-                        "not_a_level",
-                        &P::Idx(cell_base, i),
-                        format!(
-                            "`{}` is not one of the levels {:?}",
-                            f.levels[c as usize - 1],
-                            declared.unwrap_or_default()
-                        ),
-                    ),
-                    None => self.error(
-                        "invalid_code",
-                        &P::Idx(cell_base, i),
-                        format!("a code is an integer from 1 to {}", f.levels.len()),
-                    ),
-                },
+        let mut buf = vec![0i32; n.min(4096)];
+        let mut start = 0;
+        while start < n {
+            let got = f.codes.read(start, &mut buf);
+            if got == 0 {
+                break;
             }
+            let chunk = &buf[..got];
+            // One test per cell for the common case: every code in range
+            // and its level known.
+            let clean = chunk.iter().all(|&c| {
+                (c as u32).wrapping_sub(1) < k as u32 && (all_known || known[c as usize - 1])
+                    || (c == MISSING_CODE && cells_optional)
+            });
+            if !clean {
+                for (j, &c) in chunk.iter().enumerate() {
+                    let i = start + j;
+                    match c {
+                        MISSING_CODE if cells_optional => {}
+                        MISSING_CODE if declared.is_some() => self.error(
+                            "type_mismatch",
+                            &P::Idx(cell_base, i),
+                            "expected a level, found null".to_string(),
+                        ),
+                        0 if reported => {}
+                        c if (c as u32).wrapping_sub(1) < k as u32 => {
+                            if !known[c as usize - 1] {
+                                self.error(
+                                    "not_a_level",
+                                    &P::Idx(cell_base, i),
+                                    format!(
+                                        "`{}` is not one of the levels {:?}",
+                                        f.levels[c as usize - 1],
+                                        declared.unwrap_or_default()
+                                    ),
+                                );
+                            }
+                        }
+                        _ => self.error(
+                            "invalid_code",
+                            &P::Idx(cell_base, i),
+                            format!("a code is an integer from 1 to {k}"),
+                        ),
+                    }
+                }
+            }
+            start += got;
         }
         Some(n)
     }
@@ -881,6 +902,9 @@ impl<'l> Validator<'l, '_> {
             Ok(s) => s,
             Err(f) => return self.form(f, path),
         };
+        if !csc_well_formed(s.shape, &s.indptr, &s.indices, s.len as u64) {
+            return self.form(Form::new("sparse_form", CSC_FORM), path);
+        }
         for (i, want) in [nrow, ncol].into_iter().enumerate() {
             if let Some(w) = want
                 && s.shape[i] != u64::from(w)

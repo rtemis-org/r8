@@ -149,6 +149,24 @@ pub(crate) enum Val<'l, A> {
 /// a failure that compilation did not exclude, such as a division by zero.
 pub(crate) type Evaluated<'l, A> = Result<Result<Val<'l, A>, Absent>, String>;
 
+/// The JSON Pointer suffix of an element of a collection, relative to the
+/// collection; an array element's suffix is formatted only when shown.
+pub enum Suffix {
+    /// The element at an index of an array.
+    Index(usize),
+    /// A suffix written out, such as a map entry's.
+    Text(String),
+}
+
+impl std::fmt::Display for Suffix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Suffix::Index(i) => write!(f, "/{i}"),
+            Suffix::Text(s) => f.write_str(s),
+        }
+    }
+}
+
 /// The type of a value whose declared type is not known.
 pub(crate) static UNTYPED: FieldType = FieldType::Json;
 
@@ -274,17 +292,16 @@ pub(crate) fn read_scalar<'a, A: Access<'a>>(
             Scalar::Array(read_items(a, element, n, lookup))
         }
         FieldType::Factor { levels, ordered } => match a.factor(levels.as_deref(), *ordered) {
-            Ok(f) => Scalar::Array(
-                (0..f.codes.len())
-                    .map(|i| match f.codes.get(i) {
-                        Some(c) if c >= 1 => f
-                            .levels
-                            .get(c as usize - 1)
+            Ok(f) => {
+                let mut items = Vec::with_capacity(f.codes.len());
+                f.codes.each_in(0, f.codes.len(), |_, c| {
+                    items.push(
+                        f.level(c)
                             .map_or(Scalar::Null, |l| Scalar::Str(l.to_string())),
-                        _ => Scalar::Null,
-                    })
-                    .collect(),
-            ),
+                    );
+                });
+                Scalar::Array(items)
+            }
             Err(_) => Scalar::from_value(&a.to_value(ft, lookup)),
         },
         _ => Scalar::from_value(&a.to_value(ft, lookup)),
@@ -331,45 +348,68 @@ fn read_items<'a, A: Access<'a>>(
     lookup: &dyn TypeLookup,
 ) -> Vec<Scalar> {
     let mut out = Vec::with_capacity(n);
-    match unwrap_option(element) {
-        FieldType::Double(_) => a.each_double(n, |_, r| {
-            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::Num))
-        }),
-        FieldType::Integer(_) => a.each_integer(n, |_, r| {
-            out.push(
-                r.ok()
-                    .flatten()
-                    .map_or(Scalar::Null, |x| Scalar::Num(x as f64)),
-            )
-        }),
-        FieldType::Logical => a.each_logical(n, |_, r| {
-            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::Bool))
-        }),
-        FieldType::Character(_) => a.each_character(n, |_, r| {
-            out.push(
-                r.ok()
-                    .flatten()
-                    .map_or(Scalar::Null, |s| Scalar::Str(s.into_owned())),
-            )
-        }),
-        FieldType::Date => a.each_date(n, |_, r| {
-            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::Date))
-        }),
-        FieldType::Posixct => a.each_datetime(n, |_, r| {
-            out.push(r.ok().flatten().map_or(Scalar::Null, Scalar::DateTime))
-        }),
-        _ => {
-            for i in 0..n {
-                let x = a.item(i);
-                out.push(if x.is_absent() {
-                    Scalar::Null
-                } else {
-                    read_scalar(x, Some(element), lookup)
-                });
+    each_item(a, element, n, lookup, |x| {
+        out.push(x);
+        true
+    });
+    out
+}
+
+/// Calls `f` with items `0..n` of a sequence of `element` as scalars, in
+/// order, until `f` returns `false`. Reads blocks of 4096 items in place.
+fn each_item<'a, A: Access<'a>>(
+    a: A,
+    element: &FieldType,
+    n: usize,
+    lookup: &dyn TypeLookup,
+    mut f: impl FnMut(Scalar) -> bool,
+) {
+    const BLOCK: usize = 4096;
+    let inner = unwrap_option(element);
+    let mut go = true;
+    let mut start = 0;
+    while go && start < n {
+        let end = (start + BLOCK).min(n);
+        let mut put = |x: Scalar| {
+            if go {
+                go = f(x);
+            }
+        };
+        let or_null = |o: Option<Scalar>| o.unwrap_or(Scalar::Null);
+        match inner {
+            FieldType::Double(_) => a.each_double_in(start, end, |_, r| {
+                put(or_null(r.ok().flatten().map(Scalar::Num)))
+            }),
+            FieldType::Integer(_) => a.each_integer_in(start, end, |_, r| {
+                put(or_null(r.ok().flatten().map(|x| Scalar::Num(x as f64))))
+            }),
+            FieldType::Logical => a.each_logical_in(start, end, |_, r| {
+                put(or_null(r.ok().flatten().map(Scalar::Bool)))
+            }),
+            FieldType::Character(_) => a.each_character_in(start, end, |_, r| {
+                put(or_null(
+                    r.ok().flatten().map(|s| Scalar::Str(s.into_owned())),
+                ))
+            }),
+            FieldType::Date => a.each_date_in(start, end, |_, r| {
+                put(or_null(r.ok().flatten().map(Scalar::Date)))
+            }),
+            FieldType::Posixct => a.each_datetime_in(start, end, |_, r| {
+                put(or_null(r.ok().flatten().map(Scalar::DateTime)))
+            }),
+            _ => {
+                for i in start..end {
+                    let x = a.item(i);
+                    put(if x.is_absent() {
+                        Scalar::Null
+                    } else {
+                        read_scalar(x, Some(element), lookup)
+                    });
+                }
             }
         }
+        start = end;
     }
-    out
 }
 
 /// A value of the JSON host form without a declared type: a factor's
@@ -762,6 +802,25 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     self.lookup,
                 ))))
             }
+            (Op::Subset, [Val::R(a, Some(ft)), set]) => {
+                let FieldType::Vec { element, .. } = unwrap_option(ft) else {
+                    return None;
+                };
+                let set = match set {
+                    Val::V(s) => s.clone(),
+                    Val::R(x, t) => read_scalar(*x, *t, self.lookup),
+                };
+                let Scalar::Array(set) = set else {
+                    return None;
+                };
+                let n = a.vec(element).ok()?;
+                let mut all = true;
+                each_item(*a, element, n, self.lookup, |x| {
+                    all = set.iter().any(|y| scalar_eq(&x, y));
+                    all
+                });
+                Some(Ok(Scalar::Bool(all)))
+            }
             (Op::NonIncreasing | Op::NonDecreasing, [Val::R(a, Some(ft))]) => {
                 let FieldType::Vec { element, .. } = unwrap_option(ft) else {
                     return None;
@@ -845,7 +904,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         &self,
         c: Val<'l, A>,
         kind: Collection,
-        f: &mut dyn FnMut(String, (A, Option<&'l FieldType>)) -> Result<bool, String>,
+        f: &mut dyn FnMut(Suffix, (A, Option<&'l FieldType>)) -> Result<bool, String>,
     ) -> Result<(), String> {
         let (a, ty) = match c {
             Val::R(a, ty) => (a, ty.map(unwrap_option)),
@@ -867,7 +926,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 .vec(element.unwrap_or(&UNTYPED))
                 .map_err(|_| "the value is not a collection".to_string())?;
             for i in 0..n {
-                if !f(format!("/{i}"), (a.item(i), element))? {
+                if !f(Suffix::Index(i), (a.item(i), element))? {
                     break;
                 }
             }
@@ -892,7 +951,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 } else {
                     format!("/{}", k.replace('~', "~0").replace('/', "~1"))
                 };
-                entries.push((suffix, x));
+                entries.push((Suffix::Text(suffix), x));
             }
         });
         for (suffix, x) in entries {
@@ -929,14 +988,27 @@ fn contains<'a, A: Access<'a>>(
                     .iter()
                     .any(|&v| v != i32::MIN && f64::from(v) == *x);
             }
-            read_items(a, element, n, lookup)
-                .iter()
-                .any(|i| scalar_eq(i, needle))
+            found_in(a, element, n, needle, lookup)
         }
-        _ => read_items(a, element, n, lookup)
-            .iter()
-            .any(|i| scalar_eq(i, needle)),
+        _ => found_in(a, element, n, needle, lookup),
     }
+}
+
+/// Whether items `0..n` of a vector hold `needle`, read in blocks until the
+/// first match.
+fn found_in<'a, A: Access<'a>>(
+    a: A,
+    element: &FieldType,
+    n: usize,
+    needle: &Scalar,
+    lookup: &dyn TypeLookup,
+) -> bool {
+    let mut found = false;
+    each_item(a, element, n, lookup, |x| {
+        found = scalar_eq(&x, needle);
+        !found
+    });
+    found
 }
 
 /// Whether items `0..n` of a vector are in order, scanning doubles in

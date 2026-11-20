@@ -12,7 +12,7 @@
 
 use std::borrow::Cow;
 
-use crate::access::{Access, Json, Read};
+use crate::access::{Access, Json, Read, same_dimnames};
 use crate::emit::Emitter;
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use crate::name::QualifiedName;
@@ -227,24 +227,61 @@ impl Eq<'_> {
         if y.codes.len() != n {
             return false;
         }
-        if x.levels == y.levels {
-            if let (crate::access::Codes::I32(p), crate::access::Codes::I32(q)) =
-                (&x.codes, &y.codes)
-            {
-                return p == q;
-            }
-            return (0..n).all(|i| x.codes.get(i) == y.codes.get(i));
-        }
-        if declared.is_none() {
+        // With the same levels, the codes compare as they are. With other
+        // levels of a declared set, each of x's codes translates through one
+        // table to y's code of the same level, 0 for a level y lacks.
+        let map: Option<Vec<i32>> = if x.levels == y.levels {
+            None
+        } else if declared.is_none() {
             return false;
-        }
-        let label = |f: &crate::access::Factor<'_>, i: usize| -> Option<String> {
-            let c = f.codes.get(i)?;
-            f.levels
-                .get((c as usize).checked_sub(1)?)
-                .map(|l| l.to_string())
+        } else {
+            let index: std::collections::HashMap<&str, i32> = y
+                .levels
+                .iter()
+                .enumerate()
+                .map(|(k, l)| (l.as_ref(), k as i32 + 1))
+                .collect();
+            Some(
+                x.levels
+                    .iter()
+                    .map(|l| index.get(l.as_ref()).copied().unwrap_or(0))
+                    .collect(),
+            )
         };
-        (0..n).all(|i| label(&x, i) == label(&y, i))
+        if map.is_none()
+            && let (Some(p), Some(q)) = (x.codes.slice(), y.codes.slice())
+        {
+            return p == q;
+        }
+        // A code outside its levels reads as missing, as a lookup of its
+        // level does.
+        let norm = |c: i32, k: usize| -> Option<i32> {
+            ((c as u32).wrapping_sub(1) < k as u32).then_some(c)
+        };
+        let (kx, ky) = (x.levels.len(), y.levels.len());
+        let mut bx = vec![0i32; n.min(4096)];
+        let mut by = vec![0i32; n.min(4096)];
+        let mut start = 0;
+        while start < n {
+            let got = x.codes.read(start, &mut bx);
+            if got == 0 || y.codes.read(start, &mut by) != got {
+                return false;
+            }
+            let same = bx[..got].iter().zip(&by[..got]).all(|(&a, &b)| {
+                let a = norm(a, kx);
+                let b = norm(b, ky);
+                match (&map, a) {
+                    (None, _) => a == b,
+                    (Some(_), None) => b.is_none(),
+                    (Some(m), Some(c)) => m[c as usize - 1] != 0 && Some(m[c as usize - 1]) == b,
+                }
+            });
+            if !same {
+                return false;
+            }
+            start += got;
+        }
+        true
     }
 
     /// Two sparse matrices: shape, structure, and stored values.
@@ -253,8 +290,8 @@ impl Eq<'_> {
             (Ok(x), Ok(y)) => {
                 x.shape == y.shape
                     && x.len == y.len
-                    && x.indptr == y.indptr
-                    && x.indices == y.indices
+                    && x.indptr.same(&y.indptr)
+                    && x.indices.same(&y.indices)
                     && self.sequence(element, x.data, y.data, x.len)
             }
             _ => false,
@@ -327,7 +364,7 @@ impl Eq<'_> {
         match (a.dense(element), b.dense(element)) {
             (Ok(x), Ok(y)) => {
                 x.shape == y.shape
-                    && x.dimnames == y.dimnames
+                    && same_dimnames(&x.dimnames, &y.dimnames)
                     && x.len == y.len
                     && self.sequence(element, x.data, y.data, x.len)
             }

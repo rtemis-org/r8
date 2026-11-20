@@ -44,7 +44,7 @@ $(STATLIB):
 	# Static library.
 	export CARGO_HOME=$(CARGOTMP) && \
 	export LIBRARY_PATH="$(LIBRARY_PATH);$(CURDIR)/$(TARGET_DIR)/libgcc_mock" && \
-	RUSTFLAGS="$(RUSTFLAGS) --print=native-static-libs" cargo build @CRAN_FLAGS@ @CARGO_CONFIG@ --target=$(TARGET) --lib @PROFILE@ --manifest-path=rust/Cargo.toml --target-dir=$(TARGET_DIR); \
+	RUSTFLAGS="$(RUSTFLAGS) --print=native-static-libs" cargo build @CRAN_FLAGS@ @CARGO_CONFIG@ @FEATURES@ --target=$(TARGET) --lib @PROFILE@ --manifest-path=rust/Cargo.toml --target-dir=$(TARGET_DIR); \
 	status=$$?; @RESTORE_LOCK@ exit $$status
 
 	# R/extendr-wrappers.R, in development builds (NOT_CRAN or DEBUG set). CRAN builds

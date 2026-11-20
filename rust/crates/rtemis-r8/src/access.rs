@@ -63,19 +63,90 @@ impl Form {
 /// A read from a host form.
 pub type Read<T> = Result<T, Form>;
 
-/// The names of each dimension of a matrix or array, `None` for a dimension
-/// without names.
-pub type Dimnames<'a> = Vec<Option<Vec<Cow<'a, str>>>>;
+/// The names of a dense matrix's or array's dimensions: per dimension, a
+/// handle over its names, or `None` for a dimension without names.
+pub type Dimnames<A> = Vec<Option<Names<A>>>;
+
+/// A sequence handle over the names of one dimension, and their number,
+/// read in place; a missing name reads as `NA`.
+pub struct Names<A> {
+    /// A sequence handle over strings.
+    pub seq: A,
+    /// The number of names.
+    pub len: usize,
+}
+
+impl<'a, A: Access<'a>> Names<A> {
+    /// Calls `f` with consecutive blocks of at most 4096 names, in order.
+    pub fn each_block(&self, mut f: impl FnMut(&[Cow<'a, str>])) {
+        let mut buf: Vec<Cow<'a, str>> = Vec::with_capacity(self.len.min(BLOCK));
+        let mut start = 0;
+        while start < self.len {
+            let end = (start + BLOCK).min(self.len);
+            buf.clear();
+            self.seq.each_character_in(start, end, |_, r| {
+                buf.push(match r {
+                    Ok(Some(s)) => s,
+                    _ => Cow::Borrowed("NA"),
+                })
+            });
+            f(&buf);
+            start = end;
+        }
+    }
+
+    /// Whether two sequences hold the same names.
+    pub fn same<B: Access<'a>>(&self, other: &Names<B>) -> bool {
+        if self.len != other.len {
+            return false;
+        }
+        let mut start = 0;
+        let mut same = true;
+        self.each_block(|a| {
+            if same {
+                let end = start + a.len();
+                let mut k = 0;
+                other.seq.each_character_in(start, end, |_, r| {
+                    let b = match &r {
+                        Ok(Some(s)) => s.as_ref(),
+                        _ => "NA",
+                    };
+                    same &= a[k] == b;
+                    k += 1;
+                });
+                start = end;
+            }
+        });
+        same
+    }
+}
+
+/// Whether two matrices' dimension names are the same: equal in number, and
+/// per dimension both absent or the same names.
+pub fn same_dimnames<'a, A: Access<'a>>(x: &Option<Dimnames<A>>, y: &Option<Dimnames<A>>) -> bool {
+    match (x, y) {
+        (None, None) => true,
+        (Some(x), Some(y)) => {
+            x.len() == y.len()
+                && x.iter().zip(y).all(|(a, b)| match (a, b) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => a.same(b),
+                    _ => false,
+                })
+        }
+        _ => false,
+    }
+}
 
 /// A dense matrix or array: its shape and a sequence handle over its values
 /// in column-major order.
-pub struct Dense<'a, A> {
+pub struct Dense<A> {
     /// The extent of each dimension.
     pub shape: Vec<u64>,
     /// A sequence handle over the values.
     pub data: A,
     /// The names of the dimensions, when the matrix has them.
-    pub dimnames: Option<Dimnames<'a>>,
+    pub dimnames: Option<Dimnames<A>>,
     /// The number of values `data` holds.
     pub len: usize,
     /// Problems with the host form that leave the data readable.
@@ -93,10 +164,103 @@ pub struct Sparse<A> {
     /// The number of stored values.
     pub len: usize,
     /// The `ncol + 1` offsets of the columns' values.
-    pub indptr: Vec<u64>,
+    pub indptr: Indices<A>,
     /// The row index of each value.
-    pub indices: Vec<u64>,
+    pub indices: Indices<A>,
 }
+
+/// A sequence handle over the offsets or the row indices of a sparse
+/// matrix, and their number. The validator checks the compressed sparse
+/// column structure with [`csc_well_formed`]; an item that is not a
+/// non-negative whole number reads as [`INVALID_INDEX`].
+pub struct Indices<A> {
+    /// A sequence handle over whole numbers.
+    pub seq: A,
+    /// The number of items.
+    pub len: usize,
+}
+
+/// The message of the `sparse_form` problem that [`csc_well_formed`]
+/// detects.
+pub const CSC_FORM: &str = "compressed sparse column form: `indptr` has ncol + 1 non-decreasing offsets from 0 to the number of values, and each column's row `indices` increase and lie below nrow";
+
+/// The value read for an item of [`Indices`] that is not a non-negative
+/// whole number.
+pub const INVALID_INDEX: u64 = u64::MAX;
+
+impl<'a, A: Access<'a>> Indices<A> {
+    /// The number of items.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether the sequence has no items.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Calls `f` with each item of `start..end`, in order.
+    pub fn each_in(&self, start: usize, end: usize, mut f: impl FnMut(usize, u64)) {
+        if let Some(s) = self.seq.i32_slice() {
+            for (k, &x) in s[start..end].iter().enumerate() {
+                f(start + k, u64::try_from(x).unwrap_or(INVALID_INDEX));
+            }
+            return;
+        }
+        self.seq.each_integer_in(start, end, |i, r| {
+            f(
+                i,
+                match r {
+                    Ok(Some(x)) => u64::try_from(x).unwrap_or(INVALID_INDEX),
+                    _ => INVALID_INDEX,
+                },
+            )
+        });
+    }
+
+    /// Reads items `start..start + buf.len()` into `buf`, and returns how
+    /// many it read.
+    pub fn read(&self, start: usize, buf: &mut [u64]) -> usize {
+        let end = (start + buf.len()).min(self.len);
+        self.each_in(start, end, |i, x| buf[i - start] = x);
+        end.saturating_sub(start)
+    }
+
+    /// Calls `f` with consecutive blocks of at most 4096 items, in order.
+    pub fn each_block(&self, mut f: impl FnMut(&[u64])) {
+        let mut buf = vec![0u64; self.len.min(BLOCK)];
+        let mut start = 0;
+        while start < self.len {
+            let got = self.read(start, &mut buf);
+            if got == 0 {
+                break;
+            }
+            f(&buf[..got]);
+            start += got;
+        }
+    }
+
+    /// Whether two sequences hold the same items.
+    pub fn same<B: Access<'a>>(&self, other: &Indices<B>) -> bool {
+        if self.len != other.len {
+            return false;
+        }
+        let mut b = vec![0u64; self.len.min(BLOCK)];
+        let mut start = 0;
+        let mut same = true;
+        self.each_block(|a| {
+            if same {
+                other.read(start, &mut b[..a.len()]);
+                same = a == &b[..a.len()];
+                start += a.len();
+            }
+        });
+        same
+    }
+}
+
+/// The number of items a reader of [`Indices`] holds at once.
+const BLOCK: usize = 4096;
 
 /// A table: its number of rows and its columns, each a sequence handle over
 /// the column's cells, in the host's order.
@@ -109,20 +273,26 @@ pub struct Table<'a, A> {
     pub problems: Vec<Form>,
 }
 
-/// The 1-based codes of a factor.
-pub enum Codes<'a> {
-    /// R's integer codes, `i32::MIN` for a missing cell.
-    I32(&'a [i32]),
-    /// Codes read from another form, `None` for a missing cell and 0 for a
-    /// cell whose problem is among the factor's `problems`.
-    Owned(Vec<Option<u32>>),
+/// The 1-based codes of a factor: `i32::MIN` for a missing cell, and, in
+/// codes read from another form, 0 for a cell whose problem is among the
+/// factor's `problems`. The validator checks that every other code lies in
+/// `1..=levels.len()`; readers of an unvalidated value check each lookup.
+pub enum Codes<A> {
+    /// A sequence handle over the host's integer codes, and their number,
+    /// read in place by `each_in()`.
+    Host(A, usize),
+    /// Codes read from another form.
+    Owned(Vec<i32>),
 }
 
-impl Codes<'_> {
+/// The marker of a missing cell among a factor's codes.
+pub const MISSING_CODE: i32 = i32::MIN;
+
+impl<'a, A: Access<'a>> Codes<A> {
     /// The number of cells.
     pub fn len(&self) -> usize {
         match self {
-            Codes::I32(s) => s.len(),
+            Codes::Host(_, n) => *n,
             Codes::Owned(v) => v.len(),
         }
     }
@@ -132,23 +302,68 @@ impl Codes<'_> {
         self.len() == 0
     }
 
-    /// The code of cell `i`, `None` for a missing cell.
-    pub fn get(&self, i: usize) -> Option<u32> {
+    /// The codes as one array, where the host holds them as one.
+    pub fn slice<'s>(&'s self) -> Option<&'s [i32]>
+    where
+        'a: 's,
+    {
         match self {
-            Codes::I32(s) => (s[i] != i32::MIN).then_some(s[i] as u32),
-            Codes::Owned(v) => v[i],
+            Codes::Host(a, _) => a.i32_slice(),
+            Codes::Owned(v) => Some(v),
         }
+    }
+
+    /// Calls `f` with the code of each cell of `start..end`, in order.
+    pub fn each_in(&self, start: usize, end: usize, mut f: impl FnMut(usize, i32)) {
+        if let Some(s) = self.slice() {
+            for (k, &c) in s[start..end].iter().enumerate() {
+                f(start + k, c);
+            }
+            return;
+        }
+        if let Codes::Host(a, _) = self {
+            a.each_integer_in(start, end, |i, r| {
+                f(
+                    i,
+                    match r {
+                        Ok(Some(v)) => i32::try_from(v).unwrap_or(0),
+                        Ok(None) => MISSING_CODE,
+                        Err(_) => 0,
+                    },
+                )
+            });
+        }
+    }
+
+    /// Reads the codes of cells `start..start + buf.len()` into `buf`, and
+    /// returns how many it read.
+    pub fn read(&self, start: usize, buf: &mut [i32]) -> usize {
+        let end = (start + buf.len()).min(self.len());
+        self.each_in(start, end, |i, c| buf[i - start] = c);
+        end.saturating_sub(start)
     }
 }
 
 /// A factor: its levels and the code of each cell.
-pub struct Factor<'a> {
+pub struct Factor<'a, A> {
     /// The levels, in order.
     pub levels: Vec<Cow<'a, str>>,
     /// The code of each cell.
-    pub codes: Codes<'a>,
+    pub codes: Codes<A>,
     /// Problems with the host form that leave the other cells readable.
     pub problems: Vec<Form>,
+}
+
+impl<A> Factor<'_, A> {
+    /// The level of code `c`, `None` for a missing cell or a code outside
+    /// the levels.
+    pub fn level(&self, c: i32) -> Option<&str> {
+        usize::try_from(c)
+            .ok()
+            .and_then(|c| c.checked_sub(1))
+            .and_then(|k| self.levels.get(k))
+            .map(|l| l.as_ref())
+    }
 }
 
 /// A read-only view of a value in one host form.
@@ -346,9 +561,9 @@ pub trait Access<'a>: Copy + 'a {
 
     /// A factor; `declared` holds the levels its type declares, and
     /// `ordered` whether it is an ordered factor.
-    fn factor(self, declared: Option<&[String]>, ordered: bool) -> Read<Factor<'a>>;
+    fn factor(self, declared: Option<&[String]>, ordered: bool) -> Read<Factor<'a, Self>>;
     /// A matrix or an array of `element`.
-    fn dense(self, element: &FieldType) -> Read<Dense<'a, Self>>;
+    fn dense(self, element: &FieldType) -> Read<Dense<Self>>;
     /// A sparse matrix of `element`.
     fn sparse(self, element: &FieldType) -> Read<Sparse<Self>>;
     /// A table whose type declares `columns`; `open` admits other columns.
@@ -516,17 +731,57 @@ pub fn valid_base64(s: &str) -> bool {
 }
 
 /// Whether compressed sparse column offsets and row indices describe a
-/// matrix of `shape` with `nnz` stored values.
-pub fn csc_well_formed(shape: [u64; 2], indptr: &[u64], indices: &[u64], nnz: u64) -> bool {
-    indptr.len() as u64 == shape[1] + 1
-        && indptr.first() == Some(&0)
-        && indptr.last() == Some(&nnz)
-        && indptr.windows(2).all(|w| w[0] <= w[1])
-        && indices.len() as u64 == nnz
-        && indptr.windows(2).all(|w| {
-            let col = &indices[w[0] as usize..w[1] as usize];
-            col.iter().all(|&r| r < shape[0]) && col.windows(2).all(|p| p[0] < p[1])
-        })
+/// matrix of `shape` with `nnz` stored values: `ncol + 1` non-decreasing
+/// offsets from 0 to `nnz`, and within each column, row indices that
+/// increase and lie below `nrow`. Reads both sequences once, in blocks.
+pub fn csc_well_formed<'a, A: Access<'a>>(
+    shape: [u64; 2],
+    indptr: &Indices<A>,
+    indices: &Indices<A>,
+    nnz: u64,
+) -> bool {
+    if indptr.len() as u64 != shape[1].saturating_add(1) || indices.len() as u64 != nnz {
+        return false;
+    }
+    let mut rows = vec![0u64; indices.len().min(BLOCK)];
+    // `rows` holds the items `held..held + got` of `indices`.
+    let (mut held, mut got) = (0usize, 0usize);
+    let mut pos = 0usize;
+    let mut prev: Option<u64> = None;
+    let mut ok = true;
+    indptr.each_block(|block| {
+        for &p in block {
+            if !ok {
+                return;
+            }
+            match prev {
+                None if p != 0 => ok = false,
+                Some(q) if p < q || p > nnz => ok = false,
+                _ => {
+                    let mut last: Option<u64> = None;
+                    while (pos as u64) < p {
+                        if pos >= held + got {
+                            held = pos;
+                            got = indices.read(pos, &mut rows);
+                            if got == 0 {
+                                ok = false;
+                                return;
+                            }
+                        }
+                        let r = rows[pos - held];
+                        if r >= shape[0] || last.is_some_and(|l| r <= l) {
+                            ok = false;
+                            return;
+                        }
+                        last = Some(r);
+                        pos += 1;
+                    }
+                }
+            }
+            prev = Some(p);
+        }
+    });
+    ok && prev == Some(nnz)
 }
 
 /// The bytes of canonical padded base64 text, which [`valid_base64`] has
@@ -789,7 +1044,7 @@ impl<'a> Access<'a> for Json<'a> {
         }
     }
 
-    fn factor(self, declared: Option<&[String]>, _ordered: bool) -> Read<Factor<'a>> {
+    fn factor(self, declared: Option<&[String]>, _ordered: bool) -> Read<Factor<'a, Self>> {
         let form = || {
             Form::new(
                 "factor_form",
@@ -799,26 +1054,25 @@ impl<'a> Access<'a> for Json<'a> {
         match (declared, self.val()) {
             (Some(_), Some(Value::Array(items))) => {
                 let mut levels: Vec<Cow<'a, str>> = Vec::new();
+                let mut index: std::collections::HashMap<&'a str, i32> =
+                    std::collections::HashMap::new();
                 let mut codes = Vec::with_capacity(items.len());
                 let mut problems = Vec::new();
                 for (i, x) in items.iter().enumerate() {
                     match x {
-                        Value::Null => codes.push(None),
+                        Value::Null => codes.push(MISSING_CODE),
                         Value::String(s) => {
-                            let k = match levels.iter().position(|l| l == s) {
-                                Some(k) => k,
-                                None => {
-                                    levels.push(Cow::Borrowed(s.as_str()));
-                                    levels.len() - 1
-                                }
-                            };
-                            codes.push(Some(k as u32 + 1));
+                            let code = *index.entry(s.as_str()).or_insert_with(|| {
+                                levels.push(Cow::Borrowed(s.as_str()));
+                                levels.len() as i32
+                            });
+                            codes.push(code);
                         }
                         other => {
                             problems.push(
                                 Form::mismatch("a level", json_kind(other)).at(format!("/{i}")),
                             );
-                            codes.push(Some(0));
+                            codes.push(0);
                         }
                     }
                 }
@@ -855,8 +1109,8 @@ impl<'a> Access<'a> for Json<'a> {
                 let mut out = Vec::with_capacity(codes.len());
                 for (i, c) in codes.iter().enumerate() {
                     match c.as_u64() {
-                        Some(k) if k >= 1 && (k as usize) <= lv.len() => out.push(Some(k as u32)),
-                        _ if c.is_null() => out.push(None),
+                        Some(k) if k >= 1 && (k as usize) <= lv.len() => out.push(k as i32),
+                        _ if c.is_null() => out.push(MISSING_CODE),
                         _ => {
                             problems.push(
                                 Form::new(
@@ -865,7 +1119,7 @@ impl<'a> Access<'a> for Json<'a> {
                                 )
                                 .at(format!("/codes/{i}")),
                             );
-                            out.push(Some(0));
+                            out.push(0);
                         }
                     }
                 }
@@ -883,7 +1137,7 @@ impl<'a> Access<'a> for Json<'a> {
         }
     }
 
-    fn dense(self, _element: &FieldType) -> Read<Dense<'a, Self>> {
+    fn dense(self, _element: &FieldType) -> Read<Dense<Self>> {
         let m = self
             .val()
             .and_then(Value::as_object)
@@ -934,10 +1188,9 @@ impl<'a> Access<'a> for Json<'a> {
         let dimnames = m.get("dimnames").and_then(Value::as_array).map(|d| {
             d.iter()
                 .map(|names| {
-                    names.as_array().map(|a| {
-                        a.iter()
-                            .map(|x| Cow::Borrowed(x.as_str().unwrap_or_default()))
-                            .collect()
+                    names.as_array().map(|a| Names {
+                        seq: Json::V(names),
+                        len: a.len(),
                     })
                 })
                 .collect()
@@ -973,29 +1226,28 @@ impl<'a> Access<'a> for Json<'a> {
             );
         }
         let shape = [shape[0], shape[1]];
-        let (Some(indptr), Some(indices), Some(data)) = (
-            ints("indptr"),
-            ints("indices"),
-            m.get("data").filter(|d| d.is_array()),
-        ) else {
+        let array = |k: &str| m.get(k).filter(|d| d.is_array());
+        let (Some(indptr), Some(indices), Some(data)) =
+            (array("indptr"), array("indices"), array("data"))
+        else {
             return Err(Form::new(
                 "sparse_form",
                 "a sparse matrix holds `shape`, `indptr`, `indices`, and `data`",
             ));
         };
-        let nnz = data.as_array().map_or(0, Vec::len);
-        if !csc_well_formed(shape, &indptr, &indices, nnz as u64) {
-            return Err(Form::new(
-                "sparse_form",
-                "compressed sparse column form: `indptr` has ncol + 1 non-decreasing offsets from 0 to the number of values, and each column's row `indices` increase and lie below nrow",
-            ));
-        }
+        let len = |v: &Value| v.as_array().map_or(0, Vec::len);
         Ok(Sparse {
             shape,
             data: Json::V(data),
-            len: nnz,
-            indptr,
-            indices,
+            len: len(data),
+            indptr: Indices {
+                seq: Json::V(indptr),
+                len: len(indptr),
+            },
+            indices: Indices {
+                seq: Json::V(indices),
+                len: len(indices),
+            },
         })
     }
 

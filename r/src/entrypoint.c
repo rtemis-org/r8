@@ -1,6 +1,7 @@
 // R8.h is included so that every build compiles the C interface against
 // R's own headers.
 #include <R8.h>
+#include <R_ext/Rdynload.h>
 
 // R calls R_init_R8 when it loads the package. Forwarding the call to
 // the Rust registration routine references the static library, so the linker
@@ -12,10 +13,28 @@ void register_extendr_panic_hook(void);
 // The attribute reads of attrib.c, passed to the Rust code as pointers.
 R_xlen_t r8_attrib_count(SEXP x);
 SEXP r8_attrib_raw(SEXP x, SEXP name);
-void r8_set_attrib_functions(void *count, void *raw);
+SEXP r8_payload(SEXP x);
+void r8_set_attrib_functions(void *count, void *raw, void *payload);
 
-void R_init_R8(void *dll) {
+// Rust-native values (native.c) and the views and API table of R8Api
+// (view.c).
+void r8_init_native(DllInfo *dll);
+void r8_init_views(DllInfo *dll);
+void r8_register_api(void);
+SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
+                    R_xlen_t skip);
+const void *r8_native_state(SEXP x, const R8TypeVTable **vt);
+SEXP r8_native_parts(SEXP x);
+SEXP r8_native_memory(void);
+void r8_set_native_functions(void *wrap, void *state, void *parts, void *memory);
+
+void R_init_R8(DllInfo *dll) {
     register_extendr_panic_hook();
-    r8_set_attrib_functions((void *) r8_attrib_count, (void *) r8_attrib_raw);
+    r8_set_attrib_functions((void *) r8_attrib_count, (void *) r8_attrib_raw, (void *) r8_payload);
+    r8_set_native_functions((void *) r8_native_wrap, (void *) r8_native_state,
+                            (void *) r8_native_parts, (void *) r8_native_memory);
+    r8_init_native(dll);
+    r8_init_views(dll);
+    r8_register_api();
     R_init_R8_extendr(dll);
 }

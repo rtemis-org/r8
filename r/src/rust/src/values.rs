@@ -24,12 +24,12 @@ use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text, rea
 use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
-use rtemis_r8::validate::{ValueError, validate};
+use rtemis_r8::validate::ValueError;
 use serde_json::{Map, Value};
 
 use crate::declare::registry;
 
-fn fail(message: impl Into<String>) -> Error {
+pub(crate) fn fail(message: impl Into<String>) -> Error {
     Error::Other(message.into())
 }
 
@@ -60,11 +60,12 @@ fn number(x: f64) -> Value {
 
 // ------------------------------------------------------------------ encode
 
-struct Encoder<'a> {
-    lookup: &'a dyn TypeLookup,
-    errors: Vec<ValueError>,
+pub(crate) struct Encoder<'a> {
+    pub(crate) lookup: &'a dyn TypeLookup,
+    pub(crate) errors: Vec<ValueError>,
     /// The paths of runtime-only fields that hold a value.
-    runtime: Vec<String>,
+    #[cfg_attr(not(feature = "oracle"), allow(dead_code))]
+    pub(crate) runtime: Vec<String>,
 }
 
 impl Encoder<'_> {
@@ -318,7 +319,7 @@ impl Encoder<'_> {
         }
     }
 
-    fn value(&mut self, x: &Robj, ft: &FieldType, path: &str) -> Value {
+    pub(crate) fn value(&mut self, x: &Robj, ft: &FieldType, path: &str) -> Value {
         match ft {
             FieldType::Option { inner, .. } => {
                 if x.is_null() {
@@ -486,23 +487,33 @@ impl Encoder<'_> {
         }
         let lv: Vec<String> = lv.into_iter().map(Option::unwrap).collect();
         let codes = x.as_integer_slice().unwrap_or_default();
+        let k = lv.len();
+        // A code outside 1..=k has no JSON form; the encoder reports it at
+        // the path where the validator of the native form reports it.
+        let cell_base = match levels {
+            Some(_) => path.to_string(),
+            None => format!("{path}/codes"),
+        };
+        let mut cells = Vec::with_capacity(codes.len());
+        for (i, &c) in codes.iter().enumerate() {
+            cells.push(if c == i32::MIN {
+                Value::Null
+            } else if (c as u32).wrapping_sub(1) < k as u32 {
+                match levels {
+                    Some(_) => Value::from(lv[(c - 1) as usize].as_str()),
+                    None => Value::from(c),
+                }
+            } else {
+                self.err(
+                    "invalid_code",
+                    &format!("{cell_base}/{i}"),
+                    format!("a code is an integer from 1 to {k}"),
+                )
+            });
+        }
         match levels {
-            Some(_) => Value::Array(
-                codes
-                    .iter()
-                    .map(|&c| {
-                        if c == i32::MIN {
-                            Value::Null
-                        } else {
-                            Value::from(lv[(c - 1) as usize].as_str())
-                        }
-                    })
-                    .collect(),
-            ),
-            None => serde_json::json!({
-                "levels": lv,
-                "codes": codes.iter().map(|&c| if c == i32::MIN { Value::Null } else { Value::from(c) }).collect::<Vec<_>>()
-            }),
+            Some(_) => Value::Array(cells),
+            None => serde_json::json!({ "levels": lv, "codes": cells }),
         }
     }
 
@@ -831,8 +842,8 @@ fn infer_column(col: &Robj) -> Option<FieldType> {
 
 // ------------------------------------------------------------------ decode
 
-struct Decoder<'a> {
-    lookup: &'a dyn TypeLookup,
+pub(crate) struct Decoder<'a> {
+    pub(crate) lookup: &'a dyn TypeLookup,
 }
 
 fn na_logical() -> Rbool {
@@ -1148,7 +1159,12 @@ impl Decoder<'_> {
     }
 
     /// An R8 value of a named type; `original` supplies runtime-only fields.
-    fn named(&self, v: &Value, name: &QualifiedName, original: Option<&Robj>) -> Result<Robj> {
+    pub(crate) fn named(
+        &self,
+        v: &Value,
+        name: &QualifiedName,
+        original: Option<&Robj>,
+    ) -> Result<Robj> {
         let def = self
             .lookup
             .find(name)
@@ -1244,7 +1260,7 @@ pub(crate) fn decode_field(v: &Value, ft: &FieldType, lookup: &dyn TypeLookup) -
     Decoder { lookup }.value(v, ft)
 }
 
-fn errors_list(errors: &[ValueError]) -> List {
+pub(crate) fn errors_list(errors: &[ValueError]) -> List {
     let code: Vec<String> = errors.iter().map(|e| e.code.to_string()).collect();
     let path: Vec<String> = errors.iter().map(|e| e.path.clone()).collect();
     let rule: Vec<String> = errors
@@ -1253,40 +1269,6 @@ fn errors_list(errors: &[ValueError]) -> List {
         .collect();
     let message: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
     list!(code = code, path = path, rule = rule, message = message)
-}
-
-/// Encodes an R value of a named type to its JSON form and validates it.
-fn encode_and_validate(
-    x: &Robj,
-    name: &QualifiedName,
-    docs: &DocumentSet,
-) -> std::result::Result<Value, Vec<ValueError>> {
-    encode_with_runtime(x, name, docs).map(|(v, _)| v)
-}
-
-/// Encodes and validates, also returning the paths of runtime-only fields
-/// that hold a value.
-fn encode_with_runtime(
-    x: &Robj,
-    name: &QualifiedName,
-    docs: &DocumentSet,
-) -> std::result::Result<(Value, Vec<String>), Vec<ValueError>> {
-    let mut enc = Encoder {
-        lookup: docs,
-        errors: Vec::new(),
-        runtime: Vec::new(),
-    };
-    let ft = FieldType::Named { name: name.clone() };
-    let v = enc.value(x, &ft, "");
-    if !enc.errors.is_empty() {
-        return Err(enc.errors);
-    }
-    let errors = validate(&v, name, docs);
-    if errors.is_empty() {
-        Ok((v, enc.runtime))
-    } else {
-        Err(errors)
-    }
 }
 
 /// The identity of an R8 value: the canonical text of its normalized form,
@@ -1372,68 +1354,6 @@ fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::MutexGuard<'static, 
     Ok((q, docs))
 }
 
-/// The reference construction, through the JSON form: the fields are
-/// encoded to JSON, validated, normalized (an absent field takes its
-/// default), and decoded. The differential test compares `r8_new_value()`
-/// with it.
-///
-/// Returns `list(value = <R8 value>)` or `list(errors = <problems>)`.
-///
-/// @param fields List: The fields, by name.
-/// @param type_name Character: The qualified type name.
-/// @param variant Character: The enum variant, or `""` for a struct.
-/// @return List: The value or the problems.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<List> {
-    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    let mut input = fields.duplicate();
-    input.set_class([type_name, "r8_value"])?;
-    input.set_attrib("r8_type", type_name)?;
-    if !variant.is_empty() {
-        input.set_attrib("r8_variant", variant)?;
-    }
-    match encode_and_validate(&input, &q, &docs)
-        .and_then(|v| rtemis_r8::codec::normalize(&v, &q, &docs))
-    {
-        Ok(v) => {
-            let value = Decoder { lookup: &docs }.named(&v, &q, Some(&input))?;
-            Ok(list!(value = value))
-        }
-        Err(errors) => Ok(list!(errors = errors_list(&errors))),
-    }
-}
-
-/// The canonical text and content hash of a document, computed on its JSON
-/// form; the differential test compares them with `r8_value_identity()`.
-///
-/// @param text Character: The document.
-/// @param type_name Character: The qualified type name.
-/// @return List: `canonical` and `hash`, or `errors`.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
-    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let result = read_document(text, &q, &*docs).and_then(|v| {
-        let canonical = rtemis_r8::codec::canonical(&v, &q, &*docs)?;
-        let hash = rtemis_r8::codec::content_hash(&v, &q, &*docs)?;
-        Ok((canonical, hash))
-    });
-    match result {
-        Ok((canonical, hash)) => Ok(list!(canonical = canonical, hash = hash)),
-        Err(errors) => Ok(list!(errors = errors_list(&errors))),
-    }
-}
-
 /// Writes an R8 value as a document, from the R objects in place.
 ///
 /// @param x An R8 value.
@@ -1471,12 +1391,37 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?
         .clone();
-    match read_document(text, &q, &docs) {
-        Ok(v) => Ok(list!(
-            value = Decoder { lookup: &docs }.named(&v, &q, None)?
-        )),
-        Err(errors) => Ok(list!(errors = errors_list(&errors))),
+    let v = match read_document(text, &q, &docs) {
+        Ok(v) => v,
+        Err(errors) => return Ok(list!(errors = errors_list(&errors))),
+    };
+    let lookup: &dyn TypeLookup = &docs;
+    // A Rust-native struct: the codec's `decode` builds the state from the
+    // normalized document, or else `from_fields` from the decoded fields.
+    if let (Some(TypeDef::Struct(def)), Some(vt)) =
+        (lookup.find(&q), crate::exports::codec(type_name))
+    {
+        let document =
+            rtemis_r8::codec::document_access(rtemis_r8::access::Json::new(&v), &q, lookup);
+        if let Some(state) = crate::native::decode(vt, &document) {
+            let state = state.map_err(fail)?;
+            let value = unsafe {
+                let like = crate::native::template(&q, def);
+                let r = Robj::from_sexp(crate::native::wrap(vt, state, like));
+                extendr_ffi::Rf_unprotect(1);
+                r
+            };
+            return Ok(list!(value = value));
+        }
+        let fields = Decoder { lookup: &docs }.named(&v, &q, None)?;
+        let fs = unsafe { fields.get() };
+        let state = crate::native::from_fields(vt, fs).map_err(fail)?;
+        let value = unsafe { Robj::from_sexp(crate::native::wrap(vt, state, fs)) };
+        return Ok(list!(value = value));
     }
+    Ok(list!(
+        value = Decoder { lookup: &docs }.named(&v, &q, None)?
+    ))
 }
 
 /// Resolves a struct value: given its fields, with runtime fields filled by
@@ -1647,8 +1592,6 @@ extendr_module! {
     fn r8_values_equal;
     fn r8_value_hash;
     fn r8_value_check;
-    fn r8_document_identity;
-    fn r8_new_value_json;
     fn r8_value_to_document;
     fn r8_value_from_document;
 }

@@ -494,6 +494,325 @@
       "type": "ns::T"
     },
     {
+      "description": "A sparse matrix with no stored values.",
+      "expect": {
+        "valid": true
+      },
+      "id": "sparse-empty",
+      "input": {
+        "s": {
+          "data": [],
+          "indices": [],
+          "indptr": [
+            0,
+            0,
+            0
+          ],
+          "shape": [
+            2,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The column offsets start at 0.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-indptr-start",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            2,
+            1
+          ],
+          "indptr": [
+            1,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The last column offset is the number of stored values.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-indptr-end",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            2,
+            1
+          ],
+          "indptr": [
+            0,
+            2,
+            2
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "The column offsets do not decrease.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-indptr-decreasing",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            2,
+            1
+          ],
+          "indptr": [
+            0,
+            2,
+            1,
+            3
+          ],
+          "shape": [
+            3,
+            3
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "There is one column offset per column, plus one.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-indptr-length",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            2,
+            1
+          ],
+          "indptr": [
+            0,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "There is one row index per stored value.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-indices-length",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            2
+          ],
+          "indptr": [
+            0,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Row indices lie below the number of rows.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-row-beyond",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            3,
+            1
+          ],
+          "indptr": [
+            0,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Row indices are non-negative whole numbers.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-negative-index",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            -1,
+            1
+          ],
+          "indptr": [
+            0,
+            2,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
+      "description": "Column offsets are whole numbers.",
+      "expect": {
+        "errors": [
+          {
+            "code": "sparse_form",
+            "path": "/s"
+          }
+        ]
+      },
+      "id": "sparse-fractional-offset",
+      "input": {
+        "s": {
+          "data": [
+            1,
+            2,
+            3
+          ],
+          "indices": [
+            0,
+            2,
+            1
+          ],
+          "indptr": [
+            0,
+            1.5,
+            3
+          ],
+          "shape": [
+            3,
+            2
+          ]
+        }
+      },
+      "op": "decode",
+      "type": "ns::T"
+    },
+    {
       "description": "Columns of equal length; an optional column omitted.",
       "expect": {
         "valid": true

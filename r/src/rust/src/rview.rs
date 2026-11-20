@@ -17,11 +17,14 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use extendr_api::SEXP;
 use extendr_ffi::{
-    DATAPTR_OR_NULL, INTEGER, INTEGER_GET_REGION, LENGTH, LOGICAL, LOGICAL_GET_REGION, R_CHAR,
-    R_NaString, R_NilValue, R_compute_identical, R_xlen_t, RAW, REAL, REAL_GET_REGION,
-    Rf_getAttrib, Rf_install, SEXPTYPE, STRING_ELT, TYPEOF, VECTOR_ELT, XLENGTH,
+    DATAPTR_OR_NULL, INTEGER, INTEGER_ELT, INTEGER_GET_REGION, LENGTH, LOGICAL_ELT,
+    LOGICAL_GET_REGION, R_CHAR, R_NaString, R_NilValue, R_compute_identical, R_xlen_t,
+    RAW_GET_REGION, REAL_ELT, REAL_GET_REGION, Rf_getAttrib, Rf_install, SEXPTYPE, STRING_ELT,
+    TYPEOF, VECTOR_ELT, XLENGTH,
 };
-use rtemis_r8::access::{Access, Codes, Dense, Dimnames, Factor, Form, Read, Sparse, Table};
+use rtemis_r8::access::{
+    Access, Codes, Dense, Dimnames, Factor, Form, Indices, Names, Read, Sparse, Table,
+};
 use rtemis_r8::ir::{EnumDef, FieldDef, FieldType};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
@@ -31,16 +34,30 @@ use serde_json::Value;
 
 static ATTRIB_COUNT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ATTRIB_RAW: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static PAYLOAD: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Receives the attribute functions of `attrib.c` from `R_init_R8()`.
+/// Receives the functions of `attrib.c` from `R_init_R8()`.
 ///
 /// # Safety
 ///
-/// `count` and `raw` are `r8_attrib_count()` and `r8_attrib_raw()`.
+/// `count`, `raw`, and `payload` are `r8_attrib_count()`, `r8_attrib_raw()`,
+/// and `r8_payload()`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_set_attrib_functions(count: *mut (), raw: *mut ()) {
+pub unsafe extern "C" fn r8_set_attrib_functions(count: *mut (), raw: *mut (), payload: *mut ()) {
     ATTRIB_COUNT.store(count, Ordering::Release);
     ATTRIB_RAW.store(raw, Ordering::Release);
+    PAYLOAD.store(payload, Ordering::Release);
+}
+
+/// The vector to read `x`'s elements from in bulk, by its data pointer or by
+/// region: `x`, or the vector a base ALTREP wrapper holds (`r8_payload()`).
+/// `None` for an ALTREP vector on R before 4.6.0, which is read by element.
+pub(crate) fn payload(x: SEXP) -> Option<SEXP> {
+    let f = PAYLOAD.load(Ordering::Acquire);
+    assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
+    let f: unsafe extern "C" fn(SEXP) -> SEXP = unsafe { std::mem::transmute(f) };
+    let p = unsafe { f(x) };
+    (!is_null(p)).then_some(p)
 }
 
 /// The number of attributes of `x`.
@@ -196,46 +213,60 @@ pub(crate) fn is_na_real(x: f64) -> bool {
 
 const NA_INT: i32 = i32::MIN;
 
-fn reals<'a>(x: SEXP) -> &'a [f64] {
-    unsafe { std::slice::from_raw_parts(REAL(x), xlen(x)) }
-}
-
 pub(crate) fn ints<'a>(x: SEXP) -> &'a [i32] {
     unsafe { std::slice::from_raw_parts(INTEGER(x), xlen(x)) }
 }
 
-fn logicals<'a>(x: SEXP) -> &'a [i32] {
-    unsafe { std::slice::from_raw_parts(LOGICAL(x), xlen(x)) }
+/// Element `i` of a double vector. `REAL_ELT()` reads an ALTREP vector
+/// through its element method, which leaves it unmaterialized; `REAL()`
+/// would allocate and fill all of it.
+pub(crate) fn real_elt(x: SEXP, i: usize) -> f64 {
+    unsafe { REAL_ELT(x, i as R_xlen_t) }
+}
+
+/// Element `i` of an integer or logical vector, through the element method
+/// of its own type: an ALTREP logical vector has no integer method.
+pub(crate) fn int_elt(x: SEXP, i: usize) -> i32 {
+    unsafe {
+        if sexptype(x) == SEXPTYPE::LGLSXP {
+            LOGICAL_ELT(x, i as R_xlen_t)
+        } else {
+            INTEGER_ELT(x, i as R_xlen_t)
+        }
+    }
 }
 
 /// The elements of a vector as one array, where R holds them as one: an
-/// ordinary vector, or an ALTREP vector whose data are materialized.
+/// ordinary vector, or an ALTREP vector whose data are materialized, after
+/// unwrapping (`payload()`).
 fn data<'a, T>(x: SEXP) -> Option<&'a [T]> {
+    let x = payload(x)?;
     let p = unsafe { DATAPTR_OR_NULL(x) };
     (!p.is_null()).then(|| unsafe { std::slice::from_raw_parts(p.cast::<T>(), xlen(x)) })
 }
 
-/// Calls `f` with elements `start..end` of a double vector, reading an
-/// ALTREP vector without materialized data by region, so that it stays
-/// unmaterialized. A short region read ends the calls early.
-fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, f64)) {
+/// Calls `f` with elements `start..end` of a double vector: from its array
+/// where R holds one, else by region from its payload, which leaves an
+/// ALTREP vector unmaterialized, else by element (`payload()`). A short
+/// region read ends the calls early.
+pub(crate) fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, f64)) {
     if let Some(s) = data::<f64>(x) {
         for (i, &v) in s[start..end].iter().enumerate() {
             f(start + i, v);
         }
         return;
     }
+    let Some(p) = payload(x) else {
+        for i in start..end {
+            f(i, real_elt(x, i));
+        }
+        return;
+    };
     let mut buf = [0f64; 4096];
     let mut i = start;
     while i < end {
-        let got = unsafe {
-            REAL_GET_REGION(
-                x,
-                i as R_xlen_t,
-                buf.len().min(end - i) as R_xlen_t,
-                buf.as_mut_ptr(),
-            )
-        } as usize;
+        let want = buf.len().min(end - i) as R_xlen_t;
+        let got = unsafe { REAL_GET_REGION(p, i as R_xlen_t, want, buf.as_mut_ptr()) } as usize;
         if got == 0 {
             break;
         }
@@ -246,25 +277,31 @@ fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, f64)) {
     }
 }
 
-/// Calls `f` with elements `start..end` of an integer or logical vector,
-/// reading an ALTREP vector without materialized data by region.
-fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, i32)) {
+/// Calls `f` with elements `start..end` of an integer or logical vector, as
+/// `for_reals()` reads a double vector.
+pub(crate) fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, i32)) {
     if let Some(s) = data::<i32>(x) {
         for (i, &v) in s[start..end].iter().enumerate() {
             f(start + i, v);
         }
         return;
     }
-    let logical = sexptype(x) == SEXPTYPE::LGLSXP;
+    let Some(p) = payload(x) else {
+        for i in start..end {
+            f(i, int_elt(x, i));
+        }
+        return;
+    };
+    let logical = sexptype(p) == SEXPTYPE::LGLSXP;
     let mut buf = [0i32; 4096];
     let mut i = start;
     while i < end {
         let want = buf.len().min(end - i) as R_xlen_t;
         let got = unsafe {
             if logical {
-                LOGICAL_GET_REGION(x, i as R_xlen_t, want, buf.as_mut_ptr())
+                LOGICAL_GET_REGION(p, i as R_xlen_t, want, buf.as_mut_ptr())
             } else {
-                INTEGER_GET_REGION(x, i as R_xlen_t, want, buf.as_mut_ptr())
+                INTEGER_GET_REGION(p, i as R_xlen_t, want, buf.as_mut_ptr())
             }
         } as usize;
         if got == 0 {
@@ -403,14 +440,14 @@ fn whole(d: f64) -> Read<i64> {
 }
 
 /// The element of a numeric vector as a double, `None` for `NA`.
-fn number_elt(x: SEXP, i: usize) -> Option<f64> {
+pub(crate) fn number_elt(x: SEXP, i: usize) -> Option<f64> {
     match sexptype(x) {
         SEXPTYPE::REALSXP => {
-            let d = unsafe { *REAL(x).add(i) };
+            let d = real_elt(x, i);
             (!is_na_real(d)).then_some(d)
         }
         SEXPTYPE::INTSXP | SEXPTYPE::LGLSXP => {
-            let v = unsafe { *INTEGER(x).add(i) };
+            let v = int_elt(x, i);
             (v != NA_INT).then_some(f64::from(v))
         }
         _ => None,
@@ -514,9 +551,8 @@ impl<'a> Access<'a> for RView<'a> {
             RView::Row(..) => false,
             RView::Elem(x, i) => unsafe {
                 match sexptype(x) {
-                    SEXPTYPE::REALSXP => is_na_real(*REAL(x).add(i)),
-                    SEXPTYPE::INTSXP => *INTEGER(x).add(i) == NA_INT,
-                    SEXPTYPE::LGLSXP => *LOGICAL(x).add(i) == NA_INT,
+                    SEXPTYPE::REALSXP => is_na_real(real_elt(x, i)),
+                    SEXPTYPE::INTSXP | SEXPTYPE::LGLSXP => int_elt(x, i) == NA_INT,
                     SEXPTYPE::STRSXP => STRING_ELT(x, i as R_xlen_t) == R_NaString,
                     SEXPTYPE::VECSXP => is_null(VECTOR_ELT(x, i as R_xlen_t)),
                     _ => false,
@@ -527,14 +563,14 @@ impl<'a> Access<'a> for RView<'a> {
 
     fn logical(self) -> Read<bool> {
         let (x, i) = self.scalar(&FieldType::Logical)?;
-        Ok(unsafe { *LOGICAL(x).add(i) } != 0)
+        Ok(int_elt(x, i) != 0)
     }
 
     fn integer(self) -> Read<i64> {
         let (x, i) = self.scalar(&FieldType::Integer(Default::default()))?;
         match sexptype(x) {
-            SEXPTYPE::INTSXP => Ok(i64::from(unsafe { *INTEGER(x).add(i) })),
-            _ => whole(unsafe { *REAL(x).add(i) }),
+            SEXPTYPE::INTSXP => Ok(i64::from(int_elt(x, i))),
+            _ => whole(real_elt(x, i)),
         }
     }
 
@@ -572,9 +608,29 @@ impl<'a> Access<'a> for RView<'a> {
         if n == 0 {
             return Ok(Cow::Borrowed(&[]));
         }
-        Ok(Cow::Borrowed(unsafe {
-            std::slice::from_raw_parts(RAW(x), n)
-        }))
+        if let Some(s) = data::<u8>(x) {
+            return Ok(Cow::Borrowed(s));
+        }
+        // An ALTREP raw vector: its bytes by region from its payload, which
+        // `RAW()` would materialize.
+        let p = payload(x).unwrap_or(x);
+        let mut out = vec![0u8; n];
+        let mut i = 0;
+        while i < n {
+            let got = unsafe {
+                RAW_GET_REGION(
+                    p,
+                    i as R_xlen_t,
+                    (n - i) as R_xlen_t,
+                    out.as_mut_ptr().add(i),
+                )
+            } as usize;
+            if got == 0 {
+                break;
+            }
+            i += got;
+        }
+        Ok(Cow::Owned(out))
     }
 
     fn json(self) -> Read<()> {
@@ -770,7 +826,7 @@ impl<'a> Access<'a> for RView<'a> {
         }
     }
 
-    fn factor(self, _declared: Option<&[String]>, ordered: bool) -> Read<Factor<'a>> {
+    fn factor(self, _declared: Option<&[String]>, ordered: bool) -> Read<Factor<'a, Self>> {
         let Some(x) = self.sexp() else {
             return Err(r_type("expected a factor"));
         };
@@ -789,20 +845,16 @@ impl<'a> Access<'a> for RView<'a> {
         if lv.iter().any(Option::is_none) {
             return Err(Form::new("r_factor", "a factor has no NA level"));
         }
-        let levels: Vec<Cow<'a, str>> = lv.into_iter().flatten().collect();
-        let codes = ints(x);
-        let k = levels.len() as i32;
-        if codes.iter().any(|&c| c != NA_INT && !(1..=k).contains(&c)) {
-            return Err(Form::new("r_factor", "a factor's codes index its levels"));
-        }
+        // The codes stay in place, read by the consumer; the validator
+        // checks that each indexes the levels.
         Ok(Factor {
-            levels,
-            codes: Codes::I32(codes),
+            levels: lv.into_iter().flatten().collect(),
+            codes: Codes::Host(RView::Whole(x), xlen(x)),
             problems: Vec::new(),
         })
     }
 
-    fn dense(self, element: &FieldType) -> Read<Dense<'a, Self>> {
+    fn dense(self, element: &FieldType) -> Read<Dense<Self>> {
         let Some(x) = self.sexp() else {
             return Err(r_type("expected a matrix or an array"));
         };
@@ -833,16 +885,15 @@ impl<'a> Access<'a> for RView<'a> {
                 );
             }
         }
-        let dimnames: Option<Dimnames<'a>> = (!is_null(dn) && sexptype(dn) == SEXPTYPE::VECSXP)
+        // Each dimension's names stay in place, read by the consumer.
+        let dimnames: Option<Dimnames<Self>> = (!is_null(dn) && sexptype(dn) == SEXPTYPE::VECSXP)
             .then(|| {
                 (0..xlen(dn))
                     .map(|i| {
                         let names = unsafe { VECTOR_ELT(dn, i as R_xlen_t) };
-                        (!is_null(names)).then(|| {
-                            strings(names)
-                                .into_iter()
-                                .map(|s| s.unwrap_or(Cow::Borrowed("NA")))
-                                .collect()
+                        (!is_null(names)).then(|| Names {
+                            seq: RView::Whole(names),
+                            len: xlen(names),
                         })
                     })
                     .collect()
@@ -885,30 +936,20 @@ impl<'a> Access<'a> for RView<'a> {
             );
         }
         let shape = [d[0].max(0) as u64, d[1].max(0) as u64];
-        let (p, idx) = (ints(p), ints(i));
-        let nnz = xlen(xs);
-        let well_formed = p.len() as u64 == shape[1] + 1
-            && p.first() == Some(&0)
-            && p.last().map(|&v| v as i64) == Some(nnz as i64)
-            && p.windows(2).all(|w| w[0] <= w[1])
-            && idx.len() == nnz
-            && p.windows(2).all(|w| {
-                let col = &idx[w[0] as usize..w[1] as usize];
-                col.iter().all(|&r| r >= 0 && (r as u64) < shape[0])
-                    && col.windows(2).all(|q| q[0] < q[1])
-            });
-        if !well_formed {
-            return Err(Form::new(
-                "sparse_form",
-                "compressed sparse column form: `indptr` has ncol + 1 non-decreasing offsets from 0 to the number of values, and each column's row `indices` increase and lie below nrow",
-            ));
-        }
+        // The slots stay in place, read by the consumer; the validator
+        // checks the compressed sparse column structure.
         Ok(Sparse {
             shape,
             data: RView::Whole(xs),
-            len: nnz,
-            indptr: p.iter().map(|&v| v as u64).collect(),
-            indices: idx.iter().map(|&v| v as u64).collect(),
+            len: xlen(xs),
+            indptr: Indices {
+                seq: RView::Whole(p),
+                len: xlen(p),
+            },
+            indices: Indices {
+                seq: RView::Whole(i),
+                len: xlen(i),
+            },
         })
     }
 
@@ -1062,12 +1103,13 @@ fn elem_value(x: SEXP, i: usize, ft: &FieldType) -> Value {
     }
     match (ft, sexptype(x)) {
         (FieldType::Factor { .. }, SEXPTYPE::INTSXP) => {
-            let code = ints(x)[i];
-            strings(attr(x, sym_levels()))
-                .get((code - 1) as usize)
-                .cloned()
-                .flatten()
-                .map_or(Value::Null, |s| Value::from(s.into_owned()))
+            let levels = attr(x, sym_levels());
+            match usize::try_from(int_elt(x, i) - 1) {
+                Ok(k) if sexptype(levels) == SEXPTYPE::STRSXP && k < xlen(levels) => {
+                    string_elt(levels, k).map_or(Value::Null, |s| Value::from(s.into_owned()))
+                }
+                _ => Value::Null,
+            }
         }
         (FieldType::Date, _) => number_elt(x, i).map_or(Value::Null, |d| {
             Value::from(rtemis_r8::codec::date_text(d as i64))
@@ -1075,7 +1117,7 @@ fn elem_value(x: SEXP, i: usize, ft: &FieldType) -> Value {
         (FieldType::Posixct, _) => number_elt(x, i).map_or(Value::Null, |s| {
             Value::from(rtemis_r8::codec::datetime_text((s * 1e6).round() as i64))
         }),
-        (_, SEXPTYPE::LGLSXP) => Value::Bool(logicals(x)[i] != 0),
+        (_, SEXPTYPE::LGLSXP) => Value::Bool(int_elt(x, i) != 0),
         (_, SEXPTYPE::STRSXP) => {
             string_elt(x, i).map_or(Value::Null, |s| Value::from(s.into_owned()))
         }
@@ -1136,12 +1178,14 @@ pub(crate) fn table_rows(x: SEXP) -> Read<u64> {
         return Ok(0);
     }
     if sexptype(rn) == SEXPTYPE::INTSXP {
-        let s = ints(rn);
-        if s.len() == 2 && s[0] == NA_INT {
-            return Ok(s[1].unsigned_abs() as u64);
+        let n = xlen(rn);
+        if n == 2 && int_elt(rn, 0) == NA_INT {
+            return Ok(int_elt(rn, 1).unsigned_abs() as u64);
         }
-        if s.iter().enumerate().all(|(i, &v)| v == i as i32 + 1) {
-            return Ok(s.len() as u64);
+        let mut sequential = true;
+        for_ints(rn, 0, n, |i, v| sequential &= v == i as i32 + 1);
+        if sequential {
+            return Ok(n as u64);
         }
     }
     Err(Form::new(
@@ -1201,7 +1245,7 @@ fn json_form(x: SEXP, suffix: &str) -> Read<()> {
                 );
             }
             let bad = match sexptype(x) {
-                SEXPTYPE::REALSXP => !reals(x)[0].is_finite(),
+                SEXPTYPE::REALSXP => !real_elt(x, 0).is_finite(),
                 _ => RView::Elem(x, 0).is_absent(),
             };
             if bad {

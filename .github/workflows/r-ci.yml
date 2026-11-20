@@ -15,6 +15,9 @@ env:
   # tools/config.R patches the crates.io release of rtemis-r8 with this checkout's
   # crate.
   R8_CRATES_PATH: ${{ github.workspace }}/rust/crates
+  # The differential oracle that test-native.R compares native construction
+  # with; the tests fail when it is set and the oracle is missing.
+  R8_ORACLE: "true"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -84,6 +87,7 @@ jobs:
       # source, so this step runs without --locked; the job `vendored` builds
       # from the committed lock.
       - run: cargo clippy --all-targets --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
+      - run: cargo clippy --all-targets --features oracle --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
 
   msrv:
     name: Install with the minimum Rust version
@@ -133,6 +137,7 @@ jobs:
       # src/rust/vendor.tar.xz, offline, as r-universe and CRAN do. A binding
       # that uses items of an unpublished rtemis-r8 fails here.
       R8_CRATES_PATH: ""
+      R8_ORACLE: ""
     steps:
       - uses: actions/checkout@v6
       - name: Check that the R package and the crates share a major and minor version

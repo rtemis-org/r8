@@ -4,8 +4,8 @@
 
 # The differential test of construction: r8_new_value() validates R objects
 # in place and keeps them where they are in their stored forms;
-# r8_new_value_json() is the reference, which encodes to JSON, validates, and
-# decodes. Both give identical values for valid input, and the same codes,
+# the differential oracle (helper-oracle.R) is the reference, which encodes to
+# JSON, validates, and decodes. Both give identical values for valid input, and the same codes,
 # paths, and rule IDs for invalid input.
 
 # Constructs `fields` as a value of `type` on both paths and compares them.
@@ -15,9 +15,10 @@
 # encoder may report one problem twice; for these, both paths report the
 # same fields.
 same_construction <- function(type, fields, variant = "") {
+  skip_without_oracle()
   qname <- attr(type, "r8_name")
   native <- R8:::r8_new_value(fields, qname, variant)
-  ref <- R8:::r8_new_value_json(fields, qname, variant)
+  ref <- oracle_new_value(fields, qname, variant)
   if (is.null(ref[["errors"]])) {
     expect_false(inherits(native, "r8_problems"), info = qname)
     expect_identical(native, ref[["value"]], info = qname)
@@ -48,8 +49,9 @@ same_construction <- function(type, fields, variant = "") {
 # The canonical text and content hash written from the R objects equal
 # those of the value's document read through the JSON form.
 same_identity <- function(x) {
+  skip_without_oracle()
   native <- R8:::r8_value_identity(x)
-  ref <- R8:::r8_document_identity(to_json(x), attr(x, "r8_type"))
+  ref <- oracle_document_identity(to_json(x), attr(x, "r8_type"))
   expect_identical(
     native[["canonical"]],
     ref[["canonical"]],
@@ -181,6 +183,30 @@ test_that("factors, maps, and JSON construct identically", {
   same_construction(F, modifyList(base, list(f = factor(c("lo", "top")))))
   same_construction(F, modifyList(base, list(h = c(1, 2))))
   same_construction(F, modifyList(base, list(j = list(a = c(1, 2)))))
+})
+
+test_that("a factor code outside the levels is reported where it occurs", {
+  F <- declare_in(
+    "native",
+    new_struct(
+      "Codes",
+      fields = list(
+        f = type_factor(levels = c("lo", "hi")),
+        fd = type_factor()
+      )
+    )
+  )
+  # structure() sets the codes and levels without checking them.
+  bad <- structure(c(1L, 3L, 0L), levels = c("lo", "hi"), class = "factor")
+  base <- list(f = factor("lo", levels = c("lo", "hi")), fd = factor("a"))
+  native <- same_construction(F, modifyList(base, list(f = bad)))
+  expect_identical(native[["errors"]][["code"]], rep("invalid_code", 2L))
+  expect_identical(native[["errors"]][["path"]], c("/f/1", "/f/2"))
+  native <- same_construction(F, modifyList(base, list(fd = bad)))
+  expect_identical(
+    native[["errors"]][["path"]],
+    c("/fd/codes/1", "/fd/codes/2")
+  )
 })
 
 test_that("matrices and tables construct identically", {
@@ -413,4 +439,31 @@ test_that("a computed field of a matrix type is the matrix it names", {
   m <- matrix(as.numeric(1:6), 3)
   x <- r8_resolve(C(m = m))
   expect_identical(x$n, m)
+})
+
+test_that("a dgCMatrix out of compressed sparse column form is reported", {
+  skip_if_not_installed("Matrix")
+  S <- declare_in(
+    "native",
+    new_struct("Sparse", fields = list(x = type_sparse_matrix()))
+  )
+  m <- Matrix::sparseMatrix(
+    i = c(1L, 3L, 2L),
+    j = c(1L, 1L, 2L),
+    x = c(1.5, 2, 3),
+    dims = c(3L, 2L)
+  )
+  same_construction(S, list(x = m))
+  # Slot assignment skips the validity method of Matrix.
+  unsorted <- m
+  unsorted@i <- c(2L, 0L, 1L)
+  beyond <- m
+  beyond@i <- c(0L, 3L, 1L)
+  offsets <- m
+  offsets@p <- c(0L, 2L, 2L)
+  for (bad in list(unsorted, beyond, offsets)) {
+    native <- same_construction(S, list(x = bad))
+    expect_identical(native[["errors"]][["code"]], "sparse_form")
+    expect_identical(native[["errors"]][["path"]], "/x")
+  }
 })

@@ -67,6 +67,14 @@ patched <- nzchar(.cargo_config)
 )
 .drop_lock <- ifelse(patched, "rm -f rust/Cargo.lock.saved", "")
 
+# R8_ORACLE, when set, builds the differential oracle (src/rust/src/oracle.rs)
+# that the tests compare native construction with. The `document` binary builds
+# without it, so R/extendr-wrappers.R is the same in every build.
+.features <- ifelse(nzchar(Sys.getenv("R8_ORACLE")), "--features oracle", "")
+if (nzchar(.features)) {
+  message("Building with the differential oracle.")
+}
+
 # DEBUG selects the dev profile; otherwise the release profile.
 .profile <- ifelse(is_debug, "", "--release")
 .clean_targets <- ifelse(is_debug, "", "$(TARGET_DIR)")
@@ -132,6 +140,7 @@ mv_txt <- readLines(mv_fp)
 
 new_txt <- gsub("@CRAN_FLAGS@", .cran_flags, mv_txt) |>
   gsub("@CARGO_CONFIG@", .cargo_config, x = _, fixed = TRUE) |>
+  gsub("@FEATURES@", .features, x = _, fixed = TRUE) |>
   gsub("@PROFILE@", .profile, x = _) |>
   gsub("@CLEAN_TARGET@", .clean_targets, x = _) |>
   gsub("@LIBDIR@", .libdir, x = _) |>

@@ -13,15 +13,33 @@ use extendr_api::prelude::*;
 mod construct;
 mod declare;
 mod exports;
+mod native;
+#[cfg(feature = "oracle")]
+mod oracle;
 mod rview;
 mod values;
 mod version;
 
+// The feature `oracle` adds the differential oracle's routines (`oracle.rs`).
+#[cfg(not(feature = "oracle"))]
 extendr_module! {
     mod R8;
     use construct;
     use declare;
     use exports;
+    use native;
+    use values;
+    use version;
+}
+
+#[cfg(feature = "oracle")]
+extendr_module! {
+    mod R8;
+    use construct;
+    use declare;
+    use exports;
+    use native;
+    use oracle;
     use values;
     use version;
 }

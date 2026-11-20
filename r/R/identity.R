@@ -113,3 +113,39 @@ Ops.r8_value <- function(e1, e2) {
     class = "r8_dispatch_error"
   )
 } # /R8::Ops.r8_value
+
+
+# %% r8_size ----
+#' Size of an R8 value
+#'
+#' The memory an R8 value holds, in bytes. For a value of a Rust-native type,
+#' the bytes its codec reports for the state, plus the size of each field read
+#' so far that is not a view of the state; a view's memory is the state's. For
+#' an R-native value, `utils::object.size()`.
+#'
+#' @param x An R8 value.
+#'
+#' @return Double: The size in bytes.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Resampler <- new_struct("Resampler", fields = list(n = type_integer()))
+#' r8_size(Resampler(n = 10L))
+#' options(op)
+#'
+#' @export
+r8_size <- function(x) {
+  if (!inherits(x, "r8_value")) {
+    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  }
+  parts <- r8_native_parts(x)
+  if (is.null(parts)) {
+    return(as.numeric(utils::object.size(x)))
+  }
+  fields <- vapply(
+    parts[["fields"]],
+    function(f) as.numeric(utils::object.size(f)),
+    numeric(1)
+  )
+  parts[["state"]] + sum(fields)
+} # /R8::r8_size

@@ -19,18 +19,21 @@
 //! form (`crate::codec`), which is the form the content hash takes.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::access::{Access, Json, base64_encode};
+use crate::access::{Access, Indices, Json, MISSING_CODE, base64_encode};
 use crate::codec::{date_text, datetime_text};
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
 // ------------------------------------------------------------------ output
+
+/// The number of items a streamed write buffers between writes.
+const CHUNK: usize = 4096;
 
 /// A destination of text or bytes.
 pub trait Out {
@@ -267,22 +270,36 @@ fn double_bits(x: f64) -> u64 {
 /// Writes the validity bitmap and the values of items `0..n` of a sequence
 /// of the scalar element `tag`.
 fn put_sequence<'a, A: Access<'a>, O: Out>(out: &mut O, tag: u8, v: A, n: usize) {
-    let mut bitmap = vec![0u8; n.div_ceil(8)];
-    let mut mark = |i: usize, present: bool| {
-        if present {
-            bitmap[i / 8] |= 1 << (i % 8);
+    // The bitmap, written in blocks of CHUNK bytes.
+    let mut bitmap = vec![0u8; n.div_ceil(8).min(CHUNK)];
+    let mut start = 0;
+    while start < n {
+        let end = (start + CHUNK * 8).min(n);
+        let block = &mut bitmap[..(end - start).div_ceil(8)];
+        block.fill(0);
+        let mut mark = |i: usize, present: bool| {
+            if present {
+                block[(i - start) / 8] |= 1 << ((i - start) % 8);
+            }
+        };
+        match tag {
+            1 => v.each_logical_in(start, end, |i, r| mark(i, matches!(r, Ok(Some(_))))),
+            2 => v.each_integer_in(start, end, |i, r| mark(i, matches!(r, Ok(Some(_))))),
+            3 => v.each_double_in(start, end, |i, r| mark(i, matches!(r, Ok(Some(_))))),
+            4 => v.each_character_in(start, end, |i, r| mark(i, matches!(r, Ok(Some(_))))),
+            5 => v.each_date_in(start, end, |i, r| mark(i, matches!(r, Ok(Some(_))))),
+            6 => v.each_datetime_in(start, end, |i, r| mark(i, matches!(r, Ok(Some(_))))),
+            _ => {}
         }
-    };
-    match tag {
-        1 => v.each_logical(n, |i, r| mark(i, matches!(r, Ok(Some(_))))),
-        2 => v.each_integer(n, |i, r| mark(i, matches!(r, Ok(Some(_))))),
-        3 => v.each_double(n, |i, r| mark(i, matches!(r, Ok(Some(_))))),
-        4 => v.each_character(n, |i, r| mark(i, matches!(r, Ok(Some(_))))),
-        5 => v.each_date(n, |i, r| mark(i, matches!(r, Ok(Some(_))))),
-        6 => v.each_datetime(n, |i, r| mark(i, matches!(r, Ok(Some(_))))),
-        _ => {}
+        out.put(block);
+        start = end;
     }
-    out.put(&bitmap);
+    put_values(out, tag, v, n);
+}
+
+/// Writes the values of items `0..n` of a sequence of the scalar element
+/// `tag`, without a bitmap; a missing item writes the zero of its kind.
+fn put_values<'a, A: Access<'a>, O: Out>(out: &mut O, tag: u8, v: A, n: usize) {
     // Values, buffered so a hash is updated in blocks.
     let mut buf: Vec<u8> = Vec::with_capacity(8192);
     let flush = |buf: &mut Vec<u8>, out: &mut O| {
@@ -347,9 +364,11 @@ pub fn dense_binary_access<'a, A: Access<'a>, O: Out>(element: &FieldType, v: A,
         {
             Some(names) => {
                 out.put(&[1]);
-                for n in names {
-                    put_str(out, n);
-                }
+                names.each_block(|block| {
+                    for n in block {
+                        put_str(out, n);
+                    }
+                });
             }
             None => out.put(&[0]),
         }
@@ -378,13 +397,18 @@ pub fn sparse_binary_access<'a, A: Access<'a>, O: Out>(element: &FieldType, v: A
     out.put(&s.shape[0].to_le_bytes());
     out.put(&s.shape[1].to_le_bytes());
     out.put(&(s.len as u64).to_le_bytes());
-    for x in s.indptr.iter().chain(&s.indices) {
-        out.put(&x.to_le_bytes());
+    let mut bytes: Vec<u8> = Vec::with_capacity(CHUNK * 8);
+    for ix in [&s.indptr, &s.indices] {
+        ix.each_block(|block| {
+            bytes.clear();
+            for x in block {
+                bytes.extend_from_slice(&x.to_le_bytes());
+            }
+            out.put(&bytes);
+        });
     }
     // The values of a sparse matrix carry no bitmap.
-    let mut skip = Vec::new();
-    put_sequence(&mut skip, tag, s.data, s.len);
-    out.put(&skip[s.len.div_ceil(8)..]);
+    put_values(out, tag, s.data, s.len);
 }
 
 /// The canonical binary form of a table (`R8T1`).
@@ -417,31 +441,57 @@ pub fn table_binary_access<'a, A: Access<'a>, O: Out>(
             let Ok(f) = cells.factor(levels.as_deref(), *ordered) else {
                 continue;
             };
-            let names: Vec<Cow<'_, str>> = match levels {
-                Some(d) => d.iter().map(|l| Cow::Borrowed(l.as_str())).collect(),
-                None => f.levels.clone(),
+            let names: Vec<&str> = match levels {
+                Some(d) => d.iter().map(String::as_str).collect(),
+                None => f.levels.iter().map(|l| l.as_ref()).collect(),
             };
             out.put(&(names.len() as u64).to_le_bytes());
             for l in &names {
                 put_str(out, l);
             }
-            let code = |i: usize| -> Option<i32> {
-                let c = f.codes.get(i)?;
-                let level = f.levels.get((c as usize).checked_sub(1)?)?;
-                names.iter().position(|l| l == level).map(|k| k as i32 + 1)
+            // The written code of each of the factor's codes: the position of
+            // its level among `names`, 1-based, and 0 for a missing cell or a
+            // level outside `names`; one table, built once.
+            let same = names.len() == f.levels.len()
+                && names.iter().zip(&f.levels).all(|(a, b)| *a == b.as_ref());
+            let remap: Vec<i32> = if same {
+                Vec::new()
+            } else {
+                let index: HashMap<&str, i32> = names
+                    .iter()
+                    .enumerate()
+                    .map(|(k, l)| (*l, k as i32 + 1))
+                    .collect();
+                f.levels
+                    .iter()
+                    .map(|l| index.get(l.as_ref()).copied().unwrap_or(0))
+                    .collect()
+            };
+            let levels = f.levels.len();
+            let code = |c: i32| -> i32 {
+                let k = (c as u32).wrapping_sub(1) as usize;
+                match () {
+                    _ if k >= levels => 0,
+                    _ if same => c,
+                    _ => remap[k],
+                }
             };
             let k = f.codes.len();
             let mut bitmap = vec![0u8; k.div_ceil(8)];
-            for (i, byte) in (0..k).map(|i| (i, code(i))) {
-                if byte.is_some() {
+            f.codes.each_in(0, k, |i, c| {
+                if code(c) != 0 {
                     bitmap[i / 8] |= 1 << (i % 8);
                 }
-            }
+            });
             out.put(&bitmap);
-            let mut buf = Vec::with_capacity(k * 4);
-            for i in 0..k {
-                buf.extend_from_slice(&code(i).unwrap_or(0).to_le_bytes());
-            }
+            let mut buf = Vec::with_capacity(CHUNK * 4);
+            f.codes.each_in(0, k, |_, c| {
+                buf.extend_from_slice(&code(c).to_le_bytes());
+                if buf.len() == CHUNK * 4 {
+                    out.put(&buf);
+                    buf.clear();
+                }
+            });
             out.put(&buf);
             continue;
         }
@@ -655,20 +705,12 @@ impl<'l, O: Out> Emitter<'l, O> {
             return self.w.null();
         };
         let n = f.codes.len();
-        let level = |i: usize| -> Option<&str> {
-            let c = f.codes.get(i)?;
-            f.levels
-                .get((c as usize).checked_sub(1)?)
-                .map(|l| l.as_ref())
-        };
         if declared.is_some() {
             self.w.begin_array();
-            for i in 0..n {
-                match level(i) {
-                    Some(l) => self.w.string(l),
-                    None => self.w.null(),
-                }
-            }
+            f.codes.each_in(0, n, |_, c| match f.level(c) {
+                Some(l) => self.w.string(l),
+                None => self.w.null(),
+            });
             self.w.end_array();
             return;
         }
@@ -683,12 +725,10 @@ impl<'l, O: Out> Emitter<'l, O> {
         let write_codes = |w: &mut Writer<O>| {
             w.key("codes");
             w.begin_array();
-            for i in 0..n {
-                match f.codes.get(i) {
-                    Some(c) => w.number(f64::from(c)),
-                    None => w.null(),
-                }
-            }
+            f.codes.each_in(0, n, |_, c| match c {
+                MISSING_CODE => w.null(),
+                c => w.number(f64::from(c)),
+            });
             w.end_array();
         };
         self.w.begin_object();
@@ -726,9 +766,11 @@ impl<'l, O: Out> Emitter<'l, O> {
                     match names {
                         Some(n) => {
                             w.begin_array();
-                            for s in n {
-                                w.string(s);
-                            }
+                            n.each_block(|block| {
+                                for s in block {
+                                    w.string(s);
+                                }
+                            });
                             w.end_array();
                         }
                         None => w.null(),
@@ -767,18 +809,28 @@ impl<'l, O: Out> Emitter<'l, O> {
             }
             w.end_array();
         };
+        let indices = |w: &mut Writer<O>, k: &str, xs: &Indices<A>| {
+            w.key(k);
+            w.begin_array();
+            xs.each_block(|block| {
+                for x in block {
+                    w.number(*x as f64);
+                }
+            });
+            w.end_array();
+        };
         self.w.begin_object();
         // Sorted: data, indices, indptr, shape.
         if self.w.sorted {
             self.w.key("data");
             self.sequence(element, s.data, s.len);
-            ints(&mut self.w, "indices", &s.indices);
-            ints(&mut self.w, "indptr", &s.indptr);
+            indices(&mut self.w, "indices", &s.indices);
+            indices(&mut self.w, "indptr", &s.indptr);
             ints(&mut self.w, "shape", &s.shape);
         } else {
             ints(&mut self.w, "shape", &s.shape);
-            ints(&mut self.w, "indptr", &s.indptr);
-            ints(&mut self.w, "indices", &s.indices);
+            indices(&mut self.w, "indptr", &s.indptr);
+            indices(&mut self.w, "indices", &s.indices);
             self.w.key("data");
             self.sequence(element, s.data, s.len);
         }

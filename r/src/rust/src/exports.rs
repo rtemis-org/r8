@@ -70,6 +70,20 @@ fn compiled() -> &'static Mutex<Compiled> {
     COMPILED.get_or_init(|| Mutex::new(Compiled::default()))
 }
 
+/// The codec of the Rust-native type `name`, when a package registered one.
+pub(crate) fn codec(name: &str) -> Option<*const TypeVTable> {
+    compiled().lock().ok()?.types.get(name).map(|v| v.0)
+}
+
+/// The package that registered the codec of the Rust-native type `name`.
+pub(crate) fn codec_package(name: &str) -> Option<String> {
+    let c = compiled().lock().ok()?;
+    c.owned
+        .iter()
+        .find(|(_, o)| o.types.iter().any(|t| t == name))
+        .map(|(p, _)| p.clone())
+}
+
 /// The registered Rust-native types and whether each codec table holds
 /// every function.
 ///
@@ -277,13 +291,28 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
     let mut types = Vec::new();
     for v in vtables {
         let name = text(unsafe { (*v).type_name }, "type name")?;
-        let declared = doc
+        let Some(def) = doc
             .types
             .iter()
-            .any(|t| format!("{ns}::{}", t.name()) == name);
-        if !declared {
+            .find(|t| format!("{ns}::{}", t.name()) == name)
+        else {
             return Err(fail(format!(
                 "the codec of `{name}` has no declaration in the IR document of `{package}`"
+            )));
+        };
+        // A codec's state carries every field; an R object has no form in
+        // it, so a Rust-native type has no runtime-only field.
+        if let rtemis_r8::ir::TypeDef::Struct(s) = def
+            && let Some(f) = s.fields.iter().find(|f| {
+                matches!(
+                    f.ty,
+                    rtemis_r8::ir::FieldType::R { .. }
+                ) || matches!(&f.ty, rtemis_r8::ir::FieldType::Option { inner, .. } if matches!(**inner, rtemis_r8::ir::FieldType::R { .. }))
+            })
+        {
+            return Err(fail(format!(
+                "the Rust-native type `{name}` of `{package}` declares the runtime-only field `{}`; its codec's state holds every field",
+                f.name
             )));
         }
         types.push((name, VTable(v)));
