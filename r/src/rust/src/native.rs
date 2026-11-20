@@ -99,7 +99,20 @@ extendr_module! {
     mod native;
     fn r8_native_parts;
     fn r8_native_memory;
+    fn r8_format_size;
     fn r8_native_symbols;
+}
+
+/// A size in bytes in IEC binary units to three significant digits, as the
+/// Rust core formats it (`rtemis_r8::text::format_size()`).
+///
+/// @param bytes Numeric: A size in bytes.
+/// @return Character: The size, such as `"7.63 MiB"`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_format_size(bytes: f64) -> String {
+    rtemis_r8::text::format_size(bytes.max(0.0) as u64)
 }
 
 /// The value over `state` with the attributes of `like`, the assembled

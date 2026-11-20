@@ -42,6 +42,7 @@ pub mod equal;
 pub mod ir;
 pub mod name;
 pub mod rules;
+pub mod text;
 pub mod validate;
 pub mod value_schema;
 

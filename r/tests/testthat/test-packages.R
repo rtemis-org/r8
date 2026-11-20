@@ -245,6 +245,12 @@ test_that("Rust-native values read, change, persist, and cross workers", {
       "cat('serialize', grepl('r8 native', inspect(x)), R8::r8_equal(x, s), '\\n')",
       sprintf("saveRDS(s, %s)", deparse(rds)),
       "cat('size', R8::r8_size(s) > 3 * 8, '\\n')",
+      "y <- Signal(name = 'm', values = as.numeric(seq_len(1e6)))",
+      "before <- R8::r8_size(y); shown <- format(y)[1]",
+      "cat('header', shown, R8::r8_size(y) == before, '\\n')",
+      "invisible(y$name); invisible(y$values)",
+      "cat('str', utils::capture.output(str(y))[1], '\\n')",
+      "rm(y)",
       "rm(s, u, v, w, r, t, m, x); invisible(gc())",
       "cat('dropped', live_signals(), '\\n')",
       "peak <- 0",
@@ -265,6 +271,10 @@ test_that("Rust-native values read, change, persist, and cross workers", {
   expect_true("made made 0 1 2 " %in% out, info = info)
   expect_true("serialize TRUE TRUE " %in% out, info = info)
   expect_true("size TRUE " %in% out, info = info)
+  # print() shows the state's bytes and reads nothing; str() adds the fields
+  # read that are not views of the state.
+  expect_true("header <pkgc::Signal> 7.63 MiB TRUE " %in% out, info = info)
+  expect_true("str <pkgc::Signal> 7.63 MiB + 112 B read " %in% out, info = info)
   expect_true("dropped 0 " %in% out, info = info)
   expect_true("bounded TRUE " %in% out, info = info)
   # A session that reads the value before loading the codec's package.

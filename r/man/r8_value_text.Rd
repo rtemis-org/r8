@@ -21,5 +21,11 @@ invisibly.
 }
 \description{
 The default \code{Display} and \code{Debug}: the type, and each field on its own
-line.
+line. The header of a Rust-native value also shows its size, in IEC binary
+units to three significant digits: \code{format()} and \code{print()} the bytes of
+its state, which a value has whatever fields were read, and \code{str()} adds
+the fields read into R that are not views of the state, which together
+make \code{r8_size(x)}: \verb{<pkgc::Signal> 7.63 MiB + 112 B read}. An R-native
+value shows no size. A \code{Display}, \code{Print}, or \code{Debug} impl replaces this
+text whole.
 }

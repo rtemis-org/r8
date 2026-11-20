@@ -197,6 +197,15 @@ r8_native_parts <- function(x) .Call(wrap__r8_native_parts, x)
 #' @noRd
 r8_native_memory <- function() .Call(wrap__r8_native_memory)
 
+#' A size in bytes in IEC binary units to three significant digits, as the
+#' Rust core formats it (`rtemis_r8::text::format_size()`).
+#'
+#' @param bytes Numeric: A size in bytes.
+#' @return Character: The size, such as `"7.63 MiB"`.
+#' @keywords internal
+#' @noRd
+r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
+
 #' The native symbols of R8's C routines that R calls through `.Call()`:
 #' `invoke`, which calls an impl function, and `exports`, which fetches a
 #' package's exports table (`src/view.c`).

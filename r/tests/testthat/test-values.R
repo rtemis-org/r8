@@ -315,3 +315,16 @@ test_that("matrices compare, hash, and write their dimension names", {
   expect_false(identical(r8_hash(vx), r8_hash(M(m = y))))
   expect_identical(r8_from_json(M, to_json(vx)), vx)
 })
+
+test_that("sizes print in IEC units, and an R-native value shows none", {
+  f <- R8:::r8_format_size
+  expect_identical(f(120), "120 B")
+  expect_identical(f(1024), "1.00 KiB")
+  expect_identical(f(8000048), "7.63 MiB")
+  expect_identical(f(800000048), "763 MiB")
+  P <- declare_in("size_demo", {
+    new_struct("P", fields = list(x = type_double()))
+  })
+  expect_identical(format(P(x = 1))[[1L]], "<size_demo::P>")
+  expect_identical(utils::capture.output(str(P(x = 1)))[[1L]], "<size_demo::P>")
+})

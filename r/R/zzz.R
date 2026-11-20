@@ -281,7 +281,13 @@ r8_converter <- function(type) {
 #' Text of R8 values
 #'
 #' The default `Display` and `Debug`: the type, and each field on its own
-#' line.
+#' line. The header of a Rust-native value also shows its size, in IEC binary
+#' units to three significant digits: `format()` and `print()` the bytes of
+#' its state, which a value has whatever fields were read, and `str()` adds
+#' the fields read into R that are not views of the state, which together
+#' make `r8_size(x)`: `<pkgc::Signal> 7.63 MiB + 112 B read`. An R-native
+#' value shows no size. A `Display`, `Print`, or `Debug` impl replaces this
+#' text whole.
 #'
 #' @param x,object An R8 value.
 #' @param ... Not used.
@@ -299,6 +305,10 @@ format.r8_value <- function(x, ...) {
     if (!is.null(variant)) paste0("@", variant),
     ">"
   )
+  parts <- r8_native_parts(x)
+  if (!is.null(parts)) {
+    head <- paste(head, r8_format_size(parts[["state"]]))
+  }
   fields <- unclass(x)
   lines <- vapply(
     names(fields),
@@ -326,7 +336,21 @@ format.r8_value <- function(x, ...) {
 #' @rdname r8_value_text
 #' @export
 str.r8_value <- function(object, ...) {
-  cat(format.r8_value(object), sep = "\n")
+  lines <- format.r8_value(object)
+  # The fields read, counted after the layout reads them, so that a second
+  # call prints the same text.
+  parts <- r8_native_parts(object)
+  if (!is.null(parts)) {
+    read <- sum(vapply(
+      parts[["fields"]],
+      function(f) as.numeric(utils::object.size(f)),
+      numeric(1)
+    ))
+    if (read > 0) {
+      lines[[1L]] <- paste0(lines[[1L]], " + ", r8_format_size(read), " read")
+    }
+  }
+  cat(lines, sep = "\n")
   invisible(NULL)
 } # /R8::str.r8_value
 

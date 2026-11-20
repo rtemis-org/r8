@@ -4,6 +4,7 @@
 - `R8.h`: an enum's codec sets the new members `variant` and `from_variant` of `R8TypeVTable`. The ABI version stays 1, and codecs built for R8 0.3.0 register unchanged.
 - `r8_register()` refuses a codec whose shape does not match its type, and a codec whose enum declares a runtime-only field in any variant.
 - `r8::exports!` declares every type of the package's namespace that its listed types reach, such as the struct of a newtype variant.
+- `print()` and `str()` of a Rust-native value show its size in the header, in IEC units (`<pkgc::Signal> 7.63 MiB`); `str()` adds the fields read into R (`+ 112 B read`).
 - The package builds against `rtemis-r8` 0.4.0.
 
 # R8 0.3.0
