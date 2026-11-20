@@ -1,4 +1,4 @@
-TARGET_DIR = ./rust/target
+TARGET_DIR = @TARGET_DIR@
 LIBDIR = $(TARGET_DIR)/@LIBDIR@
 STATLIB = $(LIBDIR)/libr8_r.a
 PKG_LIBS = -L$(LIBDIR) -lr8_r
@@ -67,4 +67,4 @@ rust_clean: $(SHLIB)
 	rm -Rf $(CARGOTMP) $(VENDOR_DIR) @CLEAN_TARGET@
 
 clean:
-	rm -Rf $(SHLIB) $(STATLIB) $(OBJECTS) $(TARGET_DIR) $(VENDOR_DIR)
+	rm -Rf $(SHLIB) $(STATLIB) $(OBJECTS) @CLEAN_TARGET_DIR@ $(VENDOR_DIR)

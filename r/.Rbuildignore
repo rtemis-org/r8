@@ -28,3 +28,4 @@
 ^src/Makevars\.win$
 ^src/rust/Cargo\.lock\.saved$
 ^tests/testthat/packages/[^/]+/src/.*\.(o|so|dll)$
+^tests/testthat/packages/[^/]+/src/rust/target$

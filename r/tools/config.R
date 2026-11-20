@@ -75,9 +75,28 @@ if (nzchar(.features)) {
   message("Building with the differential oracle.")
 }
 
+# R8_TARGET_DIR, when set on a Unix build, is the Cargo target directory,
+# outside the package directory: an installer that copies the package directory
+# (pak::local_install()) copies no build cache, and the cache persists between
+# builds. The justfile sets it. Unset, as on CRAN, the target directory is
+# src/rust/target, which a release build removes after linking.
+target_dir <- if (.Platform[["OS.type"]] == "unix") {
+  Sys.getenv("R8_TARGET_DIR")
+} else {
+  ""
+}
+.target_dir <- if (nzchar(target_dir)) {
+  normalizePath(target_dir, winslash = "/", mustWork = FALSE)
+} else {
+  "./rust/target"
+}
+
 # DEBUG selects the dev profile; otherwise the release profile.
 .profile <- ifelse(is_debug, "", "--release")
-.clean_targets <- ifelse(is_debug, "", "$(TARGET_DIR)")
+.clean_targets <- ifelse(is_debug || nzchar(target_dir), "", "$(TARGET_DIR)")
+# `make clean` (R CMD INSTALL --preclean) removes the target directory only
+# when it is the package's own src/rust/target.
+.clean_target_dir <- ifelse(nzchar(target_dir), "", "$(TARGET_DIR)")
 
 # Target triple of webR.
 webr_target <- "wasm32-unknown-emscripten"
@@ -141,7 +160,9 @@ mv_txt <- readLines(mv_fp)
 new_txt <- gsub("@CRAN_FLAGS@", .cran_flags, mv_txt) |>
   gsub("@CARGO_CONFIG@", .cargo_config, x = _, fixed = TRUE) |>
   gsub("@FEATURES@", .features, x = _, fixed = TRUE) |>
+  gsub("@TARGET_DIR@", .target_dir, x = _, fixed = TRUE) |>
   gsub("@PROFILE@", .profile, x = _) |>
+  gsub("@CLEAN_TARGET_DIR@", .clean_target_dir, x = _, fixed = TRUE) |>
   gsub("@CLEAN_TARGET@", .clean_targets, x = _) |>
   gsub("@LIBDIR@", .libdir, x = _) |>
   gsub("@TARGET@", .target, x = _) |>

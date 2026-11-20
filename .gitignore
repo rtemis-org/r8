@@ -3,6 +3,8 @@ __dev/
 
 # Rust
 /rust/target
+/target
+r/tests/testthat/packages/*/src/rust/target
 
 # macOS
 .DS_Store
