@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # Checks that the R package R8, its binding crate r8-r, and the workspace
-# crates rtemis-r8 and rtemis-r8-macros share one major and minor version, and
-# that the binding and rtemis-r8 require that version of their dependencies.
-# Patch versions are independent. Run from the repository root.
+# crates rtemis-r8, rtemis-r8-macros, and rtemis-r8-api share one major and
+# minor version, and that the binding and the crates require that version of
+# their dependencies. Patch versions are independent. It reports whether the
+# tree is a release tree: the rtemis-r8 of the binding's Cargo.lock and of
+# r/src/rust/vendor.tar.xz is a crates.io release of that version. With
+# --release, it also fails when the tree is not a release tree. Run from the
+# repository root.
 set -euo pipefail
+
+release=0
+if [[ "${1:-}" == "--release" ]]; then
+  release=1
+fi
 
 major_minor() { echo "$1" | cut -d. -f1,2; }
 
@@ -12,6 +21,8 @@ macros_req=$(sed -n 's/^rtemis-r8-macros = .*version = "\([^"]*\)".*/\1/p' rust/
 r_package=$(sed -n 's/^Version: *//p' r/DESCRIPTION)
 binding=$(sed -n "s/^version = '\(.*\)'$/\1/p" r/src/rust/Cargo.toml | head -n 1)
 binding_req=$(sed -n "s/^rtemis-r8 = '\(.*\)'$/\1/p" r/src/rust/Cargo.toml)
+api_req=$(sed -n 's/^rtemis-r8 = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-api/Cargo.toml)
+api_macros_req=$(sed -n 's/^rtemis-r8-macros = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-api/Cargo.toml)
 
 expected=$(major_minor "$workspace")
 status=0
@@ -27,8 +38,24 @@ check() {
 }
 
 echo "Major and minor version: $expected (rust/Cargo.toml, workspace)"
-check "rtemis-r8 requirement of rtemis-r8-macros" "$macros_req"
+check "rtemis-r8-macros requirement of rtemis-r8" "$macros_req"
 check "R package R8 (r/DESCRIPTION)" "$r_package"
 check "binding crate r8-r" "$binding"
 check "binding requirement of rtemis-r8" "$binding_req"
+check "rtemis-r8 requirement of rtemis-r8-api" "$api_req"
+check "rtemis-r8-macros requirement of rtemis-r8-api" "$api_macros_req"
+
+# The rtemis-r8 that a build without R8_CRATES_PATH compiles: the binding's
+# lock entry, which names crates.io as its source, and the vendored copy.
+locked=$(awk '/^name = "rtemis-r8"$/{f=1; next} f && /^version = /{gsub(/"/, "", $3); v=$3} f && /^source = "registry/{print v; exit} /^\[\[package\]\]/{f=0}' r/src/rust/Cargo.lock)
+vendored=$(tar -xJOf r/src/rust/vendor.tar.xz vendor/rtemis-r8/Cargo.toml 2>/dev/null | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
+echo "rtemis-r8 of a build from crates.io: ${locked:-none} (Cargo.lock), ${vendored:-none} (vendor.tar.xz)"
+if [[ -n "$locked" && "$locked" == "$vendored" && "$(major_minor "$locked")" == "$expected" ]]; then
+  echo "Release tree: yes"
+else
+  echo "Release tree: no (just update-crates in r/ locks and vendors the published release)"
+  if [[ $release -eq 1 ]]; then
+    status=1
+  fi
+fi
 exit $status

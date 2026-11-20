@@ -174,7 +174,7 @@ update-crates:
     @just _msg "─── Locking the crates.io release of rtemis-r8 for {{ pkg }}... ───"
     cd src/rust && cargo update -p rtemis-r8
     R8_CRATES_PATH= just vendor
-    R8_CRATES_PATH= just check-cran
+    R8_CRATES_PATH= R8_ORACLE= just check-cran
     @just _msg "Done"
 
 vendor:

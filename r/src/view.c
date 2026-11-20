@@ -379,14 +379,21 @@ static SEXP r8_package_exports(SEXP pkg) {
   return R_MakeExternalPtr((void *) e, Rf_install("r8_exports"), R_NilValue);
 }
 
+// A native symbol in the form of `getNativeSymbolInfo(...)$address`: an
+// external pointer tagged `native symbol`, which `.Call()` accepts, of class
+// `NativeSymbol`, which `R CMD check` (tools:::checkFF) accepts as a
+// registered routine.
 static SEXP native_symbol(DL_FUNC f) {
-  return R_MakeExternalPtrFn(f, Rf_install("native symbol"), R_NilValue);
+  SEXP p = PROTECT(R_MakeExternalPtrFn(f, Rf_install("native symbol"), R_NilValue));
+  Rf_setAttrib(p, R_ClassSymbol, Rf_mkString("NativeSymbol"));
+  UNPROTECT(1);
+  return p;
 }
 
-// The C routines that R calls through `.Call()` on a native symbol, an
-// external pointer `.Call()` accepts: list(invoke, exports). R8's `.Call`
-// routines are the Rust code's, registered by extendr; these continue a
-// jump or call R_GetCCallable() from C frames.
+// The C routines that R calls through `.Call()` on a native symbol:
+// list(invoke, exports). R8's `.Call` routines are the Rust code's,
+// registered by extendr; these continue a jump or call R_GetCCallable() from
+// C frames.
 SEXP r8_native_symbols(void) {
   SEXP out = PROTECT(Rf_allocVector(VECSXP, 2));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
