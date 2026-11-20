@@ -168,7 +168,7 @@ License:     MIT OR Apache-2.0
 Repository:  https://github.com/rust-lang/regex
 
 Name:        rtemis-r8
-Version:     0.2.0
+Version:     0.3.0
 Authors:     E.D. Gennatas
 License:     BSD-3-Clause
 Repository:  https://github.com/rtemis-org/r8

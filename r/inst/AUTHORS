@@ -28,7 +28,7 @@ readonly 0.2.14: David Tolnay
 regex 1.13.2: The Rust Project Developers, Andrew Gallant
 regex-automata 0.4.19: The Rust Project Developers, Andrew Gallant
 regex-syntax 0.8.12: The Rust Project Developers, Andrew Gallant
-rtemis-r8 0.2.0: E.D. Gennatas
+rtemis-r8 0.3.0: E.D. Gennatas
 ryu-js 0.2.2: David Tolnay, boa-dev
 serde 1.0.229: Erick Tryzelaar, David Tolnay
 serde_core 1.0.229: Erick Tryzelaar, David Tolnay
