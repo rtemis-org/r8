@@ -173,7 +173,7 @@ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rtemis-r8"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "regex",
  "rtemis-r8-macros",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "rtemis-r8-api"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "rtemis-r8",
  "rtemis-r8-macros",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "rtemis-r8-macros"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",

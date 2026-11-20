@@ -13,7 +13,7 @@ use crate::api::{self, Error, Jumped, Result};
 use crate::buffer::{Buffer, Element};
 use crate::field::Field;
 use crate::keep;
-use crate::native::{Native, panic_text};
+use crate::native::{Codec, panic_text};
 use crate::sys::{self, SEXP};
 
 /// An argument of an impl function, converted from its R value.
@@ -97,8 +97,9 @@ impl FromR for Dots {
 }
 
 /// The receiver `x` of a method of a Rust-native type: the state of a
-/// Rust-native value, borrowed, or a value built with `from_fields` from an
-/// R-native value of the type, such as `serialize(version = 2)` reads back.
+/// Rust-native value, borrowed, or a value built from an R-native value of
+/// the type ([`Codec::from_r_native`]), such as `serialize(version = 2)`
+/// reads back.
 pub enum Receiver<'a, T> {
     /// The state of a Rust-native value.
     Borrowed(&'a T),
@@ -116,7 +117,7 @@ impl<T> Deref for Receiver<'_, T> {
     }
 }
 
-impl<T: Native> Receiver<'_, T> {
+impl<T: Codec> Receiver<'_, T> {
     /// The receiver from `x`; an object of another type returns
     /// `type_mismatch`.
     ///
@@ -149,13 +150,13 @@ impl<T: Native> Receiver<'_, T> {
         let fields: Vec<SEXP> = (0..n)
             .map(|i| unsafe { sys::VECTOR_ELT(x, i as isize) })
             .collect();
-        unsafe { T::from_fields(&fields) }.map(Receiver::Built)
+        unsafe { T::from_r_native(x, &fields) }.map(Receiver::Built)
     }
 }
 
 /// Whether `x` is an R-native value of `T`: a list whose `r8_type` names
 /// `T`.
-fn is_r_native<T: Native>(x: SEXP) -> bool {
+fn is_r_native<T: Codec>(x: SEXP) -> bool {
     unsafe {
         if sys::TYPEOF(x) != sys::VECSXP {
             return false;
@@ -167,6 +168,30 @@ fn is_r_native<T: Native>(x: SEXP) -> bool {
         }
         let p = sys::Rf_translateCharUTF8(sys::STRING_ELT(ty, 0));
         std::ffi::CStr::from_ptr(p).to_bytes() == T::NAME.as_bytes()
+    }
+}
+
+/// The variant of an R-native enum value `x`, its `r8_variant` attribute.
+///
+/// # Safety
+///
+/// On R's main thread, with a valid `x`.
+#[doc(hidden)]
+pub unsafe fn r_variant(x: SEXP) -> Result<String> {
+    unsafe extern "C" {
+        fn Rf_install(name: *const std::ffi::c_char) -> SEXP;
+    }
+    unsafe {
+        let v = api::protect(&|| sys::Rf_getAttrib(x, Rf_install(c"r8_variant".as_ptr())))
+            .map_err(api::Jumped::into_error)?;
+        if sys::TYPEOF(v) != sys::STRSXP || sys::Rf_xlength(v) != 1 {
+            return Err(Error::new(
+                "no_variant",
+                "the enum value has no `r8_variant`",
+            ));
+        }
+        let p = sys::Rf_translateCharUTF8(sys::STRING_ELT(v, 0));
+        Ok(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
     }
 }
 
@@ -292,9 +317,9 @@ impl<T: Element> IntoR for Buffer<T> {
 }
 
 /// A Rust-native value returned by an impl function, wrapped by R8.
-pub struct Value<T: Native>(pub T);
+pub struct Value<T: Codec>(pub T);
 
-impl<T: Native> IntoR for Value<T> {
+impl<T: Codec> IntoR for Value<T> {
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         let a = api::api().map_err(Jumped::Error)?;
         let Some(f) = a.new_value else {

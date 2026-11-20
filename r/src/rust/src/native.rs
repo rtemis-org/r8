@@ -12,7 +12,7 @@ use extendr_ffi::{
     R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_STRING_ELT, SEXPTYPE, VECTOR_ELT,
 };
 use rtemis_r8::abi::{ERROR, Error, OK, Sexp, Status, TypeVTable};
-use rtemis_r8::ir::TypeDef;
+use rtemis_r8::ir::{TypeDef, VariantShape};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 
@@ -154,6 +154,10 @@ pub(crate) fn with_field(
     if status != OK || new_state.is_null() {
         return Err(error_text(&err));
     }
+    // A replacement keeps the variant of an enum's state.
+    if let Some(v) = state_variant(vt, state) {
+        check_variant(vt, new_state, &v)?;
+    }
     Ok(new_state)
 }
 
@@ -226,8 +230,136 @@ fn c_text(p: *const c_char) -> Option<String> {
     (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
 }
 
-/// `R8Api.new_value`: wraps a state of a registered Rust-native struct as
-/// an R8 value, taking ownership of the state, also on error.
+/// The bytes of a codec table up to and including its enum members,
+/// `variant` and `from_variant`. A table whose `size` ends before them, as
+/// tables written for R8 0.3.0 do, has none.
+const ENUM_MEMBERS_END: usize =
+    std::mem::offset_of!(TypeVTable, from_variant) + std::mem::size_of::<usize>();
+
+/// Whether a codec table is an enum's: its `size` covers the enum members
+/// and both are set.
+pub(crate) fn is_enum_codec(vt: *const TypeVTable) -> bool {
+    let codec = unsafe { &*vt };
+    codec.size as usize >= ENUM_MEMBERS_END
+        && codec.variant.is_some()
+        && codec.from_variant.is_some()
+}
+
+/// Whether a codec table sets either enum member.
+pub(crate) fn has_enum_members(vt: *const TypeVTable) -> bool {
+    let codec = unsafe { &*vt };
+    codec.size as usize >= ENUM_MEMBERS_END
+        && (codec.variant.is_some() || codec.from_variant.is_some())
+}
+
+/// The variant of a state of an enum's codec; `None` for a struct's codec.
+pub(crate) fn state_variant(vt: *const TypeVTable, state: *const c_void) -> Option<String> {
+    if !is_enum_codec(vt) {
+        return None;
+    }
+    let f = unsafe { &*vt }.variant?;
+    c_text(unsafe { f(state) })
+}
+
+/// A state built by an enum's codec from the fields of `fields`, a list in
+/// the declaration order of the variant `variant`, validated and in their
+/// stored forms. The state's variant is checked against `variant`.
+pub(crate) fn from_variant(
+    vt: *const TypeVTable,
+    variant: &str,
+    fields: SEXP,
+) -> Result<*mut c_void, String> {
+    if !is_enum_codec(vt) {
+        return Err("the codec has no `variant` and `from_variant`".to_string());
+    }
+    let f = unsafe { &*vt }
+        .from_variant
+        .expect("checked by is_enum_codec");
+    let name = std::ffi::CString::new(variant).map_err(|e| e.to_string())?;
+    let items: Vec<Sexp> = (0..xlen(fields))
+        .map(|i| unsafe { VECTOR_ELT(fields, i as R_xlen_t) }.cast())
+        .collect();
+    let mut state: *mut c_void = std::ptr::null_mut();
+    let mut err = Error {
+        code: [0; 64],
+        message: [0; 1024],
+    };
+    let status = unsafe {
+        f(
+            name.as_ptr(),
+            items.as_ptr(),
+            items.len(),
+            &mut state,
+            &mut err,
+        )
+    };
+    if status != OK || state.is_null() {
+        return Err(error_text(&err));
+    }
+    check_variant(vt, state, variant)?;
+    Ok(state)
+}
+
+/// Checks that a new state of an enum's codec has the variant `expected`;
+/// on a mismatch, drops the state and returns the error `codec_variant`.
+pub(crate) fn check_variant(
+    vt: *const TypeVTable,
+    state: *mut c_void,
+    expected: &str,
+) -> Result<(), String> {
+    let found = state_variant(vt, state);
+    if found.as_deref() == Some(expected) {
+        return Ok(());
+    }
+    if let Some(d) = unsafe { (*vt).drop } {
+        unsafe { d(state) };
+    }
+    Err(format!(
+        "the codec built a state of the variant `{}` for the variant `{expected}` [codec_variant]",
+        found.unwrap_or_default()
+    ))
+}
+
+/// The field names and version of a value of the type `def`, of the
+/// variant `variant` for an enum; `None` when the enum declares no such
+/// variant.
+pub(crate) fn value_fields(
+    def: &TypeDef,
+    variant: Option<&str>,
+    lookup: &dyn TypeLookup,
+) -> Option<(Vec<String>, u32)> {
+    let names = |fs: &[rtemis_r8::ir::FieldDef]| fs.iter().map(|f| f.name.to_string()).collect();
+    match def {
+        TypeDef::Struct(s) => Some((names(&s.fields), s.version)),
+        TypeDef::Enum(e) => {
+            let v = e
+                .variants
+                .iter()
+                .find(|v| Some(v.name.as_str()) == variant)?;
+            let fields = match &v.shape {
+                VariantShape::Unit => Vec::new(),
+                VariantShape::Struct { fields, .. } => names(fields),
+                VariantShape::Newtype { of } => match lookup.find(of) {
+                    Some(TypeDef::Struct(s)) => names(&s.fields),
+                    _ => return None,
+                },
+            };
+            Some((fields, e.version))
+        }
+    }
+}
+
+/// The version of a struct or enum declaration.
+fn def_version(def: &TypeDef) -> u32 {
+    match def {
+        TypeDef::Struct(s) => s.version,
+        TypeDef::Enum(e) => e.version,
+    }
+}
+
+/// `R8Api.new_value`: wraps a state of a registered Rust-native struct or
+/// enum as an R8 value, taking ownership of the state, also on error; an
+/// enum value takes the variant that the codec's `variant` names.
 ///
 /// # Safety
 ///
@@ -294,12 +426,22 @@ fn new_value(
             return Err(("registry", "the registry is unavailable".to_string()));
         }
     };
-    let Some(TypeDef::Struct(def)) = (&*docs as &dyn TypeLookup).find(&q) else {
+    let lookup: &dyn TypeLookup = &*docs;
+    let Some(def) = lookup.find(&q) else {
         drop_state();
-        return Err(("unknown_type", format!("`{q}` is not a registered struct")));
+        return Err(("unknown_type", format!("`{q}` is not a registered type")));
     };
-    let names: Vec<String> = def.fields.iter().map(|f| f.name.to_string()).collect();
-    let version = def.version;
+    let variant = state_variant(vt, state);
+    let Some((names, version)) = value_fields(def, variant.as_deref(), lookup) else {
+        drop_state();
+        return Err((
+            "codec_variant",
+            format!(
+                "the state's variant `{}` is not a variant of `{q}`",
+                variant.unwrap_or_default()
+            ),
+        ));
+    };
     // The registry is released before R allocates: a jump out of an
     // allocation skips no Rust frame that holds the lock.
     drop(docs);
@@ -310,6 +452,7 @@ fn new_value(
         qname: &qname,
         names: &names,
         version,
+        variant: variant.as_deref(),
     };
     let mut out: SEXP = unsafe { extendr_ffi::R_NilValue };
     let mut err = Error {
@@ -338,6 +481,7 @@ struct BuildArgs<'a> {
     qname: &'a str,
     names: &'a [String],
     version: u32,
+    variant: Option<&'a str>,
 }
 
 /// Builds a Rust-native value under `r8_protect()`; it holds only borrows,
@@ -345,7 +489,7 @@ struct BuildArgs<'a> {
 extern "C" fn build_value(p: *mut c_void) -> SEXP {
     let a = unsafe { &*p.cast::<BuildArgs>() };
     unsafe {
-        let like = template(a.qname, a.names, a.version);
+        let like = template(a.qname, a.names, a.version, a.variant);
         let v = wrap(a.vt, a.state, like);
         Rf_unprotect(1);
         v
@@ -371,13 +515,19 @@ fn protect(
 }
 
 /// A list of the field names `names` with the attributes of a value of the
-/// struct `qname`, the template of a Rust-native value; returned protected.
+/// type `qname`, of the variant `variant` for an enum, the template of a
+/// Rust-native value; returned protected.
 /// It allocates no Rust memory, so it runs inside `r8_protect()`.
 ///
 /// # Safety
 ///
 /// The caller unprotects the result.
-pub(crate) unsafe fn template(qname: &str, names: &[String], version: u32) -> SEXP {
+pub(crate) unsafe fn template(
+    qname: &str,
+    names: &[String],
+    version: u32,
+    variant: Option<&str>,
+) -> SEXP {
     unsafe {
         let like = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, names.len() as R_xlen_t));
         let n = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, names.len() as R_xlen_t));
@@ -385,7 +535,7 @@ pub(crate) unsafe fn template(qname: &str, names: &[String], version: u32) -> SE
             SET_STRING_ELT(n, k as R_xlen_t, mkchar(f));
         }
         extendr_ffi::Rf_setAttrib(like, sym_names(), n);
-        crate::construct::set_value_attributes(like, qname, version, None);
+        crate::construct::set_value_attributes(like, qname, version, variant);
         Rf_unprotect(1);
         like
     }
@@ -472,14 +622,13 @@ pub unsafe extern "C" fn r8_native_meta(type_name: *const c_char) -> Sexp {
         let q = QualifiedName::parse(&name).ok()?;
         let docs = registry().lock().ok()?;
         let lookup: &dyn TypeLookup = &*docs;
-        let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
-            return None;
-        };
+        let def = lookup.find(&q)?;
+        let version = def_version(def);
         let hash = rtemis_r8::codec::declaration_hash(&q, lookup);
         let package = crate::exports::codec_package(&name).unwrap_or_default();
         unsafe {
             let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, 3));
-            extendr_ffi::SET_VECTOR_ELT(out, 0, extendr_ffi::Rf_ScalarInteger(def.version as i32));
+            extendr_ffi::SET_VECTOR_ELT(out, 0, extendr_ffi::Rf_ScalarInteger(version as i32));
             extendr_ffi::SET_VECTOR_ELT(out, 1, scalar_string(&hash));
             extendr_ffi::SET_VECTOR_ELT(out, 2, scalar_string(&package));
             Rf_unprotect(1);
@@ -531,18 +680,15 @@ pub unsafe extern "C" fn r8_native_resolve(
                 .lock()
                 .map_err(|_| ("registry", "the registry is unavailable".to_string()))?;
             let lookup: &dyn TypeLookup = &*docs;
-            let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
-                return Err((
-                    "unknown_type",
-                    format!("`{name}` is not a registered struct"),
-                ));
+            let Some(def) = lookup.find(&q) else {
+                return Err(("unknown_type", format!("`{name}` is not a registered type")));
             };
-            if def.version as i32 != version {
+            let registered = def_version(def);
+            if registered as i32 != version {
                 return Err((
                     "version_mismatch",
                     format!(
-                        "the value was saved at version {version} of `{name}`, and version {} is registered",
-                        def.version
+                        "the value was saved at version {version} of `{name}`, and version {registered} is registered"
                     ),
                 ));
             }

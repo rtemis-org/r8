@@ -779,6 +779,11 @@ pub(crate) fn assemble(
                 let state = crate::native::from_fields(vt, out).map_err(fail)?;
                 own(crate::native::wrap(vt, state, out))
             }
+            (TypeDef::Enum(_), Some(vt)) => {
+                let name = variant.unwrap_or_default();
+                let state = crate::native::from_variant(vt, name, out).map_err(fail)?;
+                own(crate::native::wrap(vt, state, out))
+            }
             _ => own(out),
         };
         Rf_unprotect(2);

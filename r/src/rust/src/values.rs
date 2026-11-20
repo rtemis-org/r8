@@ -1396,18 +1396,29 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         Err(errors) => return Ok(list!(errors = errors_list(&errors))),
     };
     let lookup: &dyn TypeLookup = &docs;
-    // A Rust-native struct: the codec's `decode` builds the state from the
-    // normalized document, or else `from_fields` from the decoded fields.
-    if let (Some(TypeDef::Struct(def)), Some(vt)) =
-        (lookup.find(&q), crate::exports::codec(type_name))
-    {
+    // A Rust-native struct or enum: the codec's `decode` builds the state
+    // from the normalized document, or else `from_fields` (a struct) or
+    // `from_variant` (an enum) from the decoded fields.
+    if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name)) {
         let document =
             rtemis_r8::codec::document_access(rtemis_r8::access::Json::new(&v), &q, lookup);
         if let Some(state) = crate::native::decode(vt, &document) {
             let state = state.map_err(fail)?;
+            let variant = crate::native::state_variant(vt, state);
+            let Some((names, version)) =
+                crate::native::value_fields(def, variant.as_deref(), lookup)
+            else {
+                if let Some(d) = unsafe { (*vt).drop } {
+                    unsafe { d(state) };
+                }
+                return Err(fail(format!(
+                    "the codec of `{q}` decoded a state of the undeclared variant `{}` [codec_variant]",
+                    variant.unwrap_or_default()
+                )));
+            };
             let value = unsafe {
-                let names: Vec<String> = def.fields.iter().map(|f| f.name.to_string()).collect();
-                let like = crate::native::template(&q.to_string(), &names, def.version);
+                let like =
+                    crate::native::template(&q.to_string(), &names, version, variant.as_deref());
                 let r = Robj::from_sexp(crate::native::wrap(vt, state, like));
                 extendr_ffi::Rf_unprotect(1);
                 r
@@ -1416,7 +1427,17 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         }
         let fields = Decoder { lookup: &docs }.named(&v, &q, None)?;
         let fs = unsafe { fields.get() };
-        let state = crate::native::from_fields(vt, fs).map_err(fail)?;
+        let state = match def {
+            TypeDef::Struct(_) => crate::native::from_fields(vt, fs),
+            TypeDef::Enum(_) => {
+                let variant = fields
+                    .get_attrib("r8_variant")
+                    .and_then(|a| a.as_str().map(str::to_string))
+                    .unwrap_or_default();
+                crate::native::from_variant(vt, &variant, fs)
+            }
+        }
+        .map_err(fail)?;
         let value = unsafe { Robj::from_sexp(crate::native::wrap(vt, state, fs)) };
         return Ok(list!(value = value));
     }

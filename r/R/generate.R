@@ -36,6 +36,10 @@
 #' @param check Logical: Compare the rendered file with `R/r8-types.R` and
 #'   signal an error when they differ, without writing.
 #'
+#' The file is current when its code and comments, token by token, equal the
+#' rendered file's; a formatter that changes only the layout, such as air,
+#' leaves it current, and the generator does not rewrite it.
+#'
 #' @return The path of `R/r8-types.R`, invisibly.
 #'
 #' @examples
@@ -91,12 +95,25 @@ r8_document_native <- function(path = ".", check = FALSE) {
   doc <- r8_json_parse(r8_exports_document(ptr))
   codecs <- r8_exports_compare(ptr)
   codecs <- codecs[["type_name"]][codecs[["codec"]]]
+  native_enums <- vapply(
+    doc[["types"]],
+    function(t) {
+      identical(t[["kind"]], "enum") &&
+        paste0(doc[["namespace"]], "::", t[["name"]]) %in% codecs
+    },
+    logical(1)
+  )
+  if (any(native_enums)) {
+    check_r8_requirement(path, pkg, "0.4.0")
+  }
   lines <- render_document(doc, pkg, codecs)
   verify_document(lines, doc[["namespace"]], ptr)
   file <- file.path(path, "R", "r8-types.R")
   old <- if (file.exists(file)) readLines(file, warn = FALSE) else character()
+  # A formatter such as air changes the file's layout and none of its tokens.
+  current <- same_code(old, lines)
   if (check) {
-    if (!identical(old, lines)) {
+    if (!current) {
       r8_abort(
         file,
         " differs from the declarations in the compiled exports of '",
@@ -105,11 +122,88 @@ r8_document_native <- function(path = ".", check = FALSE) {
         class = "r8_declaration_error"
       )
     }
-  } else if (!identical(old, lines)) {
+  } else if (!current) {
     writeLines(lines, file)
   }
   invisible(file)
 } # /R8::r8_document_native
+
+
+# %% check_r8_requirement ----
+#' Check that a package requires a minimum version of R8
+#'
+#' A Rust-native enum needs R8 0.4.0: R8 0.3.0 registers an enum's codec and
+#' builds R-native values of the type.
+#'
+#' @param path Character: The package's root directory.
+#' @param pkg Character: The package.
+#' @param minimum Character: The version of R8 the package requires.
+#'
+#' @return `NULL`, invisibly; signals `r8_declaration_error` when the
+#'   `Imports` of the package's `DESCRIPTION` admit an earlier R8.
+#'
+#' @keywords internal
+#' @noRd
+check_r8_requirement <- function(path, pkg, minimum) {
+  imports <- read.dcf(file.path(path, "DESCRIPTION"), fields = "Imports")[
+    1L,
+    1L
+  ]
+  req <- regmatches(
+    imports,
+    regexec(
+      "(^|[,[:space:]])R8[[:space:]]*\\([[:space:]]*>=[[:space:]]*([0-9.-]+)[[:space:]]*\\)",
+      imports
+    )
+  )[[1L]]
+  ok <- length(req) == 3L &&
+    package_version(req[[3L]]) >= package_version(minimum)
+  if (!ok) {
+    r8_abort(
+      "Package '",
+      pkg,
+      "' declares a Rust-native enum, which R8 ",
+      minimum,
+      " registers; its DESCRIPTION lists `R8 (>= ",
+      minimum,
+      ")` in Imports.",
+      class = "r8_declaration_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::check_r8_requirement
+
+
+# %% same_code ----
+#' Whether two R sources hold the same tokens
+#'
+#' @param a,b Character: The lines of each source.
+#'
+#' @return Logical: `TRUE` when both parse and their terminal tokens,
+#'   comments included, are the same in the same order.
+#'
+#' @keywords internal
+#' @noRd
+same_code <- function(a, b) {
+  tokens <- function(lines) {
+    exprs <- tryCatch(
+      parse(text = lines, keep.source = TRUE),
+      error = function(e) NULL
+    )
+    if (is.null(exprs)) {
+      return(NULL)
+    }
+    pd <- utils::getParseData(exprs)
+    if (is.null(pd)) {
+      return(character())
+    }
+    pd <- pd[pd[["terminal"]], ]
+    pd <- pd[order(pd[["line1"]], pd[["col1"]]), ]
+    trimws(pd[["text"]], which = "right")
+  }
+  ta <- tokens(a)
+  !is.null(ta) && identical(ta, tokens(b))
+} # /R8::same_code
 
 
 # %% verify_document ----
@@ -167,17 +261,7 @@ render_document <- function(doc, pkg, codecs) {
     if (identical(t[["kind"]], "struct")) {
       render_struct(t, ns, native)
     } else {
-      if (native) {
-        r8_abort(
-          "The enum `",
-          ns,
-          "::",
-          t[["name"]],
-          "` has a codec; Rust-native types are structs.",
-          class = "r8_declaration_error"
-        )
-      }
-      render_enum(t, ns)
+      render_enum(t, ns, native)
     }
   })
   text <- c(
@@ -360,12 +444,13 @@ render_struct <- function(t, ns, native) {
 #'
 #' @param t List: The IR declaration.
 #' @param ns Character: The namespace.
+#' @param native Logical: The type has a codec.
 #'
 #' @return Character: The lines.
 #'
 #' @keywords internal
 #' @noRd
-render_enum <- function(t, ns) {
+render_enum <- function(t, ns, native = FALSE) {
   qname <- paste0(ns, "::", t[["name"]])
   check_renderable(
     t,
@@ -412,7 +497,8 @@ render_enum <- function(t, ns) {
       paste0("description = ", deparse_string(t[["description"]]))
     },
     paste0("tag = ", deparse_string(t[["tag"]] %||% "type")),
-    paste0("version = ", t[["version"]], "L")
+    paste0("version = ", t[["version"]], "L"),
+    if (native) "native = TRUE"
   )
   c(
     roxygen_block(t, qname),

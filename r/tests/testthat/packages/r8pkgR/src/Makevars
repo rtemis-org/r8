@@ -18,6 +18,9 @@ PKG_LIBS = -L$(LIBDIR) -lr8pkgr
 
 all: $(SHLIB)
 
+# Cargo decides what to rebuild, so make runs it on every build.
+.PHONY: $(STATLIB)
+
 $(SHLIB): $(STATLIB)
 
 $(STATLIB):

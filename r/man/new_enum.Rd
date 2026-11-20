@@ -5,7 +5,14 @@
 \alias{@.r8_enum_type}
 \title{Declare an enum}
 \usage{
-new_enum(name, variants = list(), description = "", tag = "type", version = 1L)
+new_enum(
+  name,
+  variants = list(),
+  description = "",
+  tag = "type",
+  version = 1L,
+  native = FALSE
+)
 
 \method{@}{r8_enum_type}(object, name)
 }
@@ -19,6 +26,11 @@ new_enum(name, variants = list(), description = "", tag = "type", version = 1L)
 \item{tag}{Character: The member that names the variant in JSON.}
 
 \item{version}{Integer: The type's version, from 1.}
+
+\item{native}{Logical: A Rust-native type, whose values, unit variants
+included, the codec in the package's compiled exports builds and holds
+(\code{R8.h}). Its variant constructors and unit variants signal
+\code{r8_codec_missing} until the codec is registered.}
 
 \item{object}{An enum type object.}
 }

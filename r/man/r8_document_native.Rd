@@ -10,7 +10,11 @@ r8_document_native(path = ".", check = FALSE)
 \item{path}{Character: The package's root directory.}
 
 \item{check}{Logical: Compare the rendered file with \code{R/r8-types.R} and
-signal an error when they differ, without writing.}
+signal an error when they differ, without writing.
+
+The file is current when its code and comments, token by token, equal the
+rendered file's; a formatter that changes only the layout, such as air,
+leaves it current, and the generator does not rewrite it.}
 }
 \value{
 The path of \code{R/r8-types.R}, invisibly.

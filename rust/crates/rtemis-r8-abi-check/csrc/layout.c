@@ -15,6 +15,7 @@ static const size_t layout[] = {
   OFFSET(R8TypeVTable, write_state), OFFSET(R8TypeVTable, read_state),
   OFFSET(R8TypeVTable, get_field), OFFSET(R8TypeVTable, with_field),
   OFFSET(R8TypeVTable, drop), OFFSET(R8TypeVTable, bytes),
+  OFFSET(R8TypeVTable, variant), OFFSET(R8TypeVTable, from_variant),
   SIZE(R8ImplEntry), OFFSET(R8ImplEntry, type_name), OFFSET(R8ImplEntry, method),
   OFFSET(R8ImplEntry, call), OFFSET(R8ImplEntry, n_params),
   SIZE(R8Exports), OFFSET(R8Exports, size), OFFSET(R8Exports, package),

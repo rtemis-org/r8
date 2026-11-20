@@ -12,6 +12,7 @@
 // R value once read and the unfilled marker before; `get_field` fills it on
 // the first read of each field, with `data1` as the owner of any view.
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,9 +76,20 @@ SEXP r8_native_meta(const char *type_name);
 const R8TypeVTable *r8_native_resolve(const char *type_name, int version, const char *hash,
                                       R8Error *err);
 
+// The variant of a state of an enum's codec; NULL for a struct's codec and
+// for a table whose `size` ends before the enum members (R8 0.3.0's).
+static const char *state_variant(const R8TypeVTable *vt, const void *state) {
+  if (vt->size < offsetof(R8TypeVTable, from_variant) + sizeof(vt->from_variant) ||
+      vt->variant == NULL) {
+    return NULL;
+  }
+  return vt->variant(state);
+}
+
 // A value read by `Unserialize` before its codec was registered keeps the
-// serialized state, list(type, version, hash, package, names, bytes), as
-// the tag of its codec pointer, and builds its state on first entry.
+// serialized state, list(type, version, hash, package, names, bytes), and
+// for an enum value a seventh element, its variant, as the tag of its codec
+// pointer, and builds its state on first entry.
 static SEXP kept_state(SEXP data1) {
   return R_ExternalPtrTag(R_ExternalPtrProtected(data1));
 }
@@ -115,6 +127,21 @@ static int resolve(SEXP data1, R8Error *err) {
   if (vt->read_state(RAW_RO(bytes), (size_t) XLENGTH(bytes), &state, err) != R8_OK ||
       state == NULL) {
     return 0;
+  }
+  // An enum value's state has the variant the value was saved with.
+  if (XLENGTH(kept) > 6) {
+    const char *expected = kept_text(kept, 6);
+    const char *found = state_variant(vt, state);
+    if (found == NULL || strcmp(found, expected) != 0) {
+      snprintf(err->code, sizeof(err->code), "%s", "bad_state");
+      snprintf(err->message, sizeof(err->message),
+               "`read_state` of `%s` built the variant `%s` for a value saved as `%s`",
+               vt->type_name, found == NULL ? "" : found, expected);
+      if (vt->drop != NULL) {
+        vt->drop(state);
+      }
+      return 0;
+    }
   }
   R_SetExternalPtrAddr(codec, (void *) vt);
   R_SetExternalPtrTag(codec, R_NilValue);
@@ -209,8 +236,9 @@ static R8Status fill_write(void *context, const uint8_t *bytes, size_t len) {
   return R8_OK;
 }
 
-// list(type, version, hash, package, names, bytes): the state's bytes from
-// the codec's `write_state`, with the records that `Unserialize` checks.
+// list(type, version, hash, package, names, bytes), with the variant as a
+// seventh element for an enum value: the state's bytes from the codec's
+// `write_state`, with the records that `Unserialize` checks.
 // NULL, which serializes the fields as a plain list, for a codec without
 // `write_state` or a type absent from the registry.
 static SEXP native_Serialized_state(SEXP x) {
@@ -249,7 +277,11 @@ static SEXP native_Serialized_state(SEXP x) {
     }
     Rf_error("%s [%s]", err.message, err.code);
   }
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 6));
+  const char *variant = state_variant(vt, state);
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, variant == NULL ? 6 : 7));
+  if (variant != NULL) {
+    SET_VECTOR_ELT(out, 6, Rf_mkString(variant));
+  }
   SET_VECTOR_ELT(out, 0, Rf_mkString(vt->type_name));
   SET_VECTOR_ELT(out, 1, VECTOR_ELT(meta, 0));
   SET_VECTOR_ELT(out, 2, VECTOR_ELT(meta, 1));

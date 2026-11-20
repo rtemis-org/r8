@@ -372,7 +372,95 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
     )
   )
   expect_true("stale TRUE " %in% out, info = paste(out, collapse = "\n"))
-  expect_identical(readLines(file.path(copy, "R", "r8-types.R")), generated)
+  expect_true(R8:::same_code(
+    readLines(file.path(copy, "R", "r8-types.R")),
+    generated
+  ))
+})
+
+test_that("Rust-native enums construct, read, change, persist, and cross workers", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("mirai")
+  skip_if_not_installed("future")
+  lib <- install_test_packages()
+  rds <- tempfile(fileext = ".rds")
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages(library(r8pkgR))",
+      "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
+      "native <- function(x) grepl('r8 native pkgr::Resampler', inspect(x))",
+      "k <- Resampler@KFold(k = 5L, seed = 1L)",
+      "cat('kfold', native(k), attr(k, 'r8_variant'), names(k), k$k, format(k), '\\n')",
+      "idx <- as.integer(c(2, 4, 6))",
+      "f <- Resampler@Fixed(train = idx)",
+      "cat('fixed', native(f), identical(f$train, idx), format(f), '\\n')",
+      "l <- Resampler@Loocv",
+      "cat('unit', native(l), length(l), attr(l, 'r8_variant'), format(l), '\\n')",
+      "c1 <- Resampler@Custom(train = c(1L, 2L), test = 3L)",
+      "cat('newtype', native(c1), names(c1), c1$test, format(c1), '\\n')",
+      "k2 <- k; k2$k <- 10L",
+      "cat('set', native(k2), k2$k, k$k, attr(k2, 'r8_variant'), '\\n')",
+      "e <- tryCatch(k$train, error = function(e) 'no_field')",
+      "cat('variant_field', e, '\\n')",
+      "r <- R8::r8_from_json(Resampler, R8::to_json(c1))",
+      "cat('json', native(r), R8::r8_equal(r, c1), '\\n')",
+      "u <- unserialize(serialize(f, NULL)); v <- unserialize(serialize(l, NULL))",
+      "cat('serialize', native(u), R8::r8_equal(u, f), native(v), attr(v, 'r8_variant'), '\\n')",
+      "cat('hash', R8::r8_hash(k) == R8::r8_hash(Resampler@KFold(k = 5L, seed = 1L)), '\\n')",
+      "e <- tryCatch(Resampler@KFold(k = 'a', seed = 1L), error = function(e) 'r_type')",
+      "cat('invalid', e, '\\n')",
+      sprintf("saveRDS(list(f, l, c1), %s)", deparse(rds))
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true(
+    "kfold TRUE KFold k seed 5 KFold (k = 5, seed = 1) " %in% out,
+    info = info
+  )
+  expect_true("fixed TRUE TRUE Fixed (3 training cases) " %in% out, info = info)
+  expect_true("unit TRUE 0 Loocv LOOCV " %in% out, info = info)
+  expect_true(
+    "newtype TRUE train test 3 Custom (2 train, 1 test) " %in% out,
+    info = info
+  )
+  expect_true("set TRUE 10 5 KFold " %in% out, info = info)
+  expect_true("variant_field no_field " %in% out, info = info)
+  expect_true("json TRUE TRUE " %in% out, info = info)
+  expect_true("serialize TRUE TRUE TRUE Loocv " %in% out, info = info)
+  expect_true("hash TRUE " %in% out, info = info)
+  expect_true("invalid r_type " %in% out, info = info)
+  # A session that reads the values before loading the codec's package, and
+  # workers in both directions.
+  out <- run_r(
+    lib,
+    c(
+      sprintf("x <- readRDS(%s)", deparse(rds)),
+      "suppressPackageStartupMessages(library(r8pkgR))",
+      "cat('resolved', format(x[[1]]), format(x[[2]]), x[[3]]$train, '\\n')",
+      "mirai::daemons(1)",
+      "m <- mirai::mirai({ library(r8pkgR); list(format(f), Resampler@Bootstrap(n = 3L)) }, f = x[[1]])[]",
+      "cat('mirai', m[[1]], format(m[[2]]), '\\n')",
+      "invisible(mirai::daemons(0))",
+      "future::plan(future::multisession, workers = 1)",
+      "g <- future::value(future::future({ library(r8pkgR); c1$train }, globals = list(c1 = x[[3]])))",
+      "cat('future', g, '\\n')",
+      "future::plan(future::sequential)"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true(
+    "resolved Fixed (3 training cases) LOOCV 1 2 " %in% out,
+    info = info
+  )
+  expect_true(
+    "mirai Fixed (3 training cases) Bootstrap (n = 3) " %in% out,
+    info = info
+  )
+  expect_true("future 1 2 " %in% out, info = info)
 })
 
 test_that("roxygen2 documents R8 declarations and the package passes check", {

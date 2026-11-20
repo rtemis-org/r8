@@ -129,6 +129,18 @@ typedef struct R8TypeVTable {
   void (*drop)(void *state);
   /* The state's size in bytes, including memory it owns. */
   size_t (*bytes)(const void *state);
+  /* Enum codecs. An enum's codec sets `variant` and `from_variant` and
+   * leaves `from_fields` NULL; a struct's codec sets `from_fields` and
+   * leaves both NULL. R8 reads them when `size` covers them. */
+  /* The name of the state's variant, NUL-terminated, alive as long as the
+   * codec. */
+  const char *(*variant)(const void *state);
+  /* Builds a state of the variant named `variant` from its fields, `n` R
+   * values in the variant's declaration order, which R8 has validated and
+   * converted to their stored forms; a unit variant has none, and a newtype
+   * variant has the fields of its struct. */
+  R8Status (*from_variant)(const char *variant, const SEXP *fields, size_t n, void **state,
+                           R8Error *err);
 } R8TypeVTable;
 
 /* An impl function: a trait method implemented in compiled code. `args`

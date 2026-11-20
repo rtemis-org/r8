@@ -597,6 +597,10 @@ variant <- function(
 #' @param description Character: What the type is.
 #' @param tag Character: The member that names the variant in JSON.
 #' @param version Integer: The type's version, from 1.
+#' @param native Logical: A Rust-native type, whose values, unit variants
+#'   included, the codec in the package's compiled exports builds and holds
+#'   (`R8.h`). Its variant constructors and unit variants signal
+#'   `r8_codec_missing` until the codec is registered.
 #'
 #' @return `new_enum()`: the type object, of class `r8_enum_type`.
 #'   `Kernel@Linear`: the unit variant's value, an R8 value.
@@ -616,7 +620,8 @@ new_enum <- function(
   variants = list(),
   description = "",
   tag = "type",
-  version = 1L
+  version = 1L,
+  native = FALSE
 ) {
   if (!is_name(name)) {
     r8_abort(
@@ -671,7 +676,7 @@ new_enum <- function(
     version = as.integer(version),
     variants = variants_ir
   )
-  declare(ir, parent.frame(), "r8_enum_type", list())
+  declare(ir, parent.frame(), "r8_enum_type", list(), native = isTRUE(native))
 } # /R8::new_enum
 
 
@@ -696,7 +701,11 @@ new_enum <- function(
     )
   }
   qname <- attr(object, "r8_name")
+  native <- isTRUE(attr(object, "r8_native"))
   if (v[[1L]][["shape"]] == "unit") {
+    if (native) {
+      check_codec(qname)
+    }
     return(r8_construct(qname, list(), name))
   }
   # A struct or newtype variant: its constructor, with the fields as formals;
@@ -716,7 +725,8 @@ new_enum <- function(
         qname,
         names(formals),
         name,
-        required = required_formals(formals)
+        required = required_formals(formals),
+        native = native
       )
     ),
     envir = asNamespace("R8")

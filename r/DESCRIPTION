@@ -1,6 +1,6 @@
 Package: R8
 Title: Structs, Enums, and Traits with a 'Rust' Runtime
-Version: 0.3.0
+Version: 0.4.0
 Date: 2026-11-18
 Authors@R: c(
     person(given = "E.D.", family = "Gennatas", role = c("aut", "cre", "cph"),

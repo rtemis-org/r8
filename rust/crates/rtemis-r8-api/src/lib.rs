@@ -27,7 +27,7 @@ pub use buffer::{Buffer, Element, Logical};
 pub use call::{Dots, FromR, IntoR, Receiver, Sexp, Value};
 pub use exports::{ImplSet, MethodRow};
 pub use field::Field;
-pub use native::{Native, Shared, codec};
+pub use native::{Codec, Native, NativeEnum, Shared, codec, enum_codec};
 pub use state::{StateReader, StateWriter};
 pub use traits::{Debug, Dim, Display, PartialOrd};
 

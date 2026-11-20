@@ -1,5 +1,7 @@
 useDynLib(r8pkgR, .registration = TRUE)
+export(Resampler)
 export(Signal)
+export(Split)
 export(Norm)
 export(magnitude)
 export(ratio)

@@ -106,6 +106,21 @@ pub struct TypeVTable {
     pub drop: Option<unsafe extern "C" fn(*mut c_void)>,
     /// The bytes a state holds, including memory it owns.
     pub bytes: Option<unsafe extern "C" fn(*const c_void) -> usize>,
+    /// The name of the state's variant, NUL-terminated, alive as long as
+    /// the codec: set by an enum's codec, `None` in a struct's.
+    pub variant: Option<unsafe extern "C" fn(*const c_void) -> *const c_char>,
+    /// Builds a state of the named variant from its fields, in the
+    /// variant's declaration order: set by an enum's codec, `None` in a
+    /// struct's.
+    pub from_variant: Option<
+        unsafe extern "C" fn(
+            *const c_char,
+            *const Sexp,
+            usize,
+            *mut *mut c_void,
+            *mut Error,
+        ) -> Status,
+    >,
 }
 
 /// `R8MethodFn`: an impl function.
@@ -229,6 +244,11 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ),
         ("R8TypeVTable.drop", offset_of!(TypeVTable, drop)),
         ("R8TypeVTable.bytes", offset_of!(TypeVTable, bytes)),
+        ("R8TypeVTable.variant", offset_of!(TypeVTable, variant)),
+        (
+            "R8TypeVTable.from_variant",
+            offset_of!(TypeVTable, from_variant),
+        ),
         ("R8ImplEntry", size_of::<ImplEntry>()),
         ("R8ImplEntry.type_name", offset_of!(ImplEntry, type_name)),
         ("R8ImplEntry.method", offset_of!(ImplEntry, method)),

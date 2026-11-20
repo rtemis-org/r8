@@ -1,3 +1,11 @@
+# R8 0.4.0
+
+- Rust-native enums: `#[derive(R8)]` with `#[r8(native)]` on an enum of unit, struct, and newtype variants keeps every value, unit variants included, in compiled code. `new_enum(native = TRUE)` declares one in R, and `r8_document_native()` writes it; a package with a native enum lists `R8 (>= 0.4.0)` in `Imports`.
+- `R8.h`: an enum's codec sets the new members `variant` and `from_variant` of `R8TypeVTable`. The ABI version stays 1, and codecs built for R8 0.3.0 register unchanged.
+- `r8_register()` refuses a codec whose shape does not match its type, and a codec whose enum declares a runtime-only field in any variant.
+- `r8::exports!` declares every type of the package's namespace that its listed types reach, such as the struct of a newtype variant.
+- The package builds against `rtemis-r8` 0.4.0.
+
 # R8 0.3.0
 
 - Rust-native types: a struct whose codec is in a package's compiled exports keeps its values in compiled code. Field reads return views without copying, `x$name <- v` replaces a field, and values persist with `saveRDS()` and cross to mirai and future workers.

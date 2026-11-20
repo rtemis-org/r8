@@ -19,10 +19,12 @@
 //! `sensitive`, `external`, and `resolve = "runtime"`. Doc comments are
 //! descriptions.
 //!
-//! `#[r8(native)]` on a struct also implements `rtemis_r8_api::Native`, so
-//! R8 holds the struct's values in Rust: each field's type implements
-//! `rtemis_r8_api::Field`, and a `vec()` field of numbers, logicals, or
-//! bytes is a `rtemis_r8_api::Buffer`. `#[r8::methods]` and `r8::exports!`
+//! `#[r8(native)]` on a struct also implements `rtemis_r8_api::Native`, and
+//! on an enum `rtemis_r8_api::NativeEnum`; on both, `rtemis_r8_api::Codec`, so
+//! R8 holds the type's values in Rust: each field's type implements
+//! `rtemis_r8_api::Field`, a `vec()` field of numbers, logicals, or bytes is
+//! a `rtemis_r8_api::Buffer`, and a newtype variant's struct implements
+//! `rtemis_r8_api::Native`. `#[r8::methods]` and `r8::exports!`
 //! register the struct and its impls with R8.
 
 use proc_macro::TokenStream;
@@ -436,10 +438,11 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     let native = if attrs.native {
         match &input.data {
             Data::Struct(st) => native_impl(ident, &qualified, &fields_of(&st.fields)?)?,
-            _ => {
+            Data::Enum(e) => native_enum_impl(ident, &qualified, e)?,
+            Data::Union(_) => {
                 return Err(Error::new(
                     Span::call_site(),
-                    "#[r8(native)] applies to a struct",
+                    "#[r8(native)] applies to a struct or an enum",
                 ));
             }
         }
@@ -468,6 +471,194 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             const NAME: &'static str = #qualified;
             fn type_def() -> ::rtemis_r8::ir::TypeDef {
                 ::rtemis_r8::derive::type_def(#def)
+            }
+        }
+    })
+}
+
+/// `impl rtemis_r8_api::NativeEnum` and `impl rtemis_r8_api::Codec` for an
+/// enum of `#[r8(native)]`: unit variants, struct variants whose fields are
+/// each a `Field`, and newtype variants whose struct implements `Native`.
+/// The state's bytes are the variant's declaration index, a `u32`, then its
+/// fields.
+fn native_enum_impl(ident: &syn::Ident, qualified: &str, e: &syn::DataEnum) -> Result<Tokens> {
+    let type_c = c_str(qualified);
+    let api = quote! { ::rtemis_r8_api };
+    let unknown_field = quote! {
+        Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name)))
+    };
+    let mut from = Vec::new();
+    let mut variant = Vec::new();
+    let mut get = Vec::new();
+    let mut with = Vec::new();
+    let mut write = Vec::new();
+    let mut read = Vec::new();
+    let mut bytes = Vec::new();
+    for (k, v) in e.variants.iter().enumerate() {
+        let vid = &v.ident;
+        let vname = vid.to_string();
+        let vname_c = c_str(&vname);
+        let idx = k as u32;
+        match &v.fields {
+            Fields::Unit => {
+                from.push(quote! {
+                    #vname => {
+                        if !fields.is_empty() {
+                            return Err(#api::Error::new("arity", format!("`{}@{}` has no fields, and R8 passed {}", #qualified, #vname, fields.len())));
+                        }
+                        Ok(Self::#vid)
+                    }
+                });
+                variant.push(quote! { Self::#vid => #vname_c });
+                get.push(quote! { Self::#vid => #unknown_field });
+                with.push(quote! { Self::#vid => #unknown_field });
+                write.push(quote! { Self::#vid => out.write(&#idx.to_le_bytes()) });
+                read.push(quote! { #idx => Ok(Self::#vid) });
+                bytes.push(quote! { Self::#vid => 0 });
+            }
+            Fields::Named(_) => {
+                let fields = fields_of(&v.fields)?;
+                let n = fields.len();
+                let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+                let names: Vec<String> = idents
+                    .iter()
+                    .map(|i| i.to_string().trim_start_matches("r#").to_string())
+                    .collect();
+                let tys: Vec<_> = fields.iter().map(|f| &f.ty).collect();
+                let conv: Vec<Tokens> = idents
+                    .iter()
+                    .zip(&tys)
+                    .zip(&names)
+                    .enumerate()
+                    .map(|(j, ((i, t), name))| {
+                        quote! {
+                            #i: unsafe { <#t as #api::Field>::from_r(fields[#j]) }
+                                .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
+                        }
+                    })
+                    .collect();
+                from.push(quote! {
+                    #vname => {
+                        if fields.len() != #n {
+                            return Err(#api::Error::new("arity", format!("`{}@{}` has {} fields, and R8 passed {}", #qualified, #vname, #n, fields.len())));
+                        }
+                        Ok(Self::#vid { #(#conv),* })
+                    }
+                });
+                variant.push(quote! { Self::#vid { .. } => #vname_c });
+                get.push(quote! {
+                    Self::#vid { #(#idents),* } => match name {
+                        #(#names => #api::Field::to_r(#idents, owner),)*
+                        _ => #unknown_field,
+                    }
+                });
+                let with_arms: Vec<Tokens> = idents
+                    .iter()
+                    .zip(&tys)
+                    .zip(&names)
+                    .map(|((i, t), name)| {
+                        let others: Vec<Tokens> = idents
+                            .iter()
+                            .filter(|o| *o != i)
+                            .map(|o| quote! { #o: ::std::clone::Clone::clone(#o) })
+                            .collect();
+                        quote! {
+                            #name => Ok(Self::#vid {
+                                #i: unsafe { <#t as #api::Field>::from_r(value) }?,
+                                #(#others),*
+                            })
+                        }
+                    })
+                    .collect();
+                with.push(quote! {
+                    Self::#vid { #(#idents),* } => match name {
+                        #(#with_arms,)*
+                        _ => #unknown_field,
+                    }
+                });
+                write.push(quote! {
+                    Self::#vid { #(#idents),* } => {
+                        out.write(&#idx.to_le_bytes())?;
+                        #(#api::Field::write(#idents, out)?;)*
+                        Ok(())
+                    }
+                });
+                read.push(quote! {
+                    #idx => Ok(Self::#vid { #(#idents: <#tys as #api::Field>::read(input)?),* })
+                });
+                bytes.push(quote! {
+                    Self::#vid { #(#idents),* } => 0 #(+ #api::Field::owned_bytes(#idents))*
+                });
+            }
+            Fields::Unnamed(u) if u.unnamed.len() == 1 => {
+                let inner = &u.unnamed[0].ty;
+                from.push(quote! {
+                    #vname => Ok(Self::#vid(unsafe { <#inner as #api::Native>::from_fields(fields) }?))
+                });
+                variant.push(quote! { Self::#vid(_) => #vname_c });
+                get.push(quote! { Self::#vid(inner) => <#inner as #api::Native>::get_field(inner, owner, name) });
+                with.push(quote! {
+                    Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::Native>::with_field(inner, name, value) }?))
+                });
+                write.push(quote! {
+                    Self::#vid(inner) => {
+                        out.write(&#idx.to_le_bytes())?;
+                        <#inner as #api::Native>::write_state(inner, out)
+                    }
+                });
+                read.push(
+                    quote! { #idx => Ok(Self::#vid(<#inner as #api::Native>::read_state(input)?)) },
+                );
+                bytes.push(
+                    quote! { Self::#vid(inner) => <#inner as #api::Native>::owned_bytes(inner) },
+                );
+            }
+            Fields::Unnamed(u) => {
+                return Err(Error::new_spanned(
+                    u,
+                    "a variant holds named fields or one struct",
+                ));
+            }
+        }
+    }
+    Ok(quote! {
+        impl #api::Codec for #ident {
+            const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
+            const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::enum_codec::<Self>();
+            unsafe fn from_r_native(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+                let variant = unsafe { #api::call::r_variant(x) }?;
+                unsafe { <Self as #api::NativeEnum>::from_variant(&variant, fields) }
+            }
+        }
+        #[allow(unused_variables)]
+        impl #api::NativeEnum for #ident {
+            const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
+            unsafe fn from_variant(variant: &str, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+                match variant {
+                    #(#from,)*
+                    _ => Err(#api::Error::new("unknown_variant", format!("`{}` has no variant `{}`", #qualified, variant))),
+                }
+            }
+            fn variant(&self) -> &'static ::core::ffi::CStr {
+                match self { #(#variant,)* }
+            }
+            fn get_field(&self, owner: #api::sys::SEXP, name: &str) -> #api::Result<#api::sys::SEXP> {
+                match self { #(#get,)* }
+            }
+            unsafe fn with_field(&self, name: &str, value: #api::sys::SEXP) -> #api::Result<Self> {
+                match self { #(#with,)* }
+            }
+            fn write_state(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
+                match self { #(#write,)* }
+            }
+            fn read_state(input: &mut #api::StateReader) -> #api::Result<Self> {
+                match u32::from_le_bytes(input.take_array()?) {
+                    #(#read,)*
+                    i => Err(#api::Error::new("bad_state", format!("`{}` has no variant of index {}", #qualified, i))),
+                }
+            }
+            fn owned_bytes(&self) -> usize {
+                match self { #(#bytes,)* }
             }
         }
     })
@@ -521,6 +712,13 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
         })
         .collect();
     Ok(quote! {
+        impl #api::Codec for #ident {
+            const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
+            const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::codec::<Self>();
+            unsafe fn from_r_native(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+                unsafe { <Self as #api::Native>::from_fields(fields) }
+            }
+        }
         impl #api::Native for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             unsafe fn from_fields(fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
@@ -691,7 +889,7 @@ fn methods_impl(trait_name: Option<syn::LitStr>, item: &syn::ItemImpl) -> Result
         #[doc(hidden)]
         pub const #set_ident: #api::ImplSet = #api::ImplSet {
             trait_name: #trait_c,
-            type_name: <#self_ty as #api::Native>::TYPE_NAME,
+            type_name: <#self_ty as #api::Codec>::TYPE_NAME,
             methods: &[#(#rows),*],
         };
     })
@@ -798,7 +996,7 @@ fn exports_impl(a: &ExportsArgs) -> Result<Tokens> {
     let n_impls = sets.len();
     Ok(quote! {
         static __R8_CODECS: #api::Shared<[#api::rtemis_r8::abi::TypeVTable; #n_types]> =
-            #api::Shared([#(#api::codec::<#types>().0),*]);
+            #api::Shared([#(<#types as #api::Codec>::TABLE.0),*]);
         static __R8_IMPLS: [&#api::ImplSet; #n_impls] = [#(&#sets),*];
         static __R8_TABLE: ::std::sync::OnceLock<usize> = ::std::sync::OnceLock::new();
 
@@ -808,7 +1006,17 @@ fn exports_impl(a: &ExportsArgs) -> Result<Tokens> {
                 #package_c,
                 #namespace,
                 &__R8_CODECS.0,
-                || vec![#(<#types as #api::rtemis_r8::derive::R8>::type_def()),*],
+                // The listed types and every type of the namespace they
+                // reach, such as the struct of a newtype variant.
+                || {
+                    let mut set = #api::rtemis_r8::rules::DocumentSet::default();
+                    #(<#types as #api::rtemis_r8::derive::Encode>::register(&mut set);)*
+                    set.0
+                        .into_iter()
+                        .find(|d| d.namespace.as_str() == #namespace)
+                        .map(|d| d.types)
+                        .unwrap_or_default()
+                },
                 &__R8_IMPLS,
             )
         }

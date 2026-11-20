@@ -8,6 +8,6 @@ Description: Declares an R8 trait in R and implements it, and R8's Display,
 License: BSD_3_clause + file LICENSE
 Encoding: UTF-8
 Imports:
-    R8
+    R8 (>= 0.4.0)
 SystemRequirements: Cargo (Rust's package manager), rustc
 Config/R8/namespace: pkgr

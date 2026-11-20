@@ -116,8 +116,9 @@ fn r8_compiled_types() -> Result<List> {
     Ok(list!(type_name = type_name, complete = complete))
 }
 
-/// The size of `R8TypeVTable` in ABI version 1.
-const TYPE_VTABLE_SIZE: u32 = std::mem::size_of::<TypeVTable>() as u32;
+/// The smallest `R8TypeVTable` of ABI version 1: the members before the enum
+/// members, as tables written for R8 0.3.0 hold them.
+const TYPE_VTABLE_SIZE: u32 = std::mem::offset_of!(TypeVTable, variant) as u32;
 
 /// The codec tables of an exports table. The array's stride is the `size` of
 /// its entries, so a package built against a later header, whose entries
@@ -372,19 +373,49 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
                 "the codec of `{name}` has no declaration in the IR document of `{package}`"
             )));
         };
-        // A codec's state carries every field; an R object has no form in
-        // it, so a Rust-native type has no runtime-only field.
-        if let rtemis_r8::ir::TypeDef::Struct(s) = def
-            && let Some(f) = s.fields.iter().find(|f| {
-                matches!(
-                    f.ty,
-                    rtemis_r8::ir::FieldType::R { .. }
-                ) || matches!(&f.ty, rtemis_r8::ir::FieldType::Option { inner, .. } if matches!(**inner, rtemis_r8::ir::FieldType::R { .. }))
-            })
-        {
+        // An enum's codec builds states by variant and names a state's
+        // variant; a struct's builds them from its fields.
+        let shape_ok = match def {
+            rtemis_r8::ir::TypeDef::Struct(_) => {
+                (unsafe { (*v).from_fields.is_some() }) && !crate::native::has_enum_members(v)
+            }
+            rtemis_r8::ir::TypeDef::Enum(_) => {
+                crate::native::is_enum_codec(v) && (unsafe { (*v).from_fields.is_none() })
+            }
+        };
+        if !shape_ok {
             return Err(fail(format!(
-                "the Rust-native type `{name}` of `{package}` declares the runtime-only field `{}`; its codec's state holds every field",
-                f.name
+                "the codec of `{name}` of `{package}` does not match its type: a struct's codec sets `from_fields` and neither `variant` nor `from_variant`, and an enum's sets `variant` and `from_variant` and not `from_fields`"
+            )));
+        }
+        // A codec's state carries every field; an R object has no form in
+        // it, so a Rust-native type has no runtime-only field in any variant.
+        let runtime = |fs: &[rtemis_r8::ir::FieldDef]| {
+            fs.iter()
+                .find(|f| {
+                    matches!(f.ty, rtemis_r8::ir::FieldType::R { .. })
+                        || matches!(&f.ty, rtemis_r8::ir::FieldType::Option { inner, .. } if matches!(**inner, rtemis_r8::ir::FieldType::R { .. }))
+                })
+                .map(|f| f.name.to_string())
+        };
+        let found = match def {
+            rtemis_r8::ir::TypeDef::Struct(st) => runtime(&st.fields),
+            rtemis_r8::ir::TypeDef::Enum(e) => e.variants.iter().find_map(|var| match &var.shape {
+                rtemis_r8::ir::VariantShape::Struct { fields, .. } => runtime(fields),
+                rtemis_r8::ir::VariantShape::Newtype { of } => doc
+                    .types
+                    .iter()
+                    .find(|t| format!("{ns}::{}", t.name()) == of.to_string())
+                    .and_then(|t| match t {
+                        rtemis_r8::ir::TypeDef::Struct(st) => runtime(&st.fields),
+                        _ => None,
+                    }),
+                rtemis_r8::ir::VariantShape::Unit => None,
+            }),
+        };
+        if let Some(field) = found {
+            return Err(fail(format!(
+                "the Rust-native type `{name}` of `{package}` declares the runtime-only field `{field}`; its codec's state holds every field"
             )));
         }
         types.push((name, VTable(v)));
