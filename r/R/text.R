@@ -620,6 +620,7 @@ r8_theme <- function(...) {
 #' @export
 format.r8_theme <- function(x, ...) {
   x <- unclass(x)
+  width <- max(nchar(names(x)))
   vapply(
     names(x),
     function(role) {
@@ -632,7 +633,8 @@ format.r8_theme <- function(x, ...) {
         if (isTRUE(s[["italic"]])) "italic"
       )
       sprintf(
-        "%-11s %s",
+        "%-*s %s",
+        width,
         role,
         if (length(style)) paste(style, collapse = " ") else "default"
       )
