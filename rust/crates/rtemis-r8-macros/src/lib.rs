@@ -18,6 +18,12 @@
 //! `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
 //! `sensitive`, `external`, and `resolve = "runtime"`. Doc comments are
 //! descriptions.
+//!
+//! `#[r8(native)]` on a struct also implements `rtemis_r8_api::Native`, so
+//! R8 holds the struct's values in Rust: each field's type implements
+//! `rtemis_r8_api::Field`, and a `vec()` field of numbers, logicals, or
+//! bytes is a `rtemis_r8_api::Buffer`. `#[r8::methods]` and `r8::exports!`
+//! register the struct and its impls with R8.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
@@ -82,6 +88,7 @@ struct TypeAttrs {
     version: Option<u32>,
     tag: Option<String>,
     rules: Vec<Tokens>,
+    native: bool,
 }
 
 /// One `rule(id = ..., invariant = ..., when = ..., message = ...)`, as the
@@ -144,7 +151,8 @@ fn type_attrs(attrs: &[Attribute]) -> Result<TypeAttrs> {
                     out.tag = Some(s.value());
                 }
                 Some("rule") => out.rules.push(parse_rule(&meta)?),
-                _ => return Err(meta.error("expected namespace, version, tag, or rule")),
+                Some("native") => out.native = true,
+                _ => return Err(meta.error("expected namespace, version, tag, rule, or native")),
             }
             Ok(())
         })?;
@@ -425,7 +433,21 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             ));
         }
     };
+    let native = if attrs.native {
+        match &input.data {
+            Data::Struct(st) => native_impl(ident, &qualified, &fields_of(&st.fields)?)?,
+            _ => {
+                return Err(Error::new(
+                    Span::call_site(),
+                    "#[r8(native)] applies to a struct",
+                ));
+            }
+        }
+    } else {
+        quote! {}
+    };
     Ok(quote! {
+        #native
         impl ::rtemis_r8::derive::Encode for #ident {
             fn field_type() -> ::rtemis_r8::ir::FieldType {
                 ::rtemis_r8::derive::named(#qualified)
@@ -447,6 +469,359 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             fn type_def() -> ::rtemis_r8::ir::TypeDef {
                 ::rtemis_r8::derive::type_def(#def)
             }
+        }
+    })
+}
+
+/// A C string literal, `c"..."`, of an R8 name, which holds ASCII letters,
+/// digits, underscores, and `::`.
+fn c_str(s: &str) -> Tokens {
+    format!("c{s:?}").parse().expect("a C string literal")
+}
+
+/// `impl rtemis_r8_api::Native` for a struct of `#[r8(native)]`.
+fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> Result<Tokens> {
+    let type_c = c_str(qualified);
+    let n = fields.len();
+    let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+    let names: Vec<String> = idents
+        .iter()
+        .map(|i| i.to_string().trim_start_matches("r#").to_string())
+        .collect();
+    let tys: Vec<_> = fields.iter().map(|f| &f.ty).collect();
+    let api = quote! { ::rtemis_r8_api };
+    let from: Vec<Tokens> = idents
+        .iter()
+        .zip(&tys)
+        .zip(&names)
+        .enumerate()
+        .map(|(k, ((i, t), name))| {
+            quote! {
+                #i: unsafe { <#t as #api::Field>::from_r(fields[#k]) }
+                    .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
+            }
+        })
+        .collect();
+    let with_arms: Vec<Tokens> = idents
+        .iter()
+        .zip(&tys)
+        .zip(&names)
+        .map(|((i, t), name)| {
+            let others: Vec<Tokens> = idents
+                .iter()
+                .filter(|o| *o != i)
+                .map(|o| quote! { #o: ::std::clone::Clone::clone(&self.#o) })
+                .collect();
+            quote! {
+                #name => Ok(Self {
+                    #i: unsafe { <#t as #api::Field>::from_r(value) }?,
+                    #(#others),*
+                })
+            }
+        })
+        .collect();
+    Ok(quote! {
+        impl #api::Native for #ident {
+            const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
+            unsafe fn from_fields(fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+                if fields.len() != #n {
+                    return Err(#api::Error::new(
+                        "arity",
+                        format!("`{}` has {} fields, and R8 passed {}", #qualified, #n, fields.len()),
+                    ));
+                }
+                Ok(Self { #(#from),* })
+            }
+            fn get_field(&self, owner: #api::sys::SEXP, name: &str) -> #api::Result<#api::sys::SEXP> {
+                match name {
+                    #(#names => #api::Field::to_r(&self.#idents, owner),)*
+                    _ => Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name))),
+                }
+            }
+            unsafe fn with_field(&self, name: &str, value: #api::sys::SEXP) -> #api::Result<Self> {
+                match name {
+                    #(#with_arms,)*
+                    _ => Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name))),
+                }
+            }
+            fn write_state(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
+                #(#api::Field::write(&self.#idents, out)?;)*
+                Ok(())
+            }
+            fn read_state(input: &mut #api::StateReader) -> #api::Result<Self> {
+                Ok(Self { #(#idents: <#tys as #api::Field>::read(input)?),* })
+            }
+            fn owned_bytes(&self) -> usize {
+                0 #(+ #api::Field::owned_bytes(&self.#idents))*
+            }
+        }
+    })
+}
+
+/// `#[r8::methods(trait = "pkg::Trait")]` on an impl of a Rust trait for a
+/// Rust-native struct: keeps the impl, and generates one function per
+/// method that R8 calls (`R8MethodFn`), and the constant
+/// `__R8_IMPL_<Type>_<Trait>` that `r8::exports!` lists. A method takes
+/// `&self` and arguments that implement `rtemis_r8_api::FromR`, and returns
+/// a type that implements `rtemis_r8_api::IntoR`; the trait is declared in
+/// R, whose method has `x` and the other parameters by the same names.
+#[proc_macro_attribute]
+pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as syn::ItemImpl);
+    let mut trait_name: Option<syn::LitStr> = None;
+    let parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("trait") {
+            trait_name = Some(meta.value()?.parse()?);
+            Ok(())
+        } else {
+            Err(meta.error("expected trait = \"pkg::Trait\""))
+        }
+    });
+    parse_macro_input!(attr with parser);
+    methods_impl(trait_name, &item)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+fn valid_qualified(s: &str) -> bool {
+    matches!(s.split_once("::"), Some((a, b)) if valid_name(a) && valid_name(b))
+}
+
+fn methods_impl(trait_name: Option<syn::LitStr>, item: &syn::ItemImpl) -> Result<Tokens> {
+    let trait_lit = trait_name.ok_or_else(|| {
+        Error::new(
+            Span::call_site(),
+            "#[r8::methods(trait = \"pkg::Trait\")] names the R8 trait",
+        )
+    })?;
+    if !valid_qualified(&trait_lit.value()) {
+        return Err(Error::new_spanned(
+            &trait_lit,
+            "a qualified trait name is namespace::Trait",
+        ));
+    }
+    let Some((_, trait_path, _)) = &item.trait_ else {
+        return Err(Error::new_spanned(
+            item,
+            "#[r8::methods] applies to an impl of a Rust trait",
+        ));
+    };
+    let self_ty = &item.self_ty;
+    let type_ident = match &**self_ty {
+        syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.clone()),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        Error::new_spanned(
+            self_ty,
+            "#[r8::methods] applies to an impl for a named struct",
+        )
+    })?;
+    let trait_ident = &trait_path.segments.last().expect("a trait path").ident;
+    let set_ident = format_ident!("__R8_IMPL_{}_{}", type_ident, trait_ident);
+    let api = quote! { ::rtemis_r8_api };
+    let trait_c = c_str(&trait_lit.value());
+    let mut fns = Vec::new();
+    let mut rows = Vec::new();
+    for it in &item.items {
+        let syn::ImplItem::Fn(f) = it else { continue };
+        let sig = &f.sig;
+        let mname = sig.ident.to_string();
+        let mut inputs = sig.inputs.iter();
+        match inputs.next() {
+            Some(syn::FnArg::Receiver(r)) if r.reference.is_some() && r.mutability.is_none() => {}
+            _ => {
+                return Err(Error::new_spanned(
+                    sig,
+                    "an R8 method takes `&self` first, which R passes as `x`",
+                ));
+            }
+        }
+        let mut convert = Vec::new();
+        let mut args = Vec::new();
+        for (k, a) in inputs.enumerate() {
+            let syn::FnArg::Typed(pt) = a else {
+                unreachable!("one receiver")
+            };
+            let syn::Pat::Ident(pi) = &*pt.pat else {
+                return Err(Error::new_spanned(
+                    &pt.pat,
+                    "an R8 method's parameter is a name",
+                ));
+            };
+            let pname = pi.ident.to_string();
+            let pident = format_ident!("__r8_arg_{}", k);
+            let ty = &pt.ty;
+            let index = k + 1;
+            convert.push(quote! {
+                let #pident: #ty = unsafe { <#ty as #api::FromR>::from_arg(__r8_args[#index], #pname) }?;
+            });
+            args.push(pident);
+        }
+        let n_params = args.len() + 1;
+        let fn_ident = format_ident!("__r8_{}_{}_{}", type_ident, trait_ident, sig.ident);
+        let method = &sig.ident;
+        fns.push(quote! {
+            #[allow(non_snake_case)]
+            unsafe extern "C" fn #fn_ident(
+                _ctx: *const #api::rtemis_r8::abi::CallContext,
+                args: *const #api::rtemis_r8::abi::Sexp,
+                nargs: usize,
+                result: *mut #api::rtemis_r8::abi::Sexp,
+                err: *mut #api::rtemis_r8::abi::Error,
+            ) -> #api::rtemis_r8::abi::Status {
+                unsafe {
+                    #api::call::method(args, nargs, #n_params, result, err, |__r8_args| {
+                        let __r8_x = #api::Receiver::<#self_ty>::from_arg(__r8_args[0])?;
+                        #(#convert)*
+                        #api::IntoR::into_r(<#self_ty as #trait_path>::#method(&*__r8_x #(, #args)*))
+                    })
+                }
+            }
+        });
+        let name_c = c_str(&mname);
+        rows.push(quote! {
+            #api::MethodRow { name: #name_c, call: #fn_ident, n_params: #n_params }
+        });
+    }
+    Ok(quote! {
+        #item
+        #(#fns)*
+        #[allow(non_upper_case_globals)]
+        #[doc(hidden)]
+        pub const #set_ident: #api::ImplSet = #api::ImplSet {
+            trait_name: #trait_c,
+            type_name: <#self_ty as #api::Native>::TYPE_NAME,
+            methods: &[#(#rows),*],
+        };
+    })
+}
+
+/// The arguments of `r8::exports!`.
+struct ExportsArgs {
+    package: syn::LitStr,
+    namespace: syn::LitStr,
+    types: Vec<syn::Path>,
+    impls: Vec<(syn::Path, syn::Path)>,
+}
+
+impl syn::parse::Parse for ExportsArgs {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let mut package = None;
+        let mut namespace = None;
+        let mut types = Vec::new();
+        let mut impls = Vec::new();
+        while !input.is_empty() {
+            let key: syn::Ident = input.parse()?;
+            input.parse::<syn::Token![=]>()?;
+            match key.to_string().as_str() {
+                "package" => package = Some(input.parse()?),
+                "namespace" => namespace = Some(input.parse()?),
+                "types" => {
+                    let content;
+                    syn::bracketed!(content in input);
+                    types = content
+                        .parse_terminated(syn::Path::parse_mod_style, syn::Token![,])?
+                        .into_iter()
+                        .collect();
+                }
+                "impls" => {
+                    let content;
+                    syn::bracketed!(content in input);
+                    while !content.is_empty() {
+                        let ty: syn::Path = content.call(syn::Path::parse_mod_style)?;
+                        content.parse::<syn::Token![:]>()?;
+                        let tr: syn::Path = content.call(syn::Path::parse_mod_style)?;
+                        impls.push((ty, tr));
+                        if content.is_empty() {
+                            break;
+                        }
+                        content.parse::<syn::Token![,]>()?;
+                    }
+                }
+                _ => {
+                    return Err(Error::new_spanned(
+                        key,
+                        "expected package, namespace, types, or impls",
+                    ));
+                }
+            }
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<syn::Token![,]>()?;
+        }
+        Ok(ExportsArgs {
+            package: package.ok_or_else(|| input.error("`package = \"...\"` is required"))?,
+            namespace: namespace.ok_or_else(|| input.error("`namespace = \"...\"` is required"))?,
+            types,
+            impls,
+        })
+    }
+}
+
+/// `r8::exports! { package = "pkg", namespace = "ns", types = [T, ...],
+/// impls = [T: Trait, ...] }`: the package's exports table, built on first
+/// use, and `r8_init(dll)`, which the package's initialization routine
+/// calls to register it with `R_RegisterCCallable(pkg, "r8_exports", ...)`.
+/// It is invoked once per package, in the module where each impl's
+/// `#[r8::methods]` constant is in scope.
+#[proc_macro]
+pub fn exports(input: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(input as ExportsArgs);
+    exports_impl(&args)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+fn exports_impl(a: &ExportsArgs) -> Result<Tokens> {
+    if !valid_name(&a.namespace.value()) {
+        return Err(Error::new_spanned(
+            &a.namespace,
+            "a namespace matches [A-Za-z][A-Za-z0-9_]*",
+        ));
+    }
+    let api = quote! { ::rtemis_r8_api };
+    let package_c = c_str(&a.package.value());
+    let namespace = &a.namespace;
+    let types = &a.types;
+    let n_types = types.len();
+    let sets: Vec<syn::Ident> = a
+        .impls
+        .iter()
+        .map(|(ty, tr)| {
+            let t = &ty.segments.last().expect("a type path").ident;
+            let r = &tr.segments.last().expect("a trait path").ident;
+            format_ident!("__R8_IMPL_{}_{}", t, r)
+        })
+        .collect();
+    let n_impls = sets.len();
+    Ok(quote! {
+        static __R8_CODECS: #api::Shared<[#api::rtemis_r8::abi::TypeVTable; #n_types]> =
+            #api::Shared([#(#api::codec::<#types>().0),*]);
+        static __R8_IMPLS: [&#api::ImplSet; #n_impls] = [#(&#sets),*];
+        static __R8_TABLE: ::std::sync::OnceLock<usize> = ::std::sync::OnceLock::new();
+
+        unsafe extern "C" fn __r8_exports() -> *const #api::rtemis_r8::abi::Exports {
+            #api::exports::table(
+                &__R8_TABLE,
+                #package_c,
+                #namespace,
+                &__R8_CODECS.0,
+                || vec![#(<#types as #api::rtemis_r8::derive::R8>::type_def()),*],
+                &__R8_IMPLS,
+            )
+        }
+
+        /// Registers the package's R8 exports; the package's
+        /// initialization routine calls it.
+        ///
+        /// # Safety
+        ///
+        /// Called once, from the package's initialization routine.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn r8_init(_dll: *mut ::core::ffi::c_void) {
+            unsafe { #api::exports::register(#package_c, __r8_exports) }
         }
     })
 }

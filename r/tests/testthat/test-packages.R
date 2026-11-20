@@ -189,7 +189,11 @@ test_that("impls in C register through R8.h and dispatch", {
       "cat('error', grepl('[zero_divisor]', e, fixed = TRUE), '\\n')",
       "cat('display', format(p), '\\n')",
       "cat('print', utils::capture.output(print(p)), '\\n')",
-      "cat('again', R8::r8_register('r8pkgC'), magnitude(Point(x = 6, y = 8)), '\\n')"
+      "cat('again', R8::r8_register('r8pkgC'), magnitude(Point(x = 6, y = 8)), '\\n')",
+      "u <- tryCatch(ratio(p, NA_real_), error = function(e) conditionMessage(e))",
+      "cat('unwind', u, '\\n')",
+      "cat('status', suppressMessages(protect_status()), '\\n')",
+      "cat('after', ratio(p, 2), '\\n')"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -199,6 +203,11 @@ test_that("impls in C register through R8.h and dispatch", {
   expect_true("display Point(3, 4) " %in% out, info = info)
   expect_true("print Point(3, 4) " %in% out, info = info)
   expect_true("again 6 10 " %in% out, info = info)
+  # An R error raised under R8Api.protect reaches the caller after the impl
+  # function returns.
+  expect_true("unwind `by` is NA " %in% out, info = info)
+  expect_true("status 2 " %in% out, info = info)
+  expect_true("after 1.5 " %in% out, info = info)
 })
 
 test_that("Rust-native values read, change, persist, and cross workers", {

@@ -12,6 +12,7 @@
 // a writable pointer; it then holds a copy, which every later read and write
 // uses, so the owner's memory is only read.
 
+#include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -197,6 +198,66 @@ static void set_error(R8Error *err, const char *code, const char *message) {
   }
 }
 
+// R8Api.protect: runs a callback under R_UnwindProtect, whose cleanup
+// jumps back here when R jumps, so the callback's caller sees R8_UNWIND
+// instead of the jump. The continuation token is kept for r8_invoke(), which
+// continues the jump once the impl function has returned.
+static SEXP continuation = NULL;
+
+typedef struct Protected {
+  SEXP (*fn)(void *);
+  void *data;
+  jmp_buf jump;
+} Protected;
+
+static SEXP protected_body(void *p) {
+  Protected *q = p;
+  return q->fn(q->data);
+}
+
+static void protected_cleanup(void *p, Rboolean jump) {
+  if (jump) {
+    longjmp(((Protected *) p)->jump, 1);
+  }
+}
+
+static R8Status api_protect(SEXP (*fn)(void *data), void *data, SEXP *value,
+                            R8Error *err) {
+  if (fn == NULL || value == NULL) {
+    set_error(err, "invalid_argument", "`fn` or `value` is NULL");
+    return R8_ERROR;
+  }
+  Protected p;
+  p.fn = fn;
+  p.data = data;
+  if (setjmp(p.jump)) {
+    set_error(err, "unwind", "R raised a condition inside R8Api.protect");
+    return R8_UNWIND;
+  }
+  *value = R_UnwindProtect(protected_body, &p, protected_cleanup, &p, continuation);
+  // R_UnwindProtect() keeps the result in the token, which R8 preserves;
+  // clearing it leaves the result to the caller.
+  SETCAR(continuation, R_NilValue);
+  return R8_OK;
+}
+
+// Arguments of a view's construction inside api_protect().
+typedef struct ViewArgs {
+  R_altrep_class_t cls;
+  SEXP owner;
+  const void *data;
+  size_t n;
+} ViewArgs;
+
+static SEXP view_body(void *p) {
+  ViewArgs *a = p;
+  SEXP len = PROTECT(Rf_ScalarReal((double) a->n));
+  SEXP ptr = PROTECT(R_MakeExternalPtr((void *) a->data, len, a->owner));
+  SEXP ans = R_new_altrep(a->cls, ptr, R_NilValue);
+  UNPROTECT(2);
+  return ans;
+}
+
 static R8Status make_view(R_altrep_class_t cls, SEXP owner, const void *data,
                           size_t n, SEXP *value, R8Error *err) {
   if (value == NULL) {
@@ -211,11 +272,15 @@ static R8Status make_view(R_altrep_class_t cls, SEXP owner, const void *data,
     set_error(err, "too_long", "`n` exceeds the length of an R vector");
     return R8_ERROR;
   }
-  SEXP len = PROTECT(Rf_ScalarReal((double) n));
-  SEXP ptr = PROTECT(R_MakeExternalPtr((void *) data, len, owner));
-  *value = R_new_altrep(cls, ptr, R_NilValue);
-  UNPROTECT(2);
-  return R8_OK;
+  // The allocations run under api_protect(), so a failed allocation returns an
+  // error and the API keeps its rule that a callee never jumps.
+  ViewArgs a = {cls, owner, data, n};
+  R8Status status = api_protect(view_body, &a, value, err);
+  if (status == R8_UNWIND) {
+    set_error(err, "r_error", "R could not allocate the view");
+    return R8_ERROR;
+  }
+  return status;
 }
 
 static R8Status view_doubles(SEXP owner, const double *data, size_t n, SEXP *value,
@@ -245,8 +310,8 @@ R8Status r8_api_value_state(SEXP value, const char *type_name, const void **stat
                             R8Error *err);
 
 static const R8Api api = {
-    R8_ABI_VERSION, sizeof(R8Api), r8_api_new_value, r8_api_value_state,
-    view_doubles,   view_integers, view_logicals,    view_bytes,
+    R8_ABI_VERSION, sizeof(R8Api), r8_api_new_value, r8_api_value_state, view_doubles,
+    view_integers,  view_logicals, view_bytes,       api_protect,
 };
 
 static const R8Api *r8_api(uint32_t abi_version) {
@@ -254,5 +319,82 @@ static const R8Api *r8_api(uint32_t abi_version) {
 }
 
 void r8_register_api(void) {
+  continuation = R_MakeUnwindCont();
+  R_PreserveObject(continuation);
   R_RegisterCCallable("R8", "r8_api", (DL_FUNC) r8_api);
+}
+
+// R8Api.protect for R8's own Rust code (native.rs), whose callers convert
+// R8_UNWIND into R8_ERROR, since R8's API functions never jump.
+R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err) {
+  return api_protect(fn, data, value, err);
+}
+
+// Calls the impl function at the address of `fn` with the elements of the
+// list `args`; R8_ERROR raises an R error of the impl's message and code,
+// and R8_UNWIND continues the jump that R8Api.protect caught. R calls it
+// through `.Call()` on the native symbol of r8_invoke_symbol(), so the jump
+// continues from a C frame.
+static SEXP r8_invoke(SEXP fn, SEXP args) {
+  R8MethodFn call = (R8MethodFn) R_ExternalPtrAddrFn(fn);
+  if (call == NULL) {
+    Rf_error("the impl function is NULL");
+  }
+  R_xlen_t n = XLENGTH(args);
+  const SEXP *argv = n > 0 ? (const SEXP *) R_alloc((size_t) n, sizeof(SEXP)) : NULL;
+  for (R_xlen_t i = 0; i < n; i++) {
+    ((SEXP *) argv)[i] = VECTOR_ELT(args, i);
+  }
+  R8CallContext ctx = {sizeof(R8CallContext), 0, 0};
+  SEXP result = R_NilValue;
+  R8Error err = {{0}, {0}};
+  R8Status status = call(&ctx, argv, (size_t) n, &result, &err);
+  if (status == R8_OK) {
+    return result;
+  }
+  if (status == R8_UNWIND) {
+    R_ContinueUnwind(continuation);
+  }
+  if (status == R8_ERROR) {
+    Rf_error("%s [%s]", err.message, err.code);
+  }
+  Rf_error("the impl function returned the status %d, none of R8_OK, R8_ERROR, and R8_UNWIND",
+           (int) status);
+  return R_NilValue;
+}
+
+// The exports table of the package `pkg`, which it registered with
+// R_RegisterCCallable(pkg, "r8_exports", fn), as an external pointer tagged
+// `r8_exports`. R_GetCCallable() raises an error for a package that
+// registered none; register_exports() reads that as no exports.
+static SEXP r8_package_exports(SEXP pkg) {
+  if (TYPEOF(pkg) != STRSXP || XLENGTH(pkg) != 1) {
+    Rf_error("`pkg` is one package name");
+  }
+  R8ExportsFn fn = (R8ExportsFn) R_GetCCallable(CHAR(STRING_ELT(pkg, 0)), "r8_exports");
+  const R8Exports *e = fn == NULL ? NULL : fn();
+  if (e == NULL) {
+    return R_NilValue;
+  }
+  return R_MakeExternalPtr((void *) e, Rf_install("r8_exports"), R_NilValue);
+}
+
+static SEXP native_symbol(DL_FUNC f) {
+  return R_MakeExternalPtrFn(f, Rf_install("native symbol"), R_NilValue);
+}
+
+// The C routines that R calls through `.Call()` on a native symbol, an
+// external pointer `.Call()` accepts: list(invoke, exports). R8's `.Call`
+// routines are the Rust code's, registered by extendr; these continue a
+// jump or call R_GetCCallable() from C frames.
+SEXP r8_native_symbols(void) {
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
+  SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 2));
+  SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
+  SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
+  Rf_setAttrib(out, R_NamesSymbol, names);
+  UNPROTECT(2);
+  return out;
 }

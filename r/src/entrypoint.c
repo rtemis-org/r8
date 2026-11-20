@@ -26,13 +26,17 @@ SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
 const void *r8_native_state(SEXP x, const R8TypeVTable **vt);
 SEXP r8_native_parts(SEXP x);
 SEXP r8_native_memory(void);
-void r8_set_native_functions(void *wrap, void *state, void *parts, void *memory);
+R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err);
+SEXP r8_native_symbols(void);
+void r8_set_native_functions(void *wrap, void *state, void *parts, void *memory,
+                             void *protect, void *symbols);
 
 void R_init_R8(DllInfo *dll) {
     register_extendr_panic_hook();
     r8_set_attrib_functions((void *) r8_attrib_count, (void *) r8_attrib_raw, (void *) r8_payload);
     r8_set_native_functions((void *) r8_native_wrap, (void *) r8_native_state,
-                            (void *) r8_native_parts, (void *) r8_native_memory);
+                            (void *) r8_native_parts, (void *) r8_native_memory,
+                            (void *) r8_protect, (void *) r8_native_symbols);
     r8_init_native(dll);
     r8_init_views(dll);
     r8_register_api();

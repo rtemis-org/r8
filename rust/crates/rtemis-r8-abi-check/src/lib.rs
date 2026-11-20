@@ -7,6 +7,7 @@ unsafe extern "C" {
     fn r8_abi_layout(out: *mut usize, cap: usize) -> usize;
     fn r8_abi_version() -> u32;
     fn r8_abi_has_seed() -> u32;
+    fn r8_abi_statuses() -> u32;
 }
 
 /// The sizes and offsets of `R8.h`, in the order of `rtemis_r8::abi::layout()`.
@@ -19,8 +20,10 @@ pub fn c_layout() -> Vec<usize> {
     out
 }
 
-/// `R8_ABI_VERSION` and `R8_CONTEXT_HAS_SEED` as the header defines them.
-pub fn c_constants() -> (u32, u32) {
-    // SAFETY: both functions take no arguments and return a constant.
-    unsafe { (r8_abi_version(), r8_abi_has_seed()) }
+/// `R8_ABI_VERSION`, `R8_CONTEXT_HAS_SEED`, and the status codes `R8_OK`,
+/// `R8_ERROR`, and `R8_UNWIND` (one per hexadecimal digit), as the header
+/// defines them.
+pub fn c_constants() -> (u32, u32, u32) {
+    // SAFETY: the functions take no arguments and return a constant.
+    unsafe { (r8_abi_version(), r8_abi_has_seed(), r8_abi_statuses()) }
 }

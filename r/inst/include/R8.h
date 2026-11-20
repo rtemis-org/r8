@@ -7,13 +7,13 @@
  *
  * Two directions:
  *
- * 1. Exports, from a package to R8. A package whose types are declared in
- *    Rust registers a `.Call` routine named `r8_exports` that returns an
- *    external pointer, tagged with the symbol `r8_exports`, to a static
- *    `R8Exports`. `R8::r8_register()`, called from the package's `.onLoad`,
- *    calls the routine and registers the table: the IR document, the codecs
- *    of Rust-native types, and the impl functions. Registering a package
- *    again replaces its entries.
+ * 1. Exports, from a package to R8. A package with compiled exports calls
+ *    `R_RegisterCCallable("<package>", "r8_exports", fn)` from its
+ *    initialization routine, where `fn` is an `R8ExportsFn` returning its
+ *    static `R8Exports`. `R8::r8_register()`, called from the package's
+ *    `.onLoad`, fetches `fn` with `R_GetCCallable()` and registers the table:
+ *    the IR document, the codecs of Rust-native types, and the impl
+ *    functions. Registering a package again replaces its entries.
  *
  * 2. The API, from R8 to a package. `R8_api()` returns R8's function table
  *    through `R_GetCCallable("R8", "r8_api")`.
@@ -24,7 +24,10 @@
  * - A callee never raises an R error and never calls `longjmp`. It returns
  *   `R8_ERROR` and fills the `R8Error` it receives; the caller raises the R
  *   condition. A Rust callee catches panics, since a panic that leaves an
- *   `extern "C"` function aborts the process.
+ *   `extern "C"` function aborts the process. A callee calls an R function
+ *   that can jump (an allocation, an interrupt check) through
+ *   `R8Api.protect`; an impl function returns the `R8_UNWIND` it receives,
+ *   and R8 continues the jump after the impl function has returned.
  * - An `SEXP` returned through an out-parameter is unprotected; the caller
  *   protects it before the next allocation.
  * - Each side frees only what it allocated. A type's `state` is freed only by
@@ -59,6 +62,8 @@ extern "C" {
 typedef int32_t R8Status;
 #define R8_OK 0
 #define R8_ERROR 1
+/* R jumped (an error or an interrupt) inside `R8Api.protect`. */
+#define R8_UNWIND 2
 
 /* An error report, filled by the callee that returns R8_ERROR. `code` is a
  * stable code, such as "decode_failed"; `message` says what went wrong and
@@ -104,7 +109,9 @@ typedef struct R8TypeVTable {
   /* Writes the state's JSON document, for export (`to_json()`). */
   R8Status (*encode)(const void *state, R8Writer *out, R8Error *err);
   /* Writes the state's bytes, in a form of the package's choosing, for
-   * `saveRDS()` and parallel workers. */
+   * `saveRDS()` and parallel workers. R8 calls it twice per serialization,
+   * once to count the bytes and once to write them into a buffer of that
+   * size, so every call writes the same bytes. */
   R8Status (*write_state)(const void *state, R8Writer *out, R8Error *err);
   /* Builds a state from bytes that `write_state` wrote. */
   R8Status (*read_state)(const uint8_t *bytes, size_t len, void **state, R8Error *err);
@@ -137,6 +144,9 @@ typedef struct R8ImplEntry {
   /* The method's name, as declared by the trait. */
   const char *method;
   R8MethodFn call;
+  /* The number of the method's parameters, `x` included and `...` counted
+   * as one, which registration checks against the trait's declaration. */
+  size_t n_params;
 } R8ImplEntry;
 
 /* What a package registers: its IR document, the codecs of its Rust-native
@@ -153,6 +163,9 @@ typedef struct R8Exports {
   const R8ImplEntry *impls;
   size_t n_impls;
 } R8Exports;
+
+/* The function a package registers as "r8_exports". */
+typedef const R8Exports *(*R8ExportsFn)(void);
 
 /* R8's services to compiled code of other packages. */
 typedef struct R8Api {
@@ -172,6 +185,12 @@ typedef struct R8Api {
   /* Logicals in R's form: 0, 1, and NA_LOGICAL as int32_t. */
   R8Status (*view_logicals)(SEXP owner, const int32_t *data, size_t n, SEXP *value, R8Error *err);
   R8Status (*view_bytes)(SEXP owner, const uint8_t *data, size_t n, SEXP *value, R8Error *err);
+  /* Calls `fn(data)`, which may call R functions that jump, and stores its
+   * result in `*value`. When R jumps, it returns R8_UNWIND and fills `err`;
+   * R8 keeps the jump and continues it once the impl function that received
+   * R8_UNWIND returns it. `fn` owns nothing that needs freeing, since a jump
+   * skips the rest of it. */
+  R8Status (*protect)(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err);
 } R8Api;
 
 /* The entry point R8 registers with R_RegisterCCallable("R8", "r8_api").

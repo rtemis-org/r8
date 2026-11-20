@@ -595,6 +595,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtemis-r8-api"
+version = "0.2.0"
+dependencies = [
+ "rtemis-r8",
+ "rtemis-r8-macros",
+ "serde_json",
+]
+
+[[package]]
 name = "rtemis-r8-macros"
 version = "0.2.0"
 dependencies = [

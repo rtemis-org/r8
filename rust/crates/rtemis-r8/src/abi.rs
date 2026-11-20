@@ -24,6 +24,8 @@ pub type Status = i32;
 pub const OK: Status = 0;
 /// The call failed; the error report holds the code and message.
 pub const ERROR: Status = 1;
+/// `R8_UNWIND`: R jumped (an error or an interrupt) inside `R8Api.protect`.
+pub const UNWIND: Status = 2;
 
 /// `R8_CONTEXT_HAS_SEED`: [`CallContext::seed`] holds a seed.
 pub const CONTEXT_HAS_SEED: u32 = 1;
@@ -76,7 +78,9 @@ pub struct TypeVTable {
     /// Writes the state's JSON document to a writer, for export.
     pub encode: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
     /// Writes the state's bytes, in a form of the package's choosing, for
-    /// persistence and parallel workers.
+    /// persistence and parallel workers. R8 calls it twice per
+    /// serialization, to count the bytes and to write them, so every call
+    /// writes the same bytes.
     pub write_state: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
     /// Builds a state from bytes that `write_state` wrote.
     pub read_state:
@@ -119,6 +123,10 @@ pub struct ImplEntry {
     pub method: *const c_char,
     /// The impl function.
     pub call: Option<MethodFn>,
+    /// The number of the method's parameters, `x` included and `...`
+    /// counted as one, which registration checks against the trait's
+    /// declaration.
+    pub n_params: usize,
 }
 
 /// `R8Exports`: what a package registers.
@@ -165,7 +173,21 @@ pub struct Api {
     pub view_logicals: Option<ViewFn<i32>>,
     /// Views bytes as an R raw vector.
     pub view_bytes: Option<ViewFn<u8>>,
+    /// Calls `fn(data)`, which may call R functions that jump, and stores
+    /// its result; `UNWIND` when R jumped, which R8 continues once the impl
+    /// function that received it returns it.
+    pub protect: Option<
+        unsafe extern "C" fn(
+            unsafe extern "C" fn(*mut c_void) -> Sexp,
+            *mut c_void,
+            *mut Sexp,
+            *mut Error,
+        ) -> Status,
+    >,
 }
+
+/// `R8ExportsFn`: the function a package registers as `"r8_exports"`.
+pub type ExportsFn = unsafe extern "C" fn() -> *const Exports;
 
 /// A view function of [`Api`]: the owner, the elements, their number, the
 /// view, and the error report.
@@ -211,6 +233,7 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("R8ImplEntry.type_name", offset_of!(ImplEntry, type_name)),
         ("R8ImplEntry.method", offset_of!(ImplEntry, method)),
         ("R8ImplEntry.call", offset_of!(ImplEntry, call)),
+        ("R8ImplEntry.n_params", offset_of!(ImplEntry, n_params)),
         ("R8Exports", size_of::<Exports>()),
         ("R8Exports.size", offset_of!(Exports, size)),
         ("R8Exports.package", offset_of!(Exports, package)),
@@ -228,5 +251,6 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("R8Api.view_integers", offset_of!(Api, view_integers)),
         ("R8Api.view_logicals", offset_of!(Api, view_logicals)),
         ("R8Api.view_bytes", offset_of!(Api, view_bytes)),
+        ("R8Api.protect", offset_of!(Api, protect)),
     ]
 }

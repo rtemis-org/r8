@@ -38,3 +38,6 @@ signal_peek <- function(x) .Call(pkgc_signal_peek, x)
 
 # A Signal of `n` values 0, 1, ..., built in C through R8Api.new_value.
 signal_make <- function(name, n) .Call(pkgc_signal_make, name, as.integer(n))
+
+# The status of R8Api.protect for a callback that raises an R error.
+protect_status <- function() .Call(pkgc_protect_status)

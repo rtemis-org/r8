@@ -331,8 +331,13 @@ str.r8_value <- function(object, ...) {
 } # /R8::str.r8_value
 
 
+# The native symbols of R8's C routines that R calls through `.Call()`
+# (`r8_native_symbols()`), set when the package loads.
+.r8_native <- new.env(parent = emptyenv())
+
 # %% .onLoad ----
 .onLoad <- function(libname, pkgname) {
+  list2env(r8_native_symbols(), envir = .r8_native)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Dim, PartialOrd, Print)) {
     register_trait(t, "R8")

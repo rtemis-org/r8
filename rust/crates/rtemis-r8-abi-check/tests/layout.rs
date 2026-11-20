@@ -23,5 +23,9 @@ fn rust_and_c_layouts_match() {
 
 #[test]
 fn constants_match() {
-    assert_eq!(c_constants(), (abi::ABI_VERSION, abi::CONTEXT_HAS_SEED));
+    let statuses = (abi::OK | abi::ERROR << 4 | abi::UNWIND << 8) as u32;
+    assert_eq!(
+        c_constants(),
+        (abi::ABI_VERSION, abi::CONTEXT_HAS_SEED, statuses)
+    );
 }

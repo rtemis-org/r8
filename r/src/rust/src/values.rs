@@ -1406,7 +1406,8 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         if let Some(state) = crate::native::decode(vt, &document) {
             let state = state.map_err(fail)?;
             let value = unsafe {
-                let like = crate::native::template(&q, def);
+                let names: Vec<String> = def.fields.iter().map(|f| f.name.to_string()).collect();
+                let like = crate::native::template(&q.to_string(), &names, def.version);
                 let r = Robj::from_sexp(crate::native::wrap(vt, state, like));
                 extendr_ffi::Rf_unprotect(1);
                 r

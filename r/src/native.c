@@ -184,30 +184,28 @@ static SEXP native_Duplicate(SEXP x, Rboolean deep) {
   return ans;
 }
 
-// A growing buffer, the R8Writer of `write_state`.
-typedef struct Buffer {
+// The R8Writers of `write_state`: one counts the bytes, the other fills a
+// raw vector of that size.
+typedef struct Sink {
   uint8_t *bytes;
   size_t len, cap;
-} Buffer;
+} Sink;
 
-static R8Status buffer_write(void *context, const uint8_t *bytes, size_t len) {
-  Buffer *b = context;
-  if (b->len + len > b->cap) {
-    size_t cap = b->cap > 0 ? b->cap : 4096;
-    while (cap < b->len + len) {
-      cap *= 2;
-    }
-    uint8_t *p = realloc(b->bytes, cap);
-    if (p == NULL) {
-      return R8_ERROR;
-    }
-    b->bytes = p;
-    b->cap = cap;
+static R8Status count_write(void *context, const uint8_t *bytes, size_t len) {
+  (void) bytes;
+  ((Sink *) context)->len += len;
+  return R8_OK;
+}
+
+static R8Status fill_write(void *context, const uint8_t *bytes, size_t len) {
+  Sink *s = context;
+  if (len > s->cap - s->len) {
+    return R8_ERROR;
   }
   if (len > 0) {
-    memcpy(b->bytes + b->len, bytes, len);
+    memcpy(s->bytes + s->len, bytes, len);
   }
-  b->len += len;
+  s->len += len;
   return R8_OK;
 }
 
@@ -230,19 +228,27 @@ static SEXP native_Serialized_state(SEXP x) {
     UNPROTECT(1);
     return NULL;
   }
-  Buffer b = {NULL, 0, 0};
-  R8Writer w = {&b, buffer_write};
+  // Two passes, so the bytes are held once: the first counts them, the
+  // second writes them into a raw vector of that size.
   R8Error err = {{0}, {0}};
+  Sink counter = {NULL, 0, 0};
+  R8Writer w = {&counter, count_write};
   if (vt->write_state(state, &w, &err) != R8_OK) {
-    free(b.bytes);
     UNPROTECT(1);
     Rf_error("%s [%s]", err.message, err.code);
   }
-  SEXP bytes = PROTECT(Rf_allocVector(RAWSXP, (R_xlen_t) b.len));
-  if (b.len > 0) {
-    memcpy(RAW(bytes), b.bytes, b.len);
+  SEXP bytes = PROTECT(Rf_allocVector(RAWSXP, (R_xlen_t) counter.len));
+  Sink sink = {RAW(bytes), 0, counter.len};
+  w.context = &sink;
+  w.write = fill_write;
+  if (vt->write_state(state, &w, &err) != R8_OK || sink.len != counter.len) {
+    UNPROTECT(2);
+    if (err.code[0] == '\0') {
+      Rf_error("`write_state` of `%s` wrote different bytes on its second pass",
+               vt->type_name);
+    }
+    Rf_error("%s [%s]", err.message, err.code);
   }
-  free(b.bytes);
   SEXP out = PROTECT(Rf_allocVector(VECSXP, 6));
   SET_VECTOR_ELT(out, 0, Rf_mkString(vt->type_name));
   SET_VECTOR_ELT(out, 1, VECTOR_ELT(meta, 0));
@@ -300,16 +306,17 @@ void r8_init_native(DllInfo *dll) {
 
 // A value over `state` with the attributes of `like`, the assembled list of
 // the value's fields, whose names are the field names; the value owns the
-// state from here on. When `from` is a Rust-native value, the new value's
-// cache takes the fields `from` has read, except field `skip`.
+// state once this returns, and the caller owns it when R jumps out. When
+// `from` is a Rust-native value, the new value's cache takes the fields
+// `from` has read, except field `skip`.
 SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
                     R_xlen_t skip) {
-  reserve(vt->bytes != NULL ? (double) vt->bytes(state) : 0);
+  double bytes = vt->bytes != NULL ? (double) vt->bytes(state) : 0;
+  reserve(bytes);
   SEXP names = Rf_getAttrib(like, R_NamesSymbol);
-  SEXP codec = PROTECT(R_MakeExternalPtr((void *) vt, R_NilValue, R_NilValue));
+  SEXP size = PROTECT(Rf_ScalarReal(bytes));
+  SEXP codec = PROTECT(R_MakeExternalPtr((void *) vt, R_NilValue, size));
   SEXP data1 = PROTECT(R_MakeExternalPtr(state, names, codec));
-  R_RegisterCFinalizerEx(data1, native_finalize, TRUE);
-  count(data1, vt, state);
   R_xlen_t n = XLENGTH(names);
   SEXP cache = PROTECT(Rf_allocVector(VECSXP, n));
   int carry = from != R_NilValue && ALTREP(from) && R_altrep_inherits(from, native_class) &&
@@ -320,7 +327,11 @@ SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
   }
   SEXP ans = PROTECT(R_new_altrep(native_class, data1, cache));
   DUPLICATE_ATTRIB(ans, like);
-  UNPROTECT(4);
+  // The finalizer is registered after every other allocation: when R jumps
+  // before it, the state stays the caller's to drop.
+  R_RegisterCFinalizerEx(data1, native_finalize, TRUE);
+  native_live += bytes;
+  UNPROTECT(5);
   return ans;
 }
 

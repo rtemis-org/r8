@@ -1,0 +1,1 @@
+INFORMAL rust/crates/rtemis-r8-macros/src/lib.rs:763  # "exports!" is the name of the function-like macro r8::exports!, not an exclamation

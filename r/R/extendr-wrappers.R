@@ -126,15 +126,17 @@ r8_exports_info <- function(ptr) .Call(wrap__r8_exports_info, ptr)
 #' @noRd
 r8_register_exports <- function(ptr, package) .Call(wrap__r8_register_exports, ptr, package)
 
-#' Calls a registered impl function with the arguments of the method's
-#' call, in the method's declared order.
+#' The compiled impl function of `method` of the trait `trait_name` for the
+#' type `type_name`, as an external pointer to the function, which R passes
+#' to R8's C routine `invoke` (`r8_native_symbols()`).
 #'
-#' @param trait_name,type_name,method Character: The impl.
-#' @param args List: The arguments.
-#' @return The function's result.
+#' @param trait_name Character: The qualified trait name.
+#' @param type_name Character: The qualified type name.
+#' @param method Character: The method.
+#' @return An external pointer.
 #' @keywords internal
 #' @noRd
-r8_call_impl <- function(trait_name, type_name, method, args) .Call(wrap__r8_call_impl, trait_name, type_name, method, args)
+r8_impl_fn <- function(trait_name, type_name, method) .Call(wrap__r8_impl_fn, trait_name, type_name, method)
 
 #' The registered Rust-native types and whether each codec table holds
 #' every function.
@@ -160,6 +162,15 @@ r8_native_parts <- function(x) .Call(wrap__r8_native_parts, x)
 #' @keywords internal
 #' @noRd
 r8_native_memory <- function() .Call(wrap__r8_native_memory)
+
+#' The native symbols of R8's C routines that R calls through `.Call()`:
+#' `invoke`, which calls an impl function, and `exports`, which fetches a
+#' package's exports table (`src/view.c`).
+#'
+#' @return List: `invoke` and `exports`.
+#' @keywords internal
+#' @noRd
+r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
 
 #' Resolves a struct value: given its fields, with runtime fields filled by
 #' the caller, evaluates each absent computed field in dependency order over

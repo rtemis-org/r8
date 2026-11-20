@@ -32,6 +32,13 @@ static R8Status magnitude_impl(const R8CallContext *ctx, const SEXP *args, size_
   return R8_OK;
 }
 
+// Raises an R error, which R8Api.protect catches.
+static SEXP raise_na(void *data) {
+  (void) data;
+  Rf_error("`by` is NA");
+  return R_NilValue;
+}
+
 static R8Status ratio_impl(const R8CallContext *ctx, const SEXP *args, size_t nargs,
                            SEXP *result, R8Error *err) {
   (void) ctx;
@@ -40,6 +47,11 @@ static R8Status ratio_impl(const R8CallContext *ctx, const SEXP *args, size_t na
     return R8_ERROR;
   }
   double by = REAL(args[1])[0];
+  // An R error raised under R8Api.protect returns R8_UNWIND here, which R8
+  // continues once this function returns.
+  if (ISNA(by)) {
+    return R8_api()->protect(raise_na, NULL, result, err);
+  }
   if (by == 0) {
     set_error(err, "zero_divisor", "`by` is not 0");
     return R8_ERROR;
@@ -75,9 +87,9 @@ static const char ir_json[] =
     "\"methods\":[\"format\"]}]}";
 
 static const R8ImplEntry impls[] = {
-    {"pkgc::Norm", "pkgc::Point", "magnitude", magnitude_impl},
-    {"pkgc::Norm", "pkgc::Point", "ratio", ratio_impl},
-    {"R8::Display", "pkgc::Point", "format", format_impl},
+    {"pkgc::Norm", "pkgc::Point", "magnitude", magnitude_impl, 1},
+    {"pkgc::Norm", "pkgc::Point", "ratio", ratio_impl, 2},
+    {"R8::Display", "pkgc::Point", "format", format_impl, 2},
 };
 
 // The codec of pkgc::Signal (signal.c).
@@ -91,19 +103,30 @@ static const R8Exports exports = {
     &pkgc_signal_codec, 1,             impls,    sizeof(impls) / sizeof(impls[0]),
 };
 
-static SEXP r8_exports(void) {
-  return R_MakeExternalPtr((void *) &exports, Rf_install("r8_exports"), R_NilValue);
+// The status R8Api.protect returns for a callback that raises an R error,
+// R8_UNWIND, without the jump.
+static SEXP pkgc_protect_status(void) {
+  SEXP value = R_NilValue;
+  R8Error err = {{0}, {0}};
+  return Rf_ScalarInteger(R8_api()->protect(raise_na, NULL, &value, &err));
+}
+
+// The exports table, which R8 fetches with R_GetCCallable("r8pkgC",
+// "r8_exports").
+static const R8Exports *r8_exports(void) {
+  return &exports;
 }
 
 static const R_CallMethodDef call_methods[] = {
-    {"r8_exports", (DL_FUNC) &r8_exports, 0},
     {"pkgc_live_signals", (DL_FUNC) &pkgc_live_signals, 0},
     {"pkgc_signal_peek", (DL_FUNC) &pkgc_signal_peek, 1},
     {"pkgc_signal_make", (DL_FUNC) &pkgc_signal_make, 2},
+    {"pkgc_protect_status", (DL_FUNC) &pkgc_protect_status, 0},
     {NULL, NULL, 0},
 };
 
 void R_init_r8pkgC(DllInfo *dll) {
   R_registerRoutines(dll, NULL, call_methods, NULL, NULL);
   R_useDynamicSymbols(dll, FALSE);
+  R_RegisterCCallable("r8pkgC", "r8_exports", (DL_FUNC) r8_exports);
 }

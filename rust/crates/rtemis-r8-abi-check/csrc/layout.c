@@ -16,13 +16,13 @@ static const size_t layout[] = {
   OFFSET(R8TypeVTable, get_field), OFFSET(R8TypeVTable, with_field),
   OFFSET(R8TypeVTable, drop), OFFSET(R8TypeVTable, bytes),
   SIZE(R8ImplEntry), OFFSET(R8ImplEntry, type_name), OFFSET(R8ImplEntry, method),
-  OFFSET(R8ImplEntry, call),
+  OFFSET(R8ImplEntry, call), OFFSET(R8ImplEntry, n_params),
   SIZE(R8Exports), OFFSET(R8Exports, size), OFFSET(R8Exports, package),
   OFFSET(R8Exports, ir_json), OFFSET(R8Exports, ir_json_len), OFFSET(R8Exports, types),
   OFFSET(R8Exports, n_types), OFFSET(R8Exports, impls), OFFSET(R8Exports, n_impls),
   SIZE(R8Api), OFFSET(R8Api, size), OFFSET(R8Api, new_value), OFFSET(R8Api, value_state),
   OFFSET(R8Api, view_doubles), OFFSET(R8Api, view_integers), OFFSET(R8Api, view_logicals),
-  OFFSET(R8Api, view_bytes),
+  OFFSET(R8Api, view_bytes), OFFSET(R8Api, protect),
 };
 
 /* Copies the layout into `out`, up to `cap` entries, and returns the number
@@ -35,6 +35,10 @@ size_t r8_abi_layout(size_t *out, size_t cap) {
   return n;
 }
 
-/* The ABI version and the context flag, so the test can compare constants. */
+/* The ABI version, the context flag, and the statuses, so the test can
+ * compare constants. */
 unsigned r8_abi_version(void) { return R8_ABI_VERSION; }
 unsigned r8_abi_has_seed(void) { return R8_CONTEXT_HAS_SEED; }
+
+/* The status codes R8_OK, R8_ERROR, and R8_UNWIND, as one number in base 16. */
+unsigned r8_abi_statuses(void) { return R8_OK | R8_ERROR << 4 | R8_UNWIND << 8; }

@@ -58,7 +58,8 @@ r8_register <- function(pkgname = NULL) {
 # %% register_exports ----
 #' Register a package's compiled exports
 #'
-#' Calls the package's `.Call` routine `r8_exports`, when it has one, and
+#' Fetches the function the package registered with
+#' `R_RegisterCCallable(pkg, "r8_exports", fn)`, when it registered one, and
 #' registers the `R8Exports` table it returns (`R8.h`): the IR document, the
 #' codecs of Rust-native types, and the impl functions, each of which becomes
 #' the R method of its trait for its type.
@@ -70,16 +71,15 @@ r8_register <- function(pkgname = NULL) {
 #' @keywords internal
 #' @noRd
 register_exports <- function(pkg) {
-  sym <- tryCatch(
-    getNativeSymbolInfo("r8_exports", PACKAGE = pkg),
+  # R_GetCCallable() raises an error for a package that registered no
+  # exports.
+  ptr <- tryCatch(
+    .Call(.r8_native[["exports"]], pkg),
     error = function(e) NULL
   )
-  if (is.null(sym)) {
+  if (is.null(ptr)) {
     return(0L)
   }
-  # The routine is the other package's, found at run time; do.call() keeps
-  # R CMD check from reading it as an unregistered routine of R8.
-  ptr <- do.call(".Call", list(sym))
   info <- r8_exports_info(ptr)
   claim_namespace(info[["namespace"]], pkg)
   fns <- r8_register_exports(ptr, pkg)
@@ -133,7 +133,7 @@ compiled_method <- function(trait_name, type_name, method) {
   fn <- as.function(
     c(
       formals,
-      bquote(r8_call_impl(
+      bquote(call_impl(
         .(trait_name),
         .(type_name),
         .(method),
@@ -156,3 +156,26 @@ compiled_method <- function(trait_name, type_name, method) {
   }
   invisible(NULL)
 } # /R8::compiled_method
+
+
+# %% call_impl ----
+#' Call a compiled impl function
+#'
+#' Passes the arguments to the impl function of `method` of the trait for the
+#' type, through R8's C routine `invoke`, which raises the impl's error and
+#' continues a jump that `R8Api.protect` caught.
+#'
+#' @param trait_name,type_name,method Character: The impl.
+#' @param args List: The arguments, in the declared order.
+#'
+#' @return The impl function's result.
+#'
+#' @keywords internal
+#' @noRd
+call_impl <- function(trait_name, type_name, method, args) {
+  .Call(
+    .r8_native[["invoke"]],
+    r8_impl_fn(trait_name, type_name, method),
+    args
+  )
+} # /R8::call_impl

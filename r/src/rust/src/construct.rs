@@ -677,7 +677,7 @@ pub(crate) fn errors_list(errors: &[ValueError]) -> List {
     list!(code = code, path = path, rule = rule, message = message)
 }
 
-/// Sets the attributes of a value of the type `q` on the list `out`: the
+/// Sets the attributes of a value of the type `qname` on the list `out`: the
 /// class `c(<q>, "r8_value")`, `r8_type`, `r8_version`, and for an enum
 /// variant `r8_variant`.
 ///
@@ -686,14 +686,13 @@ pub(crate) fn errors_list(errors: &[ValueError]) -> List {
 /// `out` is a protected list.
 pub(crate) unsafe fn set_value_attributes(
     out: SEXP,
-    q: &QualifiedName,
+    qname: &str,
     version: u32,
     variant: Option<&str>,
 ) {
     unsafe {
-        let qname = q.to_string();
         let class = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 2));
-        let qchar = mkchar(&qname);
+        let qchar = mkchar(qname);
         SET_STRING_ELT(class, 0, qchar);
         SET_STRING_ELT(class, 1, mkchar("r8_value"));
         Rf_setAttrib(out, sym_class(), class);
@@ -772,7 +771,7 @@ pub(crate) fn assemble(
             SET_VECTOR_ELT(out, k as R_xlen_t, value);
         }
         Rf_setAttrib(out, sym_names(), names);
-        set_value_attributes(out, q, version, variant);
+        set_value_attributes(out, &q.to_string(), version, variant);
         // A Rust-native type's value is the codec's state behind an ALTLIST
         // with the same attributes (`native.rs`).
         let r = match (def, crate::exports::codec(&q.to_string())) {

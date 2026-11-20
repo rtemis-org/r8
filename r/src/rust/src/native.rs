@@ -12,7 +12,7 @@ use extendr_ffi::{
     R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_STRING_ELT, SEXPTYPE, VECTOR_ELT,
 };
 use rtemis_r8::abi::{ERROR, Error, OK, Sexp, Status, TypeVTable};
-use rtemis_r8::ir::{StructDef, TypeDef};
+use rtemis_r8::ir::TypeDef;
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 
@@ -24,24 +24,31 @@ static WRAP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static STATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static PARTS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static MEMORY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static PROTECT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static SYMBOLS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Receives the functions of `native.c` from `R_init_R8()`.
 ///
 /// # Safety
 ///
-/// `wrap`, `state`, `parts`, and `memory` are `r8_native_wrap()`,
-/// `r8_native_state()`, `r8_native_parts()`, and `r8_native_memory()`.
+/// `wrap`, `state`, `parts`, `memory`, `protect`, and `symbols` are
+/// `r8_native_wrap()`, `r8_native_state()`, `r8_native_parts()`,
+/// `r8_native_memory()`, `r8_protect()`, and `r8_native_symbols()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_set_native_functions(
     wrap: *mut (),
     state: *mut (),
     parts: *mut (),
     memory: *mut (),
+    protect: *mut (),
+    symbols: *mut (),
 ) {
     WRAP.store(wrap, Ordering::Release);
     STATE.store(state, Ordering::Release);
     PARTS.store(parts, Ordering::Release);
     MEMORY.store(memory, Ordering::Release);
+    PROTECT.store(protect, Ordering::Release);
+    SYMBOLS.store(symbols, Ordering::Release);
 }
 
 /// The parts of a Rust-native value that `r8_size()` adds up: the bytes of
@@ -73,10 +80,26 @@ fn r8_native_memory() -> Robj {
     unsafe { Robj::from_sexp(f()) }
 }
 
+/// The native symbols of R8's C routines that R calls through `.Call()`:
+/// `invoke`, which calls an impl function, and `exports`, which fetches a
+/// package's exports table (`src/view.c`).
+///
+/// @return List: `invoke` and `exports`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_native_symbols() -> Robj {
+    let f = SYMBOLS.load(Ordering::Acquire);
+    assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
+    let f: unsafe extern "C" fn() -> SEXP = unsafe { std::mem::transmute(f) };
+    unsafe { Robj::from_sexp(f()) }
+}
+
 extendr_module! {
     mod native;
     fn r8_native_parts;
     fn r8_native_memory;
+    fn r8_native_symbols;
 }
 
 /// The value over `state` with the attributes of `like`, the assembled
@@ -275,30 +298,94 @@ fn new_value(
         drop_state();
         return Err(("unknown_type", format!("`{q}` is not a registered struct")));
     };
-    unsafe {
-        let like = template(&q, def);
-        *value = wrap(vt, state, like).cast();
-        Rf_unprotect(1);
+    let names: Vec<String> = def.fields.iter().map(|f| f.name.to_string()).collect();
+    let version = def.version;
+    // The registry is released before R allocates: a jump out of an
+    // allocation skips no Rust frame that holds the lock.
+    drop(docs);
+    let qname = q.to_string();
+    let args = BuildArgs {
+        vt,
+        state,
+        qname: &qname,
+        names: &names,
+        version,
+    };
+    let mut out: SEXP = unsafe { extendr_ffi::R_NilValue };
+    let mut err = Error {
+        code: [0; 64],
+        message: [0; 1024],
+    };
+    let status = protect(
+        build_value,
+        std::ptr::from_ref(&args).cast_mut().cast(),
+        &mut out,
+        &mut err,
+    );
+    if status != OK {
+        // The value takes the state only when the build returns.
+        drop_state();
+        return Err(("r_error", "R could not allocate the value".to_string()));
     }
+    unsafe { *value = out.cast() };
     Ok(())
 }
 
-/// A list of the struct's field names with the attributes of its values,
-/// the template of a Rust-native value; returned protected.
+/// The arguments of `build_value()`, borrowed from `new_value()`.
+struct BuildArgs<'a> {
+    vt: *const TypeVTable,
+    state: *mut c_void,
+    qname: &'a str,
+    names: &'a [String],
+    version: u32,
+}
+
+/// Builds a Rust-native value under `r8_protect()`; it holds only borrows,
+/// so a jump out of it skips no destructor.
+extern "C" fn build_value(p: *mut c_void) -> SEXP {
+    let a = unsafe { &*p.cast::<BuildArgs>() };
+    unsafe {
+        let like = template(a.qname, a.names, a.version);
+        let v = wrap(a.vt, a.state, like);
+        Rf_unprotect(1);
+        v
+    }
+}
+
+/// `R8Api.protect` (`r8_protect()` in `view.c`).
+fn protect(
+    f: extern "C" fn(*mut c_void) -> SEXP,
+    data: *mut c_void,
+    value: &mut SEXP,
+    err: &mut Error,
+) -> Status {
+    let p = PROTECT.load(Ordering::Acquire);
+    assert!(!p.is_null(), "R8 is loaded through R_init_R8()");
+    let p: unsafe extern "C" fn(
+        extern "C" fn(*mut c_void) -> SEXP,
+        *mut c_void,
+        *mut SEXP,
+        *mut Error,
+    ) -> Status = unsafe { std::mem::transmute(p) };
+    unsafe { p(f, data, value, err) }
+}
+
+/// A list of the field names `names` with the attributes of a value of the
+/// struct `qname`, the template of a Rust-native value; returned protected.
+/// It allocates no Rust memory, so it runs inside `r8_protect()`.
 ///
 /// # Safety
 ///
 /// The caller unprotects the result.
-pub(crate) unsafe fn template(q: &QualifiedName, def: &StructDef) -> SEXP {
-    let n = def.fields.len();
+pub(crate) unsafe fn template(qname: &str, names: &[String], version: u32) -> SEXP {
     unsafe {
-        let like = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
-        let names = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, n as R_xlen_t));
-        for (k, f) in def.fields.iter().enumerate() {
-            SET_STRING_ELT(names, k as R_xlen_t, mkchar(f.name.as_str()));
+        let like = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, names.len() as R_xlen_t));
+        let n = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, names.len() as R_xlen_t));
+        for (k, f) in names.iter().enumerate() {
+            SET_STRING_ELT(n, k as R_xlen_t, mkchar(f));
         }
-        extendr_ffi::Rf_setAttrib(like, sym_names(), names);
-        crate::construct::set_value_attributes(like, q, def.version, None);
+        extendr_ffi::Rf_setAttrib(like, sym_names(), n);
+        crate::construct::set_value_attributes(like, qname, version, None);
         Rf_unprotect(1);
         like
     }

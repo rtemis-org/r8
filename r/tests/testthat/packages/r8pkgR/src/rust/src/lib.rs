@@ -1,0 +1,51 @@
+//! The Rust code of r8pkgR: a Rust-native struct, `pkgr::Signal`, with
+//! impls of `pkgr::Norm`, declared in R, and of `R8::Display`.
+
+use rtemis_r8::R8;
+use rtemis_r8_api as r8;
+use rtemis_r8_api::{Buffer, Dots};
+
+/// A named series of values.
+#[derive(R8, Clone)]
+#[r8(namespace = "pkgr", version = 1, native)]
+pub struct Signal {
+    /// The name.
+    pub name: String,
+    /// The values.
+    pub values: Buffer<f64>,
+}
+
+/// The Rust side of `pkgr::Norm`, declared in R with `magnitude(x)` and
+/// `ratio(x, by)`.
+pub trait Norm {
+    fn magnitude(&self) -> f64;
+    fn ratio(&self, by: f64) -> r8::Result<f64>;
+}
+
+#[r8::methods(trait = "pkgr::Norm")]
+impl Norm for Signal {
+    fn magnitude(&self) -> f64 {
+        self.values.iter().map(|v| v * v).sum::<f64>().sqrt()
+    }
+    fn ratio(&self, by: f64) -> r8::Result<f64> {
+        if by == 0.0 {
+            return Err(r8::Error::new("zero_divisor", "`by` is not 0"));
+        }
+        Ok(self.values.first().copied().unwrap_or(f64::NAN) / by)
+    }
+}
+
+#[r8::methods(trait = "R8::Display")]
+impl r8::Display for Signal {
+    fn format(&self, _dots: Dots) -> String {
+        format!("Signal {} ({} values)", self.name, self.values.len())
+    }
+}
+
+r8::exports! {
+    package = "r8pkgR",
+    namespace = "pkgr",
+    types = [Signal],
+    impls = [Signal: Norm, Signal: Display],
+}
+

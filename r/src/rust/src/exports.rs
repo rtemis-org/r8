@@ -1,12 +1,14 @@
 //! The exports of compiled code: an `R8Exports` table from a package, its
 //! registration, and calls of its impl functions.
 //!
-//! A package whose declarations are compiled returns a static `R8Exports`
-//! from its `.Call` routine `r8_exports`, as an external pointer tagged with
-//! the symbol `r8_exports` (`R8.h`). `r8_register()` passes the pointer to
-//! [`r8_exports_info`], which checks the table, and to
-//! [`r8_register_exports`], which declares its IR document and keeps its
-//! function pointers; an impl's R method calls [`r8_call_impl`].
+//! A package whose declarations are compiled registers a function returning
+//! its static `R8Exports` with `R_RegisterCCallable(pkg, "r8_exports", fn)`
+//! (`R8.h`). `r8_register()` fetches the table through R8's C routine
+//! `exports` (`src/view.c`), as an external pointer tagged with the symbol
+//! `r8_exports`, and passes it to [`r8_exports_info`], which checks the
+//! table, and to [`r8_register_exports`], which declares its IR document and
+//! keeps its function pointers. An impl's R method passes the pointer that
+//! [`r8_impl_fn`] returns to R8's C routine `invoke`, which calls it.
 //!
 //! Everything a table points to is static while the package's shared object
 //! is loaded, so the registry keeps the pointers themselves.
@@ -16,13 +18,11 @@ use std::ffi::{CStr, c_char};
 use std::sync::{Mutex, OnceLock};
 
 use extendr_api::prelude::*;
-use extendr_api::{Error, Result, SEXP};
-use extendr_ffi::{R_ExternalPtrAddr, R_ExternalPtrTag, R_xlen_t, Rf_install, VECTOR_ELT};
-use rtemis_r8::abi::{
-    ABI_VERSION, CallContext, ERROR, Error as AbiError, Exports, ImplEntry, MethodFn, OK, Sexp,
-    TypeVTable,
-};
+use extendr_api::{Error, Result};
+use extendr_ffi::{R_ExternalPtrAddr, R_ExternalPtrTag, Rf_install};
+use rtemis_r8::abi::{ABI_VERSION, Exports, ImplEntry, MethodFn, TypeVTable};
 use rtemis_r8::ir::{ImplTarget, IrDocument};
+use rtemis_r8::name::QualifiedName;
 
 fn fail(message: impl Into<String>) -> Error {
     Error::Other(message.into())
@@ -341,6 +341,37 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
                 key.2, key.0, key.1
             )));
         }
+        // The number of parameters agrees with the trait's declaration,
+        // registered by the trait's package.
+        let declared_params = crate::declare::registry().lock().ok().and_then(|docs| {
+            let q = QualifiedName::parse(&key.0).ok()?;
+            let t = docs
+                .0
+                .iter()
+                .find(|d| d.namespace == q.namespace)?
+                .traits
+                .iter()
+                .find(|t| t.name == q.name)?;
+            t.methods
+                .iter()
+                .find(|m| m.name.as_str() == key.2)
+                .map(|m| m.params.len())
+        });
+        match declared_params {
+            Some(n) if n != entry.n_params => {
+                return Err(fail(format!(
+                    "the impl function `{}` of `{}` for `{}` takes {} parameters, and the trait declares {n}",
+                    key.2, key.0, key.1, entry.n_params
+                )));
+            }
+            Some(_) => {}
+            None => {
+                return Err(fail(format!(
+                    "the trait `{}` declares no method `{}`; its package declares it before `{package}` registers",
+                    key.0, key.2
+                )));
+            }
+        }
         impls.push((key, ImplFn { call }));
     }
     let mut c = compiled()
@@ -379,26 +410,18 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
     ))
 }
 
-/// The text of a NUL-terminated field of an `R8Error`.
-fn error_text(buf: &[c_char]) -> String {
-    let bytes: Vec<u8> = buf
-        .iter()
-        .take_while(|&&c| c != 0)
-        .map(|&c| c as u8)
-        .collect();
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
-/// Calls a registered impl function with the arguments of the method's
-/// call, in the method's declared order.
+/// The compiled impl function of `method` of the trait `trait_name` for the
+/// type `type_name`, as an external pointer to the function, which R passes
+/// to R8's C routine `invoke` (`r8_native_symbols()`).
 ///
-/// @param trait_name,type_name,method Character: The impl.
-/// @param args List: The arguments.
-/// @return The function's result.
+/// @param trait_name Character: The qualified trait name.
+/// @param type_name Character: The qualified type name.
+/// @param method Character: The method.
+/// @return An external pointer.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_call_impl(trait_name: &str, type_name: &str, method: &str, args: List) -> Result<Robj> {
+fn r8_impl_fn(trait_name: &str, type_name: &str, method: &str) -> Result<Robj> {
     let f = {
         let c = compiled()
             .lock()
@@ -416,39 +439,19 @@ fn r8_call_impl(trait_name: &str, type_name: &str, method: &str, args: List) -> 
             "`{type_name}` has no compiled impl of `{trait_name}` (method `{method}`)"
         )));
     };
-    let a = unsafe { args.get() };
-    // `rtemis_r8::abi::Sexp` is an untyped pointer of the size of `SEXP`.
-    let argv: Vec<Sexp> = (0..args.len())
-        .map(|i| unsafe { VECTOR_ELT(a, i as R_xlen_t) } as Sexp)
-        .collect();
-    let ctx = CallContext {
-        size: std::mem::size_of::<CallContext>() as u32,
-        flags: 0,
-        seed: 0,
-    };
-    let mut result: Sexp = unsafe { extendr_ffi::R_NilValue } as Sexp;
-    let mut err = AbiError {
-        code: [0; 64],
-        message: [0; 1024],
-    };
-    let status = unsafe { (f.call)(&ctx, argv.as_ptr(), argv.len(), &mut result, &mut err) };
-    match status {
-        OK => Ok(unsafe { Robj::from_sexp(result as SEXP) }),
-        ERROR => Err(fail(format!(
-            "{} [{}]",
-            error_text(&err.message),
-            error_text(&err.code)
-        ))),
-        other => Err(fail(format!(
-            "the impl function of `{trait_name}` for `{type_name}` returned the status {other}, neither R8_OK nor R8_ERROR"
-        ))),
-    }
+    Ok(unsafe {
+        Robj::from_sexp(extendr_ffi::R_MakeExternalPtr(
+            f.call as *mut std::ffi::c_void,
+            extendr_ffi::R_NilValue,
+            extendr_ffi::R_NilValue,
+        ))
+    })
 }
 
 extendr_module! {
     mod exports;
     fn r8_exports_info;
     fn r8_register_exports;
-    fn r8_call_impl;
+    fn r8_impl_fn;
     fn r8_compiled_types;
 }

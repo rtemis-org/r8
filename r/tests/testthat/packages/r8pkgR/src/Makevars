@@ -1,0 +1,18 @@
+# Makevars
+# ::r8pkgR::
+# 2026- EDG rtemis.org
+
+# The Rust code is a static library, built from src/rust with the crates of
+# this R8 checkout (path dependencies), for the tests of R8.
+
+TARGET_DIR = ./rust/target
+LIBDIR = $(TARGET_DIR)/release
+STATLIB = $(LIBDIR)/libr8pkgr.a
+PKG_LIBS = -L$(LIBDIR) -lr8pkgr
+
+all: $(SHLIB)
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	PATH="$(PATH):$(HOME)/.cargo/bin" cargo build --lib --release --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR)
