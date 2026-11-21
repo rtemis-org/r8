@@ -8,8 +8,10 @@
 # exist in memory; and that time with one value constructed of each type,
 # which R8 needs before it compiles each type's rules. It reports the cons
 # cells at each endpoint and the median of 20 full gc() runs. Mode
-# "control" loads the system's own packages only, and reports the median
-# gc() time, which report.R subtracts.
+# "control" loads the system's own packages only, makes the same four gc()
+# calls, and reports the median gc() time; report.R subtracts its gc() time
+# and peak resident memory. The four calls matter: 20 full gc() runs without
+# a gc() before them raise the peak resident memory by about 5.5 MB.
 # spec: R8/class-system#benchmark
 
 source(file.path(Sys.getenv("R8_BENCH_DIR", "bench"), "rows", "common.R"))
@@ -37,5 +39,7 @@ if (MODE == "pkg") {
   emit("GBM x 200", "ncells_load", n1 - n0, "cells")
   emit("GBM x 200", "ncells_bindings", n2 - n0, "cells")
   emit("GBM x 200", "ncells_values", n3 - n0, "cells")
+} else {
+  for (i in 1:4) cells()
 }
 emit("GBM x 200", "gc_full", gc_median(), "s")
