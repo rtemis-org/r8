@@ -65,3 +65,12 @@ release:
 # Run the benchmark (bench/) on the committed tree and print its tables
 bench:
     sh bench/bench.sh
+
+# Copy a run's results and provenance into the R8 user guide, whose chapter benchmarks.qmd renders them (default: the run of HEAD)
+bench-publish docs="~/Docs/docs-rtemis/src/r/r8" commit=`git rev-parse --short HEAD`:
+    test -f "bench/results/{{ commit }}.jsonl"
+    test -f "bench/results/{{ commit }}.meta.json" || Rscript --vanilla bench/meta.R "{{ commit }}"
+    mkdir -p {{ docs }}/_data
+    cp "bench/results/{{ commit }}.jsonl" {{ docs }}/_data/bench.jsonl
+    cp "bench/results/{{ commit }}.meta.json" {{ docs }}/_data/bench-meta.json
+    @echo "Published the run of {{ commit }}; clear {{ docs }}/_freeze/benchmarks and render with just render-r8 in docs-rtemis."

@@ -19,8 +19,13 @@ sha <- args[[2L]]
 lib_alloc <- if (length(args) > 2L) normalizePath(args[[3L]]) else NULL
 bench_dir <- normalizePath("bench")
 source(file.path(bench_dir, "namespace.R"))
+source(file.path(bench_dir, "meta.R"))
 out <- file.path(bench_dir, "results", paste0(sha, ".jsonl"))
 dir.create(dirname(out), showWarnings = FALSE)
+writeLines(
+  jsonlite::toJSON(bench_meta(sha, lib), auto_unbox = TRUE, pretty = TRUE, na = "null"),
+  file.path(bench_dir, "results", paste0(sha, ".meta.json"))
+)
 rscript <- file.path(R.home("bin"), "Rscript")
 lib_path <- function(first = NULL) paste(c(first, lib, .libPaths()), collapse = .Platform$path.sep)
 
