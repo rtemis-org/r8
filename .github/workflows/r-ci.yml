@@ -97,6 +97,7 @@ jobs:
       # from the committed lock.
       - run: cargo clippy --all-targets --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
       - run: cargo clippy --all-targets --features oracle --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
+      - run: cargo clippy --all-targets --features alloc-stats --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
 
   msrv:
     name: Install with the minimum Rust version

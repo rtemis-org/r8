@@ -70,9 +70,23 @@ patched <- nzchar(.cargo_config)
 # R8_ORACLE, when set, builds the differential oracle (src/rust/src/oracle.rs)
 # that the tests compare native construction with. The `document` binary builds
 # without it, so R/extendr-wrappers.R is the same in every build.
-.features <- ifelse(nzchar(Sys.getenv("R8_ORACLE")), "--features oracle", "")
-if (nzchar(.features)) {
+# R8_ALLOC_STATS, when set, builds the counting allocator
+# (src/rust/src/alloc.rs) that the memory rows of the benchmark read through
+# r8_alloc_stats().
+.feature_list <- c(
+  if (nzchar(Sys.getenv("R8_ORACLE"))) "oracle",
+  if (nzchar(Sys.getenv("R8_ALLOC_STATS"))) "alloc-stats"
+)
+.features <- if (length(.feature_list)) {
+  paste0("--features ", paste(.feature_list, collapse = ","))
+} else {
+  ""
+}
+if ("oracle" %in% .feature_list) {
   message("Building with the differential oracle.")
+}
+if ("alloc-stats" %in% .feature_list) {
+  message("Building with the counting allocator.")
 }
 
 # R8_TARGET_DIR, when set on a Unix build, is the Cargo target directory,

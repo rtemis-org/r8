@@ -22,6 +22,7 @@ path = 'document.rs'
 # set.
 [features]
 oracle = []
+alloc-stats = []
 
 [dependencies]
 extendr-api = '0.9'

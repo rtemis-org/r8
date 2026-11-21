@@ -10,6 +10,7 @@
 
 use extendr_api::prelude::*;
 
+mod alloc;
 mod construct;
 mod declare;
 mod exports;
@@ -25,6 +26,7 @@ mod version;
 #[cfg(not(feature = "oracle"))]
 extendr_module! {
     mod R8;
+    use alloc;
     use construct;
     use declare;
     use exports;
@@ -37,6 +39,7 @@ extendr_module! {
 #[cfg(feature = "oracle")]
 extendr_module! {
     mod R8;
+    use alloc;
     use construct;
     use declare;
     use exports;

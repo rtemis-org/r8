@@ -106,8 +106,11 @@ table_of("GBM with vectors of 10^6 (median time, ms)", list(
 ns <- function(metric, mode = "pkg") function(s) value_of("namespace", s, "GBM x 200", metric, mode)
 table_of("Types: 200 GBM types", list(
   row_spec("Declaring 200 types in a session, s (median of 5 processes)", "s", function(s) value_of("types", s, "GBM", "declare_200")),
-  row_spec("R memory per type, B", "B", function(s) value_of("types", s, "GBM", "memory_type")),
-  row_spec("Peak resident memory per type, all memory, B", "B", function(s) peak_delta("peak", s, "types", "types_control") / 1000),
+  row_spec("Memory per type in R, B", "B", function(s) value_of("types", s, "GBM", "memory_type_r", "memory")),
+  row_spec("Memory per type in Rust (R8's registry), B", "B", function(s) value_of("types", s, "GBM", "memory_type_native", "memory")),
+  row_spec("Memory per type, total, B", "B", function(s) {
+    value_of("types", s, "GBM", "memory_type_r", "memory") + value_of("types", s, "GBM", "memory_type_native", "memory")
+  }),
   row_spec("loadNamespace() of a package of 200 types, s", "s", ns("load_time")),
   row_spec("Loading, every binding read, s", "s", ns("bindings_time")),
   row_spec("Loading, every binding read, a value of each type, s", "s", ns("values_time")),

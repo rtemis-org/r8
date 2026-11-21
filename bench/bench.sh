@@ -34,12 +34,16 @@ export R8_TARGET_DIR="${R8_TARGET_DIR:-$PWD/target/r}"
 (cd "$work" && R CMD build --no-build-vignettes --no-manual "$OLDPWD/r" > /dev/null)
 R CMD INSTALL --library="$lib" "$work"/R8_*.tar.gz > "$work/install-R8.log" 2>&1
 R_LIBS="$lib" R CMD INSTALL --no-test-load --library="$lib" bench/r8bench/r8benchR > "$work/install-r8benchR.log" 2>&1
+# A second build of R8 with the counting allocator, for the memory rows.
+lib_alloc="$work/lib-alloc"
+mkdir -p "$lib_alloc"
+R8_ALLOC_STATS=true R CMD INSTALL --library="$lib_alloc" "$work"/R8_*.tar.gz > "$work/install-R8-alloc.log" 2>&1
 R_LIBS="$lib" Rscript --vanilla -e "source('bench/syspkg.R'); source('bench/namespace.R'); for (s in SYSTEM_PACKAGES) write_system_package(s, '$work'); for (s in NAMESPACE_SYSTEMS) write_namespace_package(s, '$work')"
 for s in S3 S4 RC R6 S7 R8; do
   R_LIBS="$lib" R CMD INSTALL --no-test-load --library="$lib" "$work/benchsys$s" > "$work/install-sys-$s.log" 2>&1
   R_LIBS="$lib" R CMD INSTALL --no-test-load --library="$lib" "$work/bench${s}200" > "$work/install-$s.log" 2>&1
 done
 rm -f "bench/results/$sha.jsonl"
-Rscript --vanilla bench/run.R "$lib" "$sha"
+Rscript --vanilla bench/run.R "$lib" "$sha" "$lib_alloc"
 Rscript --vanilla bench/report.R "$sha"
 rm -rf "$work"

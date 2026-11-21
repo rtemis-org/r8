@@ -7,19 +7,22 @@
 # with the peak resident memory of each process, to
 # bench/results/<commit>.jsonl. The acceptance corpus runs first, and a
 # mismatch stops the run. Usage: Rscript bench/run.R <library> <commit>,
-# where the library holds the R8 release build, r8benchR, and the packages
-# of namespace.R; bench.sh prepares it.
+# [<library with alloc-stats>], where the library holds the R8 release
+# build, r8benchR, and the packages of syspkg.R and namespace.R, and the
+# second library holds a build of R8 with the feature `alloc-stats`, for
+# the memory rows; bench.sh prepares both.
 # spec: R8/class-system#benchmark
 
 args <- commandArgs(trailingOnly = TRUE)
 lib <- normalizePath(args[[1L]])
 sha <- args[[2L]]
+lib_alloc <- if (length(args) > 2L) normalizePath(args[[3L]]) else NULL
 bench_dir <- normalizePath("bench")
 source(file.path(bench_dir, "namespace.R"))
 out <- file.path(bench_dir, "results", paste0(sha, ".jsonl"))
 dir.create(dirname(out), showWarnings = FALSE)
 rscript <- file.path(R.home("bin"), "Rscript")
-libs <- paste(c(lib, .libPaths()), collapse = .Platform$path.sep)
+lib_path <- function(first = NULL) paste(c(first, lib, .libPaths()), collapse = .Platform$path.sep)
 
 # The peak resident memory in bytes from the output of /usr/bin/time:
 # `-l` on macOS reports bytes; `-v` on Linux reports kilobytes.
@@ -35,7 +38,8 @@ peak_rss <- function(err) {
   NA_real_
 }
 
-run_row <- function(row, system, mode = "", repeat_n = 1L) {
+run_row <- function(row, system, mode = "", repeat_n = 1L, first_lib = NULL) {
+  libs <- lib_path(first_lib)
   records <- list()
   for (r in seq_len(repeat_n)) {
     so <- tempfile()
@@ -90,7 +94,7 @@ if (length(unique(stored)) != 1L) {
 for (s in systems) run_row("values", s)
 for (s in systems) run_row("cold", s, repeat_n = 5L)
 for (s in r_systems) run_row("types", s, repeat_n = 5L)
-for (s in r_systems) for (m in c("types", "types_control")) run_row("peak", s, m)
+if (!is.null(lib_alloc)) for (s in r_systems) run_row("types", s, "memory", first_lib = lib_alloc)
 for (s in systems) for (m in c("", "compact")) run_row("big", s, m)
 for (s in systems) for (m in c("value", "control")) run_row("peak", s, m)
 run_row("table", "R8")

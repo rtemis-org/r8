@@ -5,6 +5,15 @@
 #' @useDynLib R8, .registration = TRUE
 NULL
 
+#' The live bytes and blocks the binding holds in Rust, from the counting
+#' allocator of the feature `alloc-stats`.
+#'
+#' @return Double: `c(bytes, blocks)`, or `NULL` in a build without the
+#'   feature.
+#' @keywords internal
+#' @noRd
+r8_alloc_stats <- function() .Call(wrap__r8_alloc_stats)
+
 #' Constructs a value: the fields of `fields`, a named list, form a value of
 #' the struct `type_name`, or of the variant `variant` of the enum
 #' `type_name`. The fields are validated in place and kept by reference
