@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use rtemis_r8::codec::{canonical, canonical_text, content_hash};
-use rtemis_r8::ir::{IrDocument, check_document, check_type};
+use rtemis_r8::ir::{IrDocument, check_document, check_trait, check_type};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::DocumentSet;
 use rtemis_r8::validate::validate;
@@ -62,17 +62,21 @@ fn run_declare(input: &Value, expect: &Value) -> Option<String> {
         (Ok(_), true) => Some("read, but a parse error was expected".to_string()),
         (Ok(doc), false) => {
             let all = check_document(&doc);
-            // The check of one type reports what the check of the document
-            // reports at that type's path.
-            for i in 0..doc.types.len() {
-                let path = format!("/types/{i}");
+            // The check of one type or trait reports what the check of the
+            // document reports at its path.
+            let declarations = (0..doc.types.len())
+                .map(|i| (format!("/types/{i}"), check_type(&doc, i)))
+                .chain(
+                    (0..doc.traits.len()).map(|i| (format!("/traits/{i}"), check_trait(&doc, i))),
+                );
+            for (path, own) in declarations {
                 let prefix = format!("{path}/");
                 let mut whole: Vec<(String, String)> = all
                     .iter()
                     .filter(|e| e.path == path || e.path.starts_with(&prefix))
                     .map(|e| (e.path.clone(), e.code.to_string()))
                     .collect();
-                let mut one: Vec<(String, String)> = check_type(&doc, i)
+                let mut one: Vec<(String, String)> = own
                     .into_iter()
                     .map(|e| (e.path, e.code.to_string()))
                     .collect();

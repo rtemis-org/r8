@@ -65,8 +65,49 @@ r8_register <- function(pkgname = NULL) {
     )
   }
   n_compiled <- register_exports(pkg, entries)
+  check_namespaces(pkg)
   invisible(length(entries) + n_compiled)
 } # /R8::r8_register
+
+
+# %% check_namespaces ----
+#' Check the namespaces a package owns, whole
+#'
+#' Each declaration is checked alone when it is registered; the check of a
+#' whole namespace, once per load, reports what those checks cannot see,
+#' such as a rule that reads a field of a type declared again without that
+#' field.
+#'
+#' @param pkg Character: The package.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+check_namespaces <- function(pkg) {
+  p <- r8_check_namespaces(r8_package_namespaces(pkg))
+  if (length(p[["code"]]) > 0L) {
+    r8_abort(
+      "The declarations of package '",
+      pkg,
+      "' do not agree:\n",
+      paste0(
+        "- ",
+        p[["message"]],
+        " [",
+        p[["code"]],
+        " at ",
+        p[["namespace"]],
+        ":",
+        p[["path"]],
+        "]",
+        collapse = "\n"
+      ),
+      class = "r8_declaration_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::check_namespaces
 
 
 # %% register_exports ----

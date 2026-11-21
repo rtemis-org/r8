@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use rtemis_r8::codec::canonical_text;
-use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef, check_document, check_type};
+use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef, check_document, check_trait, check_type};
 use rtemis_r8::name::{Name, QualifiedName};
 use rtemis_r8::rules::DocumentSet;
 use serde_json::{Map, Value};
@@ -196,15 +196,16 @@ pub(crate) fn r8_declare_type(type_json: &str, namespace: &str) -> Result<List> 
     let mut reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
-    crate::construct::registry_changed();
-    // The namespace's document is updated in place and the declaration
-    // checked alone, in the context of the namespace, so a declaration costs
-    // time proportional to itself and the namespace's names; a declaration
-    // with problems leaves the namespace as it was.
     let d = namespace_index(&mut reg, &ns);
     let doc = &mut reg.0[d];
     let name = def.name().clone();
-    let (index, previous) = match doc.types.iter().position(|t| t.name() == &name) {
+    let existing = doc.types.iter().position(|t| t.name() == &name);
+    if let Some(i) = existing
+        && doc.types[i] == def
+    {
+        return Ok(problems_list(&[], ""));
+    }
+    let (index, previous) = match existing {
         Some(i) => (i, Some(std::mem::replace(&mut doc.types[i], def))),
         None => {
             doc.types.push(def);
@@ -212,23 +213,30 @@ pub(crate) fn r8_declare_type(type_json: &str, namespace: &str) -> Result<List> 
         }
     };
     let prefix = format!("/types/{index}");
-    let problems = check_type(doc, index);
-    if !problems.is_empty() {
-        match previous {
-            Some(p) => doc.types[index] = p,
-            None => {
-                doc.types.pop();
+    let problems = checked(|| check_type(doc, index));
+    match &problems {
+        Ok(p) if p.is_empty() => crate::construct::registry_changed(),
+        _ => {
+            match previous {
+                Some(p) => doc.types[index] = p,
+                None => {
+                    doc.types.pop();
+                }
             }
+            drop_if_empty(&mut reg, d);
         }
-        drop_if_empty(&mut reg, d);
     }
-    let code: Vec<String> = problems.iter().map(|e| e.code.to_string()).collect();
-    let path: Vec<String> = problems
-        .iter()
-        .map(|e| e.path[prefix.len()..].to_string())
-        .collect();
-    let message: Vec<String> = problems.iter().map(|e| e.message.clone()).collect();
-    Ok(list!(code = code, path = path, message = message))
+    let problems = problems?;
+    Ok(problems_list(&problems, &prefix))
+}
+
+/// Runs a declaration's check, a panic of which reports an error and leaves
+/// the registry's lock usable.
+fn checked(
+    check: impl FnOnce() -> Vec<rtemis_r8::ir::DeclError>,
+) -> Result<Vec<rtemis_r8::ir::DeclError>> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(check))
+        .map_err(|_| fail("the declaration's check failed; the registry is unchanged"))
 }
 
 /// The IR document of one registered type: its namespace and its
@@ -311,12 +319,15 @@ pub(crate) fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List
     let mut reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
-    crate::construct::registry_changed();
-    // A trait's checks read the document's other traits and types, so the
-    // whole document is checked; a namespace holds few traits.
     let d = namespace_index(&mut reg, &ns);
     let doc = &mut reg.0[d];
-    let (index, previous) = match doc.traits.iter().position(|t| t.name == def.name) {
+    let existing = doc.traits.iter().position(|t| t.name == def.name);
+    if let Some(i) = existing
+        && doc.traits[i] == def
+    {
+        return Ok(problems_list(&[], ""));
+    }
+    let (index, previous) = match existing {
         Some(i) => (i, Some(std::mem::replace(&mut doc.traits[i], def))),
         None => {
             doc.traits.push(def);
@@ -324,19 +335,20 @@ pub(crate) fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List
         }
     };
     let prefix = format!("/traits/{index}");
-    let problems: Vec<_> = check_document(doc)
-        .into_iter()
-        .filter(|e| e.path == prefix || e.path.starts_with(&format!("{prefix}/")))
-        .collect();
-    if !problems.is_empty() {
-        match previous {
-            Some(p) => doc.traits[index] = p,
-            None => {
-                doc.traits.pop();
+    let problems = checked(|| check_trait(doc, index));
+    match &problems {
+        Ok(p) if p.is_empty() => crate::construct::registry_changed(),
+        _ => {
+            match previous {
+                Some(p) => doc.traits[index] = p,
+                None => {
+                    doc.traits.pop();
+                }
             }
+            drop_if_empty(&mut reg, d);
         }
-        drop_if_empty(&mut reg, d);
     }
+    let problems = problems?;
     Ok(problems_list(&problems, &prefix))
 }
 
@@ -356,13 +368,16 @@ pub(crate) fn r8_declare_impl(impl_json: &str, namespace: &str) -> Result<()> {
     let mut reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
-    crate::construct::registry_changed();
     let d = namespace_index(&mut reg, &ns);
     let doc = &mut reg.0[d];
+    if doc.impls.contains(&def) {
+        return Ok(());
+    }
     doc.impls.retain(|i| {
         !(i.r#trait == def.r#trait && i.type_args == def.type_args && i.target == def.target)
     });
     doc.impls.push(def);
+    crate::construct::registry_changed();
     Ok(())
 }
 
@@ -400,6 +415,61 @@ fn r8_claim_namespace(namespace: &str, package: &str) -> Result<String> {
     }
 }
 
+/// The namespaces a package owns.
+///
+/// @param package Character: The package.
+/// @return Character: The namespaces, sorted.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_package_namespaces(package: &str) -> Result<Vec<String>> {
+    let map = owners()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let mut out: Vec<String> = map
+        .iter()
+        .filter(|(_, owner)| owner.as_str() == package)
+        .map(|(ns, _)| ns.clone())
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
+/// The problems of whole namespaces, each document checked once: what a
+/// declaration's own check cannot see, such as a rule that reads a field of
+/// a type declared again without that field.
+///
+/// @param namespaces Character: The namespaces.
+/// @return List: The problems, as character vectors `namespace`, `code`,
+///   `path`, and `message`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_check_namespaces(namespaces: Robj) -> Result<List> {
+    let namespaces =
+        crate::text::str_vec(&namespaces).ok_or_else(|| fail("`namespaces` is character"))?;
+    let reg = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let (mut ns, mut code, mut path, mut message) = (vec![], vec![], vec![], vec![]);
+    for n in &namespaces {
+        if let Some(doc) = reg.0.iter().find(|d| d.namespace.as_str() == n) {
+            for e in check_document(doc) {
+                ns.push(n.clone());
+                code.push(e.code.to_string());
+                path.push(e.path);
+                message.push(e.message);
+            }
+        }
+    }
+    Ok(list!(
+        namespace = ns,
+        code = code,
+        path = path,
+        message = message
+    ))
+}
+
 /// The package that owns a namespace, without claiming it.
 ///
 /// @param namespace Character: The namespace.
@@ -418,6 +488,8 @@ extendr_module! {
     mod declare;
     fn r8_claim_namespace;
     fn r8_namespace_owner;
+    fn r8_package_namespaces;
+    fn r8_check_namespaces;
     fn r8_declare_trait;
     fn r8_declare_impl;
     fn r8_ir_json;

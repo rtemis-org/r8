@@ -299,7 +299,7 @@ test_that("a runtime-only field enters equality and the hash by presence", {
 test_that("matrices compare, hash, and write their dimension names", {
   M <- declare_in(
     "demo",
-    new_struct("Named", fields = list(m = type_matrix(type_double())))
+    new_struct("NamedMatrix", fields = list(m = type_matrix(type_double())))
   )
   n <- 10000L
   rows <- paste0("r", seq_len(n))

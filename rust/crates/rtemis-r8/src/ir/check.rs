@@ -577,33 +577,8 @@ impl Checker<'_> {
     /// Reports every method whose name a method of another trait in the
     /// document holds: a package namespace has one generic per name.
     fn method_names(&mut self, traits: &[TraitDef]) {
-        for (i, t) in traits.iter().enumerate() {
-            for (j, m) in t.methods.iter().enumerate() {
-                if let Some(other) = traits
-                    .iter()
-                    .enumerate()
-                    .find(|(k, o)| *k != i && o.methods.iter().any(|om| om.name == m.name))
-                    .map(|(_, o)| o)
-                {
-                    let what = |x: &TraitDef| {
-                        if x.generic {
-                            format!("generic `{}`", x.name)
-                        } else {
-                            format!("trait `{}`", x.name)
-                        }
-                    };
-                    self.report(
-                        "duplicate_generic",
-                        &format!("/traits/{i}/methods/{j}/name"),
-                        format!(
-                            "`{}` of {} is also a method of {}; a namespace has one generic per name",
-                            m.name,
-                            what(t),
-                            what(other)
-                        ),
-                    );
-                }
-            }
+        for i in 0..traits.len() {
+            self.trait_method_names(i);
         }
     }
 }
@@ -616,6 +591,85 @@ pub fn is_column_type(ty: &FieldType) -> bool {
 }
 
 impl Checker<'_> {
+    /// The uniqueness of the document's names: a type or trait that shares
+    /// its name with an earlier type or trait, or a type and a trait of one
+    /// name, each reported at its own path, so the check of either
+    /// declaration reports the conflict.
+    fn names(&mut self) {
+        let doc = self.doc;
+        for i in 0..doc.types.len() {
+            self.type_name(i);
+        }
+        for i in 0..doc.traits.len() {
+            self.trait_name(i);
+        }
+    }
+
+    /// The name of the type at `index`: unique among the types before it,
+    /// and among the traits.
+    fn type_name(&mut self, index: usize) {
+        let doc = self.doc;
+        let name = doc.types[index].name().as_str();
+        if doc.types[..index].iter().any(|t| t.name().as_str() == name)
+            || doc.traits.iter().any(|t| t.name.as_str() == name)
+        {
+            self.report(
+                "duplicate_type",
+                &format!("/types/{index}/name"),
+                format!("duplicate type or trait `{name}`"),
+            );
+        }
+    }
+
+    /// The name of the trait at `index`: unique among the traits before it,
+    /// and among the types.
+    fn trait_name(&mut self, index: usize) {
+        let doc = self.doc;
+        let name = doc.traits[index].name.as_str();
+        if doc.traits[..index].iter().any(|t| t.name.as_str() == name)
+            || doc.types.iter().any(|t| t.name().as_str() == name)
+        {
+            self.report(
+                "duplicate_type",
+                &format!("/traits/{index}/name"),
+                format!("duplicate type or trait `{name}`"),
+            );
+        }
+    }
+
+    /// The methods of the trait at `index` that another trait of the
+    /// document also declares.
+    fn trait_method_names(&mut self, index: usize) {
+        let traits = &self.doc.traits;
+        let t = &traits[index];
+        for (j, m) in t.methods.iter().enumerate() {
+            if let Some(other) = traits
+                .iter()
+                .enumerate()
+                .find(|(k, o)| *k != index && o.methods.iter().any(|om| om.name == m.name))
+                .map(|(_, o)| o)
+            {
+                let what = |x: &TraitDef| {
+                    if x.generic {
+                        format!("generic `{}`", x.name)
+                    } else {
+                        format!("trait `{}`", x.name)
+                    }
+                };
+                self.report(
+                    "duplicate_generic",
+                    &format!("/traits/{index}/methods/{j}/name"),
+                    format!(
+                        "`{}` of {} is also a method of {}; a namespace has one generic per name",
+                        m.name,
+                        what(t),
+                        what(other)
+                    ),
+                );
+            }
+        }
+    }
+
     /// The checks of one type at `path`: its own declaration, with the
     /// document as the lookup of the types it names.
     fn type_def(&mut self, t: &TypeDef, path: &str) {
@@ -671,8 +725,9 @@ impl Checker<'_> {
 /// The problems of the type at `index` of `doc`: those that
 /// [`check_document`] reports at `/types/{index}` and below, from the
 /// type's own checks and the uniqueness of its name, in time proportional
-/// to the type and to the number of names in the document. A registry
-/// checks one declaration with it as the declaration enters a namespace.
+/// to the type and to the number of types and traits in the document. A
+/// registry checks a type's declaration with it as the declaration enters a
+/// namespace.
 pub fn check_type(doc: &IrDocument, index: usize) -> Vec<DeclError> {
     let Some(t) = doc.types.get(index) else {
         return Vec::new();
@@ -681,20 +736,7 @@ pub fn check_type(doc: &IrDocument, index: usize) -> Vec<DeclError> {
         doc,
         errors: Vec::new(),
     };
-    c.unique(
-        doc.types
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.name().as_str(), format!("/types/{i}/name")))
-            .chain(
-                doc.traits
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (t.name.as_str(), format!("/traits/{i}/name"))),
-            ),
-        "type or trait",
-        "duplicate_type",
-    );
+    c.type_name(index);
     let path = format!("/types/{index}");
     c.type_def(t, &path);
     let prefix = format!("{path}/");
@@ -710,20 +752,7 @@ pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
         doc,
         errors: Vec::new(),
     };
-    c.unique(
-        doc.types
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.name().as_str(), format!("/types/{i}/name")))
-            .chain(
-                doc.traits
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (t.name.as_str(), format!("/traits/{i}/name"))),
-            ),
-        "type or trait",
-        "duplicate_type",
-    );
+    c.names();
     for (i, t) in doc.types.iter().enumerate() {
         c.type_def(t, &format!("/types/{i}"));
     }
@@ -731,5 +760,28 @@ pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
         c.trait_def(t, &format!("/traits/{i}"));
     }
     c.method_names(&doc.traits);
+    c.errors
+}
+
+/// The problems of the trait at `index` of `doc`: those that
+/// [`check_document`] reports at `/traits/{index}` and below, from the
+/// trait's own checks, the uniqueness of its name, and the uniqueness of
+/// its methods' names among the document's traits, in time proportional to
+/// the trait and to the number of types and trait methods in the document.
+pub fn check_trait(doc: &IrDocument, index: usize) -> Vec<DeclError> {
+    let Some(t) = doc.traits.get(index) else {
+        return Vec::new();
+    };
+    let mut c = Checker {
+        doc,
+        errors: Vec::new(),
+    };
+    let path = format!("/traits/{index}");
+    c.trait_name(index);
+    c.trait_def(t, &path);
+    c.trait_method_names(index);
+    let prefix = format!("{path}/");
+    c.errors
+        .retain(|e| e.path == path || e.path.starts_with(&prefix));
     c.errors
 }

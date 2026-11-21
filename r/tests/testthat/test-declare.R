@@ -293,3 +293,121 @@ test_that("qualified rule functions compile like bare ones, and is_variant() tes
   expect_false(is_variant(K@A, "B"))
   expect_error(is_variant(1, "A"), class = "r8_type_error")
 })
+
+test_that("a failed declaration leaves the registry unchanged", {
+  Point <- declare_in(
+    "regfail",
+    new_struct("Point", fields = list(x = type_double(min = 0)))
+  )
+  before <- r8_declaration(Point)
+  # A failed replacement keeps the registered declaration.
+  expect_error(
+    declare_in(
+      "regfail",
+      new_struct(
+        "Point",
+        fields = list(x = field(type_double(min = 0), default = -1))
+      )
+    ),
+    class = "r8_declaration_error"
+  )
+  expect_identical(r8_declaration(Point), before)
+  expect_s3_class(Point(x = 1), "regfail::Point")
+  # A failed new declaration registers nothing.
+  expect_error(
+    declare_in(
+      "regfail",
+      new_struct(
+        "Line",
+        fields = list(n = field(type_integer(min = 1L), default = 0L))
+      )
+    ),
+    class = "r8_declaration_error"
+  )
+  expect_error(R8:::r8_type_document("regfail::Line"), "not registered")
+  # A failed first declaration in a namespace leaves no document for it.
+  expect_error(
+    declare_in(
+      "regfresh",
+      new_struct(
+        "Bad",
+        fields = list(n = field(type_integer(min = 1L), default = 0L))
+      )
+    ),
+    class = "r8_declaration_error"
+  )
+  expect_error(R8:::r8_type_document("regfresh::Bad"), "not registered")
+  expect_length(R8:::r8_check_namespaces("regfresh")[["code"]], 0L)
+  # An identical declaration is accepted again.
+  expect_no_error(declare_in(
+    "regfail",
+    new_struct("Point", fields = list(x = type_double(min = 0)))
+  ))
+  expect_identical(r8_declaration(Point), before)
+})
+
+test_that("a type and a trait of one name are refused in either order", {
+  declare_in(
+    "collide",
+    new_trait("Size", methods = list(total = trait_method(function(x) NULL)))
+  )
+  expect_error(
+    declare_in("collide", new_struct("Size", fields = list(a = type_double()))),
+    "duplicate_type",
+    class = "r8_declaration_error"
+  )
+  declare_in("collide", new_struct("Shape", fields = list(a = type_double())))
+  expect_error(
+    declare_in(
+      "collide",
+      new_trait("Shape", methods = list(area = trait_method(function(x) NULL)))
+    ),
+    "duplicate_type"
+  )
+})
+
+test_that("the check of a whole namespace finds a type a replacement invalidates", {
+  declare_in("replaced", {
+    B <- new_struct("B", fields = list(x = type_double()))
+    new_struct(
+      "A",
+      fields = list(b = B),
+      rules = list(rule("POSITIVE", b$x > 0, "b$x is positive."))
+    )
+  })
+  expect_length(R8:::r8_check_namespaces("replaced")[["code"]], 0L)
+  # B declared again without `x`: A's rule reads a field that B lacks.
+  declare_in("replaced", new_struct("B", fields = list(y = type_double())))
+  p <- R8:::r8_check_namespaces("replaced")
+  expect_true(length(p[["code"]]) > 0L)
+  expect_true(all(startsWith(p[["path"]], "/types/1/")))
+})
+
+test_that("declaring a type takes time independent of the namespace's size", {
+  declare <- function(i) {
+    declare_in(
+      "scaling",
+      new_struct(
+        paste0("T", i),
+        fields = list(a = type_double(min = 0), b = vec(type_integer())),
+        rules = list(rule("ORDER", a >= 0, "a is not negative."))
+      )
+    )
+  }
+  first <- system.time(
+    for (i in 1:50) {
+      declare(i)
+    }
+  )[["elapsed"]]
+  for (i in 51:400) {
+    declare(i)
+  }
+  last <- system.time(
+    for (i in 401:450) {
+      declare(i)
+    }
+  )[["elapsed"]]
+  # Quadratic declaration made the last 50 about 8 times slower than the
+  # first; linear, about the same.
+  expect_lt(last, 3 * first + 0.05)
+})

@@ -1440,7 +1440,7 @@
     },
     {
       "id": "duplicate-type",
-      "description": "Two types of one namespace share a name.",
+      "description": "A type and a trait of one namespace share a name; the conflict is reported at each.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -1462,6 +1462,10 @@
       },
       "expect": {
         "errors": [
+          {
+            "code": "duplicate_type",
+            "path": "/types/0/name"
+          },
           {
             "code": "duplicate_type",
             "path": "/traits/0/name"
@@ -2227,7 +2231,7 @@
     },
     {
       "id": "generic-and-type",
-      "description": "A generic and a type share one name.",
+      "description": "A generic and a type share one name; the conflict is reported at each.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -2265,6 +2269,10 @@
       },
       "expect": {
         "errors": [
+          {
+            "code": "duplicate_type",
+            "path": "/types/0/name"
+          },
           {
             "code": "duplicate_type",
             "path": "/traits/0/name"

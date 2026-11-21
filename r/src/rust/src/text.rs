@@ -82,7 +82,7 @@ fn int_vec(v: &Robj) -> Option<Vec<i32>> {
 }
 
 /// The elements of a character vector, read as [`int_vec`] reads integers.
-fn str_vec(v: &Robj) -> Option<Vec<String>> {
+pub(crate) fn str_vec(v: &Robj) -> Option<Vec<String>> {
     match v.rtype() {
         Rtype::Strings if v.len() == 0 => Some(Vec::new()),
         Rtype::Strings => v.as_string_vector(),

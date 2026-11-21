@@ -59,6 +59,25 @@ r8_claim_namespace <- function(namespace, package) .Call(wrap__r8_claim_namespac
 #' @noRd
 r8_namespace_owner <- function(namespace) .Call(wrap__r8_namespace_owner, namespace)
 
+#' The namespaces a package owns.
+#'
+#' @param package Character: The package.
+#' @return Character: The namespaces, sorted.
+#' @keywords internal
+#' @noRd
+r8_package_namespaces <- function(package) .Call(wrap__r8_package_namespaces, package)
+
+#' The problems of whole namespaces, each document checked once: what a
+#' declaration's own check cannot see, such as a type that names another
+#' whose declaration was replaced after it.
+#'
+#' @param namespaces Character: The namespaces.
+#' @return List: The problems, as character vectors `namespace`, `code`,
+#'   `path`, and `message`.
+#' @keywords internal
+#' @noRd
+r8_check_namespaces <- function(namespaces) .Call(wrap__r8_check_namespaces, namespaces)
+
 #' Checks a trait declaration in its namespace and registers it.
 #'
 #' @param trait_json Character: The trait's IR declaration as JSON text.
