@@ -553,23 +553,6 @@ pub(crate) unsafe fn template(
     }
 }
 
-/// A state built by the codec's `decode` from a document of the type;
-/// `None` when the codec has no `decode`.
-pub(crate) fn decode(vt: *const TypeVTable, document: &str) -> Option<Result<*mut c_void, String>> {
-    let f = unsafe { &*vt }.decode?;
-    let mut state: *mut c_void = std::ptr::null_mut();
-    let mut err = Error {
-        code: [0; 64],
-        message: [0; 1024],
-    };
-    let status = unsafe { f(document.as_ptr(), document.len(), &mut state, &mut err) };
-    Some(if status != OK || state.is_null() {
-        Err(error_text(&err))
-    } else {
-        Ok(state)
-    })
-}
-
 /// `R8Api.value_state`: borrows the state of a value of the type
 /// `type_name`.
 ///

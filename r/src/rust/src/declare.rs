@@ -601,7 +601,6 @@ fn reached(reg: &DocumentSet, q: &QualifiedName, out: &mut Vec<QualifiedName>) {
     out.push(me);
 }
 
-
 /// The declaration record of the registered type `q` and of every named
 /// type it reaches, the reached types first (`rtemis_r8::record`).
 pub(crate) fn type_record(q: &QualifiedName) -> Result<Vec<u8>> {

@@ -1409,34 +1409,19 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         Err(errors) => return Ok(list!(errors = errors_list(&errors))),
     };
     let lookup: &dyn TypeLookup = &*docs;
-    // A Rust-native struct or enum: the codec's `decode` builds the state
-    // from the normalized document, or else `from_fields` (a struct) or
-    // `from_variant` (an enum) from the decoded fields.
+    // A Rust-native struct or enum: the codec builds the state from the
+    // validated fields as R values, through `from_fields` (a struct) or
+    // `from_variant` (an enum, checked against the document's variant); the
+    // codec receives no JSON text.
     if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name)) {
-        let document =
-            rtemis_r8::codec::document_access(rtemis_r8::access::Json::new(&v), &q, lookup);
-        if let Some(state) = crate::native::decode(vt, &document) {
-            let state = state.map_err(fail)?;
-            let variant = crate::native::state_variant(vt, state);
-            let Some((names, version)) =
-                crate::native::value_fields(def, variant.as_deref(), lookup)
-            else {
-                if let Some(d) = unsafe { (*vt).drop } {
-                    unsafe { d(state) };
-                }
-                return Err(fail(format!(
-                    "the codec of `{q}` decoded a state of the undeclared variant `{}` [codec_variant]",
-                    variant.unwrap_or_default()
-                )));
-            };
-            let value = unsafe {
-                let like =
-                    crate::native::template(&q.to_string(), &names, version, variant.as_deref());
-                let r = Robj::from_sexp(crate::native::wrap(vt, state, like));
-                extendr_ffi::Rf_unprotect(1);
-                r
-            };
-            return Ok(list!(value = value));
+        let builds = match def {
+            TypeDef::Struct(_) => unsafe { (*vt).from_fields.is_some() },
+            TypeDef::Enum(_) => crate::native::is_enum_codec(vt),
+        };
+        if !builds {
+            return Err(fail(format!(
+                "the codec of `{q}` reads documents through `decode` only; R8 builds the value of a document through `from_fields` or `from_variant`, so rebuild the package that declares `{q}` against R8 0.4.0 or later [codec_decode]"
+            )));
         }
         let fields = Decoder { lookup: &*docs }.named(&v, &q, None)?;
         let fs = unsafe { fields.get() };

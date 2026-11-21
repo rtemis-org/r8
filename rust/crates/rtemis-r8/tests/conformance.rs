@@ -262,3 +262,77 @@ fn conformance_corpus() {
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(passed > 0, "no conformance case ran");
 }
+
+/// The suite's IR as a lookup.
+fn suite_ir(suite: &Value) -> Option<DocumentSet> {
+    let v = suite.get("ir")?;
+    let docs: Vec<&Value> = match v {
+        Value::Array(a) => a.iter().collect(),
+        one => vec![one],
+    };
+    Some(DocumentSet::from(
+        docs.into_iter()
+            .map(|d| IrDocument::from_json(&d.to_string()).unwrap())
+            .collect::<Vec<_>>(),
+    ))
+}
+
+/// The value of a parsed document: `$value`, or the document without its
+/// envelope.
+fn document_value(mut doc: Value) -> Value {
+    let m = doc.as_object_mut().unwrap();
+    if let Some(v) = m.remove("$value") {
+        return v;
+    }
+    m.shift_remove("$type");
+    m.shift_remove("$types");
+    doc
+}
+
+/// A document read in normalized form, as R8 writes it, is used as read; a
+/// document in any other accepted form is normalized through the emitter's
+/// text. Both give the normalized form R8 writes, for every valid decode
+/// case of the corpus.
+#[test]
+fn documents_read_to_the_normalized_form() {
+    use rtemis_r8::access::Json;
+    use rtemis_r8::codec::{document_access, read_document};
+    let mut checked = 0;
+    for path in suites(&corpus_dir()) {
+        let suite: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let Some(set) = suite_ir(&suite) else {
+            continue;
+        };
+        for case in suite["cases"].as_array().unwrap() {
+            if case["op"] != "decode" || case["expect"].get("valid").is_none() {
+                continue;
+            }
+            let id = case["id"].as_str().unwrap();
+            let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
+            let input = &case["input"];
+            let written = document_access(Json::new(input), &ty, &set);
+            let parsed: Value = serde_json::from_str(&written).unwrap();
+            let types = parsed["$types"].clone();
+            let want = document_value(parsed);
+            let as_written = read_document(&written, &ty, &set)
+                .unwrap_or_else(|e| panic!("{id}: the written document does not read: {e:?}"));
+            assert_eq!(as_written, want, "{id}: the document as R8 writes it");
+            let raw = match input {
+                Value::Object(m) => {
+                    let mut m = m.clone();
+                    m.insert("$type".into(), Value::from(ty.to_string()));
+                    m.insert("$types".into(), types);
+                    Value::Object(m)
+                }
+                other => {
+                    serde_json::json!({"$type": ty.to_string(), "$types": types, "$value": other})
+                }
+            };
+            let as_input = read_document(&raw.to_string(), &ty, &set)
+                .unwrap_or_else(|e| panic!("{id}: the input as a document does not read: {e:?}"));
+            assert_eq!(as_input, want, "{id}: the input as a document");
+            checked += 1;
+        }
+    }
+    assert!(checked >= 31, "{checked} cases");
+}

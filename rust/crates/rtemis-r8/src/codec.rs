@@ -51,7 +51,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::access::{Access, Json};
-use crate::emit::{self, Emitter, Writer};
+use crate::emit::{self, Emitter, SameSink, Writer};
 
 pub use crate::emit::runtime_paths;
 
@@ -512,14 +512,29 @@ pub fn read_document_cached(
         errors.extend(validation);
         return Err(errors);
     }
-    let mut e = Emitter::new(lookup, String::new(), false, false);
-    e.named(ty, Json::new(&value), None);
-    // One tree at a time: the source is freed before the normalized text is
-    // read.
-    drop(value);
-    let normalized: Value = serde_json::from_str(&e.w.out).expect("the emitter writes JSON");
-    drop(std::mem::take(&mut e.w.out));
-    for (name, current) in e.contained {
+    // The envelope's members leave a document that is its own value.
+    let mut value = value;
+    if let Value::Object(m) = &mut value {
+        m.shift_remove("$type");
+        m.shift_remove("$types");
+    }
+    // A value already in normalized form, such as a document R8 wrote, is
+    // used as read: the emitter's stream is compared with it, building
+    // nothing. Any other value is normalized through the emitter's text, one
+    // tree at a time: the source is freed before the normalized text is read.
+    let mut same = Emitter::with_sink(lookup, SameSink::new(&value), false);
+    same.named(ty, Json::new(&value), None);
+    let (is_same, contained) = (same.w.same(), std::mem::take(&mut same.contained));
+    let (normalized, contained) = if is_same {
+        (value, contained)
+    } else {
+        let mut e = Emitter::new(lookup, String::new(), false, false);
+        e.named(ty, Json::new(&value), None);
+        drop(value);
+        let normalized: Value = serde_json::from_str(&e.w.out).expect("the emitter writes JSON");
+        (normalized, e.contained)
+    };
+    for (name, current) in contained {
         let path = format!("/$types/{}", name.replace('~', "~0").replace('/', "~1"));
         match versions.get(&name).and_then(Value::as_u64) {
             None => errors.push(document_error("version_missing", &path, format!("`$types` does not record the version of `{name}`"))),

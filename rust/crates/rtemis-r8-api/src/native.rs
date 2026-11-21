@@ -127,7 +127,7 @@ pub const fn codec<T: Native>() -> Shared<abi::TypeVTable> {
         size: std::mem::size_of::<abi::TypeVTable>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
         from_fields: Some(from_fields::<T>),
-        decode: Some(struct_fns::decode::<T>),
+        decode: None,
         encode: Some(struct_fns::encode::<T>),
         write_state: Some(struct_fns::write_state::<T>),
         read_state: Some(struct_fns::read_state::<T>),
@@ -146,7 +146,7 @@ pub const fn enum_codec<T: NativeEnum>() -> Shared<abi::TypeVTable> {
         size: std::mem::size_of::<abi::TypeVTable>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
         from_fields: None,
-        decode: Some(enum_fns::decode::<T>),
+        decode: None,
         encode: Some(enum_fns::encode::<T>),
         write_state: Some(enum_fns::write_state::<T>),
         read_state: Some(enum_fns::read_state::<T>),
@@ -218,24 +218,6 @@ macro_rules! shared_fns {
 
             use crate::api::Error;
             use crate::state::{StateReader, StateWriter};
-
-            pub(super) unsafe extern "C" fn decode<T: super::$tr>(
-                json: *const u8,
-                len: usize,
-                out: *mut *mut c_void,
-                err: *mut abi::Error,
-            ) -> Status {
-                super::guard(err, || {
-                    let bytes = unsafe { std::slice::from_raw_parts(json, len) };
-                    let text = std::str::from_utf8(bytes)
-                        .map_err(|e| Error::new("decode_failed", e.to_string()))?;
-                    // R8 has read, validated, and normalized the document.
-                    let v = T::from_validated_document(text)
-                        .map_err(|e| Error::new("decode_failed", e))?;
-                    unsafe { *out = Box::into_raw(Box::new(v)).cast() };
-                    Ok(())
-                })
-            }
 
             pub(super) unsafe extern "C" fn encode<T: super::$tr>(
                 s: *const c_void,

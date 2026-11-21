@@ -102,7 +102,6 @@ fn r8_compiled_types() -> Result<List> {
         .map(|n| {
             let v = unsafe { &*c.types[*n].0 };
             v.from_fields.is_some()
-                && v.decode.is_some()
                 && v.encode.is_some()
                 && v.write_state.is_some()
                 && v.read_state.is_some()

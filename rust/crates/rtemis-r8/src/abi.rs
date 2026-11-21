@@ -72,7 +72,9 @@ pub struct TypeVTable {
     /// that R8 has validated and converted to their stored forms.
     pub from_fields:
         Option<unsafe extern "C" fn(*const Sexp, usize, *mut *mut c_void, *mut Error) -> Status>,
-    /// Builds a state from the type's JSON document, for import.
+    /// A slot that R8 does not call: R8 builds the value of a document
+    /// through `from_fields` or `from_variant`. Generated tables set it to
+    /// `None`; it keeps its place in the table's layout.
     pub decode:
         Option<unsafe extern "C" fn(*const u8, usize, *mut *mut c_void, *mut Error) -> Status>,
     /// Writes the state's JSON document to a writer, for export.

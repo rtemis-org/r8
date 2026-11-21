@@ -103,8 +103,9 @@ typedef struct R8TypeVTable {
   /* Builds a state from the type's fields, `n` R values in declaration
    * order, which R8 has validated and converted to their stored forms. */
   R8Status (*from_fields)(const SEXP *fields, size_t n, void **state, R8Error *err);
-  /* Builds a state from the type's JSON document, for import
-   * (`r8_from_json()`). */
+  /* A slot that R8 does not call: R8 builds the value of a document
+   * (`r8_from_json()`) through `from_fields` or `from_variant`. Generated
+   * tables set it to NULL; it keeps its place in the table's layout. */
   R8Status (*decode)(const uint8_t *json, size_t len, void **state, R8Error *err);
   /* Writes the state's JSON document, for export (`to_json()`). */
   R8Status (*encode)(const void *state, R8Writer *out, R8Error *err);

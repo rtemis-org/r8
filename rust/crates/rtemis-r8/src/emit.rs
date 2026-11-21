@@ -61,11 +61,38 @@ impl Out for Sha256 {
 
 /// A number in ECMAScript's `Number.prototype.toString` form.
 pub fn number_text(x: f64) -> String {
+    let mut out = String::new();
+    write_number(x, &mut out);
+    out
+}
+
+/// Writes a finite number in ECMAScript's `Number.prototype.toString` form,
+/// without allocating. A whole number below 10^15 in magnitude is its digits,
+/// which is that form for every integer below 10^21; any other number is
+/// `ryu_js`'s.
+pub fn write_number<O: Out>(x: f64, out: &mut O) {
     if x == 0.0 {
-        return "0".to_string();
+        out.put(b"0");
+        return;
+    }
+    if x.fract() == 0.0 && x.abs() < 1e15 {
+        let mut buf = [0u8; 17];
+        let mut i = buf.len();
+        let mut n = x.abs() as u64;
+        while n > 0 {
+            i -= 1;
+            buf[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+        if x < 0.0 {
+            i -= 1;
+            buf[i] = b'-';
+        }
+        out.put(&buf[i..]);
+        return;
     }
     let mut buf = ryu_js::Buffer::new();
-    buf.format(x).to_string()
+    out.put(buf.format(x).as_bytes());
 }
 
 /// A JSON string as `JSON.stringify` writes it.
@@ -151,7 +178,7 @@ impl<O: Out> Writer<O> {
             return self.string(if x > 0.0 { "Infinity" } else { "-Infinity" });
         }
         self.sep();
-        self.out.put(number_text(x).as_bytes());
+        write_number(x, &mut self.out);
     }
 
     pub fn string(&mut self, s: &str) {
@@ -195,8 +222,7 @@ impl<O: Out> Writer<O> {
             Value::Bool(b) => self.bool(*b),
             Value::Number(n) => {
                 self.sep();
-                self.out
-                    .put(number_text(n.as_f64().unwrap_or(f64::NAN)).as_bytes());
+                write_number(n.as_f64().unwrap_or(f64::NAN), &mut self.out);
             }
             Value::String(s) => self.string(s),
             Value::Array(items) => {
@@ -218,6 +244,232 @@ impl<O: Out> Writer<O> {
                 }
                 self.end_object();
             }
+        }
+    }
+}
+
+/// The structural writes of the emitter: JSON text through [`Writer`], or a
+/// comparison with a value through [`SameSink`].
+pub trait Sink {
+    /// Object members are written in the order of their names' UTF-16 code
+    /// units.
+    fn sorted(&self) -> bool;
+    fn null(&mut self);
+    fn bool(&mut self, b: bool);
+    /// A number; a non-finite double is its string form.
+    fn number(&mut self, x: f64);
+    fn string(&mut self, s: &str);
+    fn begin_array(&mut self);
+    fn end_array(&mut self);
+    fn begin_object(&mut self);
+    fn key(&mut self, k: &str);
+    fn end_object(&mut self);
+
+    /// Writes a JSON value.
+    fn value(&mut self, v: &Value) {
+        match v {
+            Value::Null => self.null(),
+            Value::Bool(b) => self.bool(*b),
+            Value::Number(n) => self.number(n.as_f64().unwrap_or(f64::NAN)),
+            Value::String(s) => self.string(s),
+            Value::Array(items) => {
+                self.begin_array();
+                for x in items {
+                    self.value(x);
+                }
+                self.end_array();
+            }
+            Value::Object(m) => {
+                let mut keys: Vec<&String> = m.keys().collect();
+                if self.sorted() {
+                    keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+                }
+                self.begin_object();
+                for k in keys {
+                    self.key(k);
+                    self.value(&m[k]);
+                }
+                self.end_object();
+            }
+        }
+    }
+}
+
+impl<O: Out> Sink for Writer<O> {
+    fn sorted(&self) -> bool {
+        self.sorted
+    }
+    fn null(&mut self) {
+        Writer::null(self)
+    }
+    fn bool(&mut self, b: bool) {
+        Writer::bool(self, b)
+    }
+    fn number(&mut self, x: f64) {
+        Writer::number(self, x)
+    }
+    fn string(&mut self, s: &str) {
+        Writer::string(self, s)
+    }
+    fn begin_array(&mut self) {
+        Writer::begin_array(self)
+    }
+    fn end_array(&mut self) {
+        Writer::end_array(self)
+    }
+    fn begin_object(&mut self) {
+        Writer::begin_object(self)
+    }
+    fn key(&mut self, k: &str) {
+        Writer::key(self, k)
+    }
+    fn end_object(&mut self) {
+        Writer::end_object(self)
+    }
+    fn value(&mut self, v: &Value) {
+        Writer::value(self, v)
+    }
+}
+
+/// The value that serde_json reads from `x`'s ECMAScript text.
+fn number_value(x: f64) -> Value {
+    if x.fract() == 0.0 && x.abs() < 1e21 {
+        if x >= 0.0 && x <= u64::MAX as f64 {
+            return Value::from(x as u64);
+        }
+        if x < 0.0 && x >= i64::MIN as f64 {
+            return Value::from(x as i64);
+        }
+    }
+    serde_json::Number::from_f64(x).map_or(Value::Null, Value::Number)
+}
+
+/// Compares the stream the emitter writes with a value, building nothing:
+/// [`SameSink::same`] holds while every write equals the value's matching
+/// member, as parsing the [`Writer`]'s text would give it, so that a value
+/// already in normalized form is used as read.
+pub struct SameSink<'v> {
+    stack: Vec<Cursor<'v>>,
+    root: Option<&'v Value>,
+    next: Option<&'v Value>,
+    same: bool,
+}
+
+enum Cursor<'v> {
+    Array(&'v [Value], usize),
+    Object(&'v serde_json::Map<String, Value>, usize),
+}
+
+impl<'v> SameSink<'v> {
+    /// A comparison with `value`.
+    pub fn new(value: &'v Value) -> Self {
+        SameSink {
+            stack: Vec::new(),
+            root: Some(value),
+            next: None,
+            same: true,
+        }
+    }
+
+    /// Every write equalled the value, and the value holds nothing more.
+    pub fn same(&self) -> bool {
+        self.same && self.stack.is_empty() && self.root.is_none()
+    }
+
+    /// The member the next write is compared with.
+    fn expected(&mut self) -> Option<&'v Value> {
+        match self.stack.last_mut() {
+            None => self.root.take(),
+            Some(Cursor::Array(items, i)) => {
+                let v = items.get(*i);
+                *i += 1;
+                v
+            }
+            Some(Cursor::Object(..)) => self.next.take(),
+        }
+    }
+
+    fn scalar(&mut self, v: Value) {
+        if self.same && self.expected() != Some(&v) {
+            self.same = false;
+        }
+    }
+}
+
+impl Sink for SameSink<'_> {
+    fn sorted(&self) -> bool {
+        false
+    }
+    fn null(&mut self) {
+        self.scalar(Value::Null)
+    }
+    fn bool(&mut self, b: bool) {
+        self.scalar(Value::Bool(b))
+    }
+    fn number(&mut self, x: f64) {
+        if !self.same {
+            return;
+        }
+        let v = if x.is_nan() {
+            Value::from("NaN")
+        } else if x.is_infinite() {
+            Value::from(if x > 0.0 { "Infinity" } else { "-Infinity" })
+        } else {
+            number_value(x)
+        };
+        self.scalar(v)
+    }
+    fn string(&mut self, s: &str) {
+        if self.same && self.expected().and_then(Value::as_str) != Some(s) {
+            self.same = false;
+        }
+    }
+    fn begin_array(&mut self) {
+        if !self.same {
+            return;
+        }
+        match self.expected() {
+            Some(Value::Array(items)) => self.stack.push(Cursor::Array(items, 0)),
+            _ => self.same = false,
+        }
+    }
+    fn end_array(&mut self) {
+        if !self.same {
+            return;
+        }
+        match self.stack.pop() {
+            Some(Cursor::Array(items, i)) if i == items.len() => {}
+            _ => self.same = false,
+        }
+    }
+    fn begin_object(&mut self) {
+        if !self.same {
+            return;
+        }
+        match self.expected() {
+            Some(Value::Object(m)) => self.stack.push(Cursor::Object(m, 0)),
+            _ => self.same = false,
+        }
+    }
+    fn key(&mut self, k: &str) {
+        if !self.same {
+            return;
+        }
+        if let Some(Cursor::Object(m, seen)) = self.stack.last_mut() {
+            self.next = m.get(k);
+            *seen += 1;
+            if self.next.is_none() {
+                self.same = false;
+            }
+        }
+    }
+    fn end_object(&mut self) {
+        if !self.same {
+            return;
+        }
+        match self.stack.pop() {
+            Some(Cursor::Object(m, seen)) if seen == m.len() => {}
+            _ => self.same = false,
         }
     }
 }
@@ -509,9 +761,9 @@ fn digest_hex(f: impl FnOnce(&mut Sha256)) -> String {
 // ----------------------------------------------------------------- emitter
 
 /// Writes a valid value's normalized form.
-pub struct Emitter<'l, O: Out> {
+pub struct Emitter<'l, S: Sink> {
     pub lookup: &'l dyn TypeLookup,
-    pub w: Writer<O>,
+    pub w: S,
     /// Write matrices, arrays, sparse matrices, tables, and digestible
     /// vectors as digests.
     pub digest: bool,
@@ -530,11 +782,18 @@ fn esc(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
 }
 
-impl<'l, O: Out> Emitter<'l, O> {
+impl<'l, O: Out> Emitter<'l, Writer<O>> {
     pub fn new(lookup: &'l dyn TypeLookup, out: O, sorted: bool, digest: bool) -> Self {
+        Emitter::with_sink(lookup, Writer::new(out, sorted), digest)
+    }
+}
+
+impl<'l, S: Sink> Emitter<'l, S> {
+    /// An emitter that writes into `sink`.
+    pub fn with_sink(lookup: &'l dyn TypeLookup, sink: S, digest: bool) -> Self {
         Emitter {
             lookup,
-            w: Writer::new(out, sorted),
+            w: sink,
             digest,
             contained: BTreeMap::new(),
         }
@@ -584,7 +843,7 @@ impl<'l, O: Out> Emitter<'l, O> {
                         entries.push(e);
                     }
                 });
-                if self.w.sorted {
+                if self.w.sorted() {
                     entries.sort_by(|a, b| utf16_order(&a.0, &b.0));
                 }
                 self.w.begin_object();
@@ -714,7 +973,7 @@ impl<'l, O: Out> Emitter<'l, O> {
             self.w.end_array();
             return;
         }
-        let write_levels = |w: &mut Writer<O>| {
+        let write_levels = |w: &mut S| {
             w.key("levels");
             w.begin_array();
             for l in &f.levels {
@@ -722,7 +981,7 @@ impl<'l, O: Out> Emitter<'l, O> {
             }
             w.end_array();
         };
-        let write_codes = |w: &mut Writer<O>| {
+        let write_codes = |w: &mut S| {
             w.key("codes");
             w.begin_array();
             f.codes.each_in(0, n, |_, c| match c {
@@ -732,7 +991,7 @@ impl<'l, O: Out> Emitter<'l, O> {
             w.end_array();
         };
         self.w.begin_object();
-        if self.w.sorted {
+        if self.w.sorted() {
             write_codes(&mut self.w);
             write_levels(&mut self.w);
         } else {
@@ -750,7 +1009,7 @@ impl<'l, O: Out> Emitter<'l, O> {
         let Ok(d) = v.dense(element) else {
             return self.w.null();
         };
-        let write_shape = |w: &mut Writer<O>| {
+        let write_shape = |w: &mut S| {
             w.key("shape");
             w.begin_array();
             for x in &d.shape {
@@ -758,7 +1017,7 @@ impl<'l, O: Out> Emitter<'l, O> {
             }
             w.end_array();
         };
-        let write_dimnames = |w: &mut Writer<O>| {
+        let write_dimnames = |w: &mut S| {
             if let Some(dn) = &d.dimnames {
                 w.key("dimnames");
                 w.begin_array();
@@ -781,13 +1040,13 @@ impl<'l, O: Out> Emitter<'l, O> {
         };
         self.w.begin_object();
         // Sorted: data, dimnames, shape; declared: shape, data, dimnames.
-        if !self.w.sorted {
+        if !self.w.sorted() {
             write_shape(&mut self.w);
         }
         self.w.key("data");
         self.sequence(element, d.data, d.len);
         write_dimnames(&mut self.w);
-        if self.w.sorted {
+        if self.w.sorted() {
             write_shape(&mut self.w);
         }
         self.w.end_object();
@@ -801,7 +1060,7 @@ impl<'l, O: Out> Emitter<'l, O> {
         let Ok(s) = v.sparse(element) else {
             return self.w.null();
         };
-        let ints = |w: &mut Writer<O>, k: &str, xs: &[u64]| {
+        let ints = |w: &mut S, k: &str, xs: &[u64]| {
             w.key(k);
             w.begin_array();
             for x in xs {
@@ -809,7 +1068,7 @@ impl<'l, O: Out> Emitter<'l, O> {
             }
             w.end_array();
         };
-        let indices = |w: &mut Writer<O>, k: &str, xs: &Indices<A>| {
+        let indices = |w: &mut S, k: &str, xs: &Indices<A>| {
             w.key(k);
             w.begin_array();
             xs.each_block(|block| {
@@ -821,7 +1080,7 @@ impl<'l, O: Out> Emitter<'l, O> {
         };
         self.w.begin_object();
         // Sorted: data, indices, indptr, shape.
-        if self.w.sorted {
+        if self.w.sorted() {
             self.w.key("data");
             self.sequence(element, s.data, s.len);
             indices(&mut self.w, "indices", &s.indices);
@@ -877,7 +1136,7 @@ impl<'l, O: Out> Emitter<'l, O> {
         if !extras.is_empty() {
             members.push(("$columns".to_string(), None));
         }
-        if self.w.sorted {
+        if self.w.sorted() {
             members.sort_by(|a, b| utf16_order(&a.0, &b.0));
         }
         self.w.begin_object();
@@ -971,7 +1230,7 @@ impl<'l, O: Out> Emitter<'l, O> {
         for e in &extras {
             members.push((e.0.as_str(), None));
         }
-        if self.w.sorted {
+        if self.w.sorted() {
             members.sort_by(|a, b| utf16_order(a.0, b.0));
         }
         self.w.begin_object();
@@ -1107,5 +1366,42 @@ fn walk<'a, A: Access<'a>>(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod number_tests {
+    use super::*;
+
+    fn ryu(x: f64) -> String {
+        if x == 0.0 {
+            return "0".to_string();
+        }
+        ryu_js::Buffer::new().format(x).to_string()
+    }
+
+    /// The digits of a whole number are `ryu_js`'s form of it.
+    #[test]
+    fn whole_numbers_match_ryu_js() {
+        let mut xs: Vec<f64> = (-100_000..=100_000).map(f64::from).collect();
+        for e in 0..=21 {
+            let p = 10f64.powi(e);
+            xs.extend([p, -p, p - 1.0, p + 1.0, -(p - 1.0)]);
+        }
+        xs.extend([
+            9007199254740991.0,
+            9007199254740992.0,
+            -9007199254740993.0,
+            999999999999999.0,
+            1e15,
+            -0.0,
+            0.5,
+            -1.25,
+            1e-7,
+            123456.789,
+        ]);
+        for x in xs {
+            assert_eq!(number_text(x), ryu(x), "{x}");
+        }
     }
 }
