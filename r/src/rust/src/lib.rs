@@ -14,11 +14,13 @@ mod alloc;
 mod construct;
 mod declare;
 mod exports;
+mod fieldtype;
 mod irde;
 mod irser;
 mod native;
 #[cfg(feature = "oracle")]
 mod oracle;
+mod reader;
 mod rview;
 mod text;
 mod values;
@@ -32,7 +34,9 @@ extendr_module! {
     use construct;
     use declare;
     use exports;
+    use fieldtype;
     use native;
+    use reader;
     use text;
     use values;
     use version;
@@ -45,7 +49,9 @@ extendr_module! {
     use construct;
     use declare;
     use exports;
+    use fieldtype;
     use native;
+    use reader;
     use oracle;
     use text;
     use values;

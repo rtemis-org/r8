@@ -53,21 +53,18 @@ field <- function(
   optional = FALSE,
   extensions = NULL
 ) {
-  structure(
-    list(
-      type = as_field_type(type),
-      default = default,
-      has_default = !missing(default),
-      description = description,
-      sensitive = isTRUE(sensitive),
-      unit = unit,
-      external = isTRUE(external),
-      unique = isTRUE(unique),
-      optional = isTRUE(optional),
-      extensions = extensions
-    ),
-    class = "r8_field"
-  )
+  declared(r8_field(
+    type,
+    default,
+    !missing(default),
+    description,
+    sensitive,
+    unit,
+    external,
+    unique,
+    optional,
+    extensions
+  ))
 } # /R8::field
 
 
@@ -123,153 +120,6 @@ print.r8_json_ir <- function(x, ...) {
   cat("<r8_json_ir>", unclass(x), "\n")
   invisible(x)
 } # /R8::print.r8_json_ir
-
-
-# %% as_field ----
-#' A field from a field object or a field type
-#'
-#' @param x An `r8_field`, an `r8_field_type`, or an R8 type.
-#'
-#' @return An `r8_field`.
-#'
-#' @keywords internal
-#' @noRd
-as_field <- function(x) {
-  if (inherits(x, "r8_field")) x else field(x)
-} # /R8::as_field
-
-
-# %% default_json ----
-#' A default value in its JSON form, as a list for `r8_ir_json()`
-#'
-#' @param x The default value.
-#' @param type An `r8_field_type`.
-#'
-#' @return The value in the form `r8_ir_json()` writes as the field's JSON.
-#'
-#' @keywords internal
-#' @noRd
-default_json <- function(x, type) {
-  kind <- type[["kind"]]
-  if (is.null(x) || inherits(x, "r8_json_ir")) {
-    return(x)
-  }
-  if (kind == "option") {
-    return(default_json(x, type[["inner"]]))
-  }
-  if (kind == "vec") {
-    return(lapply(as.list(x), default_json, type = type[["element"]]))
-  }
-  if (kind == "named") {
-    return(value_json(x))
-  }
-  x
-} # /R8::default_json
-
-
-# %% value_json ----
-#' The JSON form of an R8 enum value, for a default
-#'
-#' @param x An R8 value.
-#'
-#' @return A string for an enum of unit variants; otherwise a named list
-#'   holding the tag member and the variant's fields.
-#'
-#' @keywords internal
-#' @noRd
-value_json <- function(x) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort(
-      "The default of a field of an R8 type is a value of that type.",
-      class = "r8_declaration_error"
-    )
-  }
-  variant <- attr(x, "r8_variant")
-  if (is.null(variant)) {
-    r8_abort(
-      "Struct values as defaults are constructed with the type.",
-      class = "r8_declaration_error"
-    )
-  }
-  ir <- r8_type_ir(attr(x, "r8_type"))
-  unit_only <- all(vapply(
-    ir[["variants"]],
-    function(v) v[["shape"]] == "unit",
-    logical(1)
-  ))
-  if (unit_only) {
-    return(variant)
-  }
-  out <- list(variant)
-  names(out) <- ir[["tag"]]
-  out
-} # /R8::value_json
-
-
-# %% field_ir ----
-#' The IR of a field
-#'
-#' @param name Character: The field name.
-#' @param f An `r8_field`.
-#'
-#' @return A list in the form of the IR's field declaration.
-#'
-#' @keywords internal
-#' @noRd
-field_ir <- function(name, f) {
-  # Nested field types keep their classes, which the deserializer that reads
-  # the declaration into Rust ignores.
-  out <- list(name = name, type = unclass(f[["type"]]))
-  if (isTRUE(f[["has_default"]])) {
-    out[["default"]] <- default_json(f[["default"]], f[["type"]])
-  }
-  out[["description"]] <- f[["description"]]
-  if (f[["sensitive"]]) {
-    out[["sensitive"]] <- TRUE
-  }
-  if (!is.null(f[["unit"]])) {
-    out[["unit"]] <- f[["unit"]]
-  }
-  if (f[["external"]]) {
-    out[["external"]] <- TRUE
-  }
-  if (f[["unique"]]) {
-    out[["unique"]] <- TRUE
-  }
-  if (f[["optional"]]) {
-    out[["optional"]] <- TRUE
-  }
-  if (!is.null(f[["extensions"]])) {
-    out[["extensions"]] <- f[["extensions"]]
-  }
-  out
-} # /R8::field_ir
-
-
-# %% fields_ir ----
-#' The IR of the fields given to a constructor
-#'
-#' @param fields Named list: Fields or field types.
-#' @param what Character: Where the fields belong, for messages.
-#'
-#' @return A list of field declarations.
-#'
-#' @keywords internal
-#' @noRd
-fields_ir <- function(fields, what) {
-  if (
-    length(fields) > 0L &&
-      (is.null(names(fields)) || any(!nzchar(names(fields))))
-  ) {
-    r8_abort(
-      "Every field of ",
-      what,
-      " is named: name = type_double() or name = field(...).",
-      class = "r8_declaration_error"
-    )
-  }
-  unname(Map(function(n, f) field_ir(n, as_field(f)), names(fields), fields))
-} # /R8::fields_ir
 
 
 # %% check_members ----
@@ -382,11 +232,42 @@ required_formals <- function(formals) {
 #'
 #' @keywords internal
 #' @noRd
-declare <- function(ir, env, class, formals, native = FALSE) {
+declare <- function(
+  kind,
+  name,
+  description,
+  version,
+  tag,
+  members,
+  rules,
+  env,
+  class,
+  native = FALSE
+) {
   namespace <- declaring_namespace(env)
   package <- declaring_package(env)
-  claim_namespace(namespace, package)
-  qname <- paste0(namespace, "::", ir[["name"]])
+  qname <- paste0(namespace, "::", name)
+  out <- r8_declare(
+    kind,
+    name,
+    description,
+    as.integer(version),
+    tag,
+    members,
+    rules,
+    namespace,
+    package
+  )
+  if (nzchar(out[["owner"]])) {
+    namespace_taken(namespace, package, out[["owner"]])
+  }
+  if (length(out[["problems"]][["code"]]) > 0L) {
+    declaration_failed(qname, out[["problems"]])
+  }
+  clear_variants()
+  # A struct's formals and its required fields come from r8_declare(); an
+  # enum's constructor takes no arguments.
+  formals <- out[["formals"]] %||% list()
   ctor <- as.function(
     c(
       formals,
@@ -394,16 +275,16 @@ declare <- function(ir, env, class, formals, native = FALSE) {
         qname,
         formals,
         native = native,
-        package = package
+        package = package,
+        required = out[["required"]]
       )
     ),
     envir = asNamespace("R8")
   )
-  register_ir(ir, qname, namespace)
   # In a package, the record goes to the package's table and the type object
   # carries its name; outside a package, the type object carries the record,
   # so that another process registers the type on first use.
-  record <- r8_type_record(qname)
+  record <- out[["record"]]
   recorded <- record_declaration(
     env,
     list(
@@ -425,27 +306,6 @@ declare <- function(ir, env, class, formals, native = FALSE) {
   assign(qname, type, envir = .r8_types)
   type
 } # /R8::declare
-
-
-# %% register_ir ----
-#' Check a type's declaration and register it
-#'
-#' @param ir List: The declaration, as the declaration functions build it.
-#' @param qname Character: The qualified name.
-#' @param namespace Character: The namespace.
-#'
-#' @return `NULL`, invisibly.
-#'
-#' @keywords internal
-#' @noRd
-register_ir <- function(ir, qname, namespace) {
-  problems <- r8_declare_type(ir, namespace)
-  if (length(problems[["code"]]) > 0L) {
-    declaration_failed(qname, problems)
-  }
-  clear_variants()
-  invisible(NULL)
-} # /R8::register_ir
 
 
 # %% register_records ----
@@ -612,32 +472,16 @@ new_struct <- function(
     )
   }
   check_members(fields, "fields", paste0("`", name, "`"))
-  ir <- list(
-    kind = "struct",
-    name = name,
-    description = description,
-    version = as.integer(version),
-    fields = fields_ir(fields, paste0("`", name, "`"))
-  )
-  if (length(rules) > 0L) {
-    ir[["rules"]] <- lapply(rules, function(r) unclass(r))
-  }
-  formals <- ctor_formals(ir[["fields"]])
-  for (n in names(fields)) {
-    f <- as_field(fields[[n]])
-    if (
-      isTRUE(f[["has_default"]]) &&
-        !is.null(f[["default"]]) &&
-        !inherits(f[["default"]], "r8_json_ir")
-    ) {
-      formals[n] <- list(f[["default"]])
-    }
-  }
   declare(
-    ir,
+    "struct",
+    name,
+    description,
+    version,
+    "type",
+    fields,
+    rules,
     parent.frame(),
     "r8_struct_type",
-    formals,
     native = isTRUE(native)
   )
 } # /R8::new_struct
@@ -737,43 +581,18 @@ new_enum <- function(
       class = "r8_declaration_error"
     )
   }
-  variants_ir <- unname(Map(
-    function(n, v) {
-      if (!inherits(v, "r8_variant")) {
-        r8_abort(
-          "Variant `",
-          n,
-          "` is a variant() call.",
-          class = "r8_declaration_error"
-        )
-      }
-      out <- list(name = n, description = v[["description"]])
-      if (!is.null(v[["of"]])) {
-        out[["shape"]] <- "newtype"
-        out[["of"]] <- attr(v[["of"]], "r8_name")
-      } else if (length(v[["fields"]]) == 0L) {
-        out[["shape"]] <- "unit"
-      } else {
-        out[["shape"]] <- "struct"
-        out[["fields"]] <- fields_ir(v[["fields"]], paste0("variant `", n, "`"))
-        if (length(v[["rules"]]) > 0L) {
-          out[["rules"]] <- lapply(v[["rules"]], unclass)
-        }
-      }
-      out
-    },
-    names(variants),
-    variants
-  ))
-  ir <- list(
-    kind = "enum",
-    name = name,
-    description = description,
-    tag = tag,
-    version = as.integer(version),
-    variants = variants_ir
+  declare(
+    "enum",
+    name,
+    description,
+    version,
+    tag,
+    variants,
+    list(),
+    parent.frame(),
+    "r8_enum_type",
+    native = isTRUE(native)
   )
-  declare(ir, parent.frame(), "r8_enum_type", list(), native = isTRUE(native))
 } # /R8::new_enum
 
 

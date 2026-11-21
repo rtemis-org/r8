@@ -97,6 +97,9 @@ pub(crate) fn sym_names() -> SEXP {
 pub(crate) fn sym_class() -> SEXP {
     symbol!(c"class")
 }
+pub(crate) fn sym_r8_name() -> SEXP {
+    symbol!(c"r8_name")
+}
 pub(crate) fn sym_dim() -> SEXP {
     symbol!(c"dim")
 }

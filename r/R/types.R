@@ -5,93 +5,27 @@
 # Each constructor returns an `r8_field_type`: a list in the form of the IR's
 # field type (`kind` and its members), which `r8_ir_json()` writes as JSON.
 # Members that are JSON arrays are lists, so that a length-one array stays an
-# array.
+# array. The constructors with arguments build in Rust (`fieldtype.rs`, through
+# `rtemis_r8::ir::build`), which checks the arguments and holds the messages;
+# a routine returns the message of an argument that does not build, which
+# declared() raises from the constructor's call.
 
-# %% new_field_type ----
-#' Field type object
+# %% declared ----
+#' A field type built in Rust, or the error of its arguments
 #'
-#' @param kind Character: The IR kind.
-#' @param ... Members of the field type; `NULL` members are dropped.
+#' @param x An `r8_field_type`, or the message of an argument that does not
+#'   build.
 #'
-#' @return An `r8_field_type`.
+#' @return `x`; aborts with `r8_declaration_error` for a message.
 #'
 #' @keywords internal
 #' @noRd
-new_field_type <- function(kind, ...) {
-  members <- Filter(Negate(is.null), list(...))
-  structure(c(list(kind = kind), members), class = "r8_field_type")
-} # /R8::new_field_type
-
-
-# %% as_array ----
-#' A vector as a JSON array
-#'
-#' @param x Optional vector.
-#'
-#' @return A list, or `NULL`.
-#'
-#' @keywords internal
-#' @noRd
-as_array <- function(x) {
-  if (is.null(x)) NULL else as.list(x)
-} # /R8::as_array
-
-
-# %% check_number ----
-#' Checks a numeric constraint
-#'
-#' @param x Optional numeric: The constraint.
-#' @param name Character: The argument name.
-#'
-#' @return `x`, invisibly.
-#'
-#' @keywords internal
-#' @noRd
-check_number <- function(x, name) {
-  if (!is.null(x) && !(is.numeric(x) && length(x) == 1L && is.finite(x))) {
-    r8_abort(
-      "`",
-      name,
-      "` is one finite number.",
-      class = "r8_declaration_error"
-    )
+declared <- function(x) {
+  if (is.character(x)) {
+    r8_abort(x, class = "r8_declaration_error")
   }
-  invisible(x)
-} # /R8::check_number
-
-
-# %% check_bounds ----
-#' Check that a numeric type sets one bound per side
-#'
-#' @param min,max,exclusive_min,exclusive_max The bounds given.
-#'
-#' @return `NULL`, invisibly; aborts with `r8_declaration_error` when a side
-#'   has both an inclusive and an exclusive bound.
-#'
-#' @keywords internal
-#' @noRd
-check_bounds <- function(min, max, exclusive_min, exclusive_max) {
-  for (side in list(c("min", "exclusive_min"), c("max", "exclusive_max"))) {
-    given <- list(
-      min = min,
-      max = max,
-      exclusive_min = exclusive_min,
-      exclusive_max = exclusive_max
-    )[side]
-    if (!is.null(given[[1L]]) && !is.null(given[[2L]])) {
-      r8_abort(
-        "`",
-        side[[1L]],
-        "` and `",
-        side[[2L]],
-        "` bound the same side; give one of them.",
-        class = "r8_declaration_error"
-      )
-    }
-  }
-  invisible(NULL)
-} # /R8::check_bounds
-
+  x
+} # /R8::declared
 
 # %% type_logical ----
 #' Logical field type
@@ -105,7 +39,7 @@ check_bounds <- function(min, max, exclusive_min, exclusive_max) {
 #'
 #' @export
 type_logical <- function() {
-  new_field_type("logical")
+  structure(list(kind = "logical"), class = "r8_field_type")
 } # /R8::type_logical
 
 
@@ -136,19 +70,7 @@ type_integer <- function(
   exclusive_max = NULL,
   values = NULL
 ) {
-  for (n in c("min", "max", "exclusive_min", "exclusive_max")) {
-    check_number(get(n), n)
-  }
-  check_bounds(min, max, exclusive_min, exclusive_max)
-  as_int <- function(x) if (is.null(x)) NULL else as.integer(x)
-  new_field_type(
-    "integer",
-    min = as_int(min),
-    max = as_int(max),
-    exclusive_min = as_int(exclusive_min),
-    exclusive_max = as_int(exclusive_max),
-    `enum` = as_array(as_int(values))
-  )
+  declared(r8_ft_integer(min, max, exclusive_min, exclusive_max, values))
 } # /R8::type_integer
 
 
@@ -181,20 +103,7 @@ type_double <- function(
   finite = TRUE,
   values = NULL
 ) {
-  for (n in c("min", "max", "exclusive_min", "exclusive_max")) {
-    check_number(get(n), n)
-  }
-  check_bounds(min, max, exclusive_min, exclusive_max)
-  as_dbl <- function(x) if (is.null(x)) NULL else as.double(x)
-  new_field_type(
-    "double",
-    min = as_dbl(min),
-    max = as_dbl(max),
-    exclusive_min = as_dbl(exclusive_min),
-    exclusive_max = as_dbl(exclusive_max),
-    finite = if (isFALSE(finite)) FALSE else NULL,
-    `enum` = as_array(as_dbl(values))
-  )
+  declared(r8_ft_double(min, max, exclusive_min, exclusive_max, finite, values))
 } # /R8::type_double
 
 
@@ -214,7 +123,7 @@ type_double <- function(
 #'
 #' @export
 type_character <- function(pattern = NULL, values = NULL) {
-  new_field_type("character", pattern = pattern, `enum` = as_array(values))
+  declared(r8_ft_character(pattern, values))
 } # /R8::type_character
 
 
@@ -230,7 +139,7 @@ type_character <- function(pattern = NULL, values = NULL) {
 #'
 #' @export
 type_raw <- function() {
-  new_field_type("raw")
+  structure(list(kind = "raw"), class = "r8_field_type")
 } # /R8::type_raw
 
 
@@ -246,7 +155,7 @@ type_raw <- function() {
 #'
 #' @export
 type_date <- function() {
-  new_field_type("date")
+  structure(list(kind = "date"), class = "r8_field_type")
 } # /R8::type_date
 
 
@@ -263,7 +172,7 @@ type_date <- function() {
 #'
 #' @export
 type_posixct <- function() {
-  new_field_type("posixct")
+  structure(list(kind = "posixct"), class = "r8_field_type")
 } # /R8::type_posixct
 
 
@@ -283,11 +192,7 @@ type_posixct <- function() {
 #'
 #' @export
 type_factor <- function(levels = NULL, ordered = FALSE) {
-  new_field_type(
-    "factor",
-    levels = as_array(levels),
-    ordered = if (isTRUE(ordered)) TRUE else NULL
-  )
+  declared(r8_ft_factor(levels, ordered))
 } # /R8::type_factor
 
 
@@ -304,7 +209,7 @@ type_factor <- function(levels = NULL, ordered = FALSE) {
 #'
 #' @export
 type_json <- function() {
-  new_field_type("json")
+  structure(list(kind = "json"), class = "r8_field_type")
 } # /R8::type_json
 
 
@@ -323,10 +228,7 @@ type_json <- function() {
 #'
 #' @export
 type_r <- function(class) {
-  if (!is.character(class) || length(class) != 1L) {
-    r8_abort("`class` is one string.", class = "r8_declaration_error")
-  }
-  new_field_type("r", class = class)
+  declared(r8_ft_r(class))
 } # /R8::type_r
 
 
@@ -347,13 +249,7 @@ type_r <- function(class) {
 #'
 #' @export
 vec <- function(type, min_length = NULL, max_length = NULL, unique = FALSE) {
-  new_field_type(
-    "vec",
-    element = as_field_type(type),
-    min_length = if (is.null(min_length)) NULL else as.integer(min_length),
-    max_length = if (is.null(max_length)) NULL else as.integer(max_length),
-    unique = if (isTRUE(unique)) TRUE else NULL
-  )
+  declared(r8_ft_vec(type, min_length, max_length, unique))
 } # /R8::vec
 
 
@@ -380,27 +276,10 @@ vec <- function(type, min_length = NULL, max_length = NULL, unique = FALSE) {
 #'
 #' @export
 option <- function(type, resolve = "none", compute = NULL) {
-  resolve <- match.arg(resolve, c("none", "computed", "runtime"))
-  expr <- substitute(compute)
-  if (resolve == "computed" && is.null(expr)) {
-    r8_abort(
-      "A computed field gives its value in `compute`.",
-      class = "r8_declaration_error"
-    )
+  if (!identical(resolve, "none")) {
+    resolve <- match.arg(resolve, c("none", "computed", "runtime"))
   }
-  if (resolve != "computed" && !is.null(expr)) {
-    r8_abort(
-      "`compute` belongs to resolve = \"computed\".",
-      class = "r8_declaration_error"
-    )
-  }
-  policy <- switch(
-    resolve,
-    none = NULL,
-    runtime = list(policy = "runtime"),
-    computed = list(policy = "computed", expr = compile_rule_expr(expr))
-  )
-  new_field_type("option", inner = as_field_type(type), resolve = policy)
+  declared(r8_ft_option(type, resolve, substitute(compute)))
 } # /R8::option
 
 
@@ -420,11 +299,7 @@ option <- function(type, resolve = "none", compute = NULL) {
 #'
 #' @export
 hashmap <- function(type, keys = NULL) {
-  new_field_type(
-    "hashmap",
-    value = as_field_type(type),
-    keys = key_constraints(keys)
-  )
+  declared(r8_ft_map(type, keys, FALSE))
 } # /R8::hashmap
 
 
@@ -445,57 +320,8 @@ hashmap <- function(type, keys = NULL) {
 #'
 #' @export
 ordered_map <- function(type, keys = NULL) {
-  new_field_type(
-    "ordered_map",
-    value = as_field_type(type),
-    keys = key_constraints(keys)
-  )
+  declared(r8_ft_map(type, keys, TRUE))
 } # /R8::ordered_map
-
-
-# %% key_constraints ----
-#' Key constraints of a map
-#'
-#' @param keys Optional `r8_field_type` of kind character.
-#'
-#' @return A list of the key constraints, or `NULL`.
-#'
-#' @keywords internal
-#' @noRd
-key_constraints <- function(keys) {
-  if (is.null(keys)) {
-    return(NULL)
-  }
-  if (!inherits(keys, "r8_field_type") || keys[["kind"]] != "character") {
-    r8_abort("`keys` is a type_character().", class = "r8_declaration_error")
-  }
-  k <- unclass(keys)
-  k[["kind"]] <- NULL
-  if (length(k) == 0L) NULL else k
-} # /R8::key_constraints
-
-
-# %% as_field_type ----
-#' A field type from a field type object or an R8 type
-#'
-#' @param x An `r8_field_type`, or a struct or enum type object.
-#'
-#' @return An `r8_field_type`.
-#'
-#' @keywords internal
-#' @noRd
-as_field_type <- function(x) {
-  if (inherits(x, "r8_field_type")) {
-    return(x)
-  }
-  if (inherits(x, "r8_type")) {
-    return(new_field_type("named", name = attr(x, "r8_name")))
-  }
-  r8_abort(
-    "A field type is a type_*(), vec(), option(), hashmap(), or ordered_map() call, or an R8 type.",
-    class = "r8_declaration_error"
-  )
-} # /R8::as_field_type
 
 
 # %% print.r8_field_type ----
@@ -532,15 +358,7 @@ print.r8_field_type <- function(x, ...) {
 #'
 #' @export
 type_matrix <- function(type, nrow = NULL, ncol = NULL) {
-  if (inherits(type, "r8_struct_type")) {
-    return(new_field_type("matrix_of", of = attr(type, "r8_name")))
-  }
-  new_field_type(
-    "matrix",
-    element = as_field_type(type),
-    nrow = if (is.null(nrow)) NULL else as.integer(nrow),
-    ncol = if (is.null(ncol)) NULL else as.integer(ncol)
-  )
+  declared(r8_ft_matrix(type, nrow, ncol, NULL, FALSE))
 } # /R8::type_matrix
 
 
@@ -559,11 +377,7 @@ type_matrix <- function(type, nrow = NULL, ncol = NULL) {
 #'
 #' @export
 type_array <- function(type, dim = NULL) {
-  new_field_type(
-    "array",
-    element = as_field_type(type),
-    dim = as_array(if (is.null(dim)) NULL else as.integer(dim))
-  )
+  declared(r8_ft_matrix(type, NULL, NULL, dim, FALSE))
 } # /R8::type_array
 
 
@@ -584,12 +398,7 @@ type_array <- function(type, dim = NULL) {
 #'
 #' @export
 type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
-  new_field_type(
-    "sparse_matrix",
-    element = as_field_type(type),
-    nrow = if (is.null(nrow)) NULL else as.integer(nrow),
-    ncol = if (is.null(ncol)) NULL else as.integer(ncol)
-  )
+  declared(r8_ft_matrix(type, nrow, ncol, NULL, TRUE))
 } # /R8::type_sparse_matrix
 
 
@@ -617,12 +426,19 @@ type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
 #' @export
 type_table <- function(columns = list(), open = FALSE, rules = list()) {
   if (inherits(columns, "r8_struct_type")) {
-    return(new_field_type("table_of", of = attr(columns, "r8_name")))
+    return(structure(
+      list(kind = "table_of", of = attr(columns, "r8_name")),
+      class = "r8_field_type"
+    ))
   }
-  new_field_type(
-    "table",
-    columns = fields_ir(columns, "a table"),
-    open = if (isTRUE(open)) TRUE else NULL,
-    rules = if (length(rules) > 0L) lapply(rules, unclass) else NULL
-  )
+  if (
+    length(columns) > 0L &&
+      (is.null(names(columns)) || any(!nzchar(names(columns))))
+  ) {
+    r8_abort(
+      "Every field of a table is named: name = type_double() or name = field(...).",
+      class = "r8_declaration_error"
+    )
+  }
+  declared(r8_ft_table(columns, open, rules))
 } # /R8::type_table

@@ -270,7 +270,7 @@ fn r8_type_document(name: &str) -> Result<String> {
     Ok(doc.to_json())
 }
 
-fn problems_list(problems: &[rtemis_r8::ir::DeclError], prefix: &str) -> List {
+pub(crate) fn problems_list(problems: &[rtemis_r8::ir::DeclError], prefix: &str) -> List {
     let code: Vec<String> = problems.iter().map(|e| e.code.to_string()).collect();
     let path: Vec<String> = problems
         .iter()
@@ -394,6 +394,12 @@ fn owners() -> &'static Mutex<std::collections::HashMap<String, String>> {
 /// @noRd
 #[extendr]
 fn r8_claim_namespace(namespace: &str, package: &str) -> Result<String> {
+    claim_namespace(namespace, package)
+}
+
+/// Claims `namespace` for `package`, as `r8_claim_namespace()` does: the
+/// owner that holds it already, or `""`.
+pub(crate) fn claim_namespace(namespace: &str, package: &str) -> Result<String> {
     let mut map = owners()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
@@ -595,30 +601,24 @@ fn reached(reg: &DocumentSet, q: &QualifiedName, out: &mut Vec<QualifiedName>) {
     out.push(me);
 }
 
-/// The declaration record of a registered type and of every named type it
-/// reaches, the reached types first (`rtemis_r8::record`).
-///
-/// @param name Character: The qualified name, `namespace::Type`.
-/// @return Raw: The record.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_type_record(name: &str) -> Result<Robj> {
+
+/// The declaration record of the registered type `q` and of every named
+/// type it reaches, the reached types first (`rtemis_r8::record`).
+pub(crate) fn type_record(q: &QualifiedName) -> Result<Vec<u8>> {
     use rtemis_r8::record::{self, DeclarationRef};
-    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
     let reg = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
     let mut names = Vec::new();
-    reached(&reg, &q, &mut names);
+    reached(&reg, q, &mut names);
     if names.is_empty() {
-        return Err(fail(format!("`{name}` is not registered")));
+        return Err(fail(format!("`{q}` is not registered")));
     }
     let bytes = record::encode(names.iter().filter_map(|n| {
         rtemis_r8::rules::TypeLookup::find(&**reg, n)
             .map(|d| (&n.namespace, DeclarationRef::Type(d)))
     }));
-    Ok(Robj::from(bytes.as_slice()))
+    Ok(bytes)
 }
 
 /// Whether a type is registered.
@@ -884,7 +884,6 @@ extendr_module! {
     fn r8_trait_record;
     fn r8_impl_record;
     fn r8_trait_ir;
-    fn r8_type_record;
     fn r8_is_registered;
     fn r8_declare_records;
     fn r8_type_ir;

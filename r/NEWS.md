@@ -12,6 +12,8 @@
 - `r8_layout()` returns the layout of a value, a list, or a data frame; `r8_span()`, `r8_text()`, and `c()` build styled text, which a `Display` or `Print` impl may return; `r8_theme()` restyles the roles of text, and `r8_css()` returns the stylesheet of the html `classes` mode (`html_style`).
 - R Markdown and Quarto documents, Jupyter notebooks, and tibble columns show R8 values through methods for knitr, repr, and pillar, registered when those packages load.
 - A declaration takes time proportional to itself, whatever the size of its namespace: a package of 200 types loads in 0.03 s.
+- Declaring a type runs in Rust: the field types, `field()`, and `rule()` build and check their arguments in compiled code, and `new_struct()` and `new_enum()` read the fields and declare in one call. 200 types declare in 0.028 s, against 0.096 s.
+- The field-type constructors check their arguments at their call: an integer bound or value is a whole number (`type_integer(min = 1.5)` is an error), and `type_character(pattern = )` reports a pattern that does not compile. A reserved field name is an `r8_declaration_error` with the code `name_reserved`.
 - A type and a trait of one name in a namespace are an error at the later declaration, in either order.
 - `r8_register()` checks each namespace a package owns once, after its declarations, and refuses a package whose declarations disagree, such as a rule that reads a field of a type declared again without that field.
 - `rtemis-r8-api`: the method of the `R8::PartialOrd` trait is `cmp`, the name of the trait's method in R; an `R8::Dim` impl's `Vec<i32>` converts to R.

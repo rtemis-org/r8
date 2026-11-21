@@ -93,15 +93,6 @@ r8_impl_record <- function(ir, namespace) .Call(wrap__r8_impl_record, ir, namesp
 #' @noRd
 r8_trait_ir <- function(name) .Call(wrap__r8_trait_ir, name)
 
-#' The declaration record of a registered type and of every named type it
-#' reaches, the reached types first (`rtemis_r8::record`).
-#'
-#' @param name Character: The qualified name, `namespace::Type`.
-#' @return Raw: The record.
-#' @keywords internal
-#' @noRd
-r8_type_record <- function(name) .Call(wrap__r8_type_record, name)
-
 #' Whether a type is registered.
 #'
 #' @param name Character: The qualified name.
@@ -323,6 +314,76 @@ r8_impl_fn <- function(trait_name, type_name, method) .Call(wrap__r8_impl_fn, tr
 #' @noRd
 r8_compiled_types <- function() .Call(wrap__r8_compiled_types)
 
+#' `type_integer()`.
+#' @keywords internal
+#' @noRd
+r8_ft_integer <- function(min, max, exclusive_min, exclusive_max, values) .Call(wrap__r8_ft_integer, min, max, exclusive_min, exclusive_max, values)
+
+#' `field()`: the field type, as given or as the `named` type of an R8 type
+#' object, and the field's facts; `has_default` is `!missing(default)`.
+#' @keywords internal
+#' @noRd
+r8_field <- function(type, default, has_default, description, sensitive, unit, external, unique, optional, extensions) .Call(wrap__r8_field, type, default, has_default, description, sensitive, unit, external, unique, optional, extensions)
+
+#' `type_double()`.
+#' @keywords internal
+#' @noRd
+r8_ft_double <- function(min, max, exclusive_min, exclusive_max, finite, values) .Call(wrap__r8_ft_double, min, max, exclusive_min, exclusive_max, finite, values)
+
+#' `type_character()`.
+#' @keywords internal
+#' @noRd
+r8_ft_character <- function(pattern, values) .Call(wrap__r8_ft_character, pattern, values)
+
+#' `type_factor()`.
+#' @keywords internal
+#' @noRd
+r8_ft_factor <- function(levels, ordered) .Call(wrap__r8_ft_factor, levels, ordered)
+
+#' `type_r()`.
+#' @keywords internal
+#' @noRd
+r8_ft_r <- function(class) .Call(wrap__r8_ft_r, class)
+
+#' `vec()`.
+#' @keywords internal
+#' @noRd
+r8_ft_vec <- function(type, min_length, max_length, unique) .Call(wrap__r8_ft_vec, type, min_length, max_length, unique)
+
+#' `option()`: `resolve` is matched in R, and `compute` is the unevaluated
+#' expression of a computed field, or `NULL`.
+#' @keywords internal
+#' @noRd
+r8_ft_option <- function(type, resolve, compute) .Call(wrap__r8_ft_option, type, resolve, compute)
+
+#' `hashmap()` and, with `ordered = TRUE`, `ordered_map()`.
+#' @keywords internal
+#' @noRd
+r8_ft_map <- function(type, keys, ordered) .Call(wrap__r8_ft_map, type, keys, ordered)
+
+#' `type_matrix()`, `type_array()` (`dim`), and `type_sparse_matrix()`
+#' (`sparse = TRUE`).
+#' @keywords internal
+#' @noRd
+r8_ft_matrix <- function(type, nrow, ncol, dim, sparse) .Call(wrap__r8_ft_matrix, type, nrow, ncol, dim, sparse)
+
+#' `rule()`: `invariant` and `when` are the unevaluated expressions.
+#' @keywords internal
+#' @noRd
+r8_rule <- function(id, invariant, message, when) .Call(wrap__r8_rule, id, invariant, message, when)
+
+#' The dialect expression of an R expression, as the list `rule()` holds,
+#' or the message of an expression the dialect does not hold.
+#' @keywords internal
+#' @noRd
+r8_logic <- function(expr) .Call(wrap__r8_logic, expr)
+
+#' The R spelling of each operator of the dialect: the dialect operators,
+#' named by the R function or operator that writes them.
+#' @keywords internal
+#' @noRd
+r8_rule_operators <- function() .Call(wrap__r8_rule_operators)
+
 #' The parts of a Rust-native value that `r8_size()` adds up: the bytes of
 #' its state and the cached fields that are not views of the state.
 #'
@@ -357,6 +418,39 @@ r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
 #' @keywords internal
 #' @noRd
 r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
+
+#' Declares a struct or an enum from the user's objects: claims the
+#' namespace, reads the declaration, checks it, registers it, and writes its
+#' record.
+#'
+#' @param kind Character: `"struct"` or `"enum"`.
+#' @param name Character: The type name.
+#' @param description Character: The type's description.
+#' @param version Integer: The type's version.
+#' @param tag Character: An enum's tag member.
+#' @param members List: A struct's fields or an enum's variants, as given.
+#' @param rules List: A struct's rules.
+#' @param namespace Character: The namespace.
+#' @param package Character: The declaring package, or `""`.
+#' @return List: `owner`, the package that owns the namespace when it is not
+#'   `package`, otherwise `""`; `problems`, as character vectors `code`,
+#'   `path`, and `message`; `record`, the record when the declaration
+#'   registers, otherwise `NULL`; and `required`, the names of a struct's
+#'   required fields.
+#' @keywords internal
+#' @noRd
+r8_declare <- function(kind, name, description, version, tag, members, rules, namespace, package) .Call(wrap__r8_declare, kind, name, description, version, tag, members, rules, namespace, package)
+
+#' `type_table(columns, open, rules)`, its columns as fields.
+#' @keywords internal
+#' @noRd
+r8_ft_table <- function(columns, open, rules) .Call(wrap__r8_ft_table, columns, open, rules)
+
+#' The canonical JSON text of the default `x` of a field of type `type`, or
+#' `""` when `x` is not a default of that type.
+#' @keywords internal
+#' @noRd
+r8_default_canonical <- function(x, type) .Call(wrap__r8_default_canonical, x, type)
 
 #' The default layout of an R8 value, as the lists of an `r8_text`.
 #'

@@ -101,6 +101,9 @@ construct_error <- function(res, type_name, variant) {
 #' @param native Logical: The type is Rust-native, whose codec is checked
 #'   first.
 #' @param package Character: The package that declares a Rust-native type.
+#' @param required Optional Logical: Which fields are required, one per
+#'   formal; `NULL` reads them from `formals`, where a required field has no
+#'   default argument.
 #'
 #' @return The body, a call.
 #'
@@ -111,10 +114,13 @@ constructor_body <- function(
   formals,
   variant = "",
   native = FALSE,
-  package = ""
+  package = "",
+  required = NULL
 ) {
   fields <- names(formals)
-  required <- fields %in% required_formals(formals)
+  if (is.null(required)) {
+    required <- fields %in% required_formals(formals)
+  }
   steps <- list(
     call(
       "<-",

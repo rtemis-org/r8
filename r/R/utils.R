@@ -125,23 +125,39 @@ declaring_package <- function(env) {
 claim_namespace <- function(namespace, package) {
   owner <- r8_claim_namespace(namespace, package)
   if (nzchar(owner)) {
-    r8_abort(
-      "The R8 namespace `",
-      namespace,
-      "` belongs to the package '",
-      owner,
-      "'",
-      if (nzchar(package)) {
-        paste0("; package '", package, "' declares into it")
-      } else {
-        ""
-      },
-      ". Declare into another namespace (`Config/R8/namespace` or the option `r8.namespace`).",
-      class = "r8_declaration_error"
-    )
+    namespace_taken(namespace, package, owner)
   }
   invisible(NULL)
 } # /R8::claim_namespace
+
+
+# %% namespace_taken ----
+#' Abort for a namespace that another package owns
+#'
+#' @param namespace Character: The namespace.
+#' @param package Character: The declaring package, or `""`.
+#' @param owner Character: The package that owns the namespace.
+#'
+#' @return Does not return; aborts with `r8_declaration_error`.
+#'
+#' @keywords internal
+#' @noRd
+namespace_taken <- function(namespace, package, owner) {
+  r8_abort(
+    "The R8 namespace `",
+    namespace,
+    "` belongs to the package '",
+    owner,
+    "'",
+    if (nzchar(package)) {
+      paste0("; package '", package, "' declares into it")
+    } else {
+      ""
+    },
+    ". Declare into another namespace (`Config/R8/namespace` or the option `r8.namespace`).",
+    class = "r8_declaration_error"
+  )
+} # /R8::namespace_taken
 
 
 # %% record_declaration ----

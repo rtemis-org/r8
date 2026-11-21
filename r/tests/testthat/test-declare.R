@@ -72,7 +72,13 @@ test_that("Kernel and Svm declared in R produce the IR of the fixture", {
 })
 
 test_that("rules compile from R expressions to JSONLogic", {
-  compile <- function(e) R8:::compile_rule_expr(e)
+  compile <- function(e) {
+    out <- R8:::r8_logic(e)
+    if (is.character(out)) {
+      R8:::r8_abort(out, class = "r8_declaration_error")
+    }
+    out
+  }
   expect_identical(
     compile(quote(kernel$gamma <= 10)),
     list("<=" = list(list(var = "kernel.gamma"), 10))
@@ -366,11 +372,11 @@ test_that("member lists are named and their names are distinct", {
 
 test_that("qualified rule functions compile like bare ones, and is_variant() tests R values", {
   expect_identical(
-    R8:::compile_rule_expr(quote(R8::is_variant(k, "A"))),
-    R8:::compile_rule_expr(quote(is_variant(k, "A")))
+    R8:::r8_logic(quote(R8::is_variant(k, "A"))),
+    R8:::r8_logic(quote(is_variant(k, "A")))
   )
   expect_identical(
-    R8:::compile_rule_expr(quote(base::is.null(a))),
+    R8:::r8_logic(quote(base::is.null(a))),
     list(is_null = list(list(var = "a")))
   )
   K <- declare_in(
@@ -498,4 +504,81 @@ test_that("declaring a type takes time independent of the namespace's size", {
   # Quadratic declaration made the last 50 about 8 times slower than the
   # first; linear, about the same.
   expect_lt(last, 3 * first + 0.05)
+})
+
+test_that("field-type arguments are checked at their call, with the core's messages", {
+  expect_error(
+    type_integer(min = 1.5),
+    "whole numbers",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    type_integer(values = c(1, NA)),
+    "whole numbers",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    type_double(min = Inf),
+    "`min` is one finite number",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    type_double(min = 0, exclusive_min = 0),
+    "bound the same side",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    type_character(pattern = "(a"),
+    "does not compile",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    vec(type_logical(), min_length = 3, max_length = 2),
+    "at most",
+    class = "r8_declaration_error"
+  )
+  expect_error(vec(1), "A field type is", class = "r8_declaration_error")
+  expect_error(
+    hashmap(type_logical(), keys = type_logical()),
+    "type_character",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    option(type_logical(), compute = x + 1),
+    "belongs to",
+    class = "r8_declaration_error"
+  )
+  expect_identical(
+    unclass(vec(type_double(min = 0), max_length = 3L)),
+    list(
+      kind = "vec",
+      element = type_double(min = 0),
+      max_length = 3L
+    )
+  )
+  expect_identical(
+    unclass(type_integer(min = 2)),
+    list(kind = "integer", min = 2L)
+  )
+})
+
+test_that("a field with a reserved name fails as a declaration, with its code and path", {
+  e <- expect_error(
+    declare_in(
+      "demo",
+      new_struct("Reserved", fields = list(`if` = type_double()))
+    ),
+    class = "r8_declaration_error"
+  )
+  expect_match(
+    conditionMessage(e),
+    "name_reserved at /fields/0/name",
+    fixed = TRUE
+  )
+})
+
+test_that("an integer beyond 2^53 in a rule keeps its value through R", {
+  r <- rule("BIG", a < json_ir("9007199254740993"), "m")
+  expect_s3_class(r$invariant[["<"]][[2L]], "r8_json_ir")
+  expect_identical(unclass(r$invariant[["<"]][[2L]]), "9007199254740993")
 })

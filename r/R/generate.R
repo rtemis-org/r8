@@ -961,11 +961,8 @@ render_logic <- function(x) {
   e <- logic_to_r(x)
   if (!is.null(e)) {
     text <- paste(deparse(e, width.cutoff = 500L), collapse = " ")
-    compiled <- tryCatch(
-      compile_rule_expr(parse(text = text, keep.source = FALSE)[[1L]]),
-      error = function(err) NULL
-    )
-    if (!is.null(compiled) && identical(canonical_ir(compiled), target)) {
+    compiled <- r8_logic(parse(text = text, keep.source = FALSE)[[1L]])
+    if (!is.character(compiled) && identical(canonical_ir(compiled), target)) {
       return(text)
     }
   }
@@ -1059,7 +1056,8 @@ logic_to_r <- function(x) {
 #' @keywords internal
 #' @noRd
 r_spelling <- function() {
-  ops <- R8_OPERATORS[!names(R8_OPERATORS) %in% c("&", "|")]
+  ops <- r8_rule_operators()
+  ops <- ops[!names(ops) %in% c("&", "|")]
   stats::setNames(names(ops), unname(ops))
 } # /R8::r_spelling
 
@@ -1069,7 +1067,7 @@ r_spelling <- function() {
 #'
 #' Logical, integer, double, and character values, vectors of them, and the
 #' unit variants of an enum of the namespace render as R values; the R value
-#' of a scalar or a vector is kept when `default_json()` gives back the same
+#' of a scalar or a vector is kept when its JSON form as a default is the same
 #' canonical JSON. Every other default renders as `R8::json_ir()`.
 #'
 #' @param x The default, as `r8_json_parse()` returns it.
@@ -1111,7 +1109,7 @@ render_default <- function(x, type, ns) {
   }
   if (!is.null(text) && !identical(kind, "named")) {
     value <- eval(parse(text = text, keep.source = FALSE)[[1L]], baseenv())
-    if (!identical(canonical_ir(default_json(value, type)), target)) {
+    if (!identical(r8_default_canonical(value, type), target)) {
       text <- NULL
     }
   }

@@ -5,6 +5,7 @@
 //! a type declared in Rust with `#[derive(R8)]` produces the same document.
 //! [`check_document`] reports the problems a document holds on its own.
 
+pub mod build;
 mod check;
 mod decl;
 mod document;
