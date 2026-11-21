@@ -97,14 +97,14 @@ pub struct GBM {
 /// The Rust side of `bench::Complexity`, declared in R with
 /// `complexity(x)`.
 pub trait Complexity {
-    /// The number of trees times their depth.
+    /// A constant, so that the dispatch row times dispatch alone.
     fn complexity(&self) -> i32;
 }
 
 #[r8::methods(trait = "bench::Complexity")]
 impl Complexity for GBM {
     fn complexity(&self) -> i32 {
-        self.n_trees * self.max_depth
+        1
     }
 }
 

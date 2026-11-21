@@ -4,7 +4,8 @@
 # 2026- EDG rtemis.org
 
 # Runs the benchmark on a committed tree: installs the release build of R8,
-# r8benchR, and the packages of namespace.R into a temporary library, runs
+# r8benchR, and the packages of syspkg.R and namespace.R into a temporary
+# library, runs
 # bench/run.R, and prints the tables of bench/report.R. `just bench` runs
 # this from the repository root.
 # spec: R8/class-system#benchmark
@@ -33,8 +34,9 @@ export R8_TARGET_DIR="${R8_TARGET_DIR:-$PWD/target/r}"
 (cd "$work" && R CMD build --no-build-vignettes --no-manual "$OLDPWD/r" > /dev/null)
 R CMD INSTALL --library="$lib" "$work"/R8_*.tar.gz > "$work/install-R8.log" 2>&1
 R_LIBS="$lib" R CMD INSTALL --no-test-load --library="$lib" bench/r8bench/r8benchR > "$work/install-r8benchR.log" 2>&1
-R_LIBS="$lib" Rscript --vanilla -e "source('bench/namespace.R'); for (s in NAMESPACE_SYSTEMS) write_namespace_package(s, '$work')"
+R_LIBS="$lib" Rscript --vanilla -e "source('bench/syspkg.R'); source('bench/namespace.R'); for (s in SYSTEM_PACKAGES) write_system_package(s, '$work'); for (s in NAMESPACE_SYSTEMS) write_namespace_package(s, '$work')"
 for s in S3 S4 RC R6 S7 R8; do
+  R_LIBS="$lib" R CMD INSTALL --no-test-load --library="$lib" "$work/benchsys$s" > "$work/install-sys-$s.log" 2>&1
   R_LIBS="$lib" R CMD INSTALL --no-test-load --library="$lib" "$work/bench${s}200" > "$work/install-$s.log" 2>&1
 done
 rm -f "bench/results/$sha.jsonl"

@@ -72,16 +72,26 @@ run_row <- function(row, system, mode = "", repeat_n = 1L) {
 }
 
 systems <- c("S3", "S4", "RC", "R6", "S7", "R8", "R8 Rust")
+r_systems <- setdiff(systems, "R8 Rust")
 
+# The gate: every system passes the acceptance corpus, and every system
+# stores the valid GBM's fields identically.
+stored <- character()
 for (s in systems) {
-  recs <- run_row("corpus", s)
-  d <- lapply(recs, jsonlite::fromJSON)
-  mismatches <- Filter(function(x) identical(x$metric, "mismatches"), d)[[1L]]$value
-  if (mismatches != 0) stop(sprintf("%s fails the acceptance corpus in %d cases", s, mismatches))
+  d <- lapply(run_row("corpus", s), jsonlite::fromJSON)
+  metric <- function(m) Filter(function(x) identical(x$metric, m), d)[[1L]]$value
+  if (metric("mismatches") != 0) stop(sprintf("%s fails the acceptance corpus in %d cases", s, metric("mismatches")))
+  stored[[s]] <- metric("stored_fields")
 }
+if (length(unique(stored)) != 1L) {
+  stop("the systems store the valid GBM's fields differently:\n", paste(names(stored), stored, collapse = "\n"))
+}
+
 for (s in systems) run_row("values", s)
-for (s in setdiff(systems, "R8 Rust")) run_row("types", s, repeat_n = 5L)
-for (s in systems) run_row("big", s)
+for (s in systems) run_row("cold", s, repeat_n = 5L)
+for (s in r_systems) run_row("types", s, repeat_n = 5L)
+for (s in r_systems) for (m in c("types", "types_control")) run_row("peak", s, m)
+for (s in systems) for (m in c("", "compact")) run_row("big", s, m)
 for (s in systems) for (m in c("value", "control")) run_row("peak", s, m)
 run_row("table", "R8")
 for (m in c("vec", "table", "rows")) run_row("peak", "R8", m)

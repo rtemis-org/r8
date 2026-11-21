@@ -15,7 +15,8 @@ ROW <- sub("\\.R$", "", basename(sub("^--file=", "", grep("^--file=", commandArg
 
 source(file.path(BENCH_DIR, "types.R"))
 
-# The packages a system needs, loaded before its types are declared.
+# The package that holds a system's types (syspkg.R), and the packages it
+# loads; R8 with Rust-native values takes its types from r8benchR.
 system_packages <- function(system) {
   switch(
     system,
@@ -29,11 +30,17 @@ system_packages <- function(system) {
   )
 }
 
+# Attaches the system's package and returns the expressions of its rows.
 load_system <- function(system = SYSTEM) {
   for (p in system_packages(system)) {
     suppressPackageStartupMessages(library(p, character.only = TRUE))
   }
-  declare_system(system)
+  if (system == "R8 Rust") {
+    return(declare_system(system, globalenv()))
+  }
+  pkg <- paste0("benchsys", system)
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+  get(".ops", envir = asNamespace(pkg))
 }
 
 emit <- function(type, metric, value, unit) {

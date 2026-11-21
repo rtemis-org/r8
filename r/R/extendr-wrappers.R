@@ -68,8 +68,8 @@ r8_namespace_owner <- function(namespace) .Call(wrap__r8_namespace_owner, namesp
 r8_package_namespaces <- function(package) .Call(wrap__r8_package_namespaces, package)
 
 #' The problems of whole namespaces, each document checked once: what a
-#' declaration's own check cannot see, such as a type that names another
-#' whose declaration was replaced after it.
+#' declaration's own check cannot see, such as a rule that reads a field of
+#' a type declared again without that field.
 #'
 #' @param namespaces Character: The namespaces.
 #' @return List: The problems, as character vectors `namespace`, `code`,

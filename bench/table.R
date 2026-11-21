@@ -8,7 +8,7 @@
 # spec: R8/class-system#benchmark
 
 table_types <- function() {
-  op <- options(r8.namespace = "bench")
+  op <- options(r8.namespace = "benchtable")
   on.exit(options(op))
   S <- R8::new_struct("S", fields = list(lower = R8::type_double(), upper = R8::type_double()))
   list(
