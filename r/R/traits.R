@@ -382,7 +382,7 @@ build_trait <- function(name, methods, description, tag, namespace, env) {
 #' @noRd
 register_trait <- function(trait, namespace) {
   t <- unclass(trait)
-  problems <- r8_declare_trait(r8_ir_json(t[["ir"]]), namespace)
+  problems <- r8_declare_trait(t[["ir"]], namespace)
   if (length(problems[["code"]]) > 0L) {
     r8_abort(
       "Declaration of `",
@@ -581,7 +581,7 @@ register_impl <- function(entry) {
       entry[["fns"]][["from"]],
       envir = .r8_impls
     )
-    r8_declare_impl(r8_ir_json(entry[["ir"]]), entry[["namespace"]])
+    r8_declare_impl(entry[["ir"]], entry[["namespace"]])
     return(invisible(NULL))
   }
   for (m in names(entry[["fns"]])) {
@@ -601,7 +601,7 @@ register_impl <- function(entry) {
       registerS3method(m, entry[["type_name"]], fn, envir = s3_envir(generic))
     }
   }
-  r8_declare_impl(r8_ir_json(entry[["ir"]]), entry[["namespace"]])
+  r8_declare_impl(entry[["ir"]], entry[["namespace"]])
   invisible(NULL)
 } # /R8::register_impl
 

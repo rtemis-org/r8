@@ -860,7 +860,7 @@ impl<'a> Access<'a> for RView<'a> {
         }
     }
 
-    fn factor(self, _declared: Option<&[String]>, ordered: bool) -> Read<Factor<'a, Self>> {
+    fn factor(self, _declared: Option<&[Box<str>]>, ordered: bool) -> Read<Factor<'a, Self>> {
         let Some(x) = self.sexp() else {
             return Err(r_type("expected a factor"));
         };

@@ -67,8 +67,8 @@ fn the_derived_declarations_equal_the_fixture() {
     assert_eq!(&Svm::type_def(), doc.find(&Svm::qualified_name()).unwrap());
     // Svm reaches Kernel, so its declarations hold both.
     let set = Svm::declarations();
-    assert_eq!(set.0.len(), 1);
-    assert_eq!(set.0[0].types.len(), 2);
+    assert_eq!(set.documents().len(), 1);
+    assert_eq!(set.documents()[0].types.len(), 2);
 }
 
 #[test]
@@ -265,5 +265,5 @@ fn a_newtype_variant_is_flattened_with_the_tag() {
     assert_eq!(Rows::from_document(&text).unwrap(), r);
     let bad = Rows::Ranged(Ranges { start: -1 });
     assert_eq!(bad.to_document().unwrap_err()[0].code, "below_min");
-    assert!(rtemis_r8::ir::check_document(&Rows::declarations().0[0]).is_empty());
+    assert!(rtemis_r8::ir::check_document(&Rows::declarations().documents()[0]).is_empty());
 }

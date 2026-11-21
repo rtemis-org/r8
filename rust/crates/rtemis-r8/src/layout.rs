@@ -828,7 +828,7 @@ mod tests {
                 {"name": "kernel", "type": {"kind": "named", "name": "demo::Kernel"}, "description": ""}]}]}"#,
         )
         .expect("the document reads");
-        let set = DocumentSet(vec![doc]);
+        let set = DocumentSet::from(vec![doc]);
         let v: serde_json::Value = serde_json::from_str(
             r#"{"name": "a", "coef": [0.1, 0.25, 1, 2, 3, 4, 5, 6, 7, 8],
                 "kernel": {"type": "Rbf", "gamma": 0.5}}"#,

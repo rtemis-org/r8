@@ -7,6 +7,11 @@
 # type objects that refer to it.
 .r8_types <- new.env(parent = emptyenv())
 
+# Each enum's variants, by qualified name: a unit variant's value and a
+# struct or newtype variant's constructor, built on first access and cleared
+# whenever a declaration changes the registry (`clear_variants()`).
+.r8_variants <- new.env(parent = emptyenv())
+
 # The registered codecs of Rust-native types: qualified name to the package
 # whose exports carry the codec.
 .r8_codecs <- new.env(parent = emptyenv())
@@ -179,7 +184,6 @@ value_json <- function(x) {
       class = "r8_declaration_error"
     )
   }
-  type <- .r8_types[[attr(x, "r8_type")]]
   variant <- attr(x, "r8_variant")
   if (is.null(variant)) {
     r8_abort(
@@ -187,7 +191,7 @@ value_json <- function(x) {
       class = "r8_declaration_error"
     )
   }
-  ir <- attr(type, "r8_ir")
+  ir <- r8_type_ir(attr(x, "r8_type"))
   unit_only <- all(vapply(
     ir[["variants"]],
     function(v) v[["shape"]] == "unit",
@@ -406,67 +410,175 @@ declare <- function(ir, env, class, formals, native = FALSE) {
         qname,
         field_names,
         required = required_formals(formals),
-        native = native
+        native = native,
+        package = package
       )
     ),
     envir = asNamespace("R8")
+  )
+  register_ir(ir, qname, namespace)
+  # In a package, the record goes to the package's table and the type object
+  # carries its name; outside a package, the type object carries the record,
+  # so that another process registers the type on first use.
+  record <- r8_type_record(qname)
+  recorded <- record_declaration(
+    env,
+    list(
+      kind = "type",
+      record = record,
+      namespace = namespace,
+      name = qname,
+      native = if (native) TRUE
+    )
   )
   type <- structure(
     ctor,
     class = c(class, "r8_type", "function"),
     r8_name = qname,
-    r8_ir = ir,
+    r8_record = if (!recorded) record,
     r8_native = if (native) TRUE,
     r8_package = if (native) package
   )
-  register_type(type, namespace)
-  record_declaration(
-    env,
-    list(kind = "type", type = type, namespace = namespace)
-  )
+  assign(qname, type, envir = .r8_types)
   type
 } # /R8::declare
 
 
-# %% register_type ----
+# %% register_ir ----
 #' Check a type's declaration and register it
 #'
-#' @param type A type object.
-#' @param namespace Character: Its namespace.
+#' @param ir List: The declaration, as the declaration functions build it.
+#' @param qname Character: The qualified name.
+#' @param namespace Character: The namespace.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
-register_type <- function(type, namespace) {
-  ir <- attr(type, "r8_ir")
-  problems <- r8_declare_type(r8_ir_json(ir), namespace)
+register_ir <- function(ir, qname, namespace) {
+  problems <- r8_declare_type(ir, namespace)
   if (length(problems[["code"]]) > 0L) {
-    lines <- paste0(
-      "- ",
-      problems[["message"]],
-      " [",
-      problems[["code"]],
-      ifelse(
-        nzchar(problems[["path"]]),
-        paste0(" at ", problems[["path"]]),
-        ""
-      ),
-      "]"
-    )
-    r8_abort(
-      "Declaration of `",
-      namespace,
-      "::",
-      ir[["name"]],
-      "` failed:\n",
-      paste(lines, collapse = "\n"),
-      class = "r8_declaration_error"
-    )
+    declaration_failed(qname, problems)
   }
-  assign(attr(type, "r8_name"), type, envir = .r8_types)
+  clear_variants()
   invisible(NULL)
-} # /R8::register_type
+} # /R8::register_ir
+
+
+# %% register_records ----
+#' Register the declarations of records
+#'
+#' @param records List: Raw vectors, each a declaration record.
+#' @param source Character: The package the records come from, or `""` for a
+#'   type object's own record.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+register_records <- function(records, source = "") {
+  if (length(records) == 0L) {
+    return(invisible(NULL))
+  }
+  problems <- r8_declare_records(records, source)
+  if (length(problems[["code"]]) > 0L) {
+    declaration_failed(problems[["name"]][[1L]], problems)
+  }
+  clear_variants()
+  invisible(NULL)
+} # /R8::register_records
+
+
+# %% ensure_registered ----
+#' Register a type object's own record when the registry lacks its type
+#'
+#' A type declared outside a package carries its record, so that a process
+#' that did not declare it, such as a `future` or `mirai` worker, registers it
+#' on first use.
+#'
+#' @param type An R8 type object.
+#'
+#' @return Logical: `TRUE` when the type is registered, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+ensure_registered <- function(type) {
+  qname <- attr(type, "r8_name")
+  if (is.null(qname)) {
+    return(invisible(FALSE))
+  }
+  if (r8_is_registered(qname)) {
+    return(invisible(TRUE))
+  }
+  record <- attr(type, "r8_record")
+  if (is.null(record)) {
+    return(invisible(FALSE))
+  }
+  register_records(list(record))
+  invisible(r8_is_registered(qname))
+} # /R8::ensure_registered
+
+
+# %% declaration_failed ----
+#' Signal the problems of a failed declaration
+#'
+#' @param qname Character: The qualified name of the declaration.
+#' @param problems List: `code`, `path`, and `message` of each problem.
+#'
+#' @return Does not return; signals `r8_declaration_error`.
+#'
+#' @keywords internal
+#' @noRd
+declaration_failed <- function(qname, problems) {
+  lines <- paste0(
+    "- ",
+    problems[["message"]],
+    " [",
+    problems[["code"]],
+    ifelse(
+      nzchar(problems[["path"]]),
+      paste0(" at ", problems[["path"]]),
+      ""
+    ),
+    "]"
+  )
+  r8_abort(
+    "Declaration of `",
+    qname,
+    "` failed:\n",
+    paste(lines, collapse = "\n"),
+    class = "r8_declaration_error"
+  )
+} # /R8::declaration_failed
+
+
+# %% clear_variants ----
+#' Clear the variants built for enum types
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+clear_variants <- function() {
+  rm(list = ls(.r8_variants, all.names = TRUE), envir = .r8_variants)
+  invisible(NULL)
+} # /R8::clear_variants
+
+
+# %% type_ir ----
+#' The declaration of a registered type
+#'
+#' @param type An R8 type object.
+#'
+#' @return List: The declaration, in the form the declaration functions build,
+#'   from the registry.
+#'
+#' @keywords internal
+#' @noRd
+type_ir <- function(type) {
+  ensure_registered(type)
+  r8_type_ir(attr(type, "r8_name"))
+} # /R8::type_ir
 
 
 # %% new_struct ----
@@ -688,35 +800,83 @@ new_enum <- function(
 #' @export
 `@.r8_enum_type` <- function(object, name) {
   name <- as.character(substitute(name))
-  ir <- attr(object, "r8_ir")
-  v <- Filter(function(x) x[["name"]] == name, ir[["variants"]])
-  if (length(v) == 0L) {
+  qname <- attr(object, "r8_name")
+  variants <- .r8_variants[[qname]] %||% enum_variants(qname, object)
+  v <- variants[[name]]
+  if (is.null(v)) {
     r8_abort(
       "`",
       name,
       "` is not a variant of `",
-      attr(object, "r8_name"),
+      qname,
       "`.",
       class = "r8_value_error"
     )
   }
-  qname <- attr(object, "r8_name")
-  native <- isTRUE(attr(object, "r8_native"))
-  if (v[[1L]][["shape"]] == "unit") {
+  if (!inherits(v, "r8_variant_spec")) {
+    return(v)
+  }
+  built <- build_variant(
+    v,
+    qname,
+    name,
+    isTRUE(attr(object, "r8_native")),
+    attr(object, "r8_package") %||% ""
+  )
+  variants[[name]] <- built
+  built
+} # /R8::@.r8_enum_type
+
+
+# %% enum_variants ----
+#' The variants of an enum, to be built on first access
+#'
+#' @param qname Character: The enum's qualified name.
+#' @param object The enum type object.
+#'
+#' @return Environment: Each variant's declaration, of class
+#'   `r8_variant_spec`, by name; kept in `.r8_variants`.
+#'
+#' @keywords internal
+#' @noRd
+enum_variants <- function(qname, object) {
+  env <- new.env(parent = emptyenv())
+  for (v in type_ir(object)[["variants"]]) {
+    env[[v[["name"]]]] <- structure(v, class = "r8_variant_spec")
+  }
+  .r8_variants[[qname]] <- env
+  env
+} # /R8::enum_variants
+
+
+# %% build_variant ----
+#' Build a variant: a unit variant's value, or a variant's constructor
+#'
+#' @param v The variant's declaration, of class `r8_variant_spec`.
+#' @param qname Character: The enum's qualified name.
+#' @param name Character: The variant's name.
+#' @param native Logical: The enum is Rust-native.
+#' @param package Character: The package that declares a Rust-native enum.
+#'
+#' @return The unit variant's value, or the constructor of a struct or
+#'   newtype variant.
+#'
+#' @keywords internal
+#' @noRd
+build_variant <- function(v, qname, name, native, package = "") {
+  v <- unclass(v)
+  if (v[["shape"]] == "unit") {
     if (native) {
-      check_codec(qname)
+      check_codec(qname, package)
     }
     return(r8_construct(qname, list(), name))
   }
   # A struct or newtype variant: its constructor, with the fields as formals;
   # a field with a default receives NULL, which construction fills.
-  formals <- if (v[[1L]][["shape"]] == "struct") {
-    ctor_formals(v[[1L]][["fields"]])
+  formals <- if (v[["shape"]] == "struct") {
+    ctor_formals(v[["fields"]])
   } else {
-    of <- formals(.r8_types[[v[[1L]][["of"]]]])
-    required <- required_formals(of)
-    of[!names(of) %in% required] <- list(NULL)
-    of
+    ctor_formals(r8_type_ir(v[["of"]])[["fields"]])
   }
   as.function(
     c(
@@ -726,12 +886,13 @@ new_enum <- function(
         names(formals),
         name,
         required = required_formals(formals),
-        native = native
+        native = native,
+        package = package
       )
     ),
     envir = asNamespace("R8")
   )
-} # /R8::@.r8_enum_type
+} # /R8::build_variant
 
 
 # %% r8_declaration ----
@@ -755,6 +916,7 @@ r8_declaration <- function(type) {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
+  ensure_registered(type)
   r8_type_document(attr(type, "r8_name"))
 } # /R8::r8_declaration
 
@@ -769,7 +931,7 @@ r8_declaration <- function(type) {
 #'
 #' @export
 print.r8_type <- function(x, ...) {
-  ir <- attr(x, "r8_ir")
+  ir <- type_ir(x)
   cat(
     "<",
     ir[["kind"]],

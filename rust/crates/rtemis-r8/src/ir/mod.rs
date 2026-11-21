@@ -17,8 +17,8 @@ pub use decl::{
     RuleDef, SplitTarget, StructDef, TraitDef, VariantDef, VariantShape,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
-pub use logic::Logic;
-pub use types::{CharacterType, DoubleType, FieldType, IntegerType, Resolve};
+pub use logic::{Logic, Operator};
+pub use types::{Bound, CharacterType, DoubleType, FieldType, IntegerType, Resolve};
 
 /// The JSON Schema (draft 2020-12) of the IR document, generated from the IR
 /// types. `schemas/ir-v1.schema.json` holds the published copy, and a test

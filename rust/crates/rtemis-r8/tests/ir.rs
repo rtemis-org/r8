@@ -40,7 +40,7 @@ fn a_non_finite_bound_is_reported() {
     let rtemis_r8::ir::FieldType::Double(cost) = &mut svm.fields[0].ty else {
         panic!("Svm's first field is a double");
     };
-    cost.max = Some(f64::INFINITY);
+    cost.upper = Some(rtemis_r8::ir::Bound::inclusive(f64::INFINITY));
     let codes: Vec<_> = check_document(&d)
         .into_iter()
         .map(|e| (e.code, e.path))
@@ -65,4 +65,44 @@ fn the_r_fixtures_match_this_fixture() {
         assert_eq!(r.namespace, d.namespace, "{file}");
         assert_eq!(r.types, vec![d.types[index].clone()], "{file}");
     }
+}
+
+/// Each side of a numeric range holds one bound: inclusive (`min`, `max`) or
+/// exclusive (`exclusive_min`, `exclusive_max`), each written back as read.
+#[test]
+fn a_numeric_type_holds_one_bound_per_side() {
+    use rtemis_r8::ir::{Bound, DoubleType, FieldType, IntegerType};
+    let read = |v: serde_json::Value| serde_json::from_value::<FieldType>(v);
+    for v in [
+        json!({"kind": "double", "min": 0.0, "max": 1.0}),
+        json!({"kind": "double", "exclusive_min": 0.0, "exclusive_max": 1.0}),
+        json!({"kind": "double", "max": 1.0, "exclusive_min": 0.0}),
+        json!({"kind": "integer", "min": 1, "exclusive_max": 10}),
+        json!({"kind": "double", "finite": false}),
+    ] {
+        assert_eq!(serde_json::to_value(read(v.clone()).unwrap()).unwrap(), v);
+    }
+    for v in [
+        json!({"kind": "double", "min": 0.0, "exclusive_min": 0.0}),
+        json!({"kind": "integer", "max": 3, "exclusive_max": 4}),
+    ] {
+        let e = read(v).unwrap_err().to_string();
+        assert!(e.contains("not both"), "{e}");
+    }
+    let d = DoubleType {
+        lower: Some(Bound::exclusive(0.0)),
+        upper: Some(Bound::inclusive(1.0)),
+        ..DoubleType::default()
+    };
+    assert!(!d.in_range(0.0) && d.in_range(1e-300) && d.in_range(1.0) && !d.in_range(1.0001));
+    assert_eq!(
+        (d.min(), d.exclusive_min(), d.max()),
+        (None, Some(0.0), Some(1.0))
+    );
+    let i = IntegerType {
+        lower: Some(Bound::inclusive(1)),
+        upper: Some(Bound::exclusive(10)),
+        values: None,
+    };
+    assert!(!i.in_range(0) && i.in_range(1) && i.in_range(9) && !i.in_range(10));
 }

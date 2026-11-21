@@ -11,11 +11,11 @@
 round_trip <- function(ns, types) {
   before <- vapply(
     types,
-    function(t) R8:::canonical_ir(attr(t, "r8_ir")),
+    function(t) R8:::canonical_ir(R8:::type_ir(t)),
     character(1)
   )
   lines <- unlist(lapply(types, function(t) {
-    ir <- R8:::r8_json_parse(R8:::r8_ir_json(attr(t, "r8_ir")))
+    ir <- R8:::type_ir(t)
     if (ir[["kind"]] == "struct") {
       R8:::render_struct(ir, ns, native = FALSE)
     } else {
@@ -30,8 +30,8 @@ round_trip <- function(ns, types) {
   after <- vapply(
     types,
     function(t) {
-      name <- attr(t, "r8_ir")[["name"]]
-      R8:::canonical_ir(attr(env[[name]], "r8_ir"))
+      name <- R8:::type_ir(t)[["name"]]
+      R8:::canonical_ir(R8:::type_ir(env[[name]]))
     },
     character(1)
   )
@@ -55,7 +55,8 @@ test_that("every field type renders as R that declares the same IR", {
       "S",
       fields = list(
         l = type_logical(),
-        i = type_integer(min = -1L, max = 10L, exclusive_max = 11L),
+        i = type_integer(min = -1L, max = 10L),
+        ie = type_integer(exclusive_min = -2L, exclusive_max = 11L),
         iv = type_integer(values = c(1L, 2L, 3L)),
         d = type_double(exclusive_min = 0, finite = FALSE),
         dv = type_double(values = c(0.5, 1.25)),
@@ -109,6 +110,44 @@ test_that("every field type renders as R that declares the same IR", {
     rt[["before"]],
     info = paste(rt[["text"]], collapse = "\n")
   )
+})
+
+test_that("a declaration read back from the registry as R lists declares the same type", {
+  types <- declare_in("ir_lists", {
+    K <- new_enum(
+      "K",
+      variants = list(
+        Linear = variant(),
+        Rbf = variant(
+          fields = list(gamma = type_double(exclusive_min = 0, max = 10))
+        )
+      ),
+      tag = "kind"
+    )
+    S <- new_struct(
+      "S",
+      fields = list(
+        i = type_integer(min = 1L, exclusive_max = 9L),
+        f = type_factor(levels = c("lo", "hi"), ordered = TRUE),
+        v = vec(type_double(min = 0), min_length = 1L, unique = TRUE),
+        o = option(type_character(pattern = "^[a-z]+$")),
+        h = hashmap(type_integer()),
+        k = field(K, default = K@Linear, description = "A kernel."),
+        tb = type_table(list(
+          start = type_integer(),
+          label = field(type_character(), optional = TRUE)
+        ))
+      ),
+      rules = list(rule("I_SMALL", i < 5L, "i is small.", when = !is.null(o)))
+    )
+    list(K, S)
+  })
+  for (t in types) {
+    before <- r8_declaration(t)
+    problems <- R8:::r8_declare_type(R8:::type_ir(t), "ir_lists")
+    expect_length(problems[["code"]], 0L)
+    expect_identical(r8_declaration(t), before)
+  }
 })
 
 test_that("field facts, defaults, and rules render as R that declares the same IR", {
@@ -269,7 +308,7 @@ test_that("a native enum's variants and unit values wait for its codec", {
   expect_error(E@A(x = 1), class = "r8_codec_missing")
   expect_error(E@B, class = "r8_codec_missing")
   lines <- R8:::render_enum(
-    R8:::r8_json_parse(R8:::r8_ir_json(attr(E, "r8_ir"))),
+    R8:::type_ir(E),
     "gen_native_enum",
     native = TRUE
   )

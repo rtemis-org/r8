@@ -170,7 +170,7 @@ pub fn is_host_keyword(s: &str) -> bool {
 
 /// A name that satisfies rules 1 and 2.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Name(String);
+pub struct Name(Box<str>);
 
 impl Name {
     /// Checks `s` against rules 1 and 2.
@@ -182,7 +182,7 @@ impl Name {
         if R_RESERVED.contains(&s.as_str()) || RUST_UNESCAPABLE.contains(&s.as_str()) {
             return Err(NameError::Reserved(s));
         }
-        Ok(Name(s))
+        Ok(Name(s.into_boxed_str()))
     }
 
     /// The name as text.
@@ -263,20 +263,20 @@ impl<'de> Deserialize<'de> for QualifiedName {
 /// Each binding maps periods to underscores (`as.data.frame` becomes
 /// `as_data_frame`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MethodName(String);
+pub struct MethodName(Box<str>);
 
 impl MethodName {
     /// A method name: a name, `...`, or an R function name.
     pub fn new(s: impl Into<String>) -> Result<Self, NameError> {
         let s = s.into();
         if s == "[" {
-            return Ok(MethodName(s));
+            return Ok(MethodName(s.into_boxed_str()));
         }
         let base = s.strip_suffix("<-").unwrap_or(&s);
         if !is_syntactic_r_name(base) {
             return Err(NameError::Method(s));
         }
-        Ok(MethodName(s))
+        Ok(MethodName(s.into_boxed_str()))
     }
 
     /// The name as text.

@@ -28,6 +28,7 @@ alloc-stats = []
 extendr-api = '0.9'
 extendr-ffi = '0.9'
 rtemis-r8 = '0.4'
+serde = '1'
 serde_json = { version = '1', features = ['float_roundtrip', 'preserve_order'] }
 
 [profile.release]

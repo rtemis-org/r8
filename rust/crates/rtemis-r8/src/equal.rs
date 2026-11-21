@@ -215,7 +215,7 @@ impl Eq<'_> {
     /// codes otherwise, as their canonical forms are written.
     fn factor<'a, A: Access<'a>>(
         &self,
-        declared: Option<&[String]>,
+        declared: Option<&[Box<str>]>,
         ordered: bool,
         a: A,
         b: A,

@@ -41,6 +41,9 @@ pub struct CompiledRule {
     pub message: String,
     invariant: Expr,
     when: Option<Expr>,
+    /// The fields the invariant and the condition read, presence tests
+    /// included: a change to any of them can change the outcome.
+    reads: Box<[String]>,
 }
 
 /// The result of checking one rule against one value.
@@ -89,14 +92,31 @@ impl CompiledRule {
             None => Some(None),
         };
         match (invariant, when) {
-            (Some(invariant), Some(when)) if errors.is_empty() => Ok(CompiledRule {
-                id: rule.id.clone(),
-                message: rule.message.clone(),
-                invariant,
-                when,
-            }),
+            (Some(invariant), Some(when)) if errors.is_empty() => {
+                let mut read = reads(&rule.invariant);
+                if let Some(w) = &rule.when {
+                    for f in reads(w) {
+                        if !read.contains(&f) {
+                            read.push(f);
+                        }
+                    }
+                }
+                Ok(CompiledRule {
+                    id: rule.id.clone(),
+                    message: rule.message.clone(),
+                    invariant,
+                    when,
+                    reads: read.into_boxed_slice(),
+                })
+            }
             _ => Err(errors),
         }
+    }
+
+    /// Whether the invariant or the condition reads the field `name`, as a
+    /// value or as a presence test.
+    pub fn reads_field(&self, name: &str) -> bool {
+        self.reads.iter().any(|f| f == name)
     }
 
     /// Checks the rule against a value's JSON form.
@@ -336,23 +356,31 @@ pub enum Computed<A> {
 /// The fields a computed expression reads, by name, in the order the
 /// expression names them.
 pub fn reads(logic: &crate::ir::Logic) -> Vec<String> {
-    fn walk(v: &Value, out: &mut Vec<String>) {
-        match v {
-            Value::Object(m) => {
-                if let Some(Value::String(p)) = m.get("var") {
-                    let head = p.split('.').next().unwrap_or_default().to_string();
-                    if !head.starts_with('.') && !out.contains(&head) {
-                        out.push(head);
-                    }
+    use crate::ir::{Logic, Operator};
+    fn push(path: &str, out: &mut Vec<String>) {
+        let head = path.split('.').next().unwrap_or_default();
+        if !head.starts_with('.') && !out.iter().any(|x| x == head) {
+            out.push(head.to_string());
+        }
+    }
+    fn walk(l: &Logic, out: &mut Vec<String>) {
+        match l {
+            Logic::Var(p) => push(p, out),
+            Logic::Call {
+                op: Operator::Var,
+                args,
+                ..
+            } => {
+                if let Some(p) = args.first().and_then(Logic::as_str) {
+                    push(p, out);
                 }
-                m.values().for_each(|x| walk(x, out));
             }
-            Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            Logic::Call { args, .. } | Logic::Array(args) => args.iter().for_each(|x| walk(x, out)),
             _ => {}
         }
     }
     let mut out = Vec::new();
-    walk(&logic.0, &mut out);
+    walk(logic, &mut out);
     out
 }
 

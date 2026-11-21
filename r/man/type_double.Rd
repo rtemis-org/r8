@@ -18,9 +18,11 @@ type_double(
 
 \item{max}{Optional Numeric: Largest admitted value.}
 
-\item{exclusive_min}{Optional Numeric: The value must be above it.}
+\item{exclusive_min}{Optional Numeric: The value must be above it. Given
+with \code{min}, it raises \code{r8_declaration_error}.}
 
-\item{exclusive_max}{Optional Numeric: The value must be below it.}
+\item{exclusive_max}{Optional Numeric: The value must be below it. Given
+with \code{max}, it raises \code{r8_declaration_error}.}
 
 \item{finite}{Logical: Restrict the domain to finite values.}
 

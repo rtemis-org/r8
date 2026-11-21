@@ -85,7 +85,7 @@ fn exported_schemas_agree_with_validation() {
     for path in suites(&dir) {
         let suite: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let Some(ir) = suite.get("ir") else { continue };
-        let docs = DocumentSet(match ir {
+        let docs = DocumentSet::from(match ir {
             Value::Array(a) => a
                 .iter()
                 .map(|d| IrDocument::from_json(&d.to_string()).unwrap())

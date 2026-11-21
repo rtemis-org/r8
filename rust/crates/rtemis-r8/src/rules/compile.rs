@@ -5,11 +5,9 @@
 //! so a rule's mistakes are declaration errors. The result is a typed tree
 //! that `eval` runs.
 
-use serde_json::Value;
-
 use super::eval::Scalar;
 use super::ty::{Shape, Ty, TypeLookup, VariantFields, shape};
-use crate::ir::{FieldDef, Logic};
+use crate::ir::{FieldDef, Logic, Operator};
 
 /// A problem in a rule expression, located by a JSON Pointer into the
 /// expression.
@@ -122,7 +120,7 @@ pub enum Expr {
     /// `levels(x)`; `declared` holds the levels a factor type declares.
     Levels {
         value: Box<Expr>,
-        declared: Option<Vec<String>>,
+        declared: Option<Box<[Box<str>]>>,
     },
     Quantifier {
         all: bool,
@@ -150,6 +148,51 @@ fn unit_of(t: &Ty) -> Option<&str> {
     }
 }
 
+/// The compiled operator and the number of operands of an operator whose
+/// operands are evaluated; `None` for the operators that compile specially.
+fn evaluated(op: Operator) -> Option<(Op, std::ops::RangeInclusive<usize>)> {
+    use Operator as O;
+    Some(match op {
+        O::StrictEq => (Op::Eq, 2..=2),
+        O::StrictNe => (Op::Ne, 2..=2),
+        O::Lt => (Op::Lt, 2..=2),
+        O::Le => (Op::Le, 2..=2),
+        O::Gt => (Op::Gt, 2..=2),
+        O::Ge => (Op::Ge, 2..=2),
+        O::Not => (Op::Not, 1..=1),
+        O::Add => (Op::Add, 2..=usize::MAX),
+        O::Sub => (Op::Sub, 1..=2),
+        O::Mul => (Op::Mul, 2..=usize::MAX),
+        O::Div => (Op::Div, 2..=2),
+        O::Mod => (Op::Mod, 2..=2),
+        O::Min => (Op::Min, 1..=usize::MAX),
+        O::Max => (Op::Max, 1..=usize::MAX),
+        O::In => (Op::In, 2..=2),
+        O::Cat => (Op::Cat, 1..=usize::MAX),
+        O::Length => (Op::Length, 1..=1),
+        O::Subset => (Op::Subset, 2..=2),
+        O::NonIncreasing => (Op::NonIncreasing, 1..=1),
+        O::NonDecreasing => (Op::NonDecreasing, 1..=1),
+        O::Floor => (Op::Floor, 1..=1),
+        O::Ceiling => (Op::Ceiling, 1..=1),
+        O::Round => (Op::Round, 1..=1),
+        O::Nrow => (Op::Nrow, 1..=1),
+        O::Ncol => (Op::Ncol, 1..=1),
+        O::Dim => (Op::Dim, 1..=1),
+        O::Var
+        | O::LooseEq
+        | O::LooseNe
+        | O::IsNull
+        | O::IsVariant
+        | O::Levels
+        | O::All
+        | O::Any
+        | O::If
+        | O::And
+        | O::Or => return None,
+    })
+}
+
 impl Compiler<'_> {
     fn error(&mut self, code: &'static str, path: &str, message: String) -> (Expr, Ty) {
         self.errors.push(RuleError {
@@ -160,61 +203,74 @@ impl Compiler<'_> {
         (Expr::Lit(Scalar::Null), Ty::Any)
     }
 
-    fn compile(&mut self, logic: &Value, path: &str) -> (Expr, Ty) {
+    fn compile(&mut self, logic: &Logic, path: &str) -> (Expr, Ty) {
         match logic {
-            Value::Bool(b) => (Expr::Lit(Scalar::Bool(*b)), Ty::Bool),
-            Value::Number(n) => (
+            Logic::Bool(b) => (Expr::Lit(Scalar::Bool(*b)), Ty::Bool),
+            Logic::Number(n) => (
                 Expr::Lit(Scalar::Num(n.as_f64().unwrap_or(f64::NAN))),
                 Ty::Number { unit: None },
             ),
-            Value::String(t) => (Expr::Lit(Scalar::Str(t.clone())), Ty::String),
-            Value::Null => (Expr::Lit(Scalar::Null), Ty::Any),
-            Value::Array(items) => {
+            Logic::String(t) => (Expr::Lit(Scalar::Str(t.to_string())), Ty::String),
+            Logic::Null => (Expr::Lit(Scalar::Null), Ty::Any),
+            Logic::Array(items) => {
                 let mut elem = None;
                 let mut out = Vec::new();
                 for (i, item) in items.iter().enumerate() {
                     let (e, t) = self.compile(item, &format!("{path}/{i}"));
-                    if !matches!(e, Expr::Lit(_)) {
+                    let Expr::Lit(v) = e else {
                         return self.error(
                             "rule_array_literal",
                             &format!("{path}/{i}"),
                             "an array literal holds literal values only".to_string(),
                         );
-                    }
+                    };
                     elem.get_or_insert(t);
-                    out.push(match e {
-                        Expr::Lit(v) => v,
-                        _ => unreachable!(),
-                    });
+                    out.push(v);
                 }
                 (
                     Expr::Lit(Scalar::Array(out)),
                     Ty::Array(Box::new(elem.unwrap_or(Ty::Any))),
                 )
             }
-            Value::Object(map) if map.len() == 1 => {
-                let (op, args) = map.iter().next().expect("one member");
-                let raw: Vec<&Value> = match args {
-                    Value::Array(a) => a.iter().collect(),
-                    single => vec![single],
-                };
-                self.operation(op, &raw, &format!("{path}/{}", pointer_segment(op)))
+            Logic::Var(p) => self.var_path(p, &format!("{path}/var")),
+            Logic::Call { op, args, .. } => {
+                let args: Vec<&Logic> = args.iter().collect();
+                self.operation(
+                    *op,
+                    &args,
+                    &format!("{path}/{}", pointer_segment(op.as_str())),
+                )
             }
-            Value::Object(map) => self.error(
-                "rule_operation",
-                path,
-                format!(
-                    "an operation is an object with one member, found {}",
-                    map.len()
+            Logic::Other(v) => match v.as_object() {
+                Some(m) if m.len() == 1 => {
+                    let op = m.keys().next().expect("one member");
+                    self.error(
+                        "rule_operator",
+                        &format!("{path}/{}", pointer_segment(op)),
+                        format!("`{op}` is not an operator of R8 rules"),
+                    )
+                }
+                Some(m) => self.error(
+                    "rule_operation",
+                    path,
+                    format!(
+                        "an operation is an object with one member, found {}",
+                        m.len()
+                    ),
                 ),
-            ),
+                None => self.error(
+                    "rule_operation",
+                    path,
+                    "an operation is an object with one member".to_string(),
+                ),
+            },
         }
     }
 
     fn arity(
         &mut self,
         op: &str,
-        args: &[&Value],
+        args: &[&Logic],
         n: std::ops::RangeInclusive<usize>,
         path: &str,
     ) -> bool {
@@ -236,7 +292,7 @@ impl Compiler<'_> {
         false
     }
 
-    fn operands(&mut self, args: &[&Value], path: &str) -> Vec<(Expr, Ty)> {
+    fn operands(&mut self, args: &[&Logic], path: &str) -> Vec<(Expr, Ty)> {
         args.iter()
             .enumerate()
             .map(|(i, a)| self.compile(a, &format!("{path}/{i}")))
@@ -343,13 +399,18 @@ impl Compiler<'_> {
         self.same_unit(a, b, path, op);
     }
 
-    fn var(&mut self, args: &[&Value], path: &str) -> (Expr, Ty) {
+    fn var(&mut self, args: &[&Logic], path: &str) -> (Expr, Ty) {
         if !self.arity("var", args, 1..=1, path) {
             return (Expr::Lit(Scalar::Null), Ty::Any);
         }
         let Some(p) = args[0].as_str() else {
             return self.error("rule_var", path, "`var` takes a path string".to_string());
         };
+        self.var_path(p, path)
+    }
+
+    /// Resolves the path `p` of a `var` to a field and its static type.
+    fn var_path(&mut self, p: &str, path: &str) -> (Expr, Ty) {
         let mut segments: Vec<&str> = p.split('.').collect();
         let mut steps = Vec::new();
         let (root, mut ty) = if p == ".x" || p.starts_with(".x.") {
@@ -497,18 +558,23 @@ impl Compiler<'_> {
         }
     }
 
-    fn operation(&mut self, op: &str, args: &[&Value], path: &str) -> (Expr, Ty) {
-        match op {
-            "var" => return self.var(args, path),
-            "==" | "!=" => {
-                let strict = if op == "==" { "===" } else { "!==" };
+    fn operation(&mut self, operator: Operator, args: &[&Logic], path: &str) -> (Expr, Ty) {
+        let op = operator.as_str();
+        match operator {
+            Operator::Var => return self.var(args, path),
+            Operator::LooseEq | Operator::LooseNe => {
+                let strict = if operator == Operator::LooseEq {
+                    "==="
+                } else {
+                    "!=="
+                };
                 return self.error(
                     "rule_loose_equality",
                     path,
                     format!("`{op}` is JSONLogic's loose equality; R8 rules write strict equality as `{strict}`"),
                 );
             }
-            "is_null" => {
+            Operator::IsNull => {
                 if !self.arity(op, args, 1..=1, path) {
                     return (Expr::Lit(Scalar::Null), Ty::Bool);
                 }
@@ -522,8 +588,8 @@ impl Compiler<'_> {
                 }
                 return (Expr::IsNull(Box::new(e)), Ty::Bool);
             }
-            "is_variant" => return self.is_variant(args, path),
-            "levels" => {
+            Operator::IsVariant => return self.is_variant(args, path),
+            Operator::Levels => {
                 if !self.arity(op, args, 1..=1, path) {
                     return (Expr::Lit(Scalar::Null), Ty::Any);
                 }
@@ -547,8 +613,10 @@ impl Compiler<'_> {
                     Ty::Array(Box::new(Ty::String)),
                 );
             }
-            "all" | "any" => return self.quantifier(op == "all", args, path),
-            "if" => {
+            Operator::All | Operator::Any => {
+                return self.quantifier(operator == Operator::All, args, path);
+            }
+            Operator::If => {
                 if !self.arity(op, args, 3..=usize::MAX, path) || args.len().is_multiple_of(2) {
                     return self.error(
                         "rule_arity",
@@ -570,7 +638,7 @@ impl Compiler<'_> {
                     result,
                 );
             }
-            "and" | "or" => {
+            Operator::And | Operator::Or => {
                 if !self.arity(op, args, 1..=usize::MAX, path) {
                     return (Expr::Lit(Scalar::Null), Ty::Bool);
                 }
@@ -580,7 +648,7 @@ impl Compiler<'_> {
                 }
                 let es = parts.into_iter().map(|(e, _)| e).collect();
                 return (
-                    if op == "and" {
+                    if operator == Operator::And {
                         Expr::And(es)
                     } else {
                         Expr::Or(es)
@@ -590,41 +658,8 @@ impl Compiler<'_> {
             }
             _ => {}
         }
-        let (code, range) = match op {
-            "===" => (Op::Eq, 2..=2),
-            "!==" => (Op::Ne, 2..=2),
-            "<" => (Op::Lt, 2..=2),
-            "<=" => (Op::Le, 2..=2),
-            ">" => (Op::Gt, 2..=2),
-            ">=" => (Op::Ge, 2..=2),
-            "!" => (Op::Not, 1..=1),
-            "+" => (Op::Add, 2..=usize::MAX),
-            "-" => (Op::Sub, 1..=2),
-            "*" => (Op::Mul, 2..=usize::MAX),
-            "/" => (Op::Div, 2..=2),
-            "%" => (Op::Mod, 2..=2),
-            "min" => (Op::Min, 1..=usize::MAX),
-            "max" => (Op::Max, 1..=usize::MAX),
-            "in" => (Op::In, 2..=2),
-            "cat" => (Op::Cat, 1..=usize::MAX),
-            "length" => (Op::Length, 1..=1),
-            "subset" => (Op::Subset, 2..=2),
-            "non_increasing" => (Op::NonIncreasing, 1..=1),
-            "non_decreasing" => (Op::NonDecreasing, 1..=1),
-            "floor" => (Op::Floor, 1..=1),
-            "ceiling" => (Op::Ceiling, 1..=1),
-            "round" => (Op::Round, 1..=1),
-            "nrow" => (Op::Nrow, 1..=1),
-            "ncol" => (Op::Ncol, 1..=1),
-            "dim" => (Op::Dim, 1..=1),
-            other => {
-                return self.error(
-                    "rule_operator",
-                    path,
-                    format!("`{other}` is not an operator of R8 rules"),
-                );
-            }
-        };
+        let (code, range) =
+            evaluated(operator).expect("every other operator takes evaluated operands");
         if !self.arity(op, args, range, path) {
             return (Expr::Lit(Scalar::Null), Ty::Any);
         }
@@ -773,7 +808,7 @@ impl Compiler<'_> {
         }
     }
 
-    fn is_variant(&mut self, args: &[&Value], path: &str) -> (Expr, Ty) {
+    fn is_variant(&mut self, args: &[&Logic], path: &str) -> (Expr, Ty) {
         if !self.arity("is_variant", args, 2..=2, path) {
             return (Expr::Lit(Scalar::Null), Ty::Bool);
         }
@@ -828,7 +863,7 @@ impl Compiler<'_> {
         )
     }
 
-    fn quantifier(&mut self, all: bool, args: &[&Value], path: &str) -> (Expr, Ty) {
+    fn quantifier(&mut self, all: bool, args: &[&Logic], path: &str) -> (Expr, Ty) {
         let op = if all { "all" } else { "any" };
         if !self.arity(op, args, 2..=2, path) {
             return (Expr::Lit(Scalar::Null), Ty::Bool);
@@ -891,7 +926,7 @@ pub fn compile(
         element: None,
         errors: Vec::new(),
     };
-    let (expr, ty) = c.compile(&logic.0, "");
+    let (expr, ty) = c.compile(logic, "");
     if let Some(what) = logical {
         c.expect_bool(&ty, "", what);
     }
@@ -917,7 +952,7 @@ pub fn compile_computed(
         element: None,
         errors: Vec::new(),
     };
-    let (expr, ty) = c.compile(&logic.0, "");
+    let (expr, ty) = c.compile(logic, "");
     if let Ty::Number { .. } = target {
         c.expect_number(&ty, "", "a computed numeric field");
         c.same_unit(target, &ty, "", "the computed field's value and its target");

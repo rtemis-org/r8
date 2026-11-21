@@ -60,6 +60,39 @@ check_number <- function(x, name) {
 } # /R8::check_number
 
 
+# %% check_bounds ----
+#' Check that a numeric type sets one bound per side
+#'
+#' @param min,max,exclusive_min,exclusive_max The bounds given.
+#'
+#' @return `NULL`, invisibly; aborts with `r8_declaration_error` when a side
+#'   has both an inclusive and an exclusive bound.
+#'
+#' @keywords internal
+#' @noRd
+check_bounds <- function(min, max, exclusive_min, exclusive_max) {
+  for (side in list(c("min", "exclusive_min"), c("max", "exclusive_max"))) {
+    given <- list(
+      min = min,
+      max = max,
+      exclusive_min = exclusive_min,
+      exclusive_max = exclusive_max
+    )[side]
+    if (!is.null(given[[1L]]) && !is.null(given[[2L]])) {
+      r8_abort(
+        "`",
+        side[[1L]],
+        "` and `",
+        side[[2L]],
+        "` bound the same side; give one of them.",
+        class = "r8_declaration_error"
+      )
+    }
+  }
+  invisible(NULL)
+} # /R8::check_bounds
+
+
 # %% type_logical ----
 #' Logical field type
 #'
@@ -84,8 +117,10 @@ type_logical <- function() {
 #'
 #' @param min Optional Integer: Smallest admitted value.
 #' @param max Optional Integer: Largest admitted value.
-#' @param exclusive_min Optional Integer: The value must be above it.
-#' @param exclusive_max Optional Integer: The value must be below it.
+#' @param exclusive_min Optional Integer: The value must be above it. Given
+#'   with `min`, it raises `r8_declaration_error`.
+#' @param exclusive_max Optional Integer: The value must be below it. Given
+#'   with `max`, it raises `r8_declaration_error`.
 #' @param values Optional Integer: The admitted values.
 #'
 #' @return An `r8_field_type`.
@@ -104,6 +139,7 @@ type_integer <- function(
   for (n in c("min", "max", "exclusive_min", "exclusive_max")) {
     check_number(get(n), n)
   }
+  check_bounds(min, max, exclusive_min, exclusive_max)
   as_int <- function(x) if (is.null(x)) NULL else as.integer(x)
   new_field_type(
     "integer",
@@ -124,8 +160,10 @@ type_integer <- function(
 #'
 #' @param min Optional Numeric: Smallest admitted value.
 #' @param max Optional Numeric: Largest admitted value.
-#' @param exclusive_min Optional Numeric: The value must be above it.
-#' @param exclusive_max Optional Numeric: The value must be below it.
+#' @param exclusive_min Optional Numeric: The value must be above it. Given
+#'   with `min`, it raises `r8_declaration_error`.
+#' @param exclusive_max Optional Numeric: The value must be below it. Given
+#'   with `max`, it raises `r8_declaration_error`.
 #' @param finite Logical: Restrict the domain to finite values.
 #' @param values Optional Numeric: The admitted values.
 #'
@@ -146,6 +184,7 @@ type_double <- function(
   for (n in c("min", "max", "exclusive_min", "exclusive_max")) {
     check_number(get(n), n)
   }
+  check_bounds(min, max, exclusive_min, exclusive_max)
   as_dbl <- function(x) if (is.null(x)) NULL else as.double(x)
   new_field_type(
     "double",

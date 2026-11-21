@@ -156,6 +156,45 @@ test_that("values cross to mirai and future workers and back", {
   expect_true("future-value TRUE " %in% out, info = info)
 })
 
+test_that("a type declared outside a package registers on first use in a worker", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("mirai")
+  skip_if_not_installed("future")
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "options(r8.namespace = 'scratch')",
+      "K <- R8::new_enum('K', variants = list(Linear = R8::variant(), Rbf = R8::variant(fields = list(gamma = R8::type_double()))))",
+      "S <- R8::new_struct('S', fields = list(cost = R8::type_double(min = 0), kernel = R8::field(K, default = K@Linear)))",
+      "cat('record', is.raw(attr(S, 'r8_record')), is.null(attr(S, 'r8_ir')), '\n')",
+      "mirai::daemons(1)",
+      "# The worker has no declaration of S or K; S's record holds both.",
+      "m <- mirai::mirai({ v <- S(cost = 2); list(cost = v$cost, kernel = attr(v$kernel, 'r8_variant')) }, S = S)",
+      "r <- mirai::collect_mirai(m)",
+      "cat('mirai', r$cost, r$kernel, '\n')",
+      "m2 <- mirai::mirai(tryCatch(S(cost = -1), r8_value_error = function(e) 'refused'), S = S)",
+      "cat('mirai-invalid', mirai::collect_mirai(m2), '\n')",
+      "m3 <- mirai::mirai(K@Rbf(gamma = 0.5)$gamma, K = K)",
+      "cat('mirai-variant', mirai::collect_mirai(m3), '\n')",
+      "mirai::daemons(0)",
+      "future::plan(future::multisession, workers = 1)",
+      "f <- future::future(S(cost = 3)$cost, globals = list(S = S), packages = character())",
+      "cat('future', future::value(f), '\n')",
+      "future::plan(future::sequential)"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("record TRUE TRUE " %in% out, info = info)
+  expect_true("mirai 2 Linear " %in% out, info = info)
+  expect_true("mirai-invalid refused " %in% out, info = info)
+  expect_true("mirai-variant 0.5 " %in% out, info = info)
+  expect_true("future 3 " %in% out, info = info)
+})
+
 test_that("load_all() twice replaces a package's declarations", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
@@ -544,7 +583,7 @@ test_that("the generator names a type of another namespace by its package's expo
       "op <- options(r8.namespace = 'model')",
       "Fit <- R8::new_struct('Fit', fields = list(shape = r8pkgA::Shape))",
       "options(op)",
-      "ir <- R8:::r8_json_parse(R8:::r8_ir_json(attr(Fit, 'r8_ir')))",
+      "ir <- R8:::type_ir(Fit)",
       "lines <- R8:::render_struct(ir, 'model', native = FALSE)",
       "cat('rendered', any(grepl('shape = r8pkgA::Shape', lines, fixed = TRUE)), '\\n')",
       "desc('R8')",

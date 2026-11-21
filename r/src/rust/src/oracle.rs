@@ -68,21 +68,19 @@ fn encode_with_runtime(
 #[extendr]
 fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<List> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
+    let docs = crate::declare::snapshot()?;
+    let docs: &DocumentSet = &docs;
     let mut input = fields.duplicate();
     input.set_class([type_name, "r8_value"])?;
     input.set_attrib("r8_type", type_name)?;
     if !variant.is_empty() {
         input.set_attrib("r8_variant", variant)?;
     }
-    match encode_and_validate(&input, &q, &docs)
-        .and_then(|v| rtemis_r8::codec::normalize(&v, &q, &docs))
+    match encode_and_validate(&input, &q, docs)
+        .and_then(|v| rtemis_r8::codec::normalize(&v, &q, docs))
     {
         Ok(v) => {
-            let value = Decoder { lookup: &docs }.named(&v, &q, Some(&input))?;
+            let value = Decoder { lookup: docs }.named(&v, &q, Some(&input))?;
             Ok(list!(value = value))
         }
         Err(errors) => Ok(list!(errors = errors_list(&errors))),
@@ -103,9 +101,10 @@ fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
     let docs = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
-    let result = read_document(text, &q, &*docs).and_then(|v| {
-        let canonical = rtemis_r8::codec::canonical(&v, &q, &*docs)?;
-        let hash = rtemis_r8::codec::content_hash(&v, &q, &*docs)?;
+    let docs: &DocumentSet = &docs;
+    let result = read_document(text, &q, docs).and_then(|v| {
+        let canonical = rtemis_r8::codec::canonical(&v, &q, docs)?;
+        let hash = rtemis_r8::codec::content_hash(&v, &q, docs)?;
         Ok((canonical, hash))
     });
     match result {

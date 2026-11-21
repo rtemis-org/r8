@@ -963,8 +963,8 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
     }
 }
 
-fn strings(items: &[String]) -> Scalar {
-    Scalar::Array(items.iter().map(|s| Scalar::Str(s.clone())).collect())
+fn strings(items: &[Box<str>]) -> Scalar {
+    Scalar::Array(items.iter().map(|s| Scalar::Str(s.to_string())).collect())
 }
 
 /// Whether items `0..n` of a vector hold `needle`, scanning doubles and

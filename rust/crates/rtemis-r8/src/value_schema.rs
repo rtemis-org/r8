@@ -61,16 +61,16 @@ impl Writer<'_> {
             FieldType::Integer(c) => {
                 let mut s = json!({"type": "integer", "minimum": INT_MIN, "maximum": INT_MAX});
                 let m = s.as_object_mut().unwrap();
-                if let Some(x) = c.min {
+                if let Some(x) = c.min() {
                     m.insert("minimum".into(), json!(x));
                 }
-                if let Some(x) = c.max {
+                if let Some(x) = c.max() {
                     m.insert("maximum".into(), json!(x));
                 }
-                if let Some(x) = c.exclusive_min {
+                if let Some(x) = c.exclusive_min() {
                     m.insert("exclusiveMinimum".into(), json!(x));
                 }
-                if let Some(x) = c.exclusive_max {
+                if let Some(x) = c.exclusive_max() {
                     m.insert("exclusiveMaximum".into(), json!(x));
                 }
                 if let Some(v) = &c.values {
@@ -82,10 +82,10 @@ impl Writer<'_> {
                 let mut n = json!({"type": "number"});
                 let m = n.as_object_mut().unwrap();
                 for (k, v) in [
-                    ("minimum", c.min),
-                    ("maximum", c.max),
-                    ("exclusiveMinimum", c.exclusive_min),
-                    ("exclusiveMaximum", c.exclusive_max),
+                    ("minimum", c.min()),
+                    ("maximum", c.max()),
+                    ("exclusiveMinimum", c.exclusive_min()),
+                    ("exclusiveMaximum", c.exclusive_max()),
                 ] {
                     if let Some(x) = v {
                         m.insert(k.into(), json!(x));
@@ -247,7 +247,7 @@ impl Writer<'_> {
         }
     }
 
-    fn factor(&mut self, levels: Option<&[String]>, cells_optional: bool) -> Value {
+    fn factor(&mut self, levels: Option<&[Box<str>]>, cells_optional: bool) -> Value {
         let maybe_null = |s: Value| if cells_optional { nullable(s) } else { s };
         match levels {
             Some(l) => json!({"type": "array", "items": maybe_null(json!({"enum": l}))}),
@@ -334,7 +334,7 @@ impl Writer<'_> {
             s["x-r8"] = json!({"unit": u});
         }
         if let Some(d) = &f.default {
-            s["default"] = d.clone();
+            s["default"] = (**d).clone();
         }
         s
     }

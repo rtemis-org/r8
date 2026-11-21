@@ -15,10 +15,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::codec::{read_document, to_document};
-use crate::ir::{FieldType, IR_VERSION, IrDocument, TypeDef};
+use crate::ir::{FieldType, TypeDef};
 use crate::name::{Name, QualifiedName};
 use crate::rules::DocumentSet;
 use crate::validate::ValueError;
@@ -310,53 +310,151 @@ macro_rules! map {
 }
 map!(HashMap, BTreeMap);
 
-/// Applies the constraints of a field's attributes to its field type, each
-/// at the level it constrains: `min_length`, `max_length`, and `unique` on
-/// the outermost `vec()`, every other constraint on the innermost scalar,
-/// through `option()` and `vec()`.
+/// The constraints of a derived field's attributes.
+#[doc(hidden)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Constraints {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub exclusive_min: Option<f64>,
+    pub exclusive_max: Option<f64>,
+    pub pattern: Option<&'static str>,
+    pub finite: Option<bool>,
+    pub min_length: Option<u64>,
+    pub max_length: Option<u64>,
+    pub unique: bool,
+}
+
+/// An integer bound of a constraint: a whole number in the integer range.
+fn int_bound(x: Option<f64>, what: &str) -> Result<Option<i32>, String> {
+    x.map(|v| {
+        if v.fract() == 0.0 && (-2_147_483_647.0..=2_147_483_647.0).contains(&v) {
+            Ok(v as i32)
+        } else {
+            Err(format!(
+                "`{what}` of an integer field is a whole number in the integer range"
+            ))
+        }
+    })
+    .transpose()
+}
+
+/// The bound of a side from an inclusive and an exclusive value.
+fn bound<T: PartialOrd + Copy>(
+    inclusive: Option<T>,
+    exclusive: Option<T>,
+    names: (&str, &str),
+) -> Result<Option<crate::ir::Bound<T>>, String> {
+    use crate::ir::Bound;
+    match (inclusive, exclusive) {
+        (Some(_), Some(_)) => Err(format!(
+            "`{}` and `{}` bound the same side",
+            names.0, names.1
+        )),
+        (Some(v), None) => Ok(Some(Bound::inclusive(v))),
+        (None, Some(v)) => Ok(Some(Bound::exclusive(v))),
+        (None, None) => Ok(None),
+    }
+}
+
+/// Applies a derived field's constraints to its field type: `min_length`,
+/// `max_length`, and `unique` on the outermost `vec()`, every other
+/// constraint on the innermost scalar, through `option()` and `vec()`; a
+/// constraint that the scalar's type does not take is an error.
 #[doc(hidden)]
 pub fn constrain(
-    ft: FieldType,
-    constraints: Value,
-    resolve: Option<Value>,
+    mut ft: FieldType,
+    c: Constraints,
+    resolve: Option<crate::ir::Resolve>,
 ) -> Result<FieldType, String> {
-    let mut v = serde_json::to_value(&ft).map_err(|e| e.to_string())?;
-    let c = constraints.as_object().cloned().unwrap_or_default();
-    let (outer, inner): (Vec<_>, Vec<_>) = c
-        .into_iter()
-        .partition(|(k, _)| matches!(k.as_str(), "min_length" | "max_length" | "unique"));
-    fn find_vec(v: &mut Value) -> Option<&mut Value> {
-        match v.get("kind").and_then(Value::as_str) {
-            Some("vec") => Some(v),
-            Some("option") => find_vec(v.get_mut("inner")?),
+    fn outer_vec(ft: &mut FieldType) -> Option<&mut FieldType> {
+        match ft {
+            FieldType::Vec { .. } => Some(ft),
+            FieldType::Option { inner, .. } => outer_vec(inner),
             _ => None,
         }
     }
-    fn find_scalar(v: &mut Value) -> &mut Value {
-        match v.get("kind").and_then(Value::as_str) {
-            Some("option") => find_scalar(v.get_mut("inner").expect("an option has inner")),
-            Some("vec") => find_scalar(v.get_mut("element").expect("a vec has element")),
-            _ => v,
+    fn scalar(ft: &mut FieldType) -> &mut FieldType {
+        match ft {
+            FieldType::Option { inner, .. } => scalar(inner),
+            FieldType::Vec { element, .. } => scalar(element),
+            other => other,
         }
     }
-    if !outer.is_empty() {
-        let vec =
-            find_vec(&mut v).ok_or("min_length, max_length, and unique apply to a Vec field")?;
-        for (k, x) in outer {
-            vec[k] = x;
+    if c.min_length.is_some() || c.max_length.is_some() || c.unique {
+        match outer_vec(&mut ft) {
+            Some(FieldType::Vec {
+                min_length,
+                max_length,
+                unique,
+                ..
+            }) => {
+                *min_length = c.min_length.or(*min_length);
+                *max_length = c.max_length.or(*max_length);
+                *unique |= c.unique;
+            }
+            _ => return Err("min_length, max_length, and unique apply to a Vec field".to_string()),
         }
     }
-    let scalar = find_scalar(&mut v);
-    for (k, x) in inner {
-        scalar[k] = x;
+    let numeric = c.min.is_some()
+        || c.max.is_some()
+        || c.exclusive_min.is_some()
+        || c.exclusive_max.is_some();
+    match scalar(&mut ft) {
+        FieldType::Double(d) => {
+            if c.pattern.is_some() {
+                return Err("`pattern` applies to a String field".to_string());
+            }
+            if c.min.is_some() || c.exclusive_min.is_some() {
+                d.lower = bound(c.min, c.exclusive_min, ("min", "exclusive_min"))?;
+            }
+            if c.max.is_some() || c.exclusive_max.is_some() {
+                d.upper = bound(c.max, c.exclusive_max, ("max", "exclusive_max"))?;
+            }
+            if let Some(f) = c.finite {
+                d.finite = f;
+            }
+        }
+        FieldType::Integer(i) => {
+            if c.pattern.is_some() || c.finite.is_some() {
+                return Err("`pattern` and `finite` do not apply to an integer field".to_string());
+            }
+            if c.min.is_some() || c.exclusive_min.is_some() {
+                i.lower = bound(
+                    int_bound(c.min, "min")?,
+                    int_bound(c.exclusive_min, "exclusive_min")?,
+                    ("min", "exclusive_min"),
+                )?;
+            }
+            if c.max.is_some() || c.exclusive_max.is_some() {
+                i.upper = bound(
+                    int_bound(c.max, "max")?,
+                    int_bound(c.exclusive_max, "exclusive_max")?,
+                    ("max", "exclusive_max"),
+                )?;
+            }
+        }
+        FieldType::Character(ch) => {
+            if numeric || c.finite.is_some() {
+                return Err("numeric constraints do not apply to a String field".to_string());
+            }
+            if let Some(p) = c.pattern {
+                ch.pattern = Some(p.into());
+            }
+        }
+        _ => {
+            if numeric || c.finite.is_some() || c.pattern.is_some() {
+                return Err("value constraints apply to a number or a String field".to_string());
+            }
+        }
     }
     if let Some(r) = resolve {
-        if v.get("kind").and_then(Value::as_str) != Some("option") {
-            return Err("resolve applies to an Option field".to_string());
+        match &mut ft {
+            FieldType::Option { resolve, .. } => *resolve = r,
+            _ => return Err("resolve applies to an Option field".to_string()),
         }
-        v["resolve"] = r;
     }
-    serde_json::from_value(v).map_err(|e| e.to_string())
+    Ok(ft)
 }
 
 /// Adds a declaration to the document of its namespace, once. Returns
@@ -365,23 +463,10 @@ pub fn constrain(
 #[doc(hidden)]
 pub fn register_def(set: &mut DocumentSet, name: &str, def: impl FnOnce() -> TypeDef) -> bool {
     let q = QualifiedName::parse(name).expect("the derive checks the name");
-    let doc = match set.0.iter().position(|d| d.namespace == q.namespace) {
-        Some(i) => &mut set.0[i],
-        None => {
-            set.0.push(IrDocument {
-                ir_version: IR_VERSION,
-                namespace: q.namespace.clone(),
-                types: Vec::new(),
-                traits: Vec::new(),
-                impls: Vec::new(),
-            });
-            set.0.last_mut().expect("just pushed")
-        }
-    };
-    if doc.types.iter().any(|t| t.name() == &q.name) {
+    if crate::rules::TypeLookup::find(&*set, &q).is_some() {
         return false;
     }
-    doc.types.push(def());
+    set.put_type(&q.namespace, def());
     true
 }
 
@@ -393,30 +478,8 @@ pub fn named(name: &str) -> FieldType {
     }
 }
 
-/// Builds a declaration from its JSON form, as the derive writes it.
-#[doc(hidden)]
-pub fn type_def(v: Value) -> TypeDef {
-    serde_json::from_value(v)
-        .unwrap_or_else(|e| panic!("the derive wrote an invalid declaration: {e}"))
-}
-
 /// A name, checked.
 #[doc(hidden)]
 pub fn name(s: &str) -> Name {
     Name::new(s).expect("the derive checks names")
-}
-
-#[doc(hidden)]
-pub fn field_json(ft: &FieldType) -> Value {
-    serde_json::to_value(ft).expect("a field type serializes")
-}
-
-#[doc(hidden)]
-pub fn object(pairs: Vec<(&str, Value)>) -> Value {
-    Value::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
-}
-
-#[doc(hidden)]
-pub fn empty() -> Value {
-    json!({})
 }

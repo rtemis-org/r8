@@ -160,7 +160,10 @@ impl Checker<'_> {
                     }
                 }
             }
-            self.extensions(f.extensions.keys(), &format!("{fpath}/extensions"));
+            self.extensions(
+                f.extensions.iter().flat_map(|m| m.keys()),
+                &format!("{fpath}/extensions"),
+            );
             if let Some(d) = &f.default {
                 // A default whose type lies outside this document is checked
                 // by the registry.
@@ -190,7 +193,7 @@ impl Checker<'_> {
                 }
             }
             if let Some(unit) = &f.unit
-                && (unit.trim().is_empty() || unit.trim() != unit)
+                && (unit.trim().is_empty() || unit.trim() != &**unit)
             {
                 self.report(
                     "unit_blank",
@@ -253,7 +256,7 @@ impl Checker<'_> {
     fn field_type(&mut self, ty: &FieldType, path: &str, at_field: bool) {
         match ty {
             FieldType::Integer(c) => {
-                if let (Some(lo), Some(hi)) = (c.min, c.max)
+                if let (Some(lo), Some(hi)) = (c.min(), c.max())
                     && lo > hi
                 {
                     self.report(
@@ -265,10 +268,10 @@ impl Checker<'_> {
             }
             FieldType::Double(c) => {
                 for (bound, v) in [
-                    ("min", c.min),
-                    ("max", c.max),
-                    ("exclusive_min", c.exclusive_min),
-                    ("exclusive_max", c.exclusive_max),
+                    ("min", c.min()),
+                    ("max", c.max()),
+                    ("exclusive_min", c.exclusive_min()),
+                    ("exclusive_max", c.exclusive_max()),
                 ] {
                     if let Some(v) = v
                         && !v.is_finite()
@@ -280,7 +283,7 @@ impl Checker<'_> {
                         );
                     }
                 }
-                if let (Some(lo), Some(hi)) = (c.min, c.max)
+                if let (Some(lo), Some(hi)) = (c.min(), c.max())
                     && lo > hi
                 {
                     self.report(
@@ -304,7 +307,7 @@ impl Checker<'_> {
                         levels
                             .iter()
                             .enumerate()
-                            .map(|(i, l)| (l.as_str(), format!("{path}/levels/{i}"))),
+                            .map(|(i, l)| (&**l, format!("{path}/levels/{i}"))),
                         "factor level",
                         "duplicate_level",
                     );

@@ -109,10 +109,10 @@ conform_value <- function(x, type, path, changes) {
     }))
   }
   if (kind == "named" && is.list(x) && !inherits(x, "r8_value")) {
-    target <- .r8_types[[type[["name"]]]]
-    if (!is.null(target) && inherits(target, "r8_struct_type")) {
+    ir <- tryCatch(r8_type_ir(type[["name"]]), error = function(e) NULL)
+    if (identical(ir[["kind"]], "struct")) {
       note(paste0("constructed a `", type[["name"]], "` from a list"))
-      return(conform_struct(x, target, path, changes))
+      return(conform_struct(x, type[["name"]], path, changes))
     }
   }
   x
@@ -123,7 +123,7 @@ conform_value <- function(x, type, path, changes) {
 #' Conform the fields of a struct and construct it
 #'
 #' @param x Named list: The fields.
-#' @param type A struct type object.
+#' @param qname Character: The struct's qualified name.
 #' @param path Character: The struct's path.
 #' @param changes Environment: Collects the changes.
 #'
@@ -131,8 +131,8 @@ conform_value <- function(x, type, path, changes) {
 #'
 #' @keywords internal
 #' @noRd
-conform_struct <- function(x, type, path, changes) {
-  ir <- attr(type, "r8_ir")
+conform_struct <- function(x, qname, path, changes) {
+  ir <- r8_type_ir(qname)
   fields <- list()
   for (f in ir[["fields"]]) {
     name <- f[["name"]]
@@ -160,7 +160,11 @@ conform_struct <- function(x, type, path, changes) {
       )
     )
   }
-  do.call(type, fields)
+  names <- vapply(ir[["fields"]], function(f) f[["name"]], character(1))
+  r8_construct(
+    qname,
+    stats::setNames(lapply(names, function(n) fields[[n]]), names)
+  )
 } # /R8::conform_struct
 
 
@@ -198,7 +202,7 @@ r8_conform <- function(x, type) {
   }
   changes <- new.env(parent = emptyenv())
   changes[["log"]] <- character()
-  value <- conform_struct(x, type, "", changes)
+  value <- conform_struct(x, attr(type, "r8_name"), "", changes)
   if (length(changes[["log"]]) > 0L) {
     message(
       "r8_conform() made ",

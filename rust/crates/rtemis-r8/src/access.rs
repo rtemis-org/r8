@@ -561,7 +561,7 @@ pub trait Access<'a>: Copy + 'a {
 
     /// A factor; `declared` holds the levels its type declares, and
     /// `ordered` whether it is an ordered factor.
-    fn factor(self, declared: Option<&[String]>, ordered: bool) -> Read<Factor<'a, Self>>;
+    fn factor(self, declared: Option<&[Box<str>]>, ordered: bool) -> Read<Factor<'a, Self>>;
     /// A matrix or an array of `element`.
     fn dense(self, element: &FieldType) -> Read<Dense<Self>>;
     /// A sparse matrix of `element`.
@@ -1044,7 +1044,7 @@ impl<'a> Access<'a> for Json<'a> {
         }
     }
 
-    fn factor(self, declared: Option<&[String]>, _ordered: bool) -> Read<Factor<'a, Self>> {
+    fn factor(self, declared: Option<&[Box<str>]>, _ordered: bool) -> Read<Factor<'a, Self>> {
         let form = || {
             Form::new(
                 "factor_form",

@@ -32,16 +32,16 @@ pub struct FieldDef {
     /// A literal default in the field's JSON form, filled by the constructor
     /// and by `r8_from_json()`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<Value>,
+    pub default: Option<Box<Value>>,
     #[serde(default)]
     /// The field's description.
-    pub description: String,
+    pub description: Box<str>,
     #[serde(default, skip_serializing_if = "is_false")]
     /// The value is withheld from logs, prints, and exports.
     pub sensitive: bool,
     /// A UCUM code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unit: Option<String>,
+    pub unit: Option<Box<str>>,
     /// Written to an Arrow IPC file by `write_json()`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub external: bool,
@@ -55,11 +55,28 @@ pub struct FieldDef {
     /// The ancestor that declared the field, for a field that `extends`
     /// flattened into a child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inherited_from: Option<QualifiedName>,
+    pub inherited_from: Option<Box<QualifiedName>>,
     /// Namespaced extensions, such as `"rtemis:tunable"`, which R8 stores and
     /// exports and does not interpret.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extensions: BTreeMap<String, Value>,
+    // `None` when there are none: 8 bytes inline on every field, against 24
+    // for a map, and a box only on the rare field that has extensions.
+    #[allow(clippy::box_collection)]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "extensions_or_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "BTreeMap<String, Value>"))]
+    pub extensions: Option<Box<BTreeMap<String, Value>>>,
+}
+
+/// A field's extensions, or `None` for an empty object.
+#[allow(clippy::box_collection)]
+fn extensions_or_none<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Box<BTreeMap<String, Value>>>, D::Error> {
+    let m = BTreeMap::<String, Value>::deserialize(d)?;
+    Ok((!m.is_empty()).then(|| Box::new(m)))
 }
 
 /// `rule(id, invariant, message, when = )`: what must hold.

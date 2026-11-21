@@ -13,19 +13,7 @@
 #' @keywords internal
 #' @noRd
 pending_fields <- function(x) {
-  type <- .r8_types[[attr(x, "r8_type")]]
-  ir <- attr(type, "r8_ir")
-  if (!identical(ir[["kind"]], "struct")) {
-    return(character())
-  }
-  out <- character()
-  for (f in ir[["fields"]]) {
-    policy <- f[["type"]][["resolve"]][["policy"]]
-    if (!is.null(policy) && is.null(unclass(x)[[f[["name"]]]])) {
-      out[[f[["name"]]]] <- policy
-    }
-  }
-  out
+  r8_pending_fields(x)
 } # /R8::pending_fields
 
 

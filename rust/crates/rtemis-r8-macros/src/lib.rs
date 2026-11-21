@@ -19,6 +19,10 @@
 //! `sensitive`, `external`, and `resolve = "runtime"`. Doc comments are
 //! descriptions.
 //!
+//! The derive builds the declaration as `rtemis_r8::ir` values. A rule's
+//! JSONLogic and a field's default are parsed when the crate compiles, so a
+//! text that does not read is a compile error at its attribute.
+//!
 //! `#[r8(native)]` on a struct also implements `rtemis_r8_api::Native`, and
 //! on an enum `rtemis_r8_api::NativeEnum`; on both, `rtemis_r8_api::Codec`, so
 //! R8 holds the type's values in Rust: each field's type implements
@@ -84,6 +88,145 @@ fn json_literal(e: &Expr) -> Result<String> {
     }
 }
 
+/// The operators of the rule dialect, by JSONLogic name, and the variants of
+/// `rtemis_r8::ir::Operator` they are.
+const OPERATORS: &[(&str, &str)] = &[
+    ("var", "Var"),
+    ("===", "StrictEq"),
+    ("!==", "StrictNe"),
+    ("==", "LooseEq"),
+    ("!=", "LooseNe"),
+    ("<", "Lt"),
+    ("<=", "Le"),
+    (">", "Gt"),
+    (">=", "Ge"),
+    ("!", "Not"),
+    ("+", "Add"),
+    ("-", "Sub"),
+    ("*", "Mul"),
+    ("/", "Div"),
+    ("%", "Mod"),
+    ("min", "Min"),
+    ("max", "Max"),
+    ("in", "In"),
+    ("cat", "Cat"),
+    ("length", "Length"),
+    ("subset", "Subset"),
+    ("non_increasing", "NonIncreasing"),
+    ("non_decreasing", "NonDecreasing"),
+    ("floor", "Floor"),
+    ("ceiling", "Ceiling"),
+    ("round", "Round"),
+    ("nrow", "Nrow"),
+    ("ncol", "Ncol"),
+    ("dim", "Dim"),
+    ("is_null", "IsNull"),
+    ("is_variant", "IsVariant"),
+    ("levels", "Levels"),
+    ("all", "All"),
+    ("any", "Any"),
+    ("if", "If"),
+    ("and", "And"),
+    ("or", "Or"),
+];
+
+/// The construction of a `serde_json::Number`.
+fn number_tokens(n: &serde_json::Number) -> Tokens {
+    if let Some(u) = n.as_u64() {
+        quote! { ::rtemis_r8::derive::serde_json::Number::from(#u) }
+    } else if let Some(i) = n.as_i64() {
+        quote! { ::rtemis_r8::derive::serde_json::Number::from(#i) }
+    } else {
+        let f = n.as_f64().expect("a JSON number is finite");
+        quote! { ::rtemis_r8::derive::serde_json::Number::from_f64(#f).expect("a finite number") }
+    }
+}
+
+/// The construction of a `serde_json::Value`.
+fn value_tokens(v: &serde_json::Value) -> Tokens {
+    use serde_json::Value as V;
+    let j = quote! { ::rtemis_r8::derive::serde_json };
+    match v {
+        V::Null => quote! { #j::Value::Null },
+        V::Bool(b) => quote! { #j::Value::Bool(#b) },
+        V::Number(n) => {
+            let n = number_tokens(n);
+            quote! { #j::Value::Number(#n) }
+        }
+        V::String(s) => quote! { #j::Value::String(#s.to_string()) },
+        V::Array(a) => {
+            let items = a.iter().map(value_tokens);
+            quote! { #j::Value::Array(::std::vec![#(#items),*]) }
+        }
+        V::Object(m) => {
+            let (k, x): (Vec<_>, Vec<_>) = m.iter().map(|(k, x)| (k, value_tokens(x))).unzip();
+            quote! {{
+                let mut m = #j::Map::new();
+                #(m.insert(#k.to_string(), #x);)*
+                #j::Value::Object(m)
+            }}
+        }
+    }
+}
+
+/// The construction of an `rtemis_r8::ir::Logic` tree from a parsed
+/// expression, as its deserializer reads it.
+fn logic_tokens(v: &serde_json::Value) -> Tokens {
+    use serde_json::Value as V;
+    let ir = quote! { ::rtemis_r8::ir };
+    let other = |v: &V| {
+        let v = value_tokens(v);
+        quote! { #ir::Logic::Other(::std::boxed::Box::new(#v)) }
+    };
+    match v {
+        V::Null => quote! { #ir::Logic::Null },
+        V::Bool(b) => quote! { #ir::Logic::Bool(#b) },
+        V::Number(n) => {
+            let n = number_tokens(n);
+            quote! { #ir::Logic::Number(#n) }
+        }
+        V::String(s) => quote! { #ir::Logic::String(#s.into()) },
+        V::Array(a) => {
+            let items = a.iter().map(logic_tokens);
+            quote! { #ir::Logic::Array(::std::boxed::Box::new([#(#items),*])) }
+        }
+        V::Object(m) if m.len() == 1 => {
+            let (op, arg) = m.iter().next().expect("one member");
+            let Some((_, variant)) = OPERATORS.iter().find(|(name, _)| name == op) else {
+                return other(v);
+            };
+            let variant = format_ident!("{}", variant);
+            match (op.as_str(), arg) {
+                ("var", V::String(path)) => quote! { #ir::Logic::Var(#path.into()) },
+                (_, V::Array(args)) => {
+                    let args = args.iter().map(logic_tokens);
+                    quote! { #ir::Logic::Call {
+                        op: #ir::Operator::#variant,
+                        single: false,
+                        args: ::std::boxed::Box::new([#(#args),*]),
+                    } }
+                }
+                (_, one) => {
+                    let one = logic_tokens(one);
+                    quote! { #ir::Logic::Call {
+                        op: #ir::Operator::#variant,
+                        single: true,
+                        args: ::std::boxed::Box::new([#one]),
+                    } }
+                }
+            }
+        }
+        V::Object(_) => other(v),
+    }
+}
+
+/// A JSONLogic attribute, parsed when the crate compiles.
+fn logic_attr(s: &syn::LitStr) -> Result<Tokens> {
+    let v: serde_json::Value = serde_json::from_str(&s.value())
+        .map_err(|e| Error::new_spanned(s, format!("the JSONLogic text does not read: {e}")))?;
+    Ok(logic_tokens(&v))
+}
+
 #[derive(Default)]
 struct TypeAttrs {
     namespace: Option<String>,
@@ -94,8 +237,8 @@ struct TypeAttrs {
 }
 
 /// One `rule(id = ..., invariant = ..., when = ..., message = ...)`, as the
-/// JSON of a rule; the expressions are JSONLogic text, parsed when the
-/// declaration is built.
+/// construction of an `rtemis_r8::ir::RuleDef`; the expressions are
+/// JSONLogic text, parsed when the crate compiles.
 fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
     let (mut id, mut invariant, mut when, mut message) = (None, None, None, None);
     meta.parse_nested_meta(|m| {
@@ -111,22 +254,29 @@ fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
     })?;
     let missing = |what: &str| meta.error(format!("a rule needs `{what}`"));
     let id = id.ok_or_else(|| missing("id"))?;
-    let invariant = invariant.ok_or_else(|| missing("invariant"))?;
+    if !valid_name(&id.value()) {
+        return Err(Error::new_spanned(
+            &id,
+            "a rule ID matches [A-Za-z][A-Za-z0-9_]*",
+        ));
+    }
+    let invariant = logic_attr(&invariant.ok_or_else(|| missing("invariant"))?)?;
     let message = message.ok_or_else(|| missing("message"))?;
     let when = match when {
         Some(w) => {
-            quote! { m.insert("when".to_string(), ::rtemis_r8::derive::serde_json::from_str(#w).expect("the rule's JSONLogic text is JSON")); }
+            let w = logic_attr(&w)?;
+            quote! { ::std::option::Option::Some(#w) }
         }
-        None => quote! {},
+        None => quote! { ::std::option::Option::None },
     };
-    Ok(quote! {{
-        let mut m = ::rtemis_r8::derive::serde_json::Map::new();
-        m.insert("id".to_string(), #id.into());
-        m.insert("invariant".to_string(), ::rtemis_r8::derive::serde_json::from_str(#invariant).expect("the rule's JSONLogic text is JSON"));
-        #when
-        m.insert("message".to_string(), #message.into());
-        ::rtemis_r8::derive::serde_json::Value::Object(m)
-    }})
+    Ok(quote! {
+        ::rtemis_r8::ir::RuleDef {
+            id: ::rtemis_r8::derive::name(#id),
+            invariant: #invariant,
+            when: #when,
+            message: #message.to_string(),
+        }
+    })
 }
 
 fn type_attrs(attrs: &[Attribute]) -> Result<TypeAttrs> {
@@ -162,7 +312,14 @@ fn type_attrs(attrs: &[Attribute]) -> Result<TypeAttrs> {
     Ok(out)
 }
 
-/// The JSON of one field's declaration.
+/// A numeric attribute value, a literal number with an optional `-`.
+fn number_attr(e: &Expr) -> Result<f64> {
+    json_literal(e)?
+        .parse::<f64>()
+        .map_err(|_| Error::new_spanned(e, "expected a number"))
+}
+
+/// The construction of one field's `rtemis_r8::ir::FieldDef`.
 fn field_def(field: &syn::Field) -> Result<Tokens> {
     let ident = field.ident.as_ref().expect("named fields");
     let name = ident.to_string().trim_start_matches("r#").to_string();
@@ -173,62 +330,88 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
         ));
     }
     let ty = &field.ty;
-    let mut constraints: Vec<(String, String)> = Vec::new();
-    let mut extra: Vec<Tokens> = Vec::new();
-    let mut resolve = quote! { None };
+    let mut constraints: Vec<Tokens> = Vec::new();
+    let (mut sensitive, mut external) = (false, false);
+    let mut unit = quote! { ::std::option::Option::None };
+    let mut default = quote! { ::std::option::Option::None };
+    let mut resolve = quote! { ::std::option::Option::None };
     for a in field.attrs.iter().filter(|a| a.path().is_ident("r8")) {
         a.parse_nested_meta(|meta| {
             let key = meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default();
             match key.as_str() {
-                "min" | "max" | "exclusive_min" | "exclusive_max" | "pattern" | "finite" | "min_length" | "max_length" => {
+                "min" | "max" | "exclusive_min" | "exclusive_max" => {
                     let e: Expr = meta.value()?.parse()?;
-                    constraints.push((key, json_literal(&e)?));
+                    let x = number_attr(&e)?;
+                    let k = format_ident!("{}", key);
+                    constraints.push(quote! { #k: ::std::option::Option::Some(#x) });
                 }
-                "unique" => constraints.push((key, "true".to_string())),
-                "sensitive" | "external" => extra.push(quote! { (#key, ::rtemis_r8::derive::serde_json::Value::Bool(true)) }),
+                "min_length" | "max_length" => {
+                    let n: syn::LitInt = meta.value()?.parse()?;
+                    let x: u64 = n.base10_parse()?;
+                    let k = format_ident!("{}", key);
+                    constraints.push(quote! { #k: ::std::option::Option::Some(#x) });
+                }
+                "pattern" => {
+                    let s: syn::LitStr = meta.value()?.parse()?;
+                    constraints.push(quote! { pattern: ::std::option::Option::Some(#s) });
+                }
+                "finite" => {
+                    let b: syn::LitBool = meta.value()?.parse()?;
+                    let b = b.value;
+                    constraints.push(quote! { finite: ::std::option::Option::Some(#b) });
+                }
+                "unique" => constraints.push(quote! { unique: true }),
+                "sensitive" => sensitive = true,
+                "external" => external = true,
                 "unit" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
-                    extra.push(quote! { ("unit", #s.into()) });
+                    unit = quote! { ::std::option::Option::Some(#s.into()) };
                 }
                 "default" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
-                    extra.push(quote! { ("default", ::rtemis_r8::derive::serde_json::from_str(#s).expect("a default is JSON text")) });
+                    let v: serde_json::Value = serde_json::from_str(&s.value())
+                        .map_err(|e| Error::new_spanned(&s, format!("a default is JSON text: {e}")))?;
+                    let v = value_tokens(&v);
+                    default = quote! { ::std::option::Option::Some(::std::boxed::Box::new(#v)) };
                 }
                 "resolve" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
-                    if !matches!(s.value().as_str(), "none" | "runtime") {
-                        return Err(Error::new_spanned(&s, "resolve is \"none\" or \"runtime\"; a computed field is declared in R"));
-                    }
-                    let policy = s.value();
-                    resolve = quote! { Some(::rtemis_r8::derive::serde_json::json!({"policy": #policy})) };
+                    resolve = match s.value().as_str() {
+                        "none" => quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::None) },
+                        "runtime" => quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::Runtime) },
+                        _ => return Err(Error::new_spanned(&s, "resolve is \"none\" or \"runtime\"; a computed field is declared in R")),
+                    };
                 }
                 _ => return Err(meta.error("unknown R8 field attribute")),
             }
             Ok(())
         })?;
     }
-    let constraint_text = format!(
-        "{{{}}}",
-        constraints
-            .iter()
-            .map(|(k, v)| format!("{k:?}: {v}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
     let desc = description(&field.attrs);
     let field_name = name.clone();
-    Ok(quote! {{
-        let ft = ::rtemis_r8::derive::constrain(
-            <#ty as ::rtemis_r8::derive::Encode>::field_type(),
-            ::rtemis_r8::derive::serde_json::from_str(#constraint_text).expect("constraints are JSON"),
-            #resolve,
-        )
-        .unwrap_or_else(|e| panic!("field `{}`: {}", #field_name, e));
-        let mut pairs = vec![("name", #name.into()), ("type", ::rtemis_r8::derive::field_json(&ft))];
-        pairs.extend([#(#extra),*]);
-        pairs.push(("description", #desc.into()));
-        ::rtemis_r8::derive::object(pairs)
-    }})
+    Ok(quote! {
+        ::rtemis_r8::ir::FieldDef {
+            name: ::rtemis_r8::derive::name(#name),
+            ty: ::rtemis_r8::derive::constrain(
+                <#ty as ::rtemis_r8::derive::Encode>::field_type(),
+                ::rtemis_r8::derive::Constraints {
+                    #(#constraints,)*
+                    ..::std::default::Default::default()
+                },
+                #resolve,
+            )
+            .unwrap_or_else(|e| panic!("field `{}`: {}", #field_name, e)),
+            default: #default,
+            description: #desc.into(),
+            sensitive: #sensitive,
+            unit: #unit,
+            external: #external,
+            unique: false,
+            optional: false,
+            inherited_from: ::std::option::Option::None,
+            extensions: ::std::option::Option::None,
+        }
+    })
 }
 
 fn fields_of(fields: &Fields) -> Result<Vec<&syn::Field>> {
@@ -290,19 +473,21 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             let (enc, dec, reg) = field_codec(&fields);
             let names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
             (
-                quote! {{
-                    let mut m = ::rtemis_r8::derive::serde_json::Map::new();
-                    m.insert("kind".to_string(), "struct".into());
-                    m.insert("name".to_string(), #type_name.into());
-                    m.insert("description".to_string(), #desc.into());
-                    m.insert("version".to_string(), #version.into());
-                    m.insert("fields".to_string(), ::rtemis_r8::derive::serde_json::Value::Array(vec![#(#defs),*]));
-                    let rules: Vec<::rtemis_r8::derive::serde_json::Value> = vec![#(#rules),*];
-                    if !rules.is_empty() {
-                        m.insert("rules".to_string(), ::rtemis_r8::derive::serde_json::Value::Array(rules));
-                    }
-                    ::rtemis_r8::derive::serde_json::Value::Object(m)
-                }},
+                quote! {
+                    ::rtemis_r8::ir::TypeDef::Struct(::rtemis_r8::ir::StructDef {
+                        name: ::rtemis_r8::derive::name(#type_name),
+                        description: #desc.to_string(),
+                        version: #version,
+                        fields: ::std::vec![#(#defs),*],
+                        extends: ::std::option::Option::None,
+                        rules: ::std::vec![#(#rules),*],
+                        migrations: ::std::vec::Vec::new(),
+                        aliases: ::std::vec::Vec::new(),
+                        provenance: false,
+                        s4: false,
+                        extensions: ::std::collections::BTreeMap::new(),
+                    })
+                },
                 quote! {
                     let Self { #(#names),* } = self;
                     let mut m = ::rtemis_r8::derive::serde_json::Map::new();
@@ -328,7 +513,13 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                 let vrules = &vattrs.rules;
                 match &v.fields {
                     Fields::Unit => {
-                        variant_defs.push(quote! { ::rtemis_r8::derive::serde_json::json!({"name": #vname, "description": #vdesc, "shape": "unit"}) });
+                        variant_defs.push(quote! {
+                            ::rtemis_r8::ir::VariantDef {
+                                name: ::rtemis_r8::derive::name(#vname),
+                                description: #vdesc.to_string(),
+                                shape: ::rtemis_r8::ir::VariantShape::Unit,
+                            }
+                        });
                         if unit_only {
                             enc_arms.push(quote! { Self::#vid => Ok(#vname.into()) });
                         } else {
@@ -345,18 +536,16 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                         let (enc, dec, r) = field_codec(&fields);
                         let names: Vec<_> =
                             fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-                        variant_defs.push(quote! {{
-                            let mut m = ::rtemis_r8::derive::serde_json::Map::new();
-                            m.insert("name".to_string(), #vname.into());
-                            m.insert("description".to_string(), #vdesc.into());
-                            m.insert("shape".to_string(), "struct".into());
-                            m.insert("fields".to_string(), ::rtemis_r8::derive::serde_json::Value::Array(vec![#(#defs),*]));
-                            let rules: Vec<::rtemis_r8::derive::serde_json::Value> = vec![#(#vrules),*];
-                            if !rules.is_empty() {
-                                m.insert("rules".to_string(), ::rtemis_r8::derive::serde_json::Value::Array(rules));
+                        variant_defs.push(quote! {
+                            ::rtemis_r8::ir::VariantDef {
+                                name: ::rtemis_r8::derive::name(#vname),
+                                description: #vdesc.to_string(),
+                                shape: ::rtemis_r8::ir::VariantShape::Struct {
+                                    fields: ::std::vec![#(#defs),*],
+                                    rules: ::std::vec![#(#vrules),*],
+                                },
                             }
-                            ::rtemis_r8::derive::serde_json::Value::Object(m)
-                        }});
+                        });
                         enc_arms.push(quote! {
                             Self::#vid { #(#names),* } => {
                                 let mut m = ::rtemis_r8::derive::serde_json::Map::new();
@@ -371,7 +560,16 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                     Fields::Unnamed(u) if u.unnamed.len() == 1 => {
                         let inner = &u.unnamed[0].ty;
                         variant_defs.push(quote! {
-                            ::rtemis_r8::derive::serde_json::json!({"name": #vname, "description": #vdesc, "shape": "newtype", "of": (<#inner as ::rtemis_r8::derive::R8>::NAME)})
+                            ::rtemis_r8::ir::VariantDef {
+                                name: ::rtemis_r8::derive::name(#vname),
+                                description: #vdesc.to_string(),
+                                shape: ::rtemis_r8::ir::VariantShape::Newtype {
+                                    of: ::rtemis_r8::name::QualifiedName::parse(
+                                        <#inner as ::rtemis_r8::derive::R8>::NAME,
+                                    )
+                                    .expect("the derive checks the name"),
+                                },
+                            }
                         });
                         let x = format_ident!("inner");
                         enc_arms.push(quote! {
@@ -412,17 +610,18 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                 }
             };
             (
-                quote! {{
-                    let variants: Vec<::rtemis_r8::derive::serde_json::Value> = vec![#(#variant_defs),*];
-                    ::rtemis_r8::derive::serde_json::json!({
-                        "kind": "enum",
-                        "name": #type_name,
-                        "description": #desc,
-                        "tag": #tag,
-                        "version": #version,
-                        "variants": variants
+                quote! {
+                    ::rtemis_r8::ir::TypeDef::Enum(::rtemis_r8::ir::EnumDef {
+                        name: ::rtemis_r8::derive::name(#type_name),
+                        description: #desc.to_string(),
+                        tag: ::rtemis_r8::derive::name(#tag),
+                        version: #version,
+                        variants: ::std::vec![#(#variant_defs),*],
+                        migrations: ::std::vec::Vec::new(),
+                        aliases: ::std::vec::Vec::new(),
+                        extensions: ::std::collections::BTreeMap::new(),
                     })
-                }},
+                },
                 quote! { match self { #(#enc_arms),* } },
                 decode,
                 quote! { #(#reg)* },
@@ -470,7 +669,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
         impl ::rtemis_r8::derive::R8 for #ident {
             const NAME: &'static str = #qualified;
             fn type_def() -> ::rtemis_r8::ir::TypeDef {
-                ::rtemis_r8::derive::type_def(#def)
+                #def
             }
         }
     })
@@ -1032,7 +1231,7 @@ fn exports_impl(a: &ExportsArgs) -> Result<Tokens> {
                 || {
                     let mut set = #api::rtemis_r8::rules::DocumentSet::default();
                     #(<#types as #api::rtemis_r8::derive::Encode>::register(&mut set);)*
-                    set.0
+                    set.into_documents()
                         .into_iter()
                         .find(|d| d.namespace.as_str() == #namespace)
                         .map(|d| d.types)

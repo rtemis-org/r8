@@ -210,7 +210,7 @@ fn conformance_corpus() {
                 Value::Array(a) => a.iter().collect(),
                 one => vec![one],
             };
-            DocumentSet(
+            DocumentSet::from(
                 docs.into_iter()
                     .map(|d| {
                         let doc = IrDocument::from_json(&d.to_string())
@@ -222,7 +222,7 @@ fn conformance_corpus() {
                         );
                         doc
                     })
-                    .collect(),
+                    .collect::<Vec<_>>(),
             )
         });
         let mut ids = std::collections::HashSet::new();

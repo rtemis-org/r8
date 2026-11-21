@@ -164,6 +164,36 @@ test_that("declaration errors name the problem and its location", {
   )
 })
 
+test_that("a numeric type takes one bound per side", {
+  expect_error(
+    type_double(min = 0, exclusive_min = 0),
+    "bound the same side",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    type_double(max = 1, exclusive_max = 2),
+    "bound the same side",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    type_integer(min = 1L, exclusive_min = 0L),
+    "bound the same side",
+    class = "r8_declaration_error"
+  )
+  T <- declare_in("bounds", {
+    new_struct(
+      "Range",
+      fields = list(
+        p = type_double(exclusive_min = 0, max = 1),
+        n = type_integer(min = 1L, exclusive_max = 10L)
+      )
+    )
+  })
+  expect_identical(T(p = 1, n = 9L)$n, 9L)
+  expect_error(T(p = 0, n = 1L), "is not above 0", class = "r8_value_error")
+  expect_error(T(p = 0.5, n = 10L), "is not below 10", class = "r8_value_error")
+})
+
 test_that("a unit variant is an R8 value, and an unknown variant is an error", {
   K <- declare_in(
     "demo",
@@ -173,6 +203,54 @@ test_that("a unit variant is an R8 value, and an unknown variant is an error", {
   expect_s3_class(v, c("demo::Shape", "r8_value"))
   expect_identical(attr(v, "r8_variant"), "Circle")
   expect_error(K@Hexagon, class = "r8_value_error")
+})
+
+test_that("enum variants are built once and rebuilt after a redeclaration", {
+  E <- declare_in(
+    "variants",
+    new_enum(
+      "E",
+      variants = list(
+        A = variant(),
+        B = variant(fields = list(x = type_double()))
+      )
+    )
+  )
+  expect_identical(E@B, E@B)
+  expect_identical(E@A, E@A)
+  expect_identical(E@B(x = 1)$x, 1)
+  expect_error(E@C, "not a variant", class = "r8_value_error")
+  E <- declare_in(
+    "variants",
+    new_enum(
+      "E",
+      variants = list(
+        A = variant(),
+        C = variant(fields = list(y = type_integer()))
+      )
+    )
+  )
+  expect_identical(E@C(y = 2L)$y, 2L)
+  expect_error(E@B, "not a variant", class = "r8_value_error")
+})
+
+test_that("a type object outside a package carries its record, which registers it", {
+  P <- declare_in("records", new_struct("P", fields = list(x = type_double())))
+  record <- attr(P, "r8_record")
+  expect_true(is.raw(record))
+  expect_null(attr(P, "r8_ir"))
+  expect_identical(rawToChar(record[1:3]), "R8D")
+  # A damaged record is refused with the source named.
+  bad <- record
+  bad[length(bad)] <- xor(bad[length(bad)], as.raw(1L))
+  expect_error(
+    R8:::r8_declare_records(list(bad), "somepkg"),
+    "package 'somepkg' do not read: the record's checksum does not match its content; reinstall 'somepkg'"
+  )
+  # Registering the record again changes nothing.
+  before <- r8_declaration(P)
+  R8:::register_records(list(record))
+  expect_identical(r8_declaration(P), before)
 })
 
 test_that("re-declaring a type replaces it", {

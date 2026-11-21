@@ -53,37 +53,8 @@ impl TypeLookup for crate::ir::IrDocument {
         tr: &QualifiedName,
         value: &serde_json::Value,
     ) -> Result<(QualifiedName, String), String> {
-        let tag = (tr.namespace == self.namespace)
-            .then(|| self.traits.iter().find(|t| t.name == tr.name))
-            .flatten()
-            .and_then(|t| t.tag.clone());
-        let Some(tag) = tag else {
-            return dollar_type(value);
-        };
-        let written = value
-            .get(tag.as_str())
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("a `dyn({tr})` value names its type in `{tag}`"))?;
-        for imp in self.impls.iter().filter(|i| &i.r#trait == tr) {
-            let crate::ir::ImplTarget::Type { name } = &imp.target else {
-                continue;
-            };
-            let bare = imp
-                .tag_value
-                .clone()
-                .unwrap_or_else(|| name.name.to_string());
-            let expected = if name.namespace == tr.namespace {
-                bare
-            } else {
-                format!("{}::{bare}", name.namespace)
-            };
-            if expected == written {
-                return Ok((name.clone(), tag.to_string()));
-            }
-        }
-        Err(format!(
-            "no registered implementor of `{tr}` has the tag value `{written}`"
-        ))
+        let home = (tr.namespace == self.namespace).then_some(self);
+        implementor_in(home, self.impls.iter(), tr, value)
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {
@@ -93,6 +64,47 @@ impl TypeLookup for crate::ir::IrDocument {
             .and_then(|t| t.tag.as_ref().map(|n| n.to_string()))
             .unwrap_or_else(|| "$type".to_string())
     }
+}
+
+/// The implementor of the trait `tr` that a `dyn()` value names: through
+/// the trait's tag member when `home`, the trait's declaring document,
+/// declares one, over `impls`; otherwise through `"$type"`.
+fn implementor_in<'d>(
+    home: Option<&crate::ir::IrDocument>,
+    impls: impl Iterator<Item = &'d crate::ir::ImplDef>,
+    tr: &QualifiedName,
+    value: &serde_json::Value,
+) -> Result<(QualifiedName, String), String> {
+    let tag = home
+        .and_then(|d| d.traits.iter().find(|t| t.name == tr.name))
+        .and_then(|t| t.tag.as_ref());
+    let Some(tag) = tag else {
+        return dollar_type(value);
+    };
+    let written = value
+        .get(tag.as_str())
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("a `dyn({tr})` value names its type in `{tag}`"))?;
+    for imp in impls.filter(|i| &i.r#trait == tr) {
+        let crate::ir::ImplTarget::Type { name } = &imp.target else {
+            continue;
+        };
+        let bare = imp.tag_value.as_deref().unwrap_or(name.name.as_str());
+        let matches = if name.namespace == tr.namespace {
+            written == bare
+        } else {
+            written
+                .strip_prefix(name.namespace.as_str())
+                .and_then(|r| r.strip_prefix("::"))
+                == Some(bare)
+        };
+        if matches {
+            return Ok((name.clone(), tag.to_string()));
+        }
+    }
+    Err(format!(
+        "no registered implementor of `{tr}` has the tag value `{written}`"
+    ))
 }
 
 /// The static type of an expression.
@@ -115,7 +127,7 @@ pub enum Ty {
     /// A factor; `levels` holds the declared levels.
     Factor {
         /// The declared levels.
-        levels: Option<Vec<String>>,
+        levels: Option<Box<[Box<str>]>>,
     },
     /// An array of the element type (`vec()`, and `levels()` and `dim()`
     /// results).
@@ -123,7 +135,7 @@ pub enum Ty {
     /// A table's columns, in declaration order.
     Table {
         /// The declared columns.
-        columns: Vec<FieldDef>,
+        columns: Box<[FieldDef]>,
         /// Other columns are admitted.
         open: bool,
     },
@@ -174,7 +186,7 @@ impl Ty {
                 open: *open,
             },
             FieldType::TableOf { .. } => Ty::Table {
-                columns: Vec::new(),
+                columns: Box::default(),
                 open: true,
             },
             FieldType::Json => Ty::Json,
@@ -272,22 +284,245 @@ pub fn shape<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Sha
 
 /// A set of IR documents, each a namespace, resolved together: the lookup a
 /// registry provides once every package's declarations are loaded.
-#[derive(Debug, Clone, Default)]
-pub struct DocumentSet(pub Vec<crate::ir::IrDocument>);
+///
+/// The set indexes its types by qualified name, so [`TypeLookup::find`] takes
+/// constant time in the number of types. The index holds positions only and
+/// compares against the stored declarations, so it copies no name. Every
+/// change to a document's types goes through the set's methods, which keep
+/// the index current.
+#[derive(Clone, Default)]
+pub struct DocumentSet {
+    docs: Vec<crate::ir::IrDocument>,
+    /// `(document, type)` positions, hashed by namespace and name.
+    index: hashbrown::HashTable<(u32, u32)>,
+    hasher: hashbrown::DefaultHashBuilder,
+}
+
+impl std::fmt::Debug for DocumentSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("DocumentSet").field(&self.docs).finish()
+    }
+}
+
+impl From<Vec<crate::ir::IrDocument>> for DocumentSet {
+    fn from(docs: Vec<crate::ir::IrDocument>) -> Self {
+        let mut set = DocumentSet {
+            docs,
+            ..DocumentSet::default()
+        };
+        set.reindex();
+        set
+    }
+}
+
+impl FromIterator<crate::ir::IrDocument> for DocumentSet {
+    fn from_iter<I: IntoIterator<Item = crate::ir::IrDocument>>(iter: I) -> Self {
+        DocumentSet::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+/// Where [`DocumentSet::put_type`] placed a declaration, and the one it
+/// replaced; [`DocumentSet::undo_put`] takes it back.
+#[derive(Debug)]
+pub struct Placed {
+    /// The position of the namespace's document.
+    pub document: usize,
+    /// The position of the type in the document.
+    pub index: usize,
+    /// The declaration replaced, or `None` for a new type.
+    pub previous: Option<TypeDef>,
+    /// The document was created for this declaration.
+    pub new_document: bool,
+}
+
+/// The hash of a qualified name, by its namespace and name.
+fn hash_name(hasher: &hashbrown::DefaultHashBuilder, ns: &str, name: &str) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    let mut h = hasher.build_hasher();
+    ns.hash(&mut h);
+    name.hash(&mut h);
+    h.finish()
+}
 
 impl DocumentSet {
-    fn namespace(&self, ns: &crate::name::Name) -> Option<&crate::ir::IrDocument> {
-        self.0.iter().find(|d| &d.namespace == ns)
+    fn hash(&self, ns: &str, name: &str) -> u64 {
+        hash_name(&self.hasher, ns, name)
+    }
+
+    fn at(&self, (d, t): (u32, u32)) -> &TypeDef {
+        &self.docs[d as usize].types[t as usize]
+    }
+
+    fn slot(&self, ns: &str, name: &str) -> Option<(u32, u32)> {
+        let h = self.hash(ns, name);
+        self.index
+            .find(h, |&(d, t)| {
+                self.docs[d as usize].namespace.as_str() == ns
+                    && self.docs[d as usize].types[t as usize].name().as_str() == name
+            })
+            .copied()
+    }
+
+    fn insert_slot(&mut self, d: usize, t: usize) {
+        let doc = &self.docs[d];
+        let h = self.hash(doc.namespace.as_str(), doc.types[t].name().as_str());
+        let (docs, hasher) = (&self.docs, &self.hasher);
+        // Growing the table rehashes the slots from the declarations.
+        let rehash = |&(d, t): &(u32, u32)| {
+            let doc = &docs[d as usize];
+            hash_name(
+                hasher,
+                doc.namespace.as_str(),
+                doc.types[t as usize].name().as_str(),
+            )
+        };
+        self.index.insert_unique(h, (d as u32, t as u32), rehash);
+    }
+
+    fn reindex(&mut self) {
+        self.index.clear();
+        for d in 0..self.docs.len() {
+            for t in 0..self.docs[d].types.len() {
+                self.insert_slot(d, t);
+            }
+        }
+    }
+
+    /// The documents, one per namespace.
+    pub fn documents(&self) -> &[crate::ir::IrDocument] {
+        &self.docs
+    }
+
+    /// The documents, one per namespace, taken out of the set.
+    pub fn into_documents(self) -> Vec<crate::ir::IrDocument> {
+        self.docs
+    }
+
+    /// The document of the namespace `ns`.
+    pub fn namespace(&self, ns: &crate::name::Name) -> Option<&crate::ir::IrDocument> {
+        self.docs.iter().find(|d| &d.namespace == ns)
+    }
+
+    /// The position of the document of `ns`, and whether it was created
+    /// empty for this call.
+    fn document_of(&mut self, ns: &crate::name::Name) -> (usize, bool) {
+        match self.docs.iter().position(|d| &d.namespace == ns) {
+            Some(i) => (i, false),
+            None => {
+                self.docs.push(crate::ir::IrDocument {
+                    ir_version: crate::ir::IR_VERSION,
+                    namespace: ns.clone(),
+                    types: Vec::new(),
+                    traits: Vec::new(),
+                    impls: Vec::new(),
+                });
+                (self.docs.len() - 1, true)
+            }
+        }
+    }
+
+    /// Adds the declaration `def` to the namespace `ns`, or replaces the type
+    /// of the same name.
+    pub fn put_type(&mut self, ns: &crate::name::Name, def: TypeDef) -> Placed {
+        let (d, new_document) = self.document_of(ns);
+        match self.slot(ns.as_str(), def.name().as_str()) {
+            Some((_, t)) => {
+                let previous = std::mem::replace(&mut self.docs[d].types[t as usize], def);
+                Placed {
+                    document: d,
+                    index: t as usize,
+                    previous: Some(previous),
+                    new_document,
+                }
+            }
+            None => {
+                self.docs[d].types.push(def);
+                let t = self.docs[d].types.len() - 1;
+                self.insert_slot(d, t);
+                Placed {
+                    document: d,
+                    index: t,
+                    previous: None,
+                    new_document,
+                }
+            }
+        }
+    }
+
+    /// Takes back the most recent [`put_type`](Self::put_type): restores the
+    /// declaration it replaced, or removes the type it added, and the document
+    /// it created.
+    pub fn undo_put(&mut self, placed: Placed) {
+        let Placed {
+            document: d,
+            index: t,
+            previous,
+            new_document,
+        } = placed;
+        match previous {
+            Some(p) => self.docs[d].types[t] = p,
+            None => {
+                let h = {
+                    let doc = &self.docs[d];
+                    self.hash(doc.namespace.as_str(), doc.types[t].name().as_str())
+                };
+                if let Ok(e) = self
+                    .index
+                    .find_entry(h, |&slot| slot == (d as u32, t as u32))
+                {
+                    e.remove();
+                }
+                self.docs[d].types.remove(t);
+                if t < self.docs[d].types.len() {
+                    self.reindex();
+                }
+            }
+        }
+        if new_document && self.docs[d].types.is_empty() {
+            self.remove_document_if_empty(d);
+        }
+    }
+
+    /// The position of the document of `ns`, created empty when the set has
+    /// none; for traits and impls, which the type index does not cover.
+    pub fn document_position(&mut self, ns: &crate::name::Name) -> usize {
+        self.document_of(ns).0
+    }
+
+    /// The document at `d`.
+    pub fn document(&self, d: usize) -> &crate::ir::IrDocument {
+        &self.docs[d]
+    }
+
+    /// The traits of the document at `d`, to add or replace a trait.
+    pub fn traits_mut(&mut self, d: usize) -> &mut Vec<crate::ir::TraitDef> {
+        &mut self.docs[d].traits
+    }
+
+    /// The impls of the document at `d`, to add or replace an impl.
+    pub fn impls_mut(&mut self, d: usize) -> &mut Vec<crate::ir::ImplDef> {
+        &mut self.docs[d].impls
+    }
+
+    /// Removes the document at `d` when it declares nothing.
+    pub fn remove_document_if_empty(&mut self, d: usize) {
+        let doc = &self.docs[d];
+        if doc.types.is_empty() && doc.traits.is_empty() && doc.impls.is_empty() {
+            self.docs.remove(d);
+            self.reindex();
+        }
     }
 }
 
 impl TypeLookup for DocumentSet {
     fn find(&self, name: &QualifiedName) -> Option<&TypeDef> {
-        self.namespace(&name.namespace)?.find(name)
+        self.slot(name.namespace.as_str(), name.name.as_str())
+            .map(|s| self.at(s))
     }
 
     /// Resolves through the trait's declaring document, over the impls of
-    /// every document.
+    /// every document: the declaring document's first, then the others' in
+    /// order.
     fn implementor(
         &self,
         tr: &QualifiedName,
@@ -296,12 +531,12 @@ impl TypeLookup for DocumentSet {
         let Some(home) = self.namespace(&tr.namespace) else {
             return dollar_type(value);
         };
-        let mut merged = home.clone();
-        for d in self.0.iter().filter(|d| d.namespace != tr.namespace) {
-            merged.impls.extend(d.impls.iter().cloned());
-        }
-        let (ty, member) = merged.implementor(tr, value)?;
-        Ok((ty, member))
+        let others = self
+            .docs
+            .iter()
+            .filter(|d| d.namespace != tr.namespace)
+            .flat_map(|d| d.impls.iter());
+        implementor_in(Some(home), home.impls.iter().chain(others), tr, value)
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {

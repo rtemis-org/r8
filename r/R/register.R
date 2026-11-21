@@ -54,17 +54,27 @@ r8_register <- function(pkgname = NULL) {
     NULL
   }
   entries <- if (is.null(table)) list() else table[["entries"]]
+  # Consecutive type records register in one call, before the next entry of
+  # another kind, so the declarations replay in their order.
+  pending <- list()
   for (e in entries) {
     claim_namespace(e[["namespace"]], pkg)
+    if (identical(e[["kind"]], "type")) {
+      pending[[length(pending) + 1L]] <- e[["record"]]
+      next
+    }
+    register_records(pending, pkg)
+    pending <- list()
     switch(
       e[["kind"]],
-      type = register_type(e[["type"]], e[["namespace"]]),
       trait = register_trait(e[["trait"]], e[["namespace"]]),
       impl = register_impl(e),
       s3method = register_s3_method(e)
     )
   }
+  register_records(pending, pkg)
   n_compiled <- register_exports(pkg, entries)
+  clear_variants()
   check_namespaces(pkg)
   invisible(length(entries) + n_compiled)
 } # /R8::r8_register
@@ -128,10 +138,8 @@ check_namespaces <- function(pkg) {
 #' @noRd
 register_exports <- function(pkg, entries = list()) {
   native <- unlist(lapply(entries, function(e) {
-    if (
-      identical(e[["kind"]], "type") && isTRUE(attr(e[["type"]], "r8_native"))
-    ) {
-      attr(e[["type"]], "r8_name")
+    if (identical(e[["kind"]], "type") && isTRUE(e[["native"]])) {
+      e[["name"]]
     }
   }))
   # R_GetCCallable() raises an error for a package that registered no

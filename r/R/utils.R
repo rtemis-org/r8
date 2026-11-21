@@ -142,14 +142,14 @@ claim_namespace <- function(namespace, package) {
 #' @param env Environment: Where the declaration is made.
 #' @param entry List: The declaration, with its `kind`.
 #'
-#' @return `NULL`, invisibly.
+#' @return Logical: `TRUE` when the declaration is recorded, invisibly.
 #'
 #' @keywords internal
 #' @noRd
 record_declaration <- function(env, entry) {
   top <- topenv(env)
   if (!isNamespace(top) || environmentIsLocked(top)) {
-    return(invisible(NULL))
+    return(invisible(FALSE))
   }
   if (!exists(".__r8__", envir = top, inherits = FALSE)) {
     assign(".__r8__", new.env(parent = emptyenv()), envir = top)
@@ -157,7 +157,7 @@ record_declaration <- function(env, entry) {
   }
   table <- top[[".__r8__"]]
   table[["entries"]] <- c(table[["entries"]], list(entry))
-  invisible(NULL)
+  invisible(TRUE)
 } # /R8::record_declaration
 
 

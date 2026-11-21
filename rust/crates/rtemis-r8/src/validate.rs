@@ -69,6 +69,25 @@ impl RuleCache {
         self.patterns.clear();
         self.rules.clear();
     }
+
+    /// The compiled form of `rule` in the scope of `fields`, compiled on
+    /// first use; `None` when the rule does not compile. The cache keys a
+    /// rule by its address, which holds while `lookup` is unchanged.
+    pub fn compiled(
+        &mut self,
+        rule: &RuleDef,
+        fields: &[FieldDef],
+        lookup: &dyn TypeLookup,
+    ) -> Option<Arc<CompiledRule>> {
+        self.rules
+            .entry(rule as *const RuleDef as usize)
+            .or_insert_with(|| {
+                CompiledRule::compile(rule, fields, lookup)
+                    .ok()
+                    .map(Arc::new)
+            })
+            .clone()
+    }
 }
 
 /// A JSON Pointer, built as a chain and rendered for an error only.
@@ -137,10 +156,7 @@ fn number_key(x: f64) -> Key {
 #[inline(always)]
 fn double_ok(c: &DoubleType, x: f64) -> bool {
     (!c.finite || x.is_finite())
-        && c.min.is_none_or(|m| x >= m)
-        && c.max.is_none_or(|m| x <= m)
-        && c.exclusive_min.is_none_or(|m| x > m)
-        && c.exclusive_max.is_none_or(|m| x < m)
+        && c.in_range(x)
         && c.values.as_ref().is_none_or(|v| v.contains(&x))
 }
 
@@ -149,11 +165,7 @@ fn double_ok(c: &DoubleType, x: f64) -> bool {
 fn integer_ok(c: &IntegerType, x: i64) -> bool {
     (INT_MIN..=INT_MAX).contains(&x) && {
         let y = x as i32;
-        c.min.is_none_or(|m| y >= m)
-            && c.max.is_none_or(|m| y <= m)
-            && c.exclusive_min.is_none_or(|m| y > m)
-            && c.exclusive_max.is_none_or(|m| y < m)
-            && c.values.as_ref().is_none_or(|v| v.contains(&y))
+        c.in_range(y) && c.values.as_ref().is_none_or(|v| v.contains(&y))
     }
 }
 
@@ -574,10 +586,10 @@ impl<'l> Validator<'l, '_> {
         let x = x as i32;
         self.bounds(
             f64::from(x),
-            c.min.map(f64::from),
-            c.max.map(f64::from),
-            c.exclusive_min.map(f64::from),
-            c.exclusive_max.map(f64::from),
+            c.min().map(f64::from),
+            c.max().map(f64::from),
+            c.exclusive_min().map(f64::from),
+            c.exclusive_max().map(f64::from),
             path,
         );
         if let Some(values) = &c.values
@@ -604,7 +616,14 @@ impl<'l> Validator<'l, '_> {
                 ),
             );
         }
-        self.bounds(x, c.min, c.max, c.exclusive_min, c.exclusive_max, path);
+        self.bounds(
+            x,
+            c.min(),
+            c.max(),
+            c.exclusive_min(),
+            c.exclusive_max(),
+            path,
+        );
         if let Some(values) = &c.values
             && !values.contains(&x)
         {
@@ -687,7 +706,7 @@ impl<'l> Validator<'l, '_> {
             );
         }
         if let Some(values) = &c.values
-            && !values.iter().any(|x| x == s)
+            && !values.iter().any(|x| &**x == s)
         {
             self.error(
                 "not_in_enum",
@@ -730,7 +749,7 @@ impl<'l> Validator<'l, '_> {
     /// a missing cell, as in an `option()` table column.
     fn factor<'a, A: Access<'a>>(
         &mut self,
-        declared: Option<&[String]>,
+        declared: Option<&[Box<str>]>,
         ordered: bool,
         cells_optional: bool,
         v: A,
@@ -768,7 +787,7 @@ impl<'l> Validator<'l, '_> {
         }
         let known: Vec<bool> = match declared {
             Some(d) => {
-                let d: HashSet<&str> = d.iter().map(String::as_str).collect();
+                let d: HashSet<&str> = d.iter().map(|l| &**l).collect();
                 f.levels.iter().map(|l| d.contains(l.as_ref())).collect()
             }
             None => vec![true; f.levels.len()],
@@ -968,7 +987,7 @@ impl<'l> Validator<'l, '_> {
                         name,
                         ty: ft,
                         default: None,
-                        description: String::new(),
+                        description: Box::default(),
                         sensitive: false,
                         unit: None,
                         external: false,
@@ -1043,21 +1062,15 @@ impl<'l> Validator<'l, '_> {
     }
 
     fn compiled(&mut self, r: &RuleDef, scope: &[FieldDef]) -> Option<Arc<CompiledRule>> {
-        let key = r as *const RuleDef as usize;
-        if !self.cache.rules.contains_key(&key) {
-            let c = CompiledRule::compile(r, scope, self.lookup)
-                .ok()
-                .map(Arc::new);
-            if c.is_none() {
-                self.error(
-                    "rule_invalid",
-                    &P::Root(""),
-                    format!("rule `{}` does not compile; check the declaration", r.id),
-                );
-            }
-            self.cache.rules.insert(key, c);
+        let c = self.cache.compiled(r, scope, self.lookup);
+        if c.is_none() {
+            self.error(
+                "rule_invalid",
+                &P::Root(""),
+                format!("rule `{}` does not compile; check the declaration", r.id),
+            );
         }
-        self.cache.rules[&key].clone()
+        c
     }
 
     fn violation(&mut self, rule: &CompiledRule, path: &str) {

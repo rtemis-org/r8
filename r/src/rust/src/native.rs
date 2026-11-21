@@ -439,7 +439,7 @@ fn new_value(
             return Err(("registry", "the registry is unavailable".to_string()));
         }
     };
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let Some(def) = lookup.find(&q) else {
         drop_state();
         return Err(("unknown_type", format!("`{q}` is not a registered type")));
@@ -634,10 +634,10 @@ pub unsafe extern "C" fn r8_native_meta(type_name: *const c_char) -> Sexp {
         let name = c_text(type_name)?;
         let q = QualifiedName::parse(&name).ok()?;
         let docs = registry().lock().ok()?;
-        let lookup: &dyn TypeLookup = &*docs;
+        let lookup: &dyn TypeLookup = &**docs;
         let def = lookup.find(&q)?;
         let version = def_version(def);
-        let hash = rtemis_r8::codec::declaration_hash(&q, lookup);
+        let hash = crate::construct::registry_declaration_hash(&q, lookup);
         let package = crate::exports::codec_package(&name).unwrap_or_default();
         unsafe {
             let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, 3));
@@ -692,7 +692,7 @@ pub unsafe extern "C" fn r8_native_resolve(
             let docs = registry()
                 .lock()
                 .map_err(|_| ("registry", "the registry is unavailable".to_string()))?;
-            let lookup: &dyn TypeLookup = &*docs;
+            let lookup: &dyn TypeLookup = &**docs;
             let Some(def) = lookup.find(&q) else {
                 return Err(("unknown_type", format!("`{name}` is not a registered type")));
             };
@@ -706,7 +706,7 @@ pub unsafe extern "C" fn r8_native_resolve(
                 ));
             }
             let recorded = c_text(hash).unwrap_or_default();
-            if rtemis_r8::codec::declaration_hash(&q, lookup) != recorded {
+            if *crate::construct::registry_declaration_hash(&q, lookup) != *recorded {
                 return Err((
                     "declaration_changed",
                     format!(

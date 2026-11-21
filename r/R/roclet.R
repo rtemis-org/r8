@@ -385,7 +385,7 @@ compiled_blocks <- function(blocks, env, base_path) {
 enum_block <- function(block) {
   type <- block$object$value
   name <- block$object$alias
-  variants <- attr(type, "r8_ir")[["variants"]]
+  variants <- type_ir(type)[["variants"]]
   lines <- vapply(
     variants,
     function(v) {

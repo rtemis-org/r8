@@ -932,7 +932,7 @@
       "description": "`rule(id, invariant, message, when = )`: what must hold.\n\nA rule holds when `when` is `false` or when a field that `invariant` or\n`when` reads is absent, and reports a violation when `invariant` is\n`false`. The IR stores both expressions as declared."
     },
     "Logic": {
-      "description": "A JSONLogic expression, stored as its JSON value."
+      "description": "A JSONLogic expression of the rule dialect."
     },
     "Resolve": {
       "oneOf": [

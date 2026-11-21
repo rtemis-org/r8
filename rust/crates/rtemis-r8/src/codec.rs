@@ -269,8 +269,8 @@ fn named_in(ft: &FieldType, out: &mut Vec<QualifiedName>) {
 fn strip(def: &mut TypeDef) {
     fn fields(fs: &mut [FieldDef]) {
         for f in fs {
-            f.description.clear();
-            f.extensions.clear();
+            f.description = Box::default();
+            f.extensions = None;
             if let FieldType::Table { columns, .. } = &mut f.ty {
                 fields(columns);
             }

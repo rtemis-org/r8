@@ -46,6 +46,52 @@ r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, f
 #' @noRd
 r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, value)
 
+#' The declaration record of a registered type and of every named type it
+#' reaches, the reached types first (`rtemis_r8::record`).
+#'
+#' @param name Character: The qualified name, `namespace::Type`.
+#' @return Raw: The record.
+#' @keywords internal
+#' @noRd
+r8_type_record <- function(name) .Call(wrap__r8_type_record, name)
+
+#' Whether a type is registered.
+#'
+#' @param name Character: The qualified name.
+#' @return Logical.
+#' @keywords internal
+#' @noRd
+r8_is_registered <- function(name) .Call(wrap__r8_is_registered, name)
+
+#' Declares the entries of declaration records, in order, through the
+#' declaration checks: one call for a package's records at load, or for the
+#' record a type object carries.
+#'
+#' @param records List: Raw vectors, each a record.
+#' @param source Character: The package the records come from, or `""`.
+#' @return List: `name`, `code`, `path`, and `message` of each problem.
+#' @keywords internal
+#' @noRd
+r8_declare_records <- function(records, source) .Call(wrap__r8_declare_records, records, source)
+
+#' The declaration of a registered type as R lists, in the form the
+#' declaration functions build (`irser`).
+#'
+#' @param name Character: The qualified name, `namespace::Type`.
+#' @return List: The declaration.
+#' @keywords internal
+#' @noRd
+r8_type_ir <- function(name) .Call(wrap__r8_type_ir, name)
+
+#' The absent fields of a struct value that resolution fills, each named by
+#' its field and holding its policy, `"runtime"` or `"computed"`.
+#'
+#' @param x An R8 value.
+#' @return Character: The policies, named by field.
+#' @keywords internal
+#' @noRd
+r8_pending_fields <- function(x) .Call(wrap__r8_pending_fields, x)
+
 #' Claims a namespace for the package that declares into it.
 #'
 #' The first package to declare into a namespace owns it; a declaration by
@@ -89,22 +135,22 @@ r8_check_namespaces <- function(namespaces) .Call(wrap__r8_check_namespaces, nam
 
 #' Checks a trait declaration in its namespace and registers it.
 #'
-#' @param trait_json Character: The trait's IR declaration as JSON text.
+#' @param ir List: The trait's declaration, as `new_trait()` builds it.
 #' @param namespace Character: The namespace.
 #' @return List: The problems, as character vectors `code`, `path`, `message`.
 #' @keywords internal
 #' @noRd
-r8_declare_trait <- function(trait_json, namespace) .Call(wrap__r8_declare_trait, trait_json, namespace)
+r8_declare_trait <- function(ir, namespace) .Call(wrap__r8_declare_trait, ir, namespace)
 
 #' Registers an impl in its namespace; an impl of the same trait for the same
 #' type replaces it.
 #'
-#' @param impl_json Character: The impl's IR declaration as JSON text.
+#' @param ir List: The impl's declaration, as `impl()` builds it.
 #' @param namespace Character: The namespace of the declaring code.
 #' @return NULL.
 #' @keywords internal
 #' @noRd
-r8_declare_impl <- function(impl_json, namespace) .Call(wrap__r8_declare_impl, impl_json, namespace)
+r8_declare_impl <- function(ir, namespace) .Call(wrap__r8_declare_impl, ir, namespace)
 
 #' JSON text of an R declaration object.
 #'
@@ -140,12 +186,13 @@ r8_json_parse <- function(json) .Call(wrap__r8_json_parse, json)
 #' Returns a list with the code, path, and message of each problem; an empty
 #' list means the declaration passed and is registered.
 #'
-#' @param type_json Character: The type's IR declaration as JSON text.
+#' @param ir List: The type's declaration, as the declaration functions build
+#'   it, read by the IR types' derives (`irde`).
 #' @param namespace Character: The namespace.
 #' @return List: The problems, as character vectors `code`, `path`, `message`.
 #' @keywords internal
 #' @noRd
-r8_declare_type <- function(type_json, namespace) .Call(wrap__r8_declare_type, type_json, namespace)
+r8_declare_type <- function(ir, namespace) .Call(wrap__r8_declare_type, ir, namespace)
 
 #' The IR document of one registered type: its namespace and its
 #' declaration.

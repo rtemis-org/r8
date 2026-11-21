@@ -455,7 +455,13 @@ impl Encoder<'_> {
         }
     }
 
-    fn factor(&mut self, x: &Robj, levels: Option<&[String]>, ordered: bool, path: &str) -> Value {
+    fn factor(
+        &mut self,
+        x: &Robj,
+        levels: Option<&[Box<str>]>,
+        ordered: bool,
+        path: &str,
+    ) -> Value {
         if !x.inherits("factor") {
             return self.err("r_type", path, "expected a factor".to_string());
         }
@@ -1008,7 +1014,7 @@ impl Decoder<'_> {
         }
     }
 
-    fn factor(&self, v: &Value, levels: Option<&[String]>, ordered: bool) -> Result<Robj> {
+    fn factor(&self, v: &Value, levels: Option<&[Box<str>]>, ordered: bool) -> Result<Robj> {
         let (lv, codes): (Vec<String>, Vec<Rint>) = match (v, levels) {
             (Value::Object(o), _) => (
                 o["levels"]
@@ -1029,15 +1035,18 @@ impl Decoder<'_> {
                     .collect(),
             ),
             (Value::Array(items), Some(levels)) => (
-                levels.to_vec(),
+                levels.iter().map(|l| l.to_string()).collect(),
                 items
                     .iter()
-                    .map(
-                        |x| match x.as_str().and_then(|s| levels.iter().position(|l| l == s)) {
+                    .map(|x| {
+                        match x
+                            .as_str()
+                            .and_then(|s| levels.iter().position(|l| &**l == s))
+                        {
                             Some(i) => Rint::from(i as i32 + 1),
                             None => Rint::na(),
-                        },
-                    )
+                        }
+                    })
                     .collect(),
             ),
             _ => return Err(fail("a factor's JSON form")),
@@ -1283,7 +1292,7 @@ pub(crate) fn errors_list(errors: &[ValueError]) -> List {
 fn r8_value_identity(x: Robj) -> Result<List> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(v, &q, lookup, cache)
@@ -1307,7 +1316,7 @@ fn r8_value_identity(x: Robj) -> Result<List> {
 fn r8_value_hash(x: Robj) -> Result<Robj> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(v, &q, lookup, cache)
@@ -1333,7 +1342,7 @@ fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
     {
         return Ok(false.into());
     }
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let eq = rtemis_r8::equal::equal_access(
         &q,
         crate::rview::RView::Whole(xs),
@@ -1344,7 +1353,12 @@ fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
 }
 
 /// The qualified type of an R8 value, with the registry locked.
-fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::MutexGuard<'static, DocumentSet>)> {
+fn value_type(
+    x: SEXP,
+) -> Result<(
+    QualifiedName,
+    std::sync::MutexGuard<'static, std::sync::Arc<DocumentSet>>,
+)> {
     let type_name = crate::rview::attr_string(x, crate::rview::sym_r8_type())
         .ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
@@ -1364,7 +1378,7 @@ fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::MutexGuard<'static, 
 fn r8_value_to_document(x: Robj) -> Result<List> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(v, &q, lookup, cache)
@@ -1387,15 +1401,12 @@ fn r8_value_to_document(x: Robj) -> Result<List> {
 #[extendr]
 fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    let v = match read_document(text, &q, &docs) {
+    let docs = crate::declare::snapshot()?;
+    let v = match read_document(text, &q, &*docs) {
         Ok(v) => v,
         Err(errors) => return Ok(list!(errors = errors_list(&errors))),
     };
-    let lookup: &dyn TypeLookup = &docs;
+    let lookup: &dyn TypeLookup = &*docs;
     // A Rust-native struct or enum: the codec's `decode` builds the state
     // from the normalized document, or else `from_fields` (a struct) or
     // `from_variant` (an enum) from the decoded fields.
@@ -1425,7 +1436,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
             };
             return Ok(list!(value = value));
         }
-        let fields = Decoder { lookup: &docs }.named(&v, &q, None)?;
+        let fields = Decoder { lookup: &*docs }.named(&v, &q, None)?;
         let fs = unsafe { fields.get() };
         let state = match def {
             TypeDef::Struct(_) => crate::native::from_fields(vt, fs),
@@ -1442,7 +1453,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         return Ok(list!(value = value));
     }
     Ok(list!(
-        value = Decoder { lookup: &docs }.named(&v, &q, None)?
+        value = Decoder { lookup: &*docs }.named(&v, &q, None)?
     ))
 }
 
@@ -1465,7 +1476,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
     let docs = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
         return Err(fail(format!("`{type_name}` is not a registered struct")));
     };
@@ -1596,7 +1607,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
 fn r8_value_check(x: Robj) -> Result<Robj> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
     });

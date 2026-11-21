@@ -85,6 +85,30 @@ pub(crate) fn default_r(
     Ok(s)
 }
 
+/// The declaration hash of the registered type `q`
+/// (`codec::declaration_hash()`), computed once per registry change. The
+/// cache is valid only for `lookup` the registry: a caller with another
+/// lookup computes the hash directly.
+pub(crate) fn registry_declaration_hash(
+    q: &QualifiedName,
+    lookup: &dyn TypeLookup,
+) -> std::sync::Arc<str> {
+    type Hashes = HashMap<QualifiedName, std::sync::Arc<str>>;
+    static CACHE: OnceLock<Mutex<(u64, Hashes)>> = OnceLock::new();
+    let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
+    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
+    let g = GENERATION.load(Ordering::Relaxed);
+    if guard.0 != g {
+        guard.1.clear();
+        guard.0 = g;
+    }
+    guard
+        .1
+        .entry(q.clone())
+        .or_insert_with(|| rtemis_r8::codec::declaration_hash(q, lookup).into())
+        .clone()
+}
+
 fn fail(message: impl Into<String>) -> Error {
     Error::Other(message.into())
 }
@@ -391,7 +415,7 @@ fn list_items(x: SEXP, element: &FieldType, lookup: &dyn TypeLookup) -> Result<O
     }
 }
 
-fn factor(x: SEXP, declared: Option<&[String]>, ordered: bool) -> Option<Robj> {
+fn factor(x: SEXP, declared: Option<&[Box<str>]>, ordered: bool) -> Option<Robj> {
     let class: &[&str] = if ordered {
         &["ordered", "factor"]
     } else {
@@ -402,7 +426,9 @@ fn factor(x: SEXP, declared: Option<&[String]>, ordered: bool) -> Option<Robj> {
         .into_iter()
         .map(|l| l.map(|s| s.into_owned()).unwrap_or_default())
         .collect();
-    let same_levels = declared.is_none_or(|d| d == current.as_slice());
+    let same_levels = declared.is_none_or(|d| {
+        d.len() == current.len() && d.iter().zip(&current).all(|(a, b)| **a == **b)
+    });
     if same_levels && class_is(x, class) && attrib_count(x) == 2 {
         return None;
     }
@@ -411,7 +437,7 @@ fn factor(x: SEXP, declared: Option<&[String]>, ordered: bool) -> Option<Robj> {
             let index: std::collections::HashMap<&str, i32> = d
                 .iter()
                 .enumerate()
-                .map(|(k, l)| (l.as_str(), k as i32 + 1))
+                .map(|(k, l)| (&**l, k as i32 + 1))
                 .collect();
             current
                 .iter()
@@ -434,7 +460,7 @@ fn factor(x: SEXP, declared: Option<&[String]>, ordered: bool) -> Option<Robj> {
         let r = own(v);
         Rf_unprotect(1);
         let lv: Vec<&str> = match declared {
-            Some(d) => d.iter().map(String::as_str).collect(),
+            Some(d) => d.iter().map(|l| &**l).collect(),
             None => current.iter().map(String::as_str).collect(),
         };
         set_attr(&r, sym_levels(), character(&lv).get());
@@ -812,12 +838,20 @@ fn r8_new_value(fields: Robj, type_name: &str, variant: &str) -> Result<Robj> {
     let docs = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
+    if docs.find(&q).is_none() {
+        return problems(&[ValueError {
+            code: "type_unregistered",
+            path: String::new(),
+            rule: None,
+            message: format!("`{q}` is not registered"),
+        }]);
+    }
     let x = unsafe { fields.get() };
-    let errors = with_cache(|cache| validate_access(RView::Draft(x, variant), &q, &*docs, cache));
+    let errors = with_cache(|cache| validate_access(RView::Draft(x, variant), &q, &**docs, cache));
     if !errors.is_empty() {
         return problems(&errors);
     }
-    assemble(x, &q, variant, &*docs)
+    assemble(x, &q, variant, &**docs)
 }
 
 /// `list(errors = <problems>)` with the class `r8_problems`, which no R8
@@ -851,7 +885,7 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
     let docs = registry()
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
-    let lookup: &dyn TypeLookup = &*docs;
+    let lookup: &dyn TypeLookup = &**docs;
     let def = lookup
         .find(&q)
         .ok_or_else(|| fail(format!("`{q}` is not registered")))?;
@@ -938,24 +972,35 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
         r
     };
     drop(created);
-    // The rules that read the field.
-    let reading: Vec<&rtemis_r8::ir::RuleDef> = rules
-        .iter()
-        .filter(|r| {
-            rtemis_r8::rules::reads(&r.invariant)
-                .iter()
-                .any(|x| x == name)
-                || r.when
-                    .as_ref()
-                    .is_some_and(|w| rtemis_r8::rules::reads(w).iter().any(|x| x == name))
-        })
-        .collect();
-    if !reading.is_empty() {
+    // The rules that read the field, compiled once per registry and kept in
+    // the rule cache, each with the fields it reads.
+    if !rules.is_empty() {
         let os = unsafe { out.get() };
         let mut errors = Vec::new();
-        for r in reading {
-            match rtemis_r8::rules::CompiledRule::compile(r, fields, lookup) {
-                Ok(rule) => match rule.check_access(RView::Whole(os), fields, lookup) {
+        with_cache(|cache| {
+            for r in rules {
+                let Some(rule) = cache.compiled(r, fields, lookup) else {
+                    // A rule that does not compile, which a change to a type
+                    // it reads can cause, is reported by the writes of the
+                    // fields its expressions name.
+                    let named = |l: &rtemis_r8::ir::Logic| {
+                        rtemis_r8::rules::reads(l).iter().any(|x| x == name)
+                    };
+                    if !named(&r.invariant) && !r.when.as_ref().is_some_and(named) {
+                        continue;
+                    }
+                    errors.push(ValueError {
+                        code: "rule_invalid",
+                        path: String::new(),
+                        rule: Some(r.id.clone()),
+                        message: format!("rule `{}` does not compile; check the declaration", r.id),
+                    });
+                    continue;
+                };
+                if !rule.reads_field(name) {
+                    continue;
+                }
+                match rule.check_access(RView::Whole(os), fields, lookup) {
                     Ok(rtemis_r8::rules::Outcome::Holds) => {}
                     Ok(rtemis_r8::rules::Outcome::Violated(paths)) => {
                         for p in paths {
@@ -973,15 +1018,9 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
                         rule: Some(rule.id.clone()),
                         message: e,
                     }),
-                },
-                Err(_) => errors.push(ValueError {
-                    code: "rule_invalid",
-                    path: String::new(),
-                    rule: Some(r.id.clone()),
-                    message: format!("rule `{}` does not compile; check the declaration", r.id),
-                }),
+                }
             }
-        }
+        });
         if !errors.is_empty() {
             return problems(&errors);
         }

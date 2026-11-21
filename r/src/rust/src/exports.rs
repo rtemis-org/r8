@@ -259,23 +259,12 @@ fn r8_exports_compare(ptr: Robj) -> Result<List> {
         .into_iter()
         .map(|v| text(unsafe { (*v).type_name }, "type name"))
         .collect::<Result<Vec<String>>>()?;
-    let reg = crate::declare::registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    let mut overlay = reg.clone();
-    match overlay.0.iter_mut().find(|d| d.namespace == doc.namespace) {
-        Some(d) => {
-            for t in &doc.types {
-                match d.types.iter().position(|x| x.name() == t.name()) {
-                    Some(i) => d.types[i] = t.clone(),
-                    None => d.types.push(t.clone()),
-                }
-            }
-        }
-        None => overlay.0.push(doc.clone()),
+    let reg = crate::declare::snapshot()?;
+    let mut overlay = rtemis_r8::rules::DocumentSet::clone(&reg);
+    for t in &doc.types {
+        overlay.put_type(&doc.namespace, t.clone());
     }
-    let lookup_r: &dyn rtemis_r8::rules::TypeLookup = &reg;
+    let lookup_r: &dyn rtemis_r8::rules::TypeLookup = &*reg;
     let lookup_rust: &dyn rtemis_r8::rules::TypeLookup = &overlay;
     let mut names = Vec::new();
     let mut status = Vec::new();
@@ -335,24 +324,21 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
         }
     };
     for t in &doc.types {
-        let json = serde_json::to_string(t).map_err(|e| fail(e.to_string()))?;
         report(
             "type",
             t.name().as_str(),
-            crate::declare::r8_declare_type(&json, &ns)?,
+            crate::declare::declare_type(t.clone(), &ns)?,
         )?;
     }
     for t in &doc.traits {
-        let json = serde_json::to_string(t).map_err(|e| fail(e.to_string()))?;
         report(
             "trait",
             t.name.as_str(),
-            crate::declare::r8_declare_trait(&json, &ns)?,
+            crate::declare::declare_trait(t.clone(), &ns)?,
         )?;
     }
     for i in &doc.impls {
-        let json = serde_json::to_string(i).map_err(|e| fail(e.to_string()))?;
-        crate::declare::r8_declare_impl(&json, &ns)?;
+        crate::declare::declare_impl(i.clone(), &ns)?;
     }
     // Codecs and impl functions.
     let vtables = type_tables(e)?;
@@ -449,7 +435,7 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
         let declared_params = crate::declare::registry().lock().ok().and_then(|docs| {
             let q = QualifiedName::parse(&key.0).ok()?;
             let t = docs
-                .0
+                .documents()
                 .iter()
                 .find(|d| d.namespace == q.namespace)?
                 .traits

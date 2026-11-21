@@ -442,7 +442,7 @@ pub fn table_binary_access<'a, A: Access<'a>, O: Out>(
                 continue;
             };
             let names: Vec<&str> = match levels {
-                Some(d) => d.iter().map(String::as_str).collect(),
+                Some(d) => d.iter().map(|l| &**l).collect(),
                 None => f.levels.iter().map(|l| l.as_ref()).collect(),
             };
             out.put(&(names.len() as u64).to_le_bytes());
@@ -700,7 +700,7 @@ impl<'l, O: Out> Emitter<'l, O> {
         w.end_array();
     }
 
-    fn factor<'a, A: Access<'a>>(&mut self, declared: Option<&[String]>, ordered: bool, v: A) {
+    fn factor<'a, A: Access<'a>>(&mut self, declared: Option<&[Box<str>]>, ordered: bool, v: A) {
         let Ok(f) = v.factor(declared, ordered) else {
             return self.w.null();
         };

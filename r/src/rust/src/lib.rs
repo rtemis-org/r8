@@ -14,6 +14,8 @@ mod alloc;
 mod construct;
 mod declare;
 mod exports;
+mod irde;
+mod irser;
 mod native;
 #[cfg(feature = "oracle")]
 mod oracle;

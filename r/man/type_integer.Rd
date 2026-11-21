@@ -17,9 +17,11 @@ type_integer(
 
 \item{max}{Optional Integer: Largest admitted value.}
 
-\item{exclusive_min}{Optional Integer: The value must be above it.}
+\item{exclusive_min}{Optional Integer: The value must be above it. Given
+with \code{min}, it raises \code{r8_declaration_error}.}
 
-\item{exclusive_max}{Optional Integer: The value must be below it.}
+\item{exclusive_max}{Optional Integer: The value must be below it. Given
+with \code{max}, it raises \code{r8_declaration_error}.}
 
 \item{values}{Optional Integer: The admitted values.}
 }

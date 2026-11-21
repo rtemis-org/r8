@@ -105,7 +105,8 @@ constructor_body <- function(
   fields,
   variant = "",
   required = character(),
-  native = FALSE
+  native = FALSE,
+  package = ""
 ) {
   # A required field without an argument reaches construction as NULL, which
   # reports it as missing.
@@ -122,17 +123,27 @@ constructor_body <- function(
       fields
     )
   ))
+  # A type declared outside a package registers its own record, which its
+  # constructor carries, when the registry lacks it, then constructs again.
   body <- bquote({
     res <- .Call(wrap__r8_new_value, .(args), .(qname), .(variant))
     if (inherits(res, "r8_problems")) {
-      construct_error(res, .(qname), .(variant))
+      if (
+        identical(res[["errors"]][["code"]][1L], "type_unregistered") &&
+          ensure_registered(sys.function())
+      ) {
+        res <- .Call(wrap__r8_new_value, .(args), .(qname), .(variant))
+      }
+      if (inherits(res, "r8_problems")) {
+        construct_error(res, .(qname), .(variant))
+      }
     }
     res
   })
   if (native) {
     body <- as.call(c(
       as.name("{"),
-      bquote(check_codec(.(qname))),
+      bquote(check_codec(.(qname), .(package))),
       as.list(body)[-1L]
     ))
   }
@@ -150,9 +161,8 @@ constructor_body <- function(
 #'
 #' @keywords internal
 #' @noRd
-check_codec <- function(qname) {
+check_codec <- function(qname, package = "") {
   if (is.null(.r8_codecs[[qname]])) {
-    package <- attr(.r8_types[[qname]], "r8_package") %||% ""
     r8_abort(
       "`",
       qname,
@@ -452,8 +462,9 @@ r8_from_json <- function(type, json) {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
+  ensure_registered(type)
   if (isTRUE(attr(type, "r8_native"))) {
-    check_codec(attr(type, "r8_name"))
+    check_codec(attr(type, "r8_name"), attr(type, "r8_package") %||% "")
   }
   res <- r8_value_from_document(
     paste(json, collapse = "\n"),

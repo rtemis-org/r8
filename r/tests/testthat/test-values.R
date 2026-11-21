@@ -111,6 +111,72 @@ test_that("values are immutable: replacing a field returns a new, validated valu
   expect_error(length(y) <- 1, class = "r8_value_error")
 })
 
+test_that("a field write runs the rules whose invariant or condition reads the field", {
+  Fit <- declare_in("writes", {
+    new_struct(
+      "Fit",
+      fields = list(
+        n_trees = type_integer(min = 1L),
+        stop_at = option(type_integer(min = 1L)),
+        verbose = type_logical(),
+        log_file = option(type_character())
+      ),
+      rules = list(
+        rule(
+          "STOP_BELOW_TREES",
+          stop_at < n_trees,
+          "stop_at is below n_trees.",
+          when = !is.null(stop_at)
+        ),
+        rule(
+          "LOG_NEEDS_VERBOSE",
+          verbose == TRUE,
+          "a log file requires verbose output.",
+          when = !is.null(log_file)
+        )
+      )
+    )
+  })
+  x <- Fit(n_trees = 10L, verbose = FALSE)
+  # The invariant reads n_trees; the rule holds while stop_at is absent.
+  x$n_trees <- 5L
+  # Only the condition's presence test and the invariant read stop_at.
+  expect_error(x$stop_at <- 20L, "STOP_BELOW_TREES", class = "r8_value_error")
+  x$stop_at <- 3L
+  expect_error(x$n_trees <- 2L, "STOP_BELOW_TREES", class = "r8_value_error")
+  # log_file appears only in a condition's presence test.
+  expect_error(
+    x$log_file <- "fit.log",
+    "LOG_NEEDS_VERBOSE",
+    class = "r8_value_error"
+  )
+  x$verbose <- TRUE
+  x$log_file <- "fit.log"
+  expect_identical(x$log_file, "fit.log")
+})
+
+test_that("a redeclared rule applies to the next field write", {
+  Capped <- declare_in("redeclare", {
+    new_struct(
+      "Capped",
+      fields = list(n = type_integer()),
+      rules = list(rule("CAP", n <= 10L, "n is at most 10."))
+    )
+  })
+  x <- Capped(n = 1L)
+  x$n <- 8L
+  Capped <- declare_in("redeclare", {
+    new_struct(
+      "Capped",
+      fields = list(n = type_integer()),
+      rules = list(rule("CAP", n <= 5L, "n is at most 5."))
+    )
+  })
+  expect_error(x$n <- 8L, "CAP", class = "r8_value_error")
+  x$n <- 4L
+  expect_identical(x$n, 4L)
+})
+
 test_that("a document round trips to an identical value", {
   t <- svm_types()
   x <- t[["Svm"]](

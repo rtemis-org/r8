@@ -21,7 +21,7 @@ use rtemis_r8::layout::{
     Entry, EntryName, LayoutOptions, Record, count, layout_record, layout_with,
 };
 use rtemis_r8::name::QualifiedName;
-use rtemis_r8::rules::{DocumentSet, TypeLookup};
+use rtemis_r8::rules::TypeLookup;
 use rtemis_r8::text::{
     ALL_ROLES, Color, ColorDepth, Facts, HostKind, HtmlStyle, Line, OutputType, Role, Span, Style,
     Text, Theme, css, encode_ansi, encode_html, encode_markdown, encode_plain, resolve,
@@ -235,11 +235,8 @@ fn r8_layout_value(
     let xs = unsafe { x.get() };
     let type_name = attr_string(xs, sym_r8_type()).ok_or_else(|| fail("`x` is not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let docs: DocumentSet = crate::declare::registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    let lookup: &dyn TypeLookup = &docs;
+    let docs = crate::declare::snapshot()?;
+    let lookup: &dyn TypeLookup = &*docs;
     let shown = display_set(&display_types)?;
     let options = LayoutOptions {
         head: head.max(0) as usize,
@@ -268,7 +265,7 @@ fn r8_layout_value(
 /// attributes in constant time.
 fn infer_type(x: SEXP, column: bool) -> FieldType {
     let other = |class: &str| FieldType::R {
-        class: class.to_string(),
+        class: class.into(),
     };
     let vector = |element: FieldType| FieldType::Vec {
         element: Box::new(element),
@@ -295,9 +292,9 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
     }
     if inherits(x, "data.frame") {
         return FieldType::Table {
-            columns: Vec::new(),
+            columns: Box::default(),
             open: true,
-            rules: Vec::new(),
+            rules: Box::default(),
         };
     }
     if inherits(x, "dgCMatrix") {
@@ -423,7 +420,7 @@ impl<'a> Record<'a, RView<'a>> for ListRecord {
         let mut ty = infer_type(elt, self.columns);
         if self.columns && is_plain_list(elt) {
             ty = FieldType::R {
-                class: "list".to_string(),
+                class: "list".into(),
             };
         }
         Entry::Field {
@@ -476,11 +473,8 @@ fn r8_layout_object(x: Robj, display_types: Robj, display: Function, head: i32) 
             if n == 1 { "" } else { "s" }
         )
     };
-    let docs: DocumentSet = crate::declare::registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .clone();
-    let lookup: &dyn TypeLookup = &docs;
+    let docs = crate::declare::snapshot()?;
+    let lookup: &dyn TypeLookup = &*docs;
     let shown = display_set(&display_types)?;
     let options = LayoutOptions {
         head: head.max(0) as usize,
