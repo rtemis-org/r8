@@ -394,3 +394,68 @@ test_that("sizes print in IEC units, and an R-native value shows none", {
   expect_identical(format(P(x = 1))[[1L]], "<size_demo::P>")
   expect_identical(utils::capture.output(str(P(x = 1)))[[1L]], "<size_demo::P>")
 })
+
+test_that("a constructor forces its arguments in order and reports a missing one", {
+  T <- declare_in("frame", {
+    new_struct(
+      "T",
+      fields = list(
+        a = type_integer(),
+        b = option(type_integer()),
+        c = field(type_double(), default = 0.5)
+      )
+    )
+  })
+  seen <- character()
+  v <- T(
+    a = {
+      seen <- c(seen, "a")
+      1L
+    },
+    b = {
+      seen <- c(seen, "b")
+      2L
+    }
+  )
+  expect_identical(seen, c("a", "b"))
+  expect_identical(v$c, 0.5)
+  expect_null(T(a = 1L)$b)
+  e <- expect_error(T(b = 2L), class = "r8_value_error")
+  expect_match(conditionMessage(e), "missing_field")
+  expect_error(T(a = stop("raised while forcing")), "raised while forcing")
+  E <- declare_in("frame", {
+    new_enum(
+      "E",
+      variants = list(
+        V = variant(fields = list(x = type_double(), y = option(type_double())))
+      )
+    )
+  })
+  expect_identical(E@V(x = 2)$x, 2)
+  expect_error(E@V(), "missing_field", class = "r8_value_error")
+  # A required argument missing through a wrapper is a missing field.
+  make <- function(a) T(a = a)
+  expect_error(make(), "missing_field", class = "r8_value_error")
+  # A field's declared default applies before the rules run.
+  Shape <- declare_in(
+    "frame",
+    new_enum("Shape", variants = list(Wide = variant(), Tall = variant()))
+  )
+  Rect <- declare_in("frame", {
+    new_struct(
+      "Rect",
+      fields = list(
+        w = type_double(),
+        h = type_double(),
+        shape = field(Shape, default = Shape@Wide)
+      ),
+      rules = list(rule(
+        "WIDE",
+        w >= h,
+        "wide",
+        when = is_variant(shape, "Wide")
+      ))
+    )
+  })
+  expect_error(Rect(w = 1, h = 2), "WIDE", class = "r8_value_error")
+})

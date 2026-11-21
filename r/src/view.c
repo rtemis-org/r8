@@ -13,6 +13,20 @@
 // uses, so the owner's memory is only read.
 
 #include <setjmp.h>
+
+// A jump buffer that leaves the signal mask alone: sigsetjmp(buf, 0) saves
+// no mask, where setjmp() on macOS and the BSDs saves it with a system call
+// (216 ns against 2 ns per call on macOS, 2026-11-21). R's own contexts jump
+// this way. Windows has no sigsetjmp(), and its setjmp() saves no mask.
+#ifdef _WIN32
+#define R8_JMP_BUF jmp_buf
+#define R8_SETJMP(b) setjmp(b)
+#define R8_LONGJMP(b, v) longjmp(b, v)
+#else
+#define R8_JMP_BUF sigjmp_buf
+#define R8_SETJMP(b) sigsetjmp(b, 0)
+#define R8_LONGJMP(b, v) siglongjmp(b, v)
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -207,7 +221,7 @@ static SEXP continuation = NULL;
 typedef struct Protected {
   SEXP (*fn)(void *);
   void *data;
-  jmp_buf jump;
+  R8_JMP_BUF jump;
 } Protected;
 
 static SEXP protected_body(void *p) {
@@ -217,7 +231,7 @@ static SEXP protected_body(void *p) {
 
 static void protected_cleanup(void *p, Rboolean jump) {
   if (jump) {
-    longjmp(((Protected *) p)->jump, 1);
+    R8_LONGJMP(((Protected *) p)->jump, 1);
   }
 }
 
@@ -230,7 +244,7 @@ static R8Status api_protect(SEXP (*fn)(void *data), void *data, SEXP *value,
   Protected p;
   p.fn = fn;
   p.data = data;
-  if (setjmp(p.jump)) {
+  if (R8_SETJMP(p.jump)) {
     set_error(err, "unwind", "R raised a condition inside R8Api.protect");
     return R8_UNWIND;
   }
@@ -338,7 +352,7 @@ R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *er
 static SEXP r8_invoke(SEXP fn, SEXP args) {
   R8MethodFn call = (R8MethodFn) R_ExternalPtrAddrFn(fn);
   if (call == NULL) {
-    Rf_error("the impl function is NULL");
+    Rf_error("the package of this compiled method is unloaded; load it again");
   }
   R_xlen_t n = XLENGTH(args);
   const SEXP *argv = n > 0 ? (const SEXP *) R_alloc((size_t) n, sizeof(SEXP)) : NULL;
@@ -390,17 +404,58 @@ static SEXP native_symbol(DL_FUNC f) {
   return p;
 }
 
+// The Rust routine behind `.Call(wrap__r8_new_value, ...)`.
+SEXP wrap__r8_new_value(SEXP fields, SEXP type_name, SEXP variant);
+
+// Constructs a value from a constructor's frame. Each field, named in
+// `names` in declaration order, is its value in `env`, its promise forced
+// with R's own evaluation, so an error raised while forcing propagates as R
+// raised it, and a formal's default (a field's declared default) applies to
+// an argument not supplied. A field whose formal has no default (`required`)
+// is NULL when `missing()` holds for it, an argument not supplied or a
+// missing argument passed through, which construction reports as missing.
+// The forcing runs in C frames, before any Rust frame exists, and the fields
+// go to the Rust constructor as one list.
+static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_name,
+                               SEXP variant) {
+  // One `missing(.)` call, kept for the session, its argument set per field.
+  static SEXP test = NULL;
+  if (test == NULL) {
+    test = Rf_lang2(Rf_install("missing"), R_NilValue);
+    R_PreserveObject(test);
+  }
+  R_xlen_t n = Rf_xlength(names);
+  SEXP fields = PROTECT(Rf_allocVector(VECSXP, n));
+  for (R_xlen_t i = 0; i < n; i++) {
+    SEXP sym = Rf_installChar(STRING_ELT(names, i));
+    int absent = 0;
+    if (LOGICAL(required)[i] == 1) {
+      SETCADR(test, sym);
+      absent = Rf_asLogical(Rf_eval(test, env)) == 1;
+    }
+    if (!absent) {
+      SET_VECTOR_ELT(fields, i, R_getVarEx(sym, env, FALSE, R_NilValue));
+    }
+  }
+  Rf_setAttrib(fields, R_NamesSymbol, names);
+  SEXP out = wrap__r8_new_value(fields, type_name, variant);
+  UNPROTECT(1);
+  return out;
+}
+
 // The C routines that R calls through `.Call()` on a native symbol:
-// list(invoke, exports). R8's `.Call` routines are the Rust code's,
+// list(invoke, exports, construct). R8's `.Call` routines are the Rust code's,
 // registered by extendr; these continue a jump or call R_GetCCallable() from
 // C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 2));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 3));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 2));
+  SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 3));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
+  SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

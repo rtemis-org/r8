@@ -229,13 +229,9 @@ macro_rules! shared_fns {
                     let bytes = unsafe { std::slice::from_raw_parts(json, len) };
                     let text = std::str::from_utf8(bytes)
                         .map_err(|e| Error::new("decode_failed", e.to_string()))?;
-                    let v = T::from_document(text).map_err(|errors| {
-                        let m: Vec<String> = errors
-                            .iter()
-                            .map(|e| format!("{} at {}", e.message, e.path))
-                            .collect();
-                        Error::new("decode_failed", m.join("; "))
-                    })?;
+                    // R8 has read, validated, and normalized the document.
+                    let v = T::from_validated_document(text)
+                        .map_err(|e| Error::new("decode_failed", e))?;
                     unsafe { *out = Box::into_raw(Box::new(v)).cast() };
                     Ok(())
                 })

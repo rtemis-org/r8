@@ -239,16 +239,18 @@ generic <- function(name, args = "x", description = "") {
     )),
     generic = TRUE
   )
-  trait <- structure(
-    list(
-      name = qname,
-      ir = ir,
-      generics = stats::setNames(list(g), name),
-      defaults = list()
+  trait <- with_record(
+    structure(
+      list(
+        name = qname,
+        ir = ir,
+        generics = stats::setNames(list(g), name),
+        defaults = list()
+      ),
+      class = "r8_trait"
     ),
-    class = "r8_trait"
+    namespace
   )
-  register_trait(trait, namespace)
   record_declaration(
     env,
     list(kind = "trait", trait = trait, namespace = namespace)
@@ -476,7 +478,10 @@ classify_generic <- function(g, type_label = "Type") {
   }
   t <- unclass(target[["trait"]])
   m <- target[["method"]]
-  decl <- Filter(function(d) identical(d[["name"]], m), t[["ir"]][["methods"]])
+  decl <- Filter(
+    function(d) identical(d[["name"]], m),
+    trait_ir(t)[["methods"]]
+  )
   check_method_formals(value, unlist(decl[[1L]][["params"]]), m)
   impl_declare(
     target[["trait"]],
@@ -663,7 +668,7 @@ print.r8_generic <- function(x, ...) {
   trait <- attr(x, "r8_trait")
   method <- attr(x, "r8_method")
   t <- .r8_traits[[trait]]
-  is_generic <- !is.null(t) && isTRUE(unclass(t)[["ir"]][["generic"]])
+  is_generic <- !is.null(t) && isTRUE(trait_ir(t)[["generic"]])
   cat(
     "<R8 generic ",
     if (is_generic) trait else paste0(trait, "@", method),

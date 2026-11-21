@@ -412,6 +412,27 @@ pub trait Access<'a>: Copy + 'a {
         None
     }
 
+    /// Copies doubles of a sequence from item `start` into `buf`, where the
+    /// host form reads a sequence by region (an R vector that ALTREP holds),
+    /// and returns how many it copied; `None` where it does not.
+    fn f64_region(self, _start: usize, _buf: &mut [f64]) -> Option<usize> {
+        None
+    }
+
+    /// Copies whole numbers of a sequence from item `start` into `buf`, as
+    /// [`Access::f64_region`] copies doubles; a missing item is `i32::MIN`.
+    fn i32_region(self, _start: usize, _buf: &mut [i32]) -> Option<usize> {
+        None
+    }
+
+    /// `Some(true)` when the host records the sequence as sorted in
+    /// increasing order and without missing items, `Some(false)` sorted in
+    /// decreasing order and without missing items, and `None` otherwise. Its
+    /// smallest and largest items are then its first and last.
+    fn sorted_without_na(self) -> Option<bool> {
+        None
+    }
+
     /// Items `0..n` of a sequence of doubles, `Ok(None)` for a missing item.
     fn each_double(self, n: usize, f: impl FnMut(usize, Read<Option<f64>>)) {
         self.each_double_in(0, n, f)

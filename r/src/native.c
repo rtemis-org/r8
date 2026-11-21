@@ -358,7 +358,10 @@ SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
                    carry && i != skip ? VECTOR_ELT(R_altrep_data2(from), i) : unfilled);
   }
   SEXP ans = PROTECT(R_new_altrep(native_class, data1, cache));
-  DUPLICATE_ATTRIB(ans, like);
+  // The attribute vectors are shared, as every value of the type shares
+  // them (`construct::shared_attributes()`); a deep copy would allocate them
+  // per value.
+  SHALLOW_DUPLICATE_ATTRIB(ans, like);
   // The finalizer is registered after every other allocation: when R jumps
   // before it, the state stays the caller's to drop.
   R_RegisterCFinalizerEx(data1, native_finalize, TRUE);

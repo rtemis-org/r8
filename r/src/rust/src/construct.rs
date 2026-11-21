@@ -703,39 +703,102 @@ pub(crate) fn errors_list(errors: &[ValueError]) -> List {
     list!(code = code, path = path, rule = rule, message = message)
 }
 
-/// Sets the attributes of a value of the type `qname` on the list `out`: the
-/// class `c(<q>, "r8_value")`, `r8_type`, `r8_version`, and for an enum
-/// variant `r8_variant`.
-///
-/// # Safety
-///
-/// `out` is a protected list.
-pub(crate) unsafe fn set_value_attributes(
-    out: SEXP,
+/// The attribute vectors every value of one type, or of one enum variant,
+/// carries: preserved, marked not mutable, and shared by the values, so a
+/// value allocates none. Rebuilt after every change to the registry.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedAttributes {
+    names: SEXP,
+    class: SEXP,
+    r8_type: SEXP,
+    r8_version: SEXP,
+    r8_variant: SEXP,
+}
+
+// SAFETY: R8's native functions run on R's main thread only; the cache that
+// holds these objects is never read from another thread.
+unsafe impl Send for SharedAttributes {}
+
+/// A new preserved vector, marked not mutable.
+unsafe fn kept(x: SEXP) -> SEXP {
+    unsafe {
+        extendr_ffi::R_PreserveObject(x);
+        extendr_ffi::MARK_NOT_MUTABLE(x);
+    }
+    x
+}
+
+/// The shared attribute vectors of values of `qname` (and `variant`), whose
+/// fields are `names`, at the type's `version`.
+pub(crate) fn shared_attributes(
     qname: &str,
     version: u32,
     variant: Option<&str>,
-) {
-    unsafe {
-        let class = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 2));
+    names: &[&str],
+) -> SharedAttributes {
+    type ByVariant = HashMap<Box<str>, SharedAttributes>;
+    type ByType = HashMap<Box<str>, ByVariant>;
+    static CACHE: OnceLock<Mutex<(u64, ByType)>> = OnceLock::new();
+    let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
+    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
+    let g = GENERATION.load(Ordering::Relaxed);
+    if guard.0 != g {
+        for a in guard.1.values().flat_map(|v| v.values()) {
+            unsafe {
+                for x in [a.names, a.class, a.r8_type, a.r8_version, a.r8_variant] {
+                    if x != extendr_ffi::R_NilValue {
+                        extendr_ffi::R_ReleaseObject(x);
+                    }
+                }
+            }
+        }
+        guard.1.clear();
+        guard.0 = g;
+    }
+    let v = variant.unwrap_or("");
+    if let Some(a) = guard.1.get(qname).and_then(|m| m.get(v)) {
+        return *a;
+    }
+    let a = unsafe {
+        let names_v = kept(character(names).get());
         let qchar = mkchar(qname);
+        let class = kept(Rf_allocVector(SEXPTYPE::STRSXP, 2));
         SET_STRING_ELT(class, 0, qchar);
         SET_STRING_ELT(class, 1, mkchar("r8_value"));
-        Rf_setAttrib(out, sym_class(), class);
-        let ty = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 1));
+        let ty = kept(Rf_allocVector(SEXPTYPE::STRSXP, 1));
         SET_STRING_ELT(ty, 0, qchar);
-        Rf_setAttrib(out, sym_r8_type(), ty);
-        let ver = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, 1));
+        let ver = kept(Rf_allocVector(SEXPTYPE::INTSXP, 1));
         *INTEGER(ver) = version as i32;
-        Rf_setAttrib(out, crate::rview::sym_r8_version(), ver);
-        let mut protected = 3;
-        if let Some(v) = variant {
-            let s = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 1));
-            SET_STRING_ELT(s, 0, mkchar(v));
-            Rf_setAttrib(out, sym_r8_variant(), s);
-            protected += 1;
+        let var = match variant {
+            Some(v) => {
+                let s = kept(Rf_allocVector(SEXPTYPE::STRSXP, 1));
+                SET_STRING_ELT(s, 0, mkchar(v));
+                s
+            }
+            None => extendr_ffi::R_NilValue,
+        };
+        SharedAttributes {
+            names: names_v,
+            class,
+            r8_type: ty,
+            r8_version: ver,
+            r8_variant: var,
         }
-        Rf_unprotect(protected);
+    };
+    guard.1.entry(qname.into()).or_default().insert(v.into(), a);
+    a
+}
+
+/// Sets the attributes of a value from its type's shared vectors.
+pub(crate) unsafe fn set_value_attributes(out: SEXP, a: SharedAttributes) {
+    unsafe {
+        Rf_setAttrib(out, sym_names(), a.names);
+        Rf_setAttrib(out, sym_class(), a.class);
+        Rf_setAttrib(out, sym_r8_type(), a.r8_type);
+        Rf_setAttrib(out, crate::rview::sym_r8_version(), a.r8_version);
+        if a.r8_variant != extendr_ffi::R_NilValue {
+            Rf_setAttrib(out, sym_r8_variant(), a.r8_variant);
+        }
     }
 }
 
@@ -775,9 +838,7 @@ pub(crate) fn assemble(
     let mut created: Vec<Robj> = Vec::new();
     unsafe {
         let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
-        let names = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, n as R_xlen_t));
         for (k, f) in defs.iter().enumerate() {
-            SET_STRING_ELT(names, k as R_xlen_t, mkchar(f.name.as_str()));
             let x = list_member_at(fields, k, f.name.as_str()).unwrap_or(nil());
             let value = if is_null(x) {
                 match &f.default {
@@ -796,8 +857,12 @@ pub(crate) fn assemble(
             };
             SET_VECTOR_ELT(out, k as R_xlen_t, value);
         }
-        Rf_setAttrib(out, sym_names(), names);
-        set_value_attributes(out, &q.to_string(), version, variant);
+        let qname = q.to_string();
+        let field_names: Vec<&str> = defs.iter().map(|f| f.name.as_str()).collect();
+        set_value_attributes(
+            out,
+            shared_attributes(&qname, version, variant, &field_names),
+        );
         // A Rust-native type's value is the codec's state behind an ALTLIST
         // with the same attributes (`native.rs`).
         let r = match (def, crate::exports::codec(&q.to_string())) {
@@ -812,7 +877,7 @@ pub(crate) fn assemble(
             }
             _ => own(out),
         };
-        Rf_unprotect(2);
+        Rf_unprotect(1);
         drop(created);
         Ok(r)
     }
@@ -948,6 +1013,26 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
             None => vs,
         }
     };
+    // A Rust-native value: the codec builds the new state, and the new value
+    // reads its fields from it on demand, keeping the fields the old value
+    // has read, except the replaced one; the rules then read the fields they
+    // name. The old value's fields are not read.
+    if let Some((state, vt)) = crate::native::state_of(xs) {
+        let new_state = crate::native::with_field(vt, state, name, stored).map_err(fail)?;
+        let value = own(crate::native::wrap_from(
+            vt,
+            new_state,
+            xs,
+            xs,
+            k as R_xlen_t,
+        ));
+        drop(created);
+        let errors = reading_rule_errors(rules, fields, name, unsafe { value.get() }, lookup);
+        if !errors.is_empty() {
+            return problems(&errors);
+        }
+        return Ok(value);
+    }
     let n = xlen(xs);
     let out = unsafe {
         let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
@@ -972,11 +1057,28 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
         r
     };
     drop(created);
+    let errors = reading_rule_errors(rules, fields, name, unsafe { out.get() }, lookup);
+    if !errors.is_empty() {
+        return problems(&errors);
+    }
+    Ok(out)
+}
+
+/// The violations of the rules of `rules` that read the field `name`, on the
+/// value `os` whose fields are `fields`. The rules come compiled from the
+/// rule cache, each with the fields it reads, and read only the fields they
+/// name.
+fn reading_rule_errors(
+    rules: &[rtemis_r8::ir::RuleDef],
+    fields: &[FieldDef],
+    name: &str,
+    os: SEXP,
+    lookup: &dyn TypeLookup,
+) -> Vec<ValueError> {
     // The rules that read the field, compiled once per registry and kept in
     // the rule cache, each with the fields it reads.
+    let mut errors = Vec::new();
     if !rules.is_empty() {
-        let os = unsafe { out.get() };
-        let mut errors = Vec::new();
         with_cache(|cache| {
             for r in rules {
                 let Some(rule) = cache.compiled(r, fields, lookup) else {
@@ -1021,25 +1123,8 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
                 }
             }
         });
-        if !errors.is_empty() {
-            return problems(&errors);
-        }
     }
-    // A Rust-native value: the codec builds the new state, and the new
-    // value keeps the other fields already read.
-    if let Some((state, vt)) = crate::native::state_of(xs) {
-        let os = unsafe { out.get() };
-        let field = unsafe { VECTOR_ELT(os, k as R_xlen_t) };
-        let new_state = crate::native::with_field(vt, state, name, field).map_err(fail)?;
-        return Ok(own(crate::native::wrap_from(
-            vt,
-            new_state,
-            os,
-            xs,
-            k as R_xlen_t,
-        )));
-    }
-    Ok(out)
+    errors
 }
 
 extendr_module! {

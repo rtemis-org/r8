@@ -56,6 +56,11 @@ is_name <- function(x) {
 declaring_namespace <- function(env) {
   top <- topenv(env)
   if (isNamespace(top)) {
+    # Read once per loaded namespace and kept in the package's table.
+    table <- get0(".__r8__", envir = top, inherits = FALSE)
+    if (!is.null(table[["namespace"]])) {
+      return(table[["namespace"]])
+    }
     pkg <- getNamespaceName(top)
     declared <- utils::packageDescription(pkg, fields = "Config/R8/namespace")
     ns <- if (is.character(declared) && !is.na(declared)) declared else pkg
@@ -68,6 +73,14 @@ declaring_namespace <- function(env) {
         "` is not an R8 name. Set `Config/R8/namespace` in its DESCRIPTION.",
         class = "r8_declaration_error"
       )
+    }
+    if (!environmentIsLocked(top)) {
+      if (is.null(table)) {
+        table <- new.env(parent = emptyenv())
+        table[["entries"]] <- list()
+        assign(".__r8__", table, envir = top)
+      }
+      table[["namespace"]] <- ns
     }
     return(ns)
   }

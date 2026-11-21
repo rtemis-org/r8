@@ -7,6 +7,14 @@
 # documents.
 .r8_compiled_methods <- new.env(parent = emptyenv())
 
+# By package, the external pointers to compiled functions that the closures
+# of its compiled methods hold (`compiled_method()`), cleared when the
+# package registers again or unloads (`clear_compiled()`).
+.r8_compiled_ptrs <- new.env(parent = emptyenv())
+
+# The packages whose `onUnload` hook clears their pointers.
+.r8_unload_hooks <- new.env(parent = emptyenv())
+
 
 # %% r8_register ----
 #' Register a package's R8 declarations
@@ -54,16 +62,24 @@ r8_register <- function(pkgname = NULL) {
     NULL
   }
   entries <- if (is.null(table)) list() else table[["entries"]]
+  for (ns_name in unique(vapply(entries, function(e) e[["namespace"]], ""))) {
+    claim_namespace(ns_name, pkg)
+  }
+  # The records were checked when the package was installed; they register
+  # without the per-type check, and check_namespaces() checks every namespace
+  # the package owns whole. A failure restores the registry.
+  r8_registry_save()
+  done <- FALSE
+  on.exit(if (done) r8_registry_release() else r8_registry_restore())
   # Consecutive type records register in one call, before the next entry of
   # another kind, so the declarations replay in their order.
   pending <- list()
   for (e in entries) {
-    claim_namespace(e[["namespace"]], pkg)
     if (identical(e[["kind"]], "type")) {
       pending[[length(pending) + 1L]] <- e[["record"]]
       next
     }
-    register_records(pending, pkg)
+    register_records(pending, pkg, check = FALSE)
     pending <- list()
     switch(
       e[["kind"]],
@@ -72,10 +88,11 @@ r8_register <- function(pkgname = NULL) {
       s3method = register_s3_method(e)
     )
   }
-  register_records(pending, pkg)
+  register_records(pending, pkg, check = FALSE)
   n_compiled <- register_exports(pkg, entries)
   clear_variants()
   check_namespaces(pkg)
+  done <- TRUE
   invisible(length(entries) + n_compiled)
 } # /R8::r8_register
 
@@ -174,15 +191,46 @@ register_exports <- function(pkg, entries = list()) {
   for (n in compared[["type_name"]][compared[["codec"]]]) {
     assign(n, pkg, envir = .r8_codecs)
   }
+  clear_compiled(pkg)
+  if (is.null(.r8_unload_hooks[[pkg]])) {
+    setHook(
+      packageEvent(pkg, "onUnload"),
+      function(...) clear_compiled(pkg)
+    )
+    assign(pkg, TRUE, envir = .r8_unload_hooks)
+  }
   for (i in seq_along(fns[["method"]])) {
     compiled_method(
       fns[["trait_name"]][[i]],
       fns[["type_name"]][[i]],
-      fns[["method"]][[i]]
+      fns[["method"]][[i]],
+      pkg
     )
   }
   length(fns[["method"]])
 } # /R8::register_exports
+
+
+# %% clear_compiled ----
+#' Clear the pointers to a package's compiled functions
+#'
+#' A closure that still holds one, after the package's library unloads or
+#' the package registers again, raises an error when called.
+#'
+#' @param pkg Character: The package.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+clear_compiled <- function(pkg) {
+  ptrs <- .r8_compiled_ptrs[[pkg]]
+  if (!is.null(ptrs)) {
+    r8_clear_external_ptrs(ptrs)
+    rm(list = pkg, envir = .r8_compiled_ptrs)
+  }
+  invisible(NULL)
+} # /R8::clear_compiled
 
 
 # %% check_exports ----
@@ -249,12 +297,13 @@ check_exports <- function(pkg, compared, native) {
 #' as the trait's method for the type, as `impl()` registers an R method.
 #'
 #' @param trait_name,type_name,method Character: The impl.
+#' @param pkg Character: The package whose exports hold the function.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
-compiled_method <- function(trait_name, type_name, method) {
+compiled_method <- function(trait_name, type_name, method, pkg) {
   trait <- .r8_traits[[trait_name]]
   if (is.null(trait)) {
     r8_abort(
@@ -267,7 +316,7 @@ compiled_method <- function(trait_name, type_name, method) {
   t <- unclass(trait)
   decl <- Filter(
     function(m) identical(m[["name"]], method),
-    t[["ir"]][["methods"]]
+    trait_ir(t)[["methods"]]
   )
   params <- unlist(decl[[1L]][["params"]])
   args <- lapply(params, function(p) {
@@ -277,24 +326,24 @@ compiled_method <- function(trait_name, type_name, method) {
     rep(list(quote(expr = )), length(params)),
     params
   )
+  # The function is resolved once, here; its pointer, which the body holds,
+  # is cleared when the package registers again or unloads.
+  ptr <- r8_impl_fn(trait_name, type_name, method)
+  .r8_compiled_ptrs[[pkg]] <- c(.r8_compiled_ptrs[[pkg]], list(ptr))
   fn <- as.function(
     c(
       formals,
-      bquote(call_impl(
-        .(trait_name),
-        .(type_name),
-        .(method),
-        .(as.call(c(as.name("list"), args)))
-      ))
+      call(
+        ".Call",
+        quote(.r8_native[["invoke"]]),
+        ptr,
+        as.call(c(as.name("list"), args))
+      )
     ),
     envir = asNamespace("R8")
   )
   generic <- t[["generics"]][[method]]
-  assign(
-    paste(trait_name, method, type_name, sep = "|"),
-    fn,
-    envir = .r8_impls
-  )
+  set_impl(trait_name, method, type_name, fn)
   if (!inherits(generic, "r8_generic")) {
     if (identical(trait_name, "R8::Print")) {
       fn <- print_method(fn)
@@ -305,26 +354,3 @@ compiled_method <- function(trait_name, type_name, method) {
   }
   invisible(NULL)
 } # /R8::compiled_method
-
-
-# %% call_impl ----
-#' Call a compiled impl function
-#'
-#' Passes the arguments to the impl function of `method` of the trait for the
-#' type, through R8's C routine `invoke`, which raises the impl's error and
-#' continues a jump that `R8Api.protect` caught.
-#'
-#' @param trait_name,type_name,method Character: The impl.
-#' @param args List: The arguments, in the declared order.
-#'
-#' @return The impl function's result.
-#'
-#' @keywords internal
-#' @noRd
-call_impl <- function(trait_name, type_name, method, args) {
-  .Call(
-    .r8_native[["invoke"]],
-    r8_impl_fn(trait_name, type_name, method),
-    args
-  )
-} # /R8::call_impl

@@ -455,6 +455,17 @@ pub fn read_document(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
 ) -> Result<Value, Vec<ValueError>> {
+    read_document_cached(text, ty, lookup, &mut crate::validate::RuleCache::new())
+}
+
+/// [`read_document`] with compiled rules kept in `cache`, which is valid for
+/// `lookup` while it is unchanged.
+pub fn read_document_cached(
+    text: &str,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    cache: &mut crate::validate::RuleCache,
+) -> Result<Value, Vec<ValueError>> {
     let mut doc: Value = serde_json::from_str(text).map_err(|e| {
         vec![document_error(
             "document_json",
@@ -496,7 +507,7 @@ pub fn read_document(
         Some(v) => v,
         None => doc,
     };
-    let validation = validate(&value, ty, lookup);
+    let validation = crate::validate::validate_cached(&value, ty, lookup, cache);
     if !validation.is_empty() {
         errors.extend(validation);
         return Err(errors);

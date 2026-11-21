@@ -64,9 +64,9 @@ impl RuleCache {
         Self::default()
     }
 
-    /// Removes every compiled rule and pattern.
+    /// Removes every compiled rule. Compiled patterns stay: a pattern's
+    /// compiled form depends on its text alone.
     pub fn clear(&mut self) {
-        self.patterns.clear();
         self.rules.clear();
     }
 
@@ -169,6 +169,112 @@ fn integer_ok(c: &IntegerType, x: i64) -> bool {
     }
 }
 
+/// A chunk of a numeric sequence.
+#[derive(Clone, Copy)]
+enum Chunk<'c> {
+    F64(&'c [f64]),
+    I32(&'c [i32]),
+}
+
+/// Whether every item of `chunk` satisfies the scalar type `inner`, a
+/// missing item satisfying it when `optional`.
+#[inline(always)]
+fn chunk_ok(inner: &FieldType, optional: bool, chunk: Chunk) -> bool {
+    let na_ok = |missing: bool, ok: bool| if missing { optional } else { ok };
+    match (inner, chunk) {
+        (FieldType::Double(c), Chunk::F64(s)) => s
+            .iter()
+            .all(|&x| na_ok(crate::access::is_na_real(x), double_ok(c, x))),
+        (FieldType::Double(c), Chunk::I32(s)) => s
+            .iter()
+            .all(|&x| na_ok(x == i32::MIN, double_ok(c, f64::from(x)))),
+        (FieldType::Integer(c), Chunk::I32(s)) => s
+            .iter()
+            .all(|&x| na_ok(x == i32::MIN, integer_ok(c, i64::from(x)))),
+        (FieldType::Integer(c), Chunk::F64(s)) => s.iter().all(|&x| {
+            na_ok(
+                crate::access::is_na_real(x),
+                x.fract() == 0.0 && integer_ok(c, x as i64),
+            )
+        }),
+        _ => false,
+    }
+}
+
+/// Whether the first `n` items of the numeric sequence `v` satisfy the
+/// scalar type `inner`, scanned as one array or by region in chunks; `false`
+/// also when neither form is available, so the caller reads item by item.
+fn scan_clean<'a, A: Access<'a>>(inner: &FieldType, optional: bool, v: A, n: usize) -> bool {
+    if !matches!(inner, FieldType::Double(_) | FieldType::Integer(_)) {
+        return false;
+    }
+    if let Some(s) = v.f64_slice() {
+        return chunk_ok(inner, optional, Chunk::F64(&s[..n.min(s.len())]));
+    }
+    if let Some(s) = v.i32_slice() {
+        return chunk_ok(inner, optional, Chunk::I32(&s[..n.min(s.len())]));
+    }
+    // Sorted without missing items: bounds and finiteness hold for every
+    // item when they hold for the first and the last. A closed set of values,
+    // and whole numbers held as doubles, need every item.
+    let bounds_only = match inner {
+        FieldType::Double(c) => c.values.is_none(),
+        FieldType::Integer(c) => c.values.is_none(),
+        _ => false,
+    };
+    if n > 0 && bounds_only && v.sorted_without_na().is_some() {
+        let mut first = [0i32; 1];
+        let mut last = [0i32; 1];
+        if v.i32_region(0, &mut first) == Some(1) && v.i32_region(n - 1, &mut last) == Some(1) {
+            return chunk_ok(inner, optional, Chunk::I32(&first))
+                && chunk_ok(inner, optional, Chunk::I32(&last));
+        }
+        if matches!(inner, FieldType::Double(_)) {
+            let mut first = [0f64; 1];
+            let mut last = [0f64; 1];
+            if v.f64_region(0, &mut first) == Some(1) && v.f64_region(n - 1, &mut last) == Some(1) {
+                return chunk_ok(inner, optional, Chunk::F64(&first))
+                    && chunk_ok(inner, optional, Chunk::F64(&last));
+            }
+        }
+    }
+    const CHUNK: usize = 4096;
+    let mut i = 0;
+    let mut ibuf = [0i32; CHUNK];
+    if v.i32_region(0, &mut ibuf[..0]).is_some() {
+        while i < n {
+            let want = (n - i).min(CHUNK);
+            match v.i32_region(i, &mut ibuf[..want]) {
+                Some(0) | None => return false,
+                Some(got) => {
+                    if !chunk_ok(inner, optional, Chunk::I32(&ibuf[..got])) {
+                        return false;
+                    }
+                    i += got;
+                }
+            }
+        }
+        return true;
+    }
+    let mut fbuf = [0f64; CHUNK];
+    if v.f64_region(0, &mut fbuf[..0]).is_some() {
+        while i < n {
+            let want = (n - i).min(CHUNK);
+            match v.f64_region(i, &mut fbuf[..want]) {
+                Some(0) | None => return false,
+                Some(got) => {
+                    if !chunk_ok(inner, optional, Chunk::F64(&fbuf[..got])) {
+                        return false;
+                    }
+                    i += got;
+                }
+            }
+        }
+        return true;
+    }
+    false
+}
+
 /// The most errors one validation lists. A value with more is reported by
 /// its first `ERROR_LIMIT` errors and one `error_limit` entry, so that the
 /// report of a large invalid value stays small.
@@ -243,11 +349,12 @@ impl<'l> Validator<'l, '_> {
     }
 
     fn regex(&mut self, pattern: &str) -> Option<&Regex> {
-        self.cache
-            .patterns
-            .entry(pattern.to_string())
-            .or_insert_with(|| Regex::new(pattern).ok())
-            .as_ref()
+        if !self.cache.patterns.contains_key(pattern) {
+            self.cache
+                .patterns
+                .insert(pattern.to_string(), compiled_pattern(pattern));
+        }
+        self.cache.patterns[pattern].as_ref()
     }
 
     /// Checks a value of a field type. An absent value is reported as a
@@ -385,31 +492,11 @@ impl<'l> Validator<'l, '_> {
             }
             return;
         }
-        // A sequence held as one array is scanned first; items are read one
-        // by one only when the scan finds a problem.
-        if !unique {
-            let na_ok = |missing: bool, ok: bool| if missing { optional } else { ok };
-            let clean = match (inner, v.f64_slice(), v.i32_slice()) {
-                (FieldType::Double(c), Some(s), _) => s[..n.min(s.len())]
-                    .iter()
-                    .all(|&x| na_ok(crate::access::is_na_real(x), double_ok(c, x))),
-                (FieldType::Double(c), None, Some(s)) => s[..n.min(s.len())]
-                    .iter()
-                    .all(|&x| na_ok(x == i32::MIN, double_ok(c, f64::from(x)))),
-                (FieldType::Integer(c), _, Some(s)) => s[..n.min(s.len())]
-                    .iter()
-                    .all(|&x| na_ok(x == i32::MIN, integer_ok(c, i64::from(x)))),
-                (FieldType::Integer(c), Some(s), None) => s[..n.min(s.len())].iter().all(|&x| {
-                    na_ok(
-                        crate::access::is_na_real(x),
-                        x.fract() == 0.0 && integer_ok(c, x as i64),
-                    )
-                }),
-                _ => false,
-            };
-            if clean {
-                return;
-            }
+        // A sequence held as one array, or read by region in chunks, is
+        // scanned first; items are read one by one only when the scan finds a
+        // problem.
+        if !unique && scan_clean(inner, optional, v, n) {
+            return;
         }
         let mut seen: HashSet<Key> = HashSet::new();
         let mut dup = |this: &mut Self, i: usize, k: Key, shown: &dyn Fn() -> String| {
@@ -1254,8 +1341,35 @@ pub fn validate_field(value: &Value, ty: &FieldType, lookup: &dyn TypeLookup) ->
 /// error; an empty vector means the value is valid. The document envelope is
 /// accepted on the outermost object.
 pub fn validate(value: &Value, ty: &QualifiedName, lookup: &dyn TypeLookup) -> Vec<ValueError> {
-    let mut cache = RuleCache::new();
-    let mut v = Validator::new(lookup, &mut cache);
+    validate_cached(value, ty, lookup, &mut RuleCache::new())
+}
+
+/// [`validate`] with compiled rules kept in `cache`, which is valid for
+/// `lookup` while it is unchanged.
+pub fn validate_cached(
+    value: &Value,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    cache: &mut RuleCache,
+) -> Vec<ValueError> {
+    let mut v = Validator::new(lookup, cache);
     v.named(ty, Json::new(value), &P::Root(""), &ENVELOPE);
     v.finish()
+}
+
+/// The compiled form of the regular expression `pattern`, or `None` when it
+/// does not compile, kept for the process: a pattern's compiled form depends
+/// on its text alone, so every declaration check and validation that names
+/// it shares one compilation.
+pub fn compiled_pattern(pattern: &str) -> Option<Regex> {
+    static PATTERNS: std::sync::OnceLock<std::sync::Mutex<HashMap<Box<str>, Option<Regex>>>> =
+        std::sync::OnceLock::new();
+    let m = PATTERNS.get_or_init(Default::default);
+    let mut map = m.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = map.get(pattern) {
+        return r.clone();
+    }
+    let r = Regex::new(pattern).ok();
+    map.insert(pattern.into(), r.clone());
+    r
 }

@@ -426,6 +426,7 @@ impl Checker<'_> {
 
     fn pattern(&mut self, pattern: Option<&str>, path: &str) {
         if let Some(p) = pattern
+            && crate::validate::compiled_pattern(p).is_none()
             && let Err(e) = regex::Regex::new(p)
         {
             self.report(

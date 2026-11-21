@@ -20,7 +20,7 @@
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result, SEXP};
-use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text, read_document};
+use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text};
 use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
@@ -1402,7 +1402,9 @@ fn r8_value_to_document(x: Robj) -> Result<List> {
 fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = crate::declare::snapshot()?;
-    let v = match read_document(text, &q, &*docs) {
+    let v = match crate::construct::with_cache(|cache| {
+        rtemis_r8::codec::read_document_cached(text, &q, &*docs, cache)
+    }) {
         Ok(v) => v,
         Err(errors) => return Ok(list!(errors = errors_list(&errors))),
     };

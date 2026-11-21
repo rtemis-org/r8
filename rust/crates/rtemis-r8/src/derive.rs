@@ -70,6 +70,18 @@ pub trait R8: Encode {
         let v = read_document(text, &Self::qualified_name(), &Self::declarations())?;
         Self::decode(&v).map_err(|e| vec![encode_error(e)])
     }
+
+    /// Decodes a document that R8 has read, validated, and normalized: the
+    /// value of `"$value"`, or the document itself, without validating it
+    /// again.
+    fn from_validated_document(text: &str) -> Result<Self, String> {
+        let mut doc: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let v = match doc.as_object_mut().and_then(|m| m.remove("$value")) {
+            Some(v) => v,
+            None => doc,
+        };
+        Self::decode(&v)
+    }
 }
 
 fn encode_error(message: String) -> ValueError {

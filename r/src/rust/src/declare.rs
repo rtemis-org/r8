@@ -642,11 +642,14 @@ fn r8_is_registered(name: &str) -> bool {
 ///
 /// @param records List: Raw vectors, each a record.
 /// @param source Character: The package the records come from, or `""`.
+/// @param check Logical: Check each declaration; `FALSE` at package load,
+///   where `check_namespaces()` checks the package's namespaces whole after
+///   every declaration is registered.
 /// @return List: `name`, `code`, `path`, and `message` of each problem.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_records(records: List, source: &str) -> Result<List> {
+fn r8_declare_records(records: List, source: &str, check: bool) -> Result<List> {
     use rtemis_r8::record::{self, Declaration};
     let from = if source.is_empty() {
         "a type object".to_string()
@@ -672,6 +675,10 @@ fn r8_declare_records(records: List, source: &str) -> Result<List> {
         })?;
         for entry in entries {
             let ns = entry.namespace.to_string();
+            if !check {
+                register_unchecked(entry.declaration, &entry.namespace)?;
+                continue;
+            }
             let (label, problems) = match entry.declaration {
                 Declaration::Type(t) => (format!("{ns}::{}", t.name()), declare_type(t, &ns)?),
                 Declaration::Trait(t) => (format!("{ns}::{}", t.name), declare_trait(t, &ns)?),
@@ -711,8 +718,172 @@ fn r8_declare_records(records: List, source: &str) -> Result<List> {
     ))
 }
 
+/// The registered declaration of the trait `name`, `namespace::Trait`.
+fn find_trait<'a>(reg: &'a DocumentSet, name: &str) -> Result<&'a rtemis_r8::ir::TraitDef> {
+    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
+    reg.namespace(&q.namespace)
+        .and_then(|d| d.traits.iter().find(|t| t.name == q.name))
+        .ok_or_else(|| fail(format!("`{name}` is not registered")))
+}
+
+/// The declaration record of a registered trait (`rtemis_r8::record`).
+///
+/// @param name Character: The qualified name, `namespace::Trait`.
+/// @return Raw: The record.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_trait_record(name: &str) -> Result<Robj> {
+    use rtemis_r8::record::{self, DeclarationRef};
+    let reg = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let t = find_trait(&reg, name)?;
+    let ns = QualifiedName::parse(name)
+        .map_err(|e| fail(e.to_string()))?
+        .namespace;
+    Ok(Robj::from(
+        record::encode([(&ns, DeclarationRef::Trait(t))]).as_slice(),
+    ))
+}
+
+/// The declaration record of an impl, read from the R lists `impl()` builds.
+///
+/// @param ir List: The impl's declaration.
+/// @param namespace Character: The namespace of the declaring code.
+/// @return Raw: The record.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_impl_record(ir: Robj, namespace: &str) -> Result<Robj> {
+    use rtemis_r8::record::{self, DeclarationRef};
+    let def: rtemis_r8::ir::ImplDef = crate::irde::from_r(unsafe { ir.get() })
+        .map_err(|e| fail(format!("the impl does not read: {e}")))?;
+    let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
+    Ok(Robj::from(
+        record::encode([(&ns, DeclarationRef::Impl(&def))]).as_slice(),
+    ))
+}
+
+/// The declaration of a registered trait as R lists (`irser`).
+///
+/// @param name Character: The qualified name, `namespace::Trait`.
+/// @return List: The declaration.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_trait_ir(name: &str) -> Result<Robj> {
+    let reg = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    let t = find_trait(&reg, name)?;
+    crate::irser::to_r(t).map_err(|e| fail(e.to_string()))
+}
+
+/// Registers a declaration without its check, for a package's records at
+/// load, which `check_namespaces()` checks whole afterward.
+fn register_unchecked(d: rtemis_r8::record::Declaration, ns: &Name) -> Result<()> {
+    use rtemis_r8::record::Declaration;
+    let mut guard = registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?;
+    match d {
+        Declaration::Type(t) => {
+            let q = QualifiedName {
+                namespace: ns.clone(),
+                name: t.name().clone(),
+            };
+            if rtemis_r8::rules::TypeLookup::find(&**guard, &q) != Some(&t) {
+                Arc::make_mut(&mut guard).put_type(ns, t);
+                crate::construct::registry_changed();
+            }
+        }
+        Declaration::Trait(t) => {
+            if !guard
+                .namespace(ns)
+                .is_some_and(|doc| doc.traits.contains(&t))
+            {
+                let reg = Arc::make_mut(&mut guard);
+                let d = reg.document_position(ns);
+                let traits = reg.traits_mut(d);
+                match traits.iter().position(|x| x.name == t.name) {
+                    Some(i) => traits[i] = t,
+                    None => traits.push(t),
+                }
+                crate::construct::registry_changed();
+            }
+        }
+        Declaration::Impl(i) => {
+            drop(guard);
+            declare_impl(i, ns.as_str())?;
+        }
+    }
+    Ok(())
+}
+
+/// Saved states of the registry, the most recent last.
+fn saved() -> &'static Mutex<Vec<Arc<DocumentSet>>> {
+    static SAVED: OnceLock<Mutex<Vec<Arc<DocumentSet>>>> = OnceLock::new();
+    SAVED.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Saves the registry's state, which `r8_registry_restore()` brings back
+/// and `r8_registry_release()` discards; saves nest.
+///
+/// @return `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_registry_save() -> Result<()> {
+    let snap = snapshot()?;
+    saved()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?
+        .push(snap);
+    Ok(())
+}
+
+/// Restores the registry to its most recently saved state.
+///
+/// @return `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_registry_restore() -> Result<()> {
+    let snap = saved()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?
+        .pop()
+        .ok_or_else(|| fail("no saved state of the registry"))?;
+    *registry()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))? = snap;
+    crate::construct::registry_changed();
+    Ok(())
+}
+
+/// Discards the most recently saved state of the registry.
+///
+/// @return `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_registry_release() -> Result<()> {
+    saved()
+        .lock()
+        .map_err(|_| fail("the registry is unavailable"))?
+        .pop();
+    Ok(())
+}
+
 extendr_module! {
     mod declare;
+    fn r8_registry_save;
+    fn r8_registry_restore;
+    fn r8_registry_release;
+    fn r8_trait_record;
+    fn r8_impl_record;
+    fn r8_trait_ir;
     fn r8_type_record;
     fn r8_is_registered;
     fn r8_declare_records;

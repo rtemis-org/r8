@@ -46,6 +46,53 @@ r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, f
 #' @noRd
 r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, value)
 
+#' Saves the registry's state, which `r8_registry_restore()` brings back
+#' and `r8_registry_release()` discards; saves nest.
+#'
+#' @return `NULL`.
+#' @keywords internal
+#' @noRd
+r8_registry_save <- function() .Call(wrap__r8_registry_save)
+
+#' Restores the registry to its most recently saved state.
+#'
+#' @return `NULL`.
+#' @keywords internal
+#' @noRd
+r8_registry_restore <- function() .Call(wrap__r8_registry_restore)
+
+#' Discards the most recently saved state of the registry.
+#'
+#' @return `NULL`.
+#' @keywords internal
+#' @noRd
+r8_registry_release <- function() .Call(wrap__r8_registry_release)
+
+#' The declaration record of a registered trait (`rtemis_r8::record`).
+#'
+#' @param name Character: The qualified name, `namespace::Trait`.
+#' @return Raw: The record.
+#' @keywords internal
+#' @noRd
+r8_trait_record <- function(name) .Call(wrap__r8_trait_record, name)
+
+#' The declaration record of an impl, read from the R lists `impl()` builds.
+#'
+#' @param ir List: The impl's declaration.
+#' @param namespace Character: The namespace of the declaring code.
+#' @return Raw: The record.
+#' @keywords internal
+#' @noRd
+r8_impl_record <- function(ir, namespace) .Call(wrap__r8_impl_record, ir, namespace)
+
+#' The declaration of a registered trait as R lists (`irser`).
+#'
+#' @param name Character: The qualified name, `namespace::Trait`.
+#' @return List: The declaration.
+#' @keywords internal
+#' @noRd
+r8_trait_ir <- function(name) .Call(wrap__r8_trait_ir, name)
+
 #' The declaration record of a registered type and of every named type it
 #' reaches, the reached types first (`rtemis_r8::record`).
 #'
@@ -69,10 +116,13 @@ r8_is_registered <- function(name) .Call(wrap__r8_is_registered, name)
 #'
 #' @param records List: Raw vectors, each a record.
 #' @param source Character: The package the records come from, or `""`.
+#' @param check Logical: Check each declaration; `FALSE` at package load,
+#'   where `check_namespaces()` checks the package's namespaces whole after
+#'   every declaration is registered.
 #' @return List: `name`, `code`, `path`, and `message` of each problem.
 #' @keywords internal
 #' @noRd
-r8_declare_records <- function(records, source) .Call(wrap__r8_declare_records, records, source)
+r8_declare_records <- function(records, source, check) .Call(wrap__r8_declare_records, records, source, check)
 
 #' The declaration of a registered type as R lists, in the form the
 #' declaration functions build (`irser`).
@@ -202,6 +252,16 @@ r8_declare_type <- function(ir, namespace) .Call(wrap__r8_declare_type, ir, name
 #' @keywords internal
 #' @noRd
 r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
+
+#' Clears external pointers to compiled functions, whose package's library
+#' unloads or registers again, so a closure that still holds one raises an
+#' error in `invoke` rather than calling freed code.
+#'
+#' @param ptrs List: External pointers.
+#' @return `NULL`.
+#' @keywords internal
+#' @noRd
+r8_clear_external_ptrs <- function(ptrs) .Call(wrap__r8_clear_external_ptrs, ptrs)
 
 #' The package and namespace of an exports table, checked.
 #'

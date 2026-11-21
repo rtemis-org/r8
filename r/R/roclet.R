@@ -325,7 +325,7 @@ compiled_blocks <- function(blocks, env, base_path) {
     method <- methods[["method"]][[i]]
     decl <- Filter(
       function(m) identical(m[["name"]], method),
-      t[["ir"]][["methods"]]
+      trait_ir(t)[["methods"]]
     )
     params <- unlist(decl[[1L]][["params"]])
     formals <- stats::setNames(

@@ -244,13 +244,23 @@ test_that("a type object outside a package carries its record, which registers i
   bad <- record
   bad[length(bad)] <- xor(bad[length(bad)], as.raw(1L))
   expect_error(
-    R8:::r8_declare_records(list(bad), "somepkg"),
+    R8:::r8_declare_records(list(bad), "somepkg", TRUE),
     "package 'somepkg' do not read: the record's checksum does not match its content; reinstall 'somepkg'"
   )
   # Registering the record again changes nothing.
   before <- r8_declaration(P)
   R8:::register_records(list(record))
   expect_identical(r8_declaration(P), before)
+})
+
+test_that("a restored registry takes back the declarations made after its save", {
+  R8:::r8_registry_save()
+  Q <- declare_in("restore", new_struct("Q", fields = list(x = type_double())))
+  expect_true(R8:::r8_is_registered("restore::Q"))
+  R8:::r8_registry_restore()
+  expect_false(R8:::r8_is_registered("restore::Q"))
+  # The type object carries its record, which registers it again.
+  expect_identical(Q(x = 1)$x, 1)
 })
 
 test_that("re-declaring a type replaces it", {

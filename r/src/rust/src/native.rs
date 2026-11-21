@@ -18,7 +18,7 @@ use rtemis_r8::rules::TypeLookup;
 
 use crate::construct::mkchar;
 use crate::declare::registry;
-use crate::rview::{sym_names, xlen};
+use crate::rview::xlen;
 
 static WRAP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static STATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -542,14 +542,13 @@ pub(crate) unsafe fn template(
     variant: Option<&str>,
 ) -> SEXP {
     unsafe {
+        // Left protected for the caller, as before.
         let like = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, names.len() as R_xlen_t));
-        let n = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, names.len() as R_xlen_t));
-        for (k, f) in names.iter().enumerate() {
-            SET_STRING_ELT(n, k as R_xlen_t, mkchar(f));
-        }
-        extendr_ffi::Rf_setAttrib(like, sym_names(), n);
-        crate::construct::set_value_attributes(like, qname, version, variant);
-        Rf_unprotect(1);
+        let field_names: Vec<&str> = names.iter().map(String::as_str).collect();
+        crate::construct::set_value_attributes(
+            like,
+            crate::construct::shared_attributes(qname, version, variant, &field_names),
+        );
         like
     }
 }

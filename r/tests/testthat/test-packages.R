@@ -240,7 +240,13 @@ test_that("impls in C register through R8.h and dispatch", {
       "u <- tryCatch(ratio(p, NA_real_), error = function(e) conditionMessage(e))",
       "cat('unwind', u, '\\n')",
       "cat('status', suppressMessages(protect_status()), '\\n')",
-      "cat('after', ratio(p, 2), '\\n')"
+      "cat('after', ratio(p, 2), '\\n')",
+      "# A closure kept after its package unloads refuses the call.",
+      "keys <- grep('|magnitude|', ls(R8:::.r8_impls), fixed = TRUE, value = TRUE)",
+      "f <- get(keys[[1L]], envir = R8:::.r8_impls)",
+      "unloadNamespace('r8pkgC')",
+      "e <- tryCatch(f(p), error = function(e) conditionMessage(e))",
+      "cat('unloaded', grepl('unloaded', e), '\\n')"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -255,6 +261,7 @@ test_that("impls in C register through R8.h and dispatch", {
   expect_true("unwind `by` is NA " %in% out, info = info)
   expect_true("status 2 " %in% out, info = info)
   expect_true("after 1.5 " %in% out, info = info)
+  expect_true("unloaded TRUE " %in% out, info = info)
 })
 
 test_that("Rust-native values read, change, persist, and cross workers", {

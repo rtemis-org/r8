@@ -537,8 +537,27 @@ fn r8_impl_fn(trait_name: &str, type_name: &str, method: &str) -> Result<Robj> {
     })
 }
 
+/// Clears external pointers to compiled functions, whose package's library
+/// unloads or registers again, so a closure that still holds one raises an
+/// error in `invoke` rather than calling freed code.
+///
+/// @param ptrs List: External pointers.
+/// @return `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_clear_external_ptrs(ptrs: List) {
+    for p in ptrs.values() {
+        let x = unsafe { p.get() };
+        if unsafe { extendr_ffi::TYPEOF(x) } == extendr_ffi::SEXPTYPE::EXTPTRSXP {
+            unsafe { extendr_ffi::R_ClearExternalPtr(x) };
+        }
+    }
+}
+
 extendr_module! {
     mod exports;
+    fn r8_clear_external_ptrs;
     fn r8_exports_info;
     fn r8_exports_document;
     fn r8_exports_compare;

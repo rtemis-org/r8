@@ -6,6 +6,13 @@
 # a trait looks up the impl for the qualified type of its first argument.
 .r8_impls <- new.env(parent = emptyenv())
 
+# The dispatch index: by `"Trait|method"`, an environment of each impl of
+# the method by qualified type; a trait's default stays in `.r8_impls`, which
+# `r8_find_impl()` reads when the index has no impl. A generic reads
+# it in R8's namespace, so a generic sent to a worker finds the worker's
+# impls. `set_impl()` keeps it with `.r8_impls`.
+.r8_dispatch <- new.env(parent = emptyenv())
+
 # Trait objects by qualified name, for the impls of compiled code.
 .r8_traits <- new.env(parent = emptyenv())
 
@@ -154,9 +161,14 @@ make_generic <- function(trait_name, method, fn) {
     if (a == "...") quote(...) else as.name(a)
   })
   names(call_args) <- ifelse(args == "...", "", args)
+  key <- paste(trait_name, method, sep = "|")
   body <- bquote({
-    impl <- r8_find_impl(.(trait_name), .(method), .(first))
-    .(as.call(c(list(quote(impl)), call_args)))
+    .r8_type_ <- attr(.(first), "r8_type", exact = TRUE)
+    .r8_impl_ <- if (!is.null(.r8_type_)) .r8_dispatch[[.(key)]][[.r8_type_]]
+    if (is.null(.r8_impl_)) {
+      .r8_impl_ <- r8_find_impl(.(trait_name), .(method), .(first))
+    }
+    .(as.call(c(list(quote(.r8_impl_)), call_args)))
   })
   g <- as.function(c(formals(fn), body), envir = asNamespace("R8"))
   structure(
@@ -250,8 +262,10 @@ new_trait <- function(name, methods = list(), description = "", tag = NULL) {
   env <- parent.frame()
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
-  trait <- build_trait(name, methods, description, tag, namespace, env)
-  register_trait(trait, namespace)
+  trait <- with_record(
+    build_trait(name, methods, description, tag, namespace, env),
+    namespace
+  )
   record_declaration(
     env,
     list(kind = "trait", trait = trait, namespace = namespace)
@@ -382,30 +396,17 @@ build_trait <- function(name, methods, description, tag, namespace, env) {
 #' @noRd
 register_trait <- function(trait, namespace) {
   t <- unclass(trait)
-  problems <- r8_declare_trait(t[["ir"]], namespace)
-  if (length(problems[["code"]]) > 0L) {
-    r8_abort(
-      "Declaration of `",
-      t[["name"]],
-      "` failed:\n",
-      paste0(
-        "- ",
-        problems[["message"]],
-        " [",
-        problems[["code"]],
-        "]",
-        collapse = "\n"
-      ),
-      class = "r8_declaration_error"
-    )
+  if (!is.null(t[["record"]])) {
+    register_records(list(t[["record"]]))
+  } else {
+    problems <- r8_declare_trait(t[["ir"]], namespace)
+    if (length(problems[["code"]]) > 0L) {
+      declaration_failed(t[["name"]], problems)
+    }
   }
   assign(t[["name"]], trait, envir = .r8_traits)
   for (m in names(t[["defaults"]])) {
-    assign(
-      paste(t[["name"]], m, "", sep = "|"),
-      t[["defaults"]][[m]],
-      envir = .r8_impls
-    )
+    set_impl(t[["name"]], m, "", t[["defaults"]][[m]])
   }
   invisible(NULL)
 } # /R8::register_trait
@@ -504,8 +505,9 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
   }
   check_members(methods, "methods", "an impl")
   fns <- methods
+  methods_ir <- trait_ir(t)[["methods"]]
   declared <- vapply(
-    t[["ir"]][["methods"]],
+    methods_ir,
     function(m) m[["name"]],
     character(1)
   )
@@ -523,7 +525,7 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
   for (m in declared) {
     has_default <- isTRUE(Filter(
       function(x) x[["name"]] == m,
-      t[["ir"]][["methods"]]
+      methods_ir
     )[[1L]][["has_default"]])
     if (is.null(fns[[m]]) && !has_default) {
       r8_abort(
@@ -546,17 +548,20 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
   if (!is.null(tag_value)) {
     ir[["tag_value"]] <- tag_value
   }
+  if (inherits(trait, "r8_from_trait")) {
+    ir[["type_args"]] <- list(t[["source"]])
+  }
+  # The entry names its trait, which registers before the impl.
   entry <- list(
     kind = "impl",
-    trait = trait,
+    trait_name = t[["name"]],
     type_name = type_name,
     fns = fns,
-    ir = ir,
+    record = r8_impl_record(ir, namespace),
     namespace = namespace
   )
   if (inherits(trait, "r8_from_trait")) {
     entry[["source"]] <- t[["source"]]
-    entry[["ir"]][["type_args"]] <- list(t[["source"]])
   }
   register_impl(entry)
   record_declaration(env, entry)
@@ -574,24 +579,24 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
 #' @keywords internal
 #' @noRd
 register_impl <- function(entry) {
-  t <- unclass(entry[["trait"]])
+  t <- if (!is.null(entry[["source"]])) {
+    unclass(From(entry[["source"]]))
+  } else {
+    unclass(.r8_traits[[entry[["trait_name"]]]])
+  }
   if (!is.null(entry[["source"]])) {
     assign(
       paste("R8::From", entry[["source"]], entry[["type_name"]], sep = "|"),
       entry[["fns"]][["from"]],
       envir = .r8_impls
     )
-    r8_declare_impl(entry[["ir"]], entry[["namespace"]])
+    register_records(list(entry[["record"]]))
     return(invisible(NULL))
   }
   for (m in names(entry[["fns"]])) {
     generic <- t[["generics"]][[m]]
     fn <- entry[["fns"]][[m]]
-    assign(
-      paste(t[["name"]], m, entry[["type_name"]], sep = "|"),
-      fn,
-      envir = .r8_impls
-    )
+    set_impl(t[["name"]], m, entry[["type_name"]], fn)
     if (!inherits(generic, "r8_generic")) {
       if (identical(t[["name"]], "R8::Print")) {
         fn <- print_method(fn)
@@ -601,9 +606,73 @@ register_impl <- function(entry) {
       registerS3method(m, entry[["type_name"]], fn, envir = s3_envir(generic))
     }
   }
-  r8_declare_impl(entry[["ir"]], entry[["namespace"]])
+  register_records(list(entry[["record"]]))
   invisible(NULL)
 } # /R8::register_impl
+
+
+# %% set_impl ----
+#' Record the impl of a trait method for a type
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param method Character: The method name.
+#' @param type Character: The qualified type name, or `""` for the trait's
+#'   default.
+#' @param fn Function: The impl.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+set_impl <- function(trait_name, method, type, fn) {
+  assign(paste(trait_name, method, type, sep = "|"), fn, envir = .r8_impls)
+  if (!nzchar(type)) {
+    return(invisible(NULL))
+  }
+  key <- paste(trait_name, method, sep = "|")
+  index <- .r8_dispatch[[key]]
+  if (is.null(index)) {
+    index <- new.env(parent = emptyenv())
+    assign(key, index, envir = .r8_dispatch)
+  }
+  assign(type, fn, envir = index)
+  invisible(NULL)
+} # /R8::set_impl
+
+
+# %% with_record ----
+#' Register a trait and keep its declaration as a record
+#'
+#' @param trait A trait object holding its declaration as R lists.
+#' @param namespace Character: Its namespace.
+#'
+#' @return The trait object, holding its declaration record in place of the
+#'   lists.
+#'
+#' @keywords internal
+#' @noRd
+with_record <- function(trait, namespace) {
+  register_trait(trait, namespace)
+  t <- unclass(trait)
+  t[["record"]] <- r8_trait_record(t[["name"]])
+  t[["ir"]] <- NULL
+  structure(t, class = class(trait))
+} # /R8::with_record
+
+
+# %% trait_ir ----
+#' The declaration of a registered trait
+#'
+#' @param trait A trait object, or its unclassed list.
+#'
+#' @return List: The declaration, in the form the declaration functions build,
+#'   from the registry.
+#'
+#' @keywords internal
+#' @noRd
+trait_ir <- function(trait) {
+  r8_trait_ir(unclass(trait)[["name"]])
+} # /R8::trait_ir
 
 
 # %% print.r8_trait ----
@@ -618,7 +687,7 @@ register_impl <- function(entry) {
 print.r8_trait <- function(x, ...) {
   t <- unclass(x)
   cat("<trait ", t[["name"]], ">\n", sep = "")
-  for (m in t[["ir"]][["methods"]]) {
+  for (m in trait_ir(t)[["methods"]]) {
     cat(
       "  ",
       m[["name"]],

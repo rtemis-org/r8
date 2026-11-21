@@ -86,69 +86,109 @@ construct_error <- function(res, type_name, variant) {
 # %% constructor_body ----
 #' The body of a constructor
 #'
-#' One `.Call()` with the fields in declaration order; the constructor's
-#' environment is R8's namespace, where the native routine is bound.
+#' One `.Call()` of R8's C routine `construct` with the call's frame, the
+#' field names, and which fields are required, constant vectors: the routine
+#' forces the arguments in the order of the formals, an error raised while
+#' forcing one propagates, a formal's default (a field's declared default)
+#' applies to an argument not supplied, and a missing required argument
+#' reaches construction as an absent field. The constructor's environment is
+#' R8's namespace, where `.r8_native` is bound.
 #'
 #' @param qname Character: The qualified type name.
-#' @param fields Character: The field names, in declaration order.
+#' @param formals List: The constructor's formals, one per field in
+#'   declaration order; a formal without a default is a required field.
 #' @param variant Character: The enum variant, or `""` for a struct.
-#' @param required Character: The fields without a default argument.
-#' @param native Logical: A Rust-native type, whose constructor first checks
-#'   that its codec is registered.
+#' @param native Logical: The type is Rust-native, whose codec is checked
+#'   first.
+#' @param package Character: The package that declares a Rust-native type.
 #'
-#' @return A call.
+#' @return The body, a call.
 #'
 #' @keywords internal
 #' @noRd
 constructor_body <- function(
   qname,
-  fields,
+  formals,
   variant = "",
-  required = character(),
   native = FALSE,
   package = ""
 ) {
-  # A required field without an argument reaches construction as NULL, which
-  # reports it as missing.
-  args <- as.call(c(
-    as.name("list"),
-    stats::setNames(
-      lapply(fields, function(n) {
-        if (n %in% required) {
-          bquote(if (missing(.(as.name(n)))) NULL else .(as.name(n)))
-        } else {
-          as.name(n)
-        }
-      }),
-      fields
+  fields <- names(formals)
+  required <- fields %in% required_formals(formals)
+  steps <- list(
+    call(
+      "<-",
+      quote(.r8_value_),
+      call(
+        ".Call",
+        quote(.r8_native[["construct"]]),
+        quote(environment()),
+        as.character(fields),
+        required,
+        qname,
+        variant
+      )
+    ),
+    call(
+      "if",
+      quote(inherits(.r8_value_, "r8_problems")),
+      call(
+        "construct_failed",
+        quote(.r8_value_),
+        quote(environment()),
+        quote(sys.function()),
+        qname,
+        variant
+      ),
+      quote(.r8_value_)
     )
-  ))
-  # A type declared outside a package registers its own record, which its
-  # constructor carries, when the registry lacks it, then constructs again.
-  body <- bquote({
-    res <- .Call(wrap__r8_new_value, .(args), .(qname), .(variant))
-    if (inherits(res, "r8_problems")) {
-      if (
-        identical(res[["errors"]][["code"]][1L], "type_unregistered") &&
-          ensure_registered(sys.function())
-      ) {
-        res <- .Call(wrap__r8_new_value, .(args), .(qname), .(variant))
-      }
-      if (inherits(res, "r8_problems")) {
-        construct_error(res, .(qname), .(variant))
-      }
-    }
-    res
-  })
+  )
   if (native) {
-    body <- as.call(c(
-      as.name("{"),
-      bquote(check_codec(.(qname), .(package))),
-      as.list(body)[-1L]
-    ))
+    steps <- c(list(call("check_codec", qname, package)), steps)
   }
-  body
+  as.call(c(list(as.name("{")), steps))
 } # /R8::constructor_body
+
+
+# %% construct_failed ----
+#' Handle a construction that returned problems
+#'
+#' A type declared outside a package registers its own record, which its
+#' constructor carries, when the registry lacks it, then constructs again
+#' from the same frame, whose promises are already forced; any other problem
+#' raises the construction error.
+#'
+#' @param res The problems, of class `r8_problems`.
+#' @param env Environment: The constructor's frame.
+#' @param fn Function: The constructor.
+#' @param qname Character: The qualified type name.
+#' @param variant Character: The enum variant, or `""`.
+#'
+#' @return The value constructed on the second attempt; otherwise signals
+#'   `r8_value_error`.
+#'
+#' @keywords internal
+#' @noRd
+construct_failed <- function(res, env, fn, qname, variant) {
+  if (
+    identical(res[["errors"]][["code"]][1L], "type_unregistered") &&
+      ensure_registered(fn)
+  ) {
+    f <- formals(fn)
+    res <- .Call(
+      .r8_native[["construct"]],
+      env,
+      names(f),
+      names(f) %in% required_formals(f),
+      qname,
+      variant
+    )
+    if (!inherits(res, "r8_problems")) {
+      return(res)
+    }
+  }
+  construct_error(res, qname, variant)
+} # /R8::construct_failed
 
 
 # %% check_codec ----
@@ -238,7 +278,8 @@ new_dgc <- function(i, p, x, dim) {
       class = "r8_value_error"
     )
   }
-  field_get(x, i)
+  v <- .subset2(x, i)
+  if (is.null(v)) field_get(x, i) else v
 } # /R8::[[.r8_value
 
 
@@ -276,7 +317,8 @@ new_dgc <- function(i, p, x, dim) {
 #' @noRd
 field_get <- function(x, name) {
   v <- .subset2(x, name)
-  if (is.null(v) && !name %in% names(x)) {
+  # `names()` dispatches; the attribute does not.
+  if (is.null(v) && is.na(match(name, attr(x, "names", exact = TRUE)))) {
     variant <- attr(x, "r8_variant")
     label <- paste0(
       attr(x, "r8_type"),

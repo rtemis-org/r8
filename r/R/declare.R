@@ -217,7 +217,9 @@ value_json <- function(x) {
 #' @keywords internal
 #' @noRd
 field_ir <- function(name, f) {
-  out <- list(name = name, type = unclass(strip_classes(f[["type"]])))
+  # Nested field types keep their classes, which the deserializer that reads
+  # the declaration into Rust ignores.
+  out <- list(name = name, type = unclass(f[["type"]]))
   if (isTRUE(f[["has_default"]])) {
     out[["default"]] <- default_json(f[["default"]], f[["type"]])
   }
@@ -242,23 +244,6 @@ field_ir <- function(name, f) {
   }
   out
 } # /R8::field_ir
-
-
-# %% strip_classes ----
-#' A field type without its classes, recursively
-#'
-#' @param x An `r8_field_type` or a list.
-#'
-#' @return A plain list.
-#'
-#' @keywords internal
-#' @noRd
-strip_classes <- function(x) {
-  if (is.list(x)) {
-    x <- lapply(unclass(x), strip_classes)
-  }
-  x
-} # /R8::strip_classes
 
 
 # %% fields_ir ----
@@ -402,14 +387,12 @@ declare <- function(ir, env, class, formals, native = FALSE) {
   package <- declaring_package(env)
   claim_namespace(namespace, package)
   qname <- paste0(namespace, "::", ir[["name"]])
-  field_names <- names(formals)
   ctor <- as.function(
     c(
       formals,
       constructor_body(
         qname,
-        field_names,
-        required = required_formals(formals),
+        formals,
         native = native,
         package = package
       )
@@ -471,16 +454,18 @@ register_ir <- function(ir, qname, namespace) {
 #' @param records List: Raw vectors, each a declaration record.
 #' @param source Character: The package the records come from, or `""` for a
 #'   type object's own record.
+#' @param check Logical: Check each declaration; `FALSE` at package load,
+#'   where `check_namespaces()` checks the package's namespaces whole.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
-register_records <- function(records, source = "") {
+register_records <- function(records, source = "", check = TRUE) {
   if (length(records) == 0L) {
     return(invisible(NULL))
   }
-  problems <- r8_declare_records(records, source)
+  problems <- r8_declare_records(records, source, check)
   if (length(problems[["code"]]) > 0L) {
     declaration_failed(problems[["name"]][[1L]], problems)
   }
@@ -883,9 +868,8 @@ build_variant <- function(v, qname, name, native, package = "") {
       formals,
       constructor_body(
         qname,
-        names(formals),
+        formals,
         name,
-        required = required_formals(formals),
         native = native,
         package = package
       )

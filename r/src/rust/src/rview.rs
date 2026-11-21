@@ -720,6 +720,69 @@ impl<'a> Access<'a> for RView<'a> {
         (sexptype(x) == SEXPTYPE::INTSXP).then(|| data(x)).flatten()
     }
 
+    fn f64_region(self, start: usize, buf: &mut [f64]) -> Option<usize> {
+        // The payload: reading a base ALTREP wrapper by region materializes
+        // the vector it wraps.
+        let x = payload(self.sexp()?)?;
+        if sexptype(x) != SEXPTYPE::REALSXP {
+            return None;
+        }
+        if buf.is_empty() || start >= xlen(x) {
+            return Some(0);
+        }
+        Some(unsafe {
+            REAL_GET_REGION(
+                x,
+                start as R_xlen_t,
+                buf.len() as R_xlen_t,
+                buf.as_mut_ptr(),
+            )
+        } as usize)
+    }
+
+    fn i32_region(self, start: usize, buf: &mut [i32]) -> Option<usize> {
+        let x = payload(self.sexp()?)?;
+        if sexptype(x) != SEXPTYPE::INTSXP {
+            return None;
+        }
+        if buf.is_empty() || start >= xlen(x) {
+            return Some(0);
+        }
+        Some(unsafe {
+            INTEGER_GET_REGION(
+                x,
+                start as R_xlen_t,
+                buf.len() as R_xlen_t,
+                buf.as_mut_ptr(),
+            )
+        } as usize)
+    }
+
+    fn sorted_without_na(self) -> Option<bool> {
+        // R's sortedness codes: 1 and 2 increasing, -1 and -2 decreasing, 0
+        // unsorted, INT_MIN unknown (R_ext/Altrep.h). A base wrapper reports
+        // unknown; its payload reports its own.
+        let x = payload(self.sexp()?)?;
+        let (sorted, no_na) = unsafe {
+            match sexptype(x) {
+                SEXPTYPE::INTSXP => (
+                    extendr_ffi::INTEGER_IS_SORTED(x),
+                    extendr_ffi::INTEGER_NO_NA(x),
+                ),
+                SEXPTYPE::REALSXP => (extendr_ffi::REAL_IS_SORTED(x), extendr_ffi::REAL_NO_NA(x)),
+                _ => return None,
+            }
+        };
+        if no_na == 0 {
+            return None;
+        }
+        match sorted {
+            1 | 2 => Some(true),
+            -1 | -2 => Some(false),
+            _ => None,
+        }
+    }
+
     fn each_double_in(self, start: usize, end: usize, mut f: impl FnMut(usize, Read<Option<f64>>)) {
         let Some(x) = self.sexp() else { return };
         match sexptype(x) {
@@ -1201,7 +1264,15 @@ pub(crate) fn list_member_at(x: SEXP, hint: usize, name: &str) -> Option<SEXP> {
     } else {
         (0..n).find(|&i| name_is(names, i, name))
     };
-    i.map(|i| unsafe { VECTOR_ELT(x, i as R_xlen_t) })
+    // A constructor passes its frame, `as.list(environment())`, where a
+    // missing argument is R's missing-argument symbol: an absent field.
+    i.map(|i| unsafe { VECTOR_ELT(x, i as R_xlen_t) }).map(|v| {
+        if v == unsafe { extendr_ffi::R_MissingArg } {
+            nil()
+        } else {
+            v
+        }
+    })
 }
 
 /// The number of rows of a data.frame with automatic row names: the compact
