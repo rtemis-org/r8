@@ -1,0 +1,13 @@
+Package: r8benchR
+Title: Rust-Native Types of the R8 Benchmark
+Version: 0.0.1
+Authors@R: person("E.D.", "Gennatas", role = c("aut", "cre"), email = "gennatas@gmail.com")
+Description: Declares the benchmark types Wide20 and GBM in Rust as
+    Rust-native R8 structs, with an impl in Rust of the trait Complexity,
+    declared in R, for the R8 benchmark.
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Imports:
+    R8 (>= 0.4.0)
+SystemRequirements: Cargo (Rust's package manager), rustc
+Config/R8/namespace: bench

@@ -22,3 +22,6 @@ r/src/rust/Cargo.lock.saved
 r/tests/testthat/packages/*/src/*.o
 r/tests/testthat/packages/*/src/*.so
 r/tests/testthat/packages/*/src/*.dll
+
+# Benchmark results; the tables go into the spec repository's notes.md
+/bench/results/

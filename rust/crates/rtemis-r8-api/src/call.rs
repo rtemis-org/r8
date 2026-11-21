@@ -301,6 +301,14 @@ unsafe extern "C" fn drop_buffer<T: Element>(x: SEXP) {
     }
 }
 
+impl<T: Element> IntoR for Vec<T> {
+    /// The vector as an owned [`Buffer`], which R reads as a view: the
+    /// result of `R8::Dim`'s `dim()`, among others.
+    fn into_r(self) -> std::result::Result<SEXP, Jumped> {
+        Buffer::from(self).into_r()
+    }
+}
+
 impl<T: Element> IntoR for Buffer<T> {
     /// A borrowed buffer returns its R vector; an owned one, a view whose
     /// owner, an external pointer, holds the buffer until R collects it.

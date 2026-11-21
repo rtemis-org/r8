@@ -615,31 +615,14 @@ pub fn is_column_type(ty: &FieldType) -> bool {
     column(ty) || matches!(ty, FieldType::Option { inner, .. } if column(inner))
 }
 
-/// Checks one IR document and returns every problem found, in document
-/// order; an empty vector means the document passes.
-pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
-    let mut c = Checker {
-        doc,
-        errors: Vec::new(),
-    };
-    c.unique(
-        doc.types
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.name().as_str(), format!("/types/{i}/name")))
-            .chain(
-                doc.traits
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (t.name.as_str(), format!("/traits/{i}/name"))),
-            ),
-        "type or trait",
-        "duplicate_type",
-    );
-    for (i, t) in doc.types.iter().enumerate() {
-        let path = format!("/types/{i}");
+impl Checker<'_> {
+    /// The checks of one type at `path`: its own declaration, with the
+    /// document as the lookup of the types it names.
+    fn type_def(&mut self, t: &TypeDef, path: &str) {
+        let c = self;
+        let doc = c.doc;
         match t {
-            TypeDef::Struct(s) => c.struct_def(s, &path),
+            TypeDef::Struct(s) => c.struct_def(s, path),
             TypeDef::Enum(e) => {
                 c.class_name(&e.name, "type", &format!("{path}/name"));
                 c.version(e.version, &format!("{path}/version"));
@@ -670,18 +653,79 @@ pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
                         c.rules(rules, fields, &format!("{vpath}/rules"));
                         if let Some(k) = fields.iter().position(|f| f.name == e.tag) {
                             c.report(
-                                "field_is_tag",
-                                &format!("{vpath}/fields/{k}/name"),
-                                format!(
-                                    "field `{}` of variant `{}` has the name of the enum's tag member; rename the field or set `tag =`",
-                                    e.tag, v.name
-                                ),
-                            );
+                            "field_is_tag",
+                            &format!("{vpath}/fields/{k}/name"),
+                            format!(
+                                "field `{}` of variant `{}` has the name of the enum's tag member; rename the field or set `tag =`",
+                                e.tag, v.name
+                            ),
+                        );
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/// The problems of the type at `index` of `doc`: those that
+/// [`check_document`] reports at `/types/{index}` and below, from the
+/// type's own checks and the uniqueness of its name, in time proportional
+/// to the type and to the number of names in the document. A registry
+/// checks one declaration with it as the declaration enters a namespace.
+pub fn check_type(doc: &IrDocument, index: usize) -> Vec<DeclError> {
+    let Some(t) = doc.types.get(index) else {
+        return Vec::new();
+    };
+    let mut c = Checker {
+        doc,
+        errors: Vec::new(),
+    };
+    c.unique(
+        doc.types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.name().as_str(), format!("/types/{i}/name")))
+            .chain(
+                doc.traits
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (t.name.as_str(), format!("/traits/{i}/name"))),
+            ),
+        "type or trait",
+        "duplicate_type",
+    );
+    let path = format!("/types/{index}");
+    c.type_def(t, &path);
+    let prefix = format!("{path}/");
+    c.errors
+        .retain(|e| e.path == path || e.path.starts_with(&prefix));
+    c.errors
+}
+
+/// Checks one IR document and returns every problem found, in document
+/// order; an empty vector means the document passes.
+pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
+    let mut c = Checker {
+        doc,
+        errors: Vec::new(),
+    };
+    c.unique(
+        doc.types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.name().as_str(), format!("/types/{i}/name")))
+            .chain(
+                doc.traits
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (t.name.as_str(), format!("/traits/{i}/name"))),
+            ),
+        "type or trait",
+        "duplicate_type",
+    );
+    for (i, t) in doc.types.iter().enumerate() {
+        c.type_def(t, &format!("/types/{i}"));
     }
     for (i, t) in doc.traits.iter().enumerate() {
         c.trait_def(t, &format!("/traits/{i}"));

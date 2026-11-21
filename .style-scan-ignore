@@ -2,3 +2,4 @@ INFORMAL rust/crates/rtemis-r8-macros/src/lib.rs  # "exports!" is the name of th
 INFORMAL r/tests/testthat/packages/r8pkgR/src/entrypoint.c:6  # "exports!" is the name of the function-like macro r8::exports!, not an exclamation
 EVALUATIVE:fast justfile  # "fast-forward" is the git operation that moves main to devel
 FILLER:just justfile  # `just` is the command runner of the justfile
+INFORMAL bench/r8bench/r8benchR/src/entrypoint.c:6  # "exports!" is the name of the function-like macro r8::exports!, not an exclamation

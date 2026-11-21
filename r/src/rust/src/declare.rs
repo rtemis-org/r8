@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use rtemis_r8::codec::canonical_text;
-use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef, check_document};
+use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef, check_document, check_type};
 use rtemis_r8::name::{Name, QualifiedName};
 use rtemis_r8::rules::DocumentSet;
 use serde_json::{Map, Value};
@@ -197,40 +197,30 @@ pub(crate) fn r8_declare_type(type_json: &str, namespace: &str) -> Result<List> 
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
     crate::construct::registry_changed();
-    let mut doc = reg
-        .0
-        .iter()
-        .find(|d| d.namespace == ns)
-        .cloned()
-        .unwrap_or_else(|| IrDocument {
-            ir_version: IR_VERSION,
-            namespace: ns.clone(),
-            types: Vec::new(),
-            traits: Vec::new(),
-            impls: Vec::new(),
-        });
+    // The namespace's document is updated in place and the declaration
+    // checked alone, in the context of the namespace, so a declaration costs
+    // time proportional to itself and the namespace's names; a declaration
+    // with problems leaves the namespace as it was.
+    let d = namespace_index(&mut reg, &ns);
+    let doc = &mut reg.0[d];
     let name = def.name().clone();
-    let index = match doc.types.iter().position(|t| t.name() == &name) {
-        Some(i) => {
-            doc.types[i] = def;
-            i
-        }
+    let (index, previous) = match doc.types.iter().position(|t| t.name() == &name) {
+        Some(i) => (i, Some(std::mem::replace(&mut doc.types[i], def))),
         None => {
             doc.types.push(def);
-            doc.types.len() - 1
+            (doc.types.len() - 1, None)
         }
     };
-    // Report the problems of this declaration only.
     let prefix = format!("/types/{index}");
-    let problems: Vec<_> = check_document(&doc)
-        .into_iter()
-        .filter(|e| e.path == prefix || e.path.starts_with(&format!("{prefix}/")))
-        .collect();
-    if problems.is_empty() {
-        match reg.0.iter().position(|d| d.namespace == ns) {
-            Some(i) => reg.0[i] = doc,
-            None => reg.0.push(doc),
+    let problems = check_type(doc, index);
+    if !problems.is_empty() {
+        match previous {
+            Some(p) => doc.types[index] = p,
+            None => {
+                doc.types.pop();
+            }
         }
+        drop_if_empty(&mut reg, d);
     }
     let code: Vec<String> = problems.iter().map(|e| e.code.to_string()).collect();
     let path: Vec<String> = problems
@@ -268,24 +258,31 @@ fn r8_type_document(name: &str) -> Result<String> {
 }
 
 /// The namespace document of the registry, or an empty one.
-fn namespace_doc(reg: &DocumentSet, ns: &Name) -> IrDocument {
-    reg.0
-        .iter()
-        .find(|d| &d.namespace == ns)
-        .cloned()
-        .unwrap_or_else(|| IrDocument {
-            ir_version: IR_VERSION,
-            namespace: ns.clone(),
-            types: Vec::new(),
-            traits: Vec::new(),
-            impls: Vec::new(),
-        })
+/// The position of the namespace's document in the registry, added empty
+/// when the namespace has none. Declarations update the document in place,
+/// so a declaration costs no copy of the namespace.
+fn namespace_index(reg: &mut DocumentSet, ns: &Name) -> usize {
+    match reg.0.iter().position(|d| &d.namespace == ns) {
+        Some(i) => i,
+        None => {
+            reg.0.push(IrDocument {
+                ir_version: IR_VERSION,
+                namespace: ns.clone(),
+                types: Vec::new(),
+                traits: Vec::new(),
+                impls: Vec::new(),
+            });
+            reg.0.len() - 1
+        }
+    }
 }
 
-fn store(reg: &mut DocumentSet, doc: IrDocument) {
-    match reg.0.iter().position(|d| d.namespace == doc.namespace) {
-        Some(i) => reg.0[i] = doc,
-        None => reg.0.push(doc),
+/// Removes the namespace's document when it holds no declaration, after a
+/// first declaration into it failed.
+fn drop_if_empty(reg: &mut DocumentSet, d: usize) {
+    let doc = &reg.0[d];
+    if doc.types.is_empty() && doc.traits.is_empty() && doc.impls.is_empty() {
+        reg.0.remove(d);
     }
 }
 
@@ -315,24 +312,30 @@ pub(crate) fn r8_declare_trait(trait_json: &str, namespace: &str) -> Result<List
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
     crate::construct::registry_changed();
-    let mut doc = namespace_doc(&reg, &ns);
-    let index = match doc.traits.iter().position(|t| t.name == def.name) {
-        Some(i) => {
-            doc.traits[i] = def;
-            i
-        }
+    // A trait's checks read the document's other traits and types, so the
+    // whole document is checked; a namespace holds few traits.
+    let d = namespace_index(&mut reg, &ns);
+    let doc = &mut reg.0[d];
+    let (index, previous) = match doc.traits.iter().position(|t| t.name == def.name) {
+        Some(i) => (i, Some(std::mem::replace(&mut doc.traits[i], def))),
         None => {
             doc.traits.push(def);
-            doc.traits.len() - 1
+            (doc.traits.len() - 1, None)
         }
     };
     let prefix = format!("/traits/{index}");
-    let problems: Vec<_> = check_document(&doc)
+    let problems: Vec<_> = check_document(doc)
         .into_iter()
         .filter(|e| e.path == prefix || e.path.starts_with(&format!("{prefix}/")))
         .collect();
-    if problems.is_empty() {
-        store(&mut reg, doc);
+    if !problems.is_empty() {
+        match previous {
+            Some(p) => doc.traits[index] = p,
+            None => {
+                doc.traits.pop();
+            }
+        }
+        drop_if_empty(&mut reg, d);
     }
     Ok(problems_list(&problems, &prefix))
 }
@@ -354,12 +357,12 @@ pub(crate) fn r8_declare_impl(impl_json: &str, namespace: &str) -> Result<()> {
         .lock()
         .map_err(|_| fail("the registry is unavailable"))?;
     crate::construct::registry_changed();
-    let mut doc = namespace_doc(&reg, &ns);
+    let d = namespace_index(&mut reg, &ns);
+    let doc = &mut reg.0[d];
     doc.impls.retain(|i| {
         !(i.r#trait == def.r#trait && i.type_args == def.type_args && i.target == def.target)
     });
     doc.impls.push(def);
-    store(&mut reg, doc);
     Ok(())
 }
 

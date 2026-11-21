@@ -1,0 +1,27 @@
+# Makevars
+# ::r8benchR::
+# 2026- EDG rtemis.org
+
+# The Rust code is a static library, built from src/rust with the crates of
+# this R8 checkout (path dependencies), for the R8 benchmark.
+
+# R8_TARGET_DIR, which the justfile of R8 sets, places the Cargo target
+# directory outside the package directory; unset, it is src/rust/target.
+ifdef R8_TARGET_DIR
+TARGET_DIR = $(R8_TARGET_DIR)/r8benchR
+else
+TARGET_DIR = ./rust/target
+endif
+LIBDIR = $(TARGET_DIR)/release
+STATLIB = $(LIBDIR)/libr8benchr.a
+PKG_LIBS = -L$(LIBDIR) -lr8benchr
+
+all: $(SHLIB)
+
+# Cargo decides what to rebuild, so make runs it on every build.
+.PHONY: $(STATLIB)
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	PATH="$(PATH):$(HOME)/.cargo/bin" cargo build --lib --release --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR)

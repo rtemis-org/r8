@@ -1,4 +1,5 @@
 useDynLib(r8pkgR, .registration = TRUE)
+export(Conform)
 export(Resampler)
 export(Signal)
 export(Split)

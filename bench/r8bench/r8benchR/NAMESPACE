@@ -1,0 +1,5 @@
+useDynLib(r8benchR, .registration = TRUE)
+export(Complexity)
+export(GBM)
+export(Wide20)
+export(complexity)

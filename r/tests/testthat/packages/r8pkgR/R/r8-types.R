@@ -94,3 +94,69 @@ Resampler <- R8::new_enum(
   version = 1L,
   native = TRUE
 )
+
+#' Conform
+#'
+#' A field of every Rust field type, with constraints, a default, and rules.
+#'
+#' The struct `pkgr::Conform`, declared in Rust.
+#'
+#' @param ratio A fraction.
+#' @param count A count.
+#' @param flag A flag.
+#' @param label A lowercase label.
+#' @param seed An optional seed.
+#' @param weights Weights.
+#' @param index Case indices.
+#' @param bytes Bytes.
+#' @param mask A mask.
+#' @return A `pkgr::Conform` value.
+#' @export
+Conform <- R8::new_struct(
+  "Conform",
+  fields = list(
+    ratio = R8::field(
+      R8::type_double(min = 0, max = 1),
+      description = "A fraction."
+    ),
+    count = R8::field(
+      R8::type_integer(min = 1L),
+      default = 10L,
+      description = "A count."
+    ),
+    flag = R8::field(R8::type_logical(), description = "A flag."),
+    label = R8::field(
+      R8::type_character(pattern = "^[a-z]+$"),
+      description = "A lowercase label."
+    ),
+    seed = R8::field(
+      R8::option(R8::type_integer()),
+      description = "An optional seed."
+    ),
+    weights = R8::field(R8::vec(R8::type_double()), description = "Weights."),
+    index = R8::field(
+      R8::vec(R8::type_integer()),
+      description = "Case indices."
+    ),
+    bytes = R8::field(R8::type_raw(), description = "Bytes."),
+    mask = R8::field(R8::vec(R8::type_logical()), description = "A mask.")
+  ),
+  description = "A field of every Rust field type, with constraints, a default, and rules.",
+  version = 1L,
+  rules = list(
+    R8::rule(
+      "seed_below_count",
+      seed < count,
+      "The seed is below the count.",
+      when = R8::json_ir('{"!==":[{"var":"seed"},null]}')
+    ),
+    R8::rule(
+      "weights_match_index",
+      R8::json_ir(
+        '{"===":[{"length":{"var":"weights"}},{"length":{"var":"index"}}]}'
+      ),
+      "There is one weight per index."
+    )
+  ),
+  native = TRUE
+)

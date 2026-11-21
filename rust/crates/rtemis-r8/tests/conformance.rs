@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use rtemis_r8::codec::{canonical, canonical_text, content_hash};
-use rtemis_r8::ir::{IrDocument, check_document};
+use rtemis_r8::ir::{IrDocument, check_document, check_type};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::DocumentSet;
 use rtemis_r8::validate::validate;
@@ -61,11 +61,30 @@ fn run_declare(input: &Value, expect: &Value) -> Option<String> {
         (Err(e), false) => Some(format!("did not read: {e}")),
         (Ok(_), true) => Some("read, but a parse error was expected".to_string()),
         (Ok(doc), false) => {
-            let got = sorted_errors(
-                check_document(&doc)
+            let all = check_document(&doc);
+            // The check of one type reports what the check of the document
+            // reports at that type's path.
+            for i in 0..doc.types.len() {
+                let path = format!("/types/{i}");
+                let prefix = format!("{path}/");
+                let mut whole: Vec<(String, String)> = all
+                    .iter()
+                    .filter(|e| e.path == path || e.path.starts_with(&prefix))
+                    .map(|e| (e.path.clone(), e.code.to_string()))
+                    .collect();
+                let mut one: Vec<(String, String)> = check_type(&doc, i)
                     .into_iter()
-                    .map(|e| (e.path, e.code.to_string(), None)),
-            );
+                    .map(|e| (e.path, e.code.to_string()))
+                    .collect();
+                whole.sort();
+                one.sort();
+                if one != whole {
+                    return Some(format!(
+                        "check_type at {path}: {one:?}, check_document: {whole:?}"
+                    ));
+                }
+            }
+            let got = sorted_errors(all.into_iter().map(|e| (e.path, e.code.to_string(), None)));
             let want = expected_errors(expect);
             (got != want).then(|| format!("errors {got:?}, expected {want:?}"))
         }

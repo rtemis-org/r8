@@ -26,7 +26,14 @@ run_r <- function(lib, code) {
   ))
 }
 
+# The library of the installed test packages, installed once per run of this
+# file.
+.test_packages <- new.env(parent = emptyenv())
+
 install_test_packages <- function() {
+  if (!is.null(.test_packages[["lib"]])) {
+    return(.test_packages[["lib"]])
+  }
   lib <- tempfile("r8lib")
   dir.create(lib)
   for (p in c("r8pkgA", "r8pkgB", "r8pkgC", "r8pkgR")) {
@@ -46,6 +53,7 @@ install_test_packages <- function() {
       stop(paste(out, collapse = "\n"))
     }
   }
+  .test_packages[["lib"]] <- lib
   lib
 }
 
@@ -769,4 +777,56 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
   info <- paste(workers, collapse = "\n")
   expect_true(paste0("mirai|", expected) %in% workers, info = info)
   expect_true(paste0("future|", expected) %in% workers, info = info)
+})
+
+
+test_that("the conformance tests pass against the Rust-native pkgr::Conform", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  dir <- normalizePath(test_path("conformance"))
+  results <- tempfile(fileext = ".rds")
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({ library(R8); library(r8pkgR); library(testthat) })",
+      "options(r8.conformance = 'native')",
+      sprintf(
+        "res <- testthat::test_dir(%s, reporter = 'silent', stop_on_failure = FALSE, stop_on_warning = FALSE)",
+        deparse(dir)
+      ),
+      sprintf("saveRDS(as.data.frame(res), %s)", deparse(results))
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true(file.exists(results), info = info)
+  res <- readRDS(results)
+  failed <- res[["test"]][res[["failed"]] > 0L | res[["error"]]]
+  expect_identical(
+    failed,
+    character(),
+    info = paste(c(failed, info), collapse = "\n")
+  )
+  # The field types without a Rust field type. A Rust field type added later
+  # fails this expectation until its test leaves the list.
+  expect_identical(
+    res[["test"]][res[["skipped"]]],
+    "fields of every R8 field type round trip through JSON"
+  )
+  expect_gt(sum(res[["nb"]]), 60L)
+  # The R mirror of the conformance tests declares the type r8pkgR declares
+  # in Rust, apart from the namespace.
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
+      sprintf("source(%s)", deparse(file.path(dir, "helper-conformance.R"))),
+      "mirror <- conformance_r_types()[['Conform']]",
+      "native <- gsub('pkgr', 'conf', r8_declaration(r8pkgR::Conform), fixed = TRUE)",
+      "cat('mirror', identical(native, r8_declaration(mirror)), '\\n')"
+    )
+  )
+  expect_true("mirror TRUE " %in% out, info = paste(out, collapse = "\n"))
 })

@@ -61,3 +61,7 @@ release:
     bash tools/check-versions.sh --release
     git tag "v$(sed -n 's/^Version: *//p' r/DESCRIPTION)"
     git push origin devel devel:main "v$(sed -n 's/^Version: *//p' r/DESCRIPTION)"
+
+# Run the benchmark (bench/) on the committed tree and print its tables
+bench:
+    sh bench/bench.sh

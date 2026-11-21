@@ -1,0 +1,19 @@
+[package]
+name = "r8benchr"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+# Its own workspace root, inside the R8 checkout.
+[workspace]
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+rtemis-r8 = { path = "../../../../../rust/crates/rtemis-r8", features = ["macros"] }
+rtemis-r8-api = { path = "../../../../../rust/crates/rtemis-r8-api" }
+
+[profile.release]
+codegen-units = 1

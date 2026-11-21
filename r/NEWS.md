@@ -8,6 +8,10 @@
 - A method of `#[r8::methods]` takes another value of a Rust-native type as `&T`, borrowed from its state, or built from an R-native value of the type.
 - `r8_document_native()` writes a field whose type belongs to another package's namespace as that package's exported type object (`r8resample::Resampler`); the package lists it in `Imports`.
 - The roclet `r8_rd()` documents the methods a package implements in compiled code, as it documents `implement()` calls.
+- Text output: the Rust core lays out and encodes values as plain text, ANSI color, HTML, or markdown. `print()` chooses the output type for the console, document, or notebook (`r8_output_type()`), and `format()` returns plain text unless asked. The default layout shows each vector's type, length, and first items, colors the names of base types after rtemislive, and indents nested values.
+- `r8_layout()` returns the layout of a value, a list, or a data frame; `r8_span()`, `r8_text()`, and `c()` build styled text, which a `Display` or `Print` impl may return; `r8_theme()` restyles the roles of text, and `r8_css()` returns the stylesheet of the html `classes` mode (`html_style`).
+- R Markdown and Quarto documents, Jupyter notebooks, and tibble columns show R8 values through methods for knitr, repr, and pillar, registered when those packages load.
+- `rtemis-r8-api`: the method of the `R8::PartialOrd` trait is `cmp`, the name of the trait's method in R; an `R8::Dim` impl's `Vec<i32>` converts to R.
 - The package builds against `rtemis-r8` 0.4.0.
 
 # R8 0.3.0

@@ -23,9 +23,12 @@ pub trait Dim {
     fn dim(&self) -> Vec<i32>;
 }
 
-/// `R8::PartialOrd`: the order of two values, `r8_cmp(x, y)`: negative,
-/// zero, or positive, or `None` when they are not ordered.
+/// `R8::PartialOrd`: the order of two values, the trait's method `cmp(x, y)`,
+/// which `r8_cmp()`, `<`, `<=`, `>`, and `>=` call in R: negative, zero, or
+/// positive, or `None` when they are not ordered. The macro calls the method
+/// by its qualified path, so a type that also implements `std::cmp::Ord`
+/// keeps both.
 pub trait PartialOrd {
     /// The order of `self` and `other`.
-    fn r8_cmp(&self, other: crate::call::Sexp) -> Option<i32>;
+    fn cmp(&self, other: crate::call::Sexp) -> Option<i32>;
 }

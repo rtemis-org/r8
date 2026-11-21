@@ -1,0 +1,90 @@
+# run.R
+# ::r8 bench::
+# 2026- EDG rtemis.org
+
+# Runs every row of the benchmark, each row and system in a fresh
+# `Rscript --vanilla` under /usr/bin/time, and appends the measurements,
+# with the peak resident memory of each process, to
+# bench/results/<commit>.jsonl. The acceptance corpus runs first, and a
+# mismatch stops the run. Usage: Rscript bench/run.R <library> <commit>,
+# where the library holds the R8 release build, r8benchR, and the packages
+# of namespace.R; bench.sh prepares it.
+# spec: R8/class-system#benchmark
+
+args <- commandArgs(trailingOnly = TRUE)
+lib <- normalizePath(args[[1L]])
+sha <- args[[2L]]
+bench_dir <- normalizePath("bench")
+source(file.path(bench_dir, "namespace.R"))
+out <- file.path(bench_dir, "results", paste0(sha, ".jsonl"))
+dir.create(dirname(out), showWarnings = FALSE)
+rscript <- file.path(R.home("bin"), "Rscript")
+libs <- paste(c(lib, .libPaths()), collapse = .Platform$path.sep)
+
+# The peak resident memory in bytes from the output of /usr/bin/time:
+# `-l` on macOS reports bytes; `-v` on Linux reports kilobytes.
+peak_rss <- function(err) {
+  mac <- grep("maximum resident set size", err, value = TRUE)
+  if (length(mac)) {
+    return(as.numeric(sub("^\\s*([0-9]+).*$", "\\1", mac[[1L]])))
+  }
+  linux <- grep("Maximum resident set size", err, value = TRUE)
+  if (length(linux)) {
+    return(1024 * as.numeric(sub(".*:\\s*([0-9]+)\\s*$", "\\1", linux[[1L]])))
+  }
+  NA_real_
+}
+
+run_row <- function(row, system, mode = "", repeat_n = 1L) {
+  records <- list()
+  for (r in seq_len(repeat_n)) {
+    so <- tempfile()
+    se <- tempfile()
+    flag <- if (Sys.info()[["sysname"]] == "Darwin") "-l" else "-v"
+    status <- system2(
+      "/usr/bin/time",
+      c(flag, rscript, "--vanilla", shQuote(file.path(bench_dir, "rows", paste0(row, ".R"))), shQuote(system), shQuote(mode)),
+      stdout = so,
+      stderr = se,
+      env = c(paste0("R_LIBS=", libs), paste0("R8_BENCH_DIR=", bench_dir))
+    )
+    lines <- readLines(so, warn = FALSE)
+    err <- readLines(se, warn = FALSE)
+    if (!identical(status, 0L)) {
+      stop(sprintf("row %s, %s %s failed:\n%s", row, system, mode, paste(c(lines, err), collapse = "\n")))
+    }
+    json <- grep("^\\{", lines, value = TRUE)
+    rss <- jsonlite::toJSON(
+      list(row = row, system = system, mode = mode, type = "process", metric = "peak_rss", value = peak_rss(err), unit = "B"),
+      auto_unbox = TRUE, digits = NA
+    )
+    records <- c(records, json, rss)
+  }
+  stamp <- function(j) {
+    d <- jsonlite::fromJSON(j)
+    d$commit <- sha
+    d$date <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
+    jsonlite::toJSON(d, auto_unbox = TRUE, digits = NA)
+  }
+  cat(vapply(records, stamp, ""), file = out, sep = "\n", append = TRUE)
+  message(sprintf("%-12s %-8s %-8s done", row, system, mode))
+  invisible(records)
+}
+
+systems <- c("S3", "S4", "RC", "R6", "S7", "R8", "R8 Rust")
+
+for (s in systems) {
+  recs <- run_row("corpus", s)
+  d <- lapply(recs, jsonlite::fromJSON)
+  mismatches <- Filter(function(x) identical(x$metric, "mismatches"), d)[[1L]]$value
+  if (mismatches != 0) stop(sprintf("%s fails the acceptance corpus in %d cases", s, mismatches))
+}
+for (s in systems) run_row("values", s)
+for (s in setdiff(systems, "R8 Rust")) run_row("types", s, repeat_n = 5L)
+for (s in systems) run_row("big", s)
+for (s in systems) for (m in c("value", "control")) run_row("peak", s, m)
+run_row("table", "R8")
+for (m in c("vec", "table", "rows")) run_row("peak", "R8", m)
+for (s in NAMESPACE_SYSTEMS) for (m in c("pkg", "control")) run_row("namespace", s, m)
+run_row("s7_baseline", "S7")
+message("results: ", out)
