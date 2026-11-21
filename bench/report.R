@@ -68,7 +68,7 @@ table_of("GBM, vectors of 10 (median time, µs; sizes, bytes)", list(
   row_spec("Memory per value held in Rust, B", "B", vals("GBM", "memory_value_rust")),
   row_spec("saveRDS() size, B", "B", vals("GBM", "saverds_size"))
 ), note = paste(
-  "The idiom: S3, S4, RC, and R6 check every field again, S7 and R8 the changed field and the rules (R8 the rules that read the field).",
+  "In the idiom, S3, S4, RC, and R6 check every field again. S7 and R8 check the changed field and the rules; R8 checks the rules that read the field.",
   "RC and R6 write in place; the other systems return a new value and keep the original."
 ))
 table_of("R allocations of the GBM operations (bytes per evaluation, after two)", list(
