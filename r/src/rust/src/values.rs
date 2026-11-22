@@ -20,6 +20,7 @@
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result, SEXP};
+use rtemis_r8::access::Node;
 use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text};
 use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use rtemis_r8::name::QualifiedName;
@@ -856,56 +857,70 @@ fn na_logical() -> Rbool {
     Rbool::na()
 }
 
+/// The items of an array node.
+fn items<'a, N: Node<'a>>(seq: N) -> impl ExactSizeIterator<Item = N> {
+    let n = seq.array_len().unwrap_or(0);
+    (0..n).map(move |i| seq.item(i).expect("an item below the array's length"))
+}
+
+/// A number of a node: a JSON number, or a non-finite double in its string
+/// form.
+fn node_number<'a, N: Node<'a>>(v: N) -> Option<f64> {
+    v.number().or_else(|| match v.as_str() {
+        Some("Infinity") => Some(f64::INFINITY),
+        Some("-Infinity") => Some(f64::NEG_INFINITY),
+        Some("NaN") => Some(f64::NAN),
+        _ => None,
+    })
+}
+
 impl Decoder<'_> {
-    /// An atomic vector of a scalar type from JSON values, `null` as `NA`.
-    fn atomic<'v>(
+    /// An atomic vector of a scalar type from JSON nodes, `null` as `NA`.
+    fn atomic<'a, N: Node<'a>>(
         &self,
-        items: impl IntoIterator<Item = &'v Value, IntoIter: ExactSizeIterator>,
+        items: impl ExactSizeIterator<Item = N>,
         element: &FieldType,
     ) -> Result<Robj> {
         let (inner, _) = unwrap_option(element);
         Ok(match inner {
             FieldType::Logical => Logicals::from_values(
-                items
-                    .into_iter()
-                    .map(|v| v.as_bool().map(Rbool::from).unwrap_or_else(na_logical)),
+                items.map(|v| v.as_bool().map(Rbool::from).unwrap_or_else(na_logical)),
             )
             .into(),
-            FieldType::Integer(_) => Integers::from_values(items.into_iter().map(|v| {
-                v.as_f64()
+            FieldType::Integer(_) => Integers::from_values(items.map(|v| {
+                v.number()
                     .map(|d| Rint::from(d as i32))
                     .unwrap_or_else(Rint::na)
             }))
             .into(),
-            FieldType::Double(_) => Doubles::from_values(items.into_iter().map(|v| match v {
-                Value::Null => Rfloat::na(),
-                other => Rfloat::from(rtemis_r8::rules::number_value(other).unwrap_or(f64::NAN)),
+            FieldType::Double(_) => Doubles::from_values(items.map(|v| {
+                if v.is_null() {
+                    Rfloat::na()
+                } else {
+                    Rfloat::from(node_number(v).unwrap_or(f64::NAN))
+                }
             }))
             .into(),
-            FieldType::Character(_) => {
-                Strings::from_values(items.into_iter().map(|v| match v.as_str() {
-                    Some(s) => Rstr::from(s),
-                    None => Rstr::na(),
-                }))
-                .into()
-            }
+            FieldType::Character(_) => Strings::from_values(items.map(|v| match v.as_str() {
+                Some(s) => Rstr::from(s),
+                None => Rstr::na(),
+            }))
+            .into(),
             FieldType::Date => {
-                let mut r: Robj =
-                    Doubles::from_values(items.into_iter().map(|v| match v.as_str() {
-                        Some(s) => Rfloat::from(date_days(s) as f64),
-                        None => Rfloat::na(),
-                    }))
-                    .into();
+                let mut r: Robj = Doubles::from_values(items.map(|v| match v.as_str() {
+                    Some(s) => Rfloat::from(date_days(s) as f64),
+                    None => Rfloat::na(),
+                }))
+                .into();
                 r.set_class(["Date"])?;
                 r
             }
             FieldType::Posixct => {
-                let mut r: Robj =
-                    Doubles::from_values(items.into_iter().map(|v| match v.as_str() {
-                        Some(s) => Rfloat::from(datetime_micros(s) as f64 / 1e6),
-                        None => Rfloat::na(),
-                    }))
-                    .into();
+                let mut r: Robj = Doubles::from_values(items.map(|v| match v.as_str() {
+                    Some(s) => Rfloat::from(datetime_micros(s) as f64 / 1e6),
+                    None => Rfloat::na(),
+                }))
+                .into();
                 r.set_class(["POSIXct", "POSIXt"])?;
                 r.set_attrib("tzone", "UTC")?;
                 r
@@ -914,7 +929,30 @@ impl Decoder<'_> {
         })
     }
 
-    fn value(&self, v: &Value, ft: &FieldType) -> Result<Robj> {
+    /// An atomic vector from an array node: a run of doubles copies in one
+    /// call, and any other array is read item by item.
+    fn sequence<'a, N: Node<'a>>(&self, seq: N, element: &FieldType) -> Result<Robj> {
+        if let Some(run) = seq.f64_slice() {
+            match unwrap_option(element).0 {
+                // R's `NA_real_` is the run's `NA_real_`.
+                FieldType::Double(_) => return Ok(Robj::from(run)),
+                FieldType::Integer(_) => {
+                    return Ok(Integers::from_values(run.iter().map(|&x| {
+                        if x.to_bits() == rtemis_r8::abi::NA_DOUBLE_BITS {
+                            Rint::na()
+                        } else {
+                            Rint::from(x as i32)
+                        }
+                    }))
+                    .into());
+                }
+                _ => {}
+            }
+        }
+        self.atomic(items(seq), element)
+    }
+
+    fn value<'a, N: Node<'a>>(&self, v: N, ft: &FieldType) -> Result<Robj> {
         match ft {
             FieldType::Option { inner, .. } => {
                 if v.is_null() {
@@ -929,54 +967,44 @@ impl Decoder<'_> {
             | FieldType::Double(_)
             | FieldType::Character(_)
             | FieldType::Date
-            | FieldType::Posixct => self.atomic(std::slice::from_ref(v), ft),
+            | FieldType::Posixct => self.atomic(std::iter::once(v), ft),
             FieldType::Raw => {
-                let b = <rtemis_r8::derive::Bytes as rtemis_r8::derive::Encode>::decode(v)
-                    .map_err(fail)?;
-                Ok(Raw::from_bytes(&b.0).into())
+                let b = rtemis_r8::access::base64_decode(v.as_str().unwrap_or_default());
+                Ok(Raw::from_bytes(&b).into())
             }
             FieldType::Factor { levels, ordered } => self.factor(v, levels.as_deref(), *ordered),
             FieldType::Vec { element, .. } => {
-                // Borrowed: a vector of 10^6 elements is read in place.
-                let items: &[Value] = v.as_array().map_or(&[], Vec::as_slice);
                 let (inner, _) = unwrap_option(element);
                 if is_scalar(inner) {
-                    self.atomic(items, element)
+                    self.sequence(v, element)
                 } else {
-                    let values = items
-                        .iter()
+                    let values = items(v)
                         .map(|e| self.value(e, element))
                         .collect::<Result<Vec<_>>>()?;
                     Ok(List::from_values(values).into())
                 }
             }
             FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
-                let (keys, items): (Vec<String>, Vec<&Value>) = match v {
-                    Value::Object(m) => {
-                        let mut pairs: Vec<(&String, &Value)> = m.iter().collect();
+                let (keys, values): (Vec<String>, Vec<N>) = match v.entries() {
+                    Some(mut pairs) => {
                         pairs.sort_by(|a, b| a.0.cmp(b.0));
-                        pairs.into_iter().map(|(k, x)| (k.clone(), x)).unzip()
+                        pairs.into_iter().map(|(k, x)| (k.to_string(), x)).unzip()
                     }
-                    Value::Array(pairs) => pairs
-                        .iter()
-                        .map(|p| {
-                            (
-                                p["name"].as_str().unwrap_or_default().to_string(),
-                                &p["value"],
-                            )
+                    None => items(v)
+                        .filter_map(|p| {
+                            Some((p.get("name")?.as_str()?.to_string(), p.get("value")?))
                         })
                         .unzip(),
-                    _ => (Vec::new(), Vec::new()),
                 };
                 let (inner, _) = unwrap_option(value);
                 let mut r = if is_scalar(inner) && matches!(ft, FieldType::Hashmap { .. }) {
-                    self.atomic(items.iter().copied(), value)?
+                    self.atomic(values.iter().copied(), value)?
                 } else {
-                    let values = items
+                    let out = values
                         .iter()
-                        .map(|e| self.value(e, value))
+                        .map(|&e| self.value(e, value))
                         .collect::<Result<Vec<_>>>()?;
-                    List::from_values(values).into()
+                    List::from_values(out).into()
                 };
                 r.set_names(keys)?;
                 Ok(r)
@@ -1008,40 +1036,42 @@ impl Decoder<'_> {
             }
             FieldType::Named { name } => self.named(v, name, None),
             FieldType::Dyn { r#trait } => {
-                let (ty, member) = self.lookup.implementor(r#trait, v).map_err(fail)?;
-                let mut inner = v.clone();
-                if let Some(o) = inner.as_object_mut() {
-                    o.remove(&member);
-                }
-                self.named(&inner, &ty, None)
+                // The type member is read by name like any member the
+                // implementor's fields do not name, so the value is read in
+                // place.
+                let (ty, _) = v
+                    .with_value(|x| self.lookup.implementor(r#trait, x))
+                    .map_err(fail)?;
+                self.named(v, &ty, None)
             }
         }
     }
 
-    fn factor(&self, v: &Value, levels: Option<&[Box<str>]>, ordered: bool) -> Result<Robj> {
-        let (lv, codes): (Vec<String>, Vec<Rint>) = match (v, levels) {
-            (Value::Object(o), _) => (
-                o["levels"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|l| l.as_str().unwrap().to_string())
-                    .collect(),
-                o["codes"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|c| {
-                        c.as_i64()
-                            .map(|k| Rint::from(k as i32))
-                            .unwrap_or_else(Rint::na)
-                    })
-                    .collect(),
-            ),
-            (Value::Array(items), Some(levels)) => (
+    fn factor<'a, N: Node<'a>>(
+        &self,
+        v: N,
+        levels: Option<&[Box<str>]>,
+        ordered: bool,
+    ) -> Result<Robj> {
+        let (lv, codes): (Vec<String>, Vec<Rint>) = match (v.object_len(), levels) {
+            (Some(_), _) => {
+                let lv = v.get("levels").ok_or_else(|| fail("a factor's levels"))?;
+                let codes = v.get("codes").ok_or_else(|| fail("a factor's codes"))?;
+                (
+                    items(lv)
+                        .map(|l| l.as_str().unwrap_or_default().to_string())
+                        .collect(),
+                    items(codes)
+                        .map(|c| match c.number() {
+                            Some(k) => Rint::from(k as i32),
+                            None => Rint::na(),
+                        })
+                        .collect(),
+                )
+            }
+            (None, Some(levels)) if v.array_len().is_some() => (
                 levels.iter().map(|l| l.to_string()).collect(),
-                items
-                    .iter()
+                items(v)
                     .map(|x| {
                         match x
                             .as_str()
@@ -1065,22 +1095,21 @@ impl Decoder<'_> {
         Ok(r)
     }
 
-    fn dense(&self, v: &Value, element: &FieldType) -> Result<Robj> {
-        let data: &[Value] = v["data"].as_array().map_or(&[], Vec::as_slice);
-        let mut r = self.atomic(data, element)?;
-        let shape: Vec<i32> = v["shape"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|d| d.as_i64().unwrap() as i32)
-            .collect();
+    fn dense<'a, N: Node<'a>>(&self, v: N, element: &FieldType) -> Result<Robj> {
+        let mut r = match v.get("data") {
+            Some(data) => self.sequence(data, element)?,
+            None => self.atomic(std::iter::empty::<N>(), element)?,
+        };
+        let shape: Vec<i32> = v
+            .get("shape")
+            .map(|s| items(s).map(|d| d.number().unwrap_or(0.0) as i32).collect())
+            .unwrap_or_default();
         r.set_attrib("dim", shape)?;
-        if let Some(dn) = v.get("dimnames").and_then(Value::as_array) {
-            let names: Vec<Robj> = dn
-                .iter()
-                .map(|d| match d.as_array() {
-                    Some(a) => Strings::from_values(
-                        a.iter().map(|s| Rstr::from(s.as_str().unwrap_or_default())),
+        if let Some(dn) = v.get("dimnames").filter(|d| d.array_len().is_some()) {
+            let names: Vec<Robj> = items(dn)
+                .map(|d| match d.array_len() {
+                    Some(_) => Strings::from_values(
+                        items(d).map(|s| Rstr::from(s.as_str().unwrap_or_default())),
                     )
                     .into(),
                     None => Robj::from(()),
@@ -1091,54 +1120,63 @@ impl Decoder<'_> {
         Ok(r)
     }
 
-    fn sparse(&self, v: &Value) -> Result<Robj> {
+    fn sparse<'a, N: Node<'a>>(&self, v: N) -> Result<Robj> {
         let ints = |k: &str| -> Robj {
             Integers::from_values(
-                v[k].as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|x| Rint::from(x.as_i64().unwrap() as i32)),
+                v.get(k)
+                    .map(|a| {
+                        items(a)
+                            .map(|x| Rint::from(x.number().unwrap_or(0.0) as i32))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
             )
             .into()
         };
-        let x: Robj = Doubles::from_values(
-            v["data"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|d| Rfloat::from(d.as_f64().unwrap_or(f64::NAN))),
-        )
-        .into();
+        let x: Robj = match v.get("data") {
+            Some(d) => match d.f64_slice() {
+                Some(run) => Robj::from(run),
+                None => Doubles::from_values(
+                    items(d).map(|x| Rfloat::from(x.number().unwrap_or(f64::NAN))),
+                )
+                .into(),
+            },
+            None => Doubles::from_values(std::iter::empty::<Rfloat>()).into(),
+        };
         let f = R!("R8:::new_dgc")?;
         f.as_function()
             .ok_or_else(|| fail("R8:::new_dgc"))?
             .call(pairlist!(ints("indices"), ints("indptr"), x, ints("shape")))
     }
 
-    fn table(&self, v: &Value, columns: &[FieldDef]) -> Result<Robj> {
-        let m = v.as_object().cloned().unwrap_or_default();
-        let n = m.get("$length").and_then(Value::as_i64).unwrap_or(0) as i32;
-        let extra = m
-            .get("$columns")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
+    fn table<'a, N: Node<'a>>(&self, v: N, columns: &[FieldDef]) -> Result<Robj> {
+        let n = v.get("$length").and_then(Node::number).unwrap_or(0.0) as i32;
+        let extra = v.get("$columns");
         let mut names = Vec::new();
         let mut cols = Vec::new();
-        for (k, cells) in m.iter().filter(|(k, _)| !k.starts_with('$')) {
+        for (k, cells) in v
+            .entries()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with('$'))
+        {
             let ft: FieldType = match columns.iter().find(|c| c.name.as_str() == k) {
                 Some(c) => c.ty.clone(),
-                None => serde_json::from_value(extra.get(k).cloned().unwrap_or(Value::Null))
-                    .map_err(|e| fail(e.to_string()))?,
+                None => extra
+                    .and_then(|t| t.get(k))
+                    .map(|t| t.with_value(|x| <FieldType as serde::Deserialize>::deserialize(x)))
+                    .transpose()
+                    .map_err(|e| fail(e.to_string()))?
+                    .ok_or_else(|| fail(format!("column `{k}` has no type")))?,
             };
             let (inner, _) = unwrap_option(&ft);
             let col = match inner {
                 FieldType::Factor { levels, ordered } => {
                     self.factor(cells, levels.as_deref(), *ordered)?
                 }
-                _ => self.atomic(cells.as_array().map(Vec::as_slice).unwrap_or_default(), &ft)?,
+                _ => self.sequence(cells, &ft)?,
             };
-            names.push(k.clone());
+            names.push(k.to_string());
             cols.push(col);
         }
         let mut r: Robj = List::from_values(cols).into();
@@ -1148,33 +1186,43 @@ impl Decoder<'_> {
         Ok(r)
     }
 
-    fn json(&self, v: &Value) -> Result<Robj> {
-        Ok(match v {
-            Value::Null => ().into(),
-            Value::Bool(b) => (*b).into(),
-            Value::Number(n) => n.as_f64().unwrap_or(f64::NAN).into(),
-            Value::String(s) => s.as_str().into(),
-            Value::Array(a) => {
-                List::from_values(a.iter().map(|x| self.json(x)).collect::<Result<Vec<_>>>()?)
-                    .into()
-            }
-            Value::Object(o) => {
-                let mut r: Robj = List::from_values(
-                    o.values()
-                        .map(|x| self.json(x))
-                        .collect::<Result<Vec<_>>>()?,
-                )
-                .into();
-                r.set_names(o.keys().cloned().collect::<Vec<_>>())?;
-                r
-            }
-        })
+    fn json<'a, N: Node<'a>>(&self, v: N) -> Result<Robj> {
+        if v.is_null() {
+            return Ok(().into());
+        }
+        if let Some(b) = v.as_bool() {
+            return Ok(b.into());
+        }
+        if let Some(x) = v.number() {
+            return Ok(x.into());
+        }
+        if let Some(s) = v.as_str() {
+            return Ok(s.into());
+        }
+        if let Some(members) = v.entries() {
+            let mut r: Robj = List::from_values(
+                members
+                    .iter()
+                    .map(|&(_, x)| self.json(x))
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .into();
+            r.set_names(
+                members
+                    .iter()
+                    .map(|(k, _)| k.to_string())
+                    .collect::<Vec<_>>(),
+            )?;
+            return Ok(r);
+        }
+        Ok(List::from_values(items(v).map(|x| self.json(x)).collect::<Result<Vec<_>>>()?).into())
     }
 
     /// An R8 value of a named type; `original` supplies runtime-only fields.
-    pub(crate) fn named(
+    /// A member the value does not hold reads as `null`.
+    pub(crate) fn named<'a, N: Node<'a>>(
         &self,
-        v: &Value,
+        v: N,
         name: &QualifiedName,
         original: Option<&Robj>,
     ) -> Result<Robj> {
@@ -1200,7 +1248,10 @@ impl Decoder<'_> {
                 names.push(f.name.to_string());
                 values.push(match carry(f) {
                     Some(x) => x,
-                    None => self.value(v.get(f.name.as_str()).unwrap_or(&Value::Null), &f.ty)?,
+                    None => match v.get(f.name.as_str()) {
+                        Some(x) => self.value(x, &f.ty)?,
+                        None => ().into(),
+                    },
                 });
             }
             Ok((names, values))
@@ -1219,7 +1270,7 @@ impl Decoder<'_> {
                     v.as_str().unwrap_or_default().to_string()
                 } else {
                     v.get(e.tag.as_str())
-                        .and_then(Value::as_str)
+                        .and_then(Node::as_str)
                         .unwrap_or_default()
                         .to_string()
                 };
@@ -1406,12 +1457,15 @@ fn r8_value_to_document(x: Robj) -> Result<List> {
 fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = crate::declare::snapshot()?;
-    let v = match crate::construct::with_cache(|cache| {
-        rtemis_r8::codec::read_document_cached(text, &q, &*docs, cache)
+    // The value as a compact tree, which holds a run of numbers in 8 B an
+    // item; the conversion to R and a codec's reader read it in place.
+    let tree = match crate::construct::with_cache(|cache| {
+        rtemis_r8::codec::read_tree_cached(text, &q, &*docs, cache)
     }) {
-        Ok(v) => v,
+        Ok(t) => t,
         Err(errors) => return Ok(list!(errors = errors_list(&errors))),
     };
+    let v = rtemis_r8::tree::TreeRef::new(&tree);
     let lookup: &dyn TypeLookup = &*docs;
     // A Rust-native struct or enum: the codec builds the state from the
     // read value through `from_reader` when its table has it, and otherwise
@@ -1420,8 +1474,9 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     // document's, and the codec receives no JSON text.
     if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name)) {
         if crate::native::has_from_reader(vt) {
-            let reader = rtemis_r8::reader::json_reader();
-            let state = crate::native::from_reader(vt, &reader, rtemis_r8::reader::node(&v))
+            let lent = rtemis_r8::reader::TreeReader::new();
+            let reader = lent.table();
+            let state = crate::native::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
                 .map_err(fail)?;
             let variant = crate::native::state_variant(vt, state);
             let drop_state = || {
@@ -1430,11 +1485,12 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
                 }
             };
             if let TypeDef::Enum(e) = def {
-                let read = match &v {
-                    serde_json::Value::String(s) => Some(s.as_str()),
-                    other => other
-                        .get(e.tag.as_str())
-                        .and_then(serde_json::Value::as_str),
+                let read = match &tree {
+                    rtemis_r8::tree::Tree::Str(s) => Some(&**s),
+                    other => match other.get(e.tag.as_str()) {
+                        Some(rtemis_r8::tree::Tree::Str(s)) => Some(&**s),
+                        _ => None,
+                    },
                 };
                 if read != variant.as_deref() {
                     drop_state();
@@ -1472,7 +1528,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
                 "the codec of `{q}` reads documents through `decode` only; R8 builds the value of a document through `from_fields` or `from_variant`, so rebuild the package that declares `{q}` against R8 0.4.0 or later [codec_decode]"
             )));
         }
-        let fields = Decoder { lookup: &*docs }.named(&v, &q, None)?;
+        let fields = Decoder { lookup: &*docs }.named(v, &q, None)?;
         let fs = unsafe { fields.get() };
         let state = match def {
             TypeDef::Struct(_) => crate::native::from_fields(vt, fs),
@@ -1489,7 +1545,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         return Ok(list!(value = value));
     }
     Ok(list!(
-        value = Decoder { lookup: &*docs }.named(&v, &q, None)?
+        value = Decoder { lookup: &*docs }.named(v, &q, None)?
     ))
 }
 

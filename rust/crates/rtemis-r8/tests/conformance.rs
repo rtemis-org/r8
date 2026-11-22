@@ -336,3 +336,69 @@ fn documents_read_to_the_normalized_form() {
     }
     assert!(checked >= 31, "{checked} cases");
 }
+
+/// A document read into a compact tree (`read_tree_cached`) holds the value
+/// the reference read (`read_document`) gives, by R8's equality of
+/// normalized forms, for every decode case of the corpus: the same value for
+/// a valid case, and the same error codes for an invalid one.
+#[test]
+fn tree_reads_match_the_reference_read() {
+    use rtemis_r8::access::Json;
+    use rtemis_r8::codec::{document_access, read_document, read_tree_cached};
+    use rtemis_r8::equal::equal_access;
+    use rtemis_r8::validate::RuleCache;
+    let mut checked = 0;
+    for path in suites(&corpus_dir()) {
+        let suite: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let Some(set) = suite_ir(&suite) else {
+            continue;
+        };
+        for case in suite["cases"].as_array().unwrap() {
+            if case["op"] != "decode" {
+                continue;
+            }
+            let id = case["id"].as_str().unwrap();
+            let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
+            let input = &case["input"];
+            let types =
+                serde_json::from_str::<Value>(&document_access(Json::new(input), &ty, &set))
+                    .ok()
+                    .and_then(|d| d.get("$types").cloned())
+                    .unwrap_or_else(|| serde_json::json!({}));
+            let raw = match input {
+                Value::Object(m) => {
+                    let mut m = m.clone();
+                    m.insert("$type".into(), Value::from(ty.to_string()));
+                    m.insert("$types".into(), types);
+                    Value::Object(m)
+                }
+                other => {
+                    serde_json::json!({"$type": ty.to_string(), "$types": types, "$value": other})
+                }
+            };
+            let text = raw.to_string();
+            let reference = read_document(&text, &ty, &set);
+            let tree = read_tree_cached(&text, &ty, &set, &mut RuleCache::new());
+            match (reference, tree) {
+                (Ok(v), Ok(t)) => {
+                    let tv = t.to_value();
+                    assert!(
+                        equal_access(&ty, Json::new(&v), Json::new(&tv), &set),
+                        "{id}: the tree read differs from the reference read\n{tv}\n{v}"
+                    );
+                }
+                (Err(a), Err(b)) => {
+                    let codes = |e: &[rtemis_r8::validate::ValueError]| {
+                        let mut c: Vec<&str> = e.iter().map(|x| x.code).collect();
+                        c.sort();
+                        c
+                    };
+                    assert_eq!(codes(&a), codes(&b), "{id}: the error codes differ");
+                }
+                (a, b) => panic!("{id}: the reference read gives {a:?}, the tree read {b:?}"),
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked >= 31, "{checked} cases");
+}

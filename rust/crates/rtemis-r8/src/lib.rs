@@ -46,6 +46,7 @@ pub mod reader;
 pub mod record;
 pub mod rules;
 pub mod text;
+pub mod tree;
 pub mod validate;
 pub mod value_schema;
 

@@ -58,6 +58,7 @@ pub use crate::emit::runtime_paths;
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
+use crate::tree::{Tree, TreeRef};
 use crate::validate::{ValueError, validate};
 
 // ---------------------------------------------------------------- RFC 8785
@@ -553,6 +554,315 @@ pub fn read_document_cached(
     }
     if errors.is_empty() {
         Ok(normalized)
+    } else {
+        Err(errors)
+    }
+}
+
+// ------------------------------------------------------------- tree reads
+
+/// A field type through which a value can hold a named type.
+fn holds_named(ft: &FieldType) -> bool {
+    match ft {
+        FieldType::Named { .. } | FieldType::Dyn { .. } => true,
+        FieldType::Option { inner, .. } => holds_named(inner),
+        FieldType::Vec { element, .. } => holds_named(element),
+        FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+            holds_named(value)
+        }
+        _ => false,
+    }
+}
+
+/// The named types a valid value of `ft` contains, with their versions, as
+/// the emitter records them: a named type, a `dyn()` value's implementor, and
+/// a newtype variant's struct. The walk enters only the fields through which
+/// a named type can be held.
+fn contained<'a, A: Access<'a>>(
+    v: A,
+    ft: &FieldType,
+    lookup: &dyn TypeLookup,
+    out: &mut std::collections::BTreeMap<String, u32>,
+) {
+    if v.is_absent() || !holds_named(ft) {
+        return;
+    }
+    match ft {
+        FieldType::Option { inner, .. } => contained(v, inner, lookup, out),
+        FieldType::Vec { element, .. } => {
+            for i in 0..v.vec(element).unwrap_or(0) {
+                contained(v.item(i), element, lookup, out);
+            }
+        }
+        FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+            v.each_entry(|_, e| {
+                if let Ok((_, x)) = e {
+                    contained(x, value, lookup, out);
+                }
+            });
+        }
+        FieldType::Named { name } => contained_named(v, name, lookup, out),
+        FieldType::Dyn { r#trait } => {
+            if let Ok((ty, _)) = v.implementor(r#trait, lookup) {
+                contained_named(v, &ty, lookup, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn contained_named<'a, A: Access<'a>>(
+    v: A,
+    name: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    out: &mut std::collections::BTreeMap<String, u32>,
+) {
+    let Some(def) = lookup.find(name) else { return };
+    match def {
+        TypeDef::Struct(s) => {
+            out.insert(name.to_string(), s.version);
+            for f in &s.fields {
+                contained(v.member(f.name.as_str()), &f.ty, lookup, out);
+            }
+        }
+        TypeDef::Enum(e) => {
+            out.insert(name.to_string(), e.version);
+            let Ok(variant) = v.variant(name, e) else {
+                return;
+            };
+            let fields: &[FieldDef] = match e
+                .variants
+                .iter()
+                .find(|x| x.name.as_str() == variant)
+                .map(|x| &x.shape)
+            {
+                Some(VariantShape::Struct { fields, .. }) => fields,
+                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                    Some(TypeDef::Struct(s)) => {
+                        out.insert(of.to_string(), s.version);
+                        &s.fields
+                    }
+                    _ => &[],
+                },
+                _ => &[],
+            };
+            for f in fields {
+                contained(v.member(f.name.as_str()), &f.ty, lookup, out);
+            }
+        }
+    }
+}
+
+/// A field type through which a value can hold a field with a default.
+fn holds_defaults(ft: &FieldType) -> bool {
+    holds_named(ft)
+}
+
+/// Gives each absent or null field of `t`, a valid value of `ft`, that has a
+/// default its default, at every depth: the normalization of a document's
+/// value on read, which the emitter applies when it writes.
+pub fn fill_defaults(t: &mut Tree, ft: &FieldType, lookup: &dyn TypeLookup) {
+    if matches!(t, Tree::Null) || !holds_defaults(ft) {
+        return;
+    }
+    match ft {
+        FieldType::Option { inner, .. } => fill_defaults(t, inner, lookup),
+        FieldType::Vec { element, .. } => {
+            if let Tree::Array(items) = t {
+                for x in items.iter_mut() {
+                    fill_defaults(x, element, lookup);
+                }
+            }
+        }
+        FieldType::Hashmap { value, .. } => {
+            if let Tree::Object(m) = t {
+                for (_, x) in m.iter_mut() {
+                    fill_defaults(x, value, lookup);
+                }
+            }
+        }
+        FieldType::OrderedMap { value, .. } => {
+            if let Tree::Array(pairs) = t {
+                for p in pairs.iter_mut() {
+                    if let Some(m) = p.members_mut()
+                        && let Some((_, x)) = m.iter_mut().find(|(k, _)| &**k == "value")
+                    {
+                        fill_defaults(x, value, lookup);
+                    }
+                }
+            }
+        }
+        FieldType::Named { name } => fill_named(t, name, lookup),
+        FieldType::Dyn { r#trait } => {
+            let found = crate::access::JsonOf::of(TreeRef::new(t)).implementor(r#trait, lookup);
+            if let Ok((ty, _)) = found {
+                fill_named(t, &ty, lookup);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fill_named(t: &mut Tree, name: &QualifiedName, lookup: &dyn TypeLookup) {
+    let Some(def) = lookup.find(name) else { return };
+    let fields: &[FieldDef] = match def {
+        TypeDef::Struct(s) => &s.fields,
+        TypeDef::Enum(e) => {
+            let variant = match &*t {
+                Tree::Object(_) => t.get(e.tag.as_str()).and_then(|v| match v {
+                    Tree::Str(s) => Some(s.to_string()),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            let Some(variant) = variant else { return };
+            match e
+                .variants
+                .iter()
+                .find(|x| x.name.as_str() == variant)
+                .map(|x| &x.shape)
+            {
+                Some(VariantShape::Struct { fields, .. }) => fields,
+                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                    Some(TypeDef::Struct(s)) => &s.fields,
+                    _ => return,
+                },
+                _ => return,
+            }
+        }
+    };
+    let Some(members) = t.members_mut() else {
+        return;
+    };
+    let mut added: Vec<(Box<str>, Tree)> = Vec::new();
+    for f in fields {
+        let at = members.iter().rposition(|(k, _)| &**k == f.name.as_str());
+        match at {
+            Some(i) if !matches!(members[i].1, Tree::Null) => {
+                fill_defaults(&mut members[i].1, &f.ty, lookup);
+            }
+            _ => {
+                let Some(d) = f.default.as_deref() else {
+                    continue;
+                };
+                let Ok(value) = <Tree as serde::Deserialize>::deserialize(d) else {
+                    continue;
+                };
+                match at {
+                    Some(i) => members[i].1 = value,
+                    None => added.push((f.name.as_str().into(), value)),
+                }
+            }
+        }
+    }
+    if !added.is_empty() {
+        let mut all = std::mem::take(members).into_vec();
+        all.extend(added);
+        *members = all.into_boxed_slice();
+    }
+}
+
+/// Reads a document of the type `ty` into a compact [`Tree`]: the value of
+/// `$value`, or the document without its envelope, validated, with each
+/// absent field that has a default given its default ([`fill_defaults`]),
+/// and its `$types` checked against the contained types' declarations. The
+/// read holds the document's text and one tree; a run of numbers takes 8 B
+/// an item.
+pub fn read_tree_cached(
+    text: &str,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    cache: &mut crate::validate::RuleCache,
+) -> Result<Tree, Vec<ValueError>> {
+    let doc: Tree = serde_json::from_str(text).map_err(|e| {
+        vec![document_error(
+            "document_json",
+            "",
+            format!("not a JSON document: {e}"),
+        )]
+    })?;
+    let Tree::Object(members) = doc else {
+        return Err(vec![document_error(
+            "document_form",
+            "",
+            "a document is a JSON object".to_string(),
+        )]);
+    };
+    let mut errors = Vec::new();
+    let mut members = members.into_vec();
+    let take = |members: &mut Vec<(Box<str>, Tree)>, key: &str| {
+        members
+            .iter()
+            .rposition(|(k, _)| &**k == key)
+            .map(|i| members.remove(i).1)
+    };
+    match take(&mut members, "$type") {
+        Some(Tree::Str(t)) if *t == *ty.to_string() => {}
+        Some(Tree::Str(t)) => errors.push(document_error(
+            "document_type",
+            "/$type",
+            format!("the document holds a `{t}`, not a `{ty}`"),
+        )),
+        _ => errors.push(document_error(
+            "document_form",
+            "/$type",
+            "a document names its type in `$type`".to_string(),
+        )),
+    }
+    let Some(versions @ Tree::Object(_)) = take(&mut members, "$types") else {
+        errors.push(document_error(
+            "document_form",
+            "/$types",
+            "a document records its types' versions in `$types`".to_string(),
+        ));
+        return Err(errors);
+    };
+    let mut value = match take(&mut members, "$value") {
+        Some(v) => v,
+        None => Tree::Object(members.into_boxed_slice()),
+    };
+    let validation = crate::validate::validate_access(
+        crate::access::JsonOf::of(TreeRef::new(&value)),
+        ty,
+        lookup,
+        cache,
+    );
+    if !validation.is_empty() {
+        errors.extend(validation);
+        return Err(errors);
+    }
+    let named = FieldType::Named { name: ty.clone() };
+    fill_defaults(&mut value, &named, lookup);
+    let mut found = std::collections::BTreeMap::new();
+    contained(
+        crate::access::JsonOf::of(TreeRef::new(&value)),
+        &named,
+        lookup,
+        &mut found,
+    );
+    for (name, current) in found {
+        let path = format!("/$types/{}", name.replace('~', "~0").replace('/', "~1"));
+        let listed = match versions.get(&name) {
+            Some(Tree::Num(n)) => n.as_u64(),
+            _ => None,
+        };
+        match listed {
+            None => errors.push(document_error("version_missing", &path, format!("`$types` does not record the version of `{name}`"))),
+            Some(v) if v == u64::from(current) => {}
+            Some(v) if v < u64::from(current) => errors.push(document_error(
+                "version_older",
+                &path,
+                format!("`{name}` is version {v} in the document and {current} in its declaration; reading it needs a migration"),
+            )),
+            Some(v) => errors.push(document_error(
+                "version_newer",
+                &path,
+                format!("`{name}` is version {v} in the document, newer than its declaration, {current}; update the package that declares it"),
+            )),
+        }
+    }
+    if errors.is_empty() {
+        Ok(value)
     } else {
         Err(errors)
     }

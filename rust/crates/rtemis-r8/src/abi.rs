@@ -371,7 +371,10 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("R8Exports.impls", offset_of!(Exports, impls)),
         ("R8Exports.n_impls", offset_of!(Exports, n_impls)),
         ("R8Exports.ir_record", offset_of!(Exports, ir_record)),
-        ("R8Exports.ir_record_len", offset_of!(Exports, ir_record_len)),
+        (
+            "R8Exports.ir_record_len",
+            offset_of!(Exports, ir_record_len),
+        ),
         ("R8Api", size_of::<Api>()),
         ("R8Api.size", offset_of!(Api, size)),
         ("R8Api.new_value", offset_of!(Api, new_value)),

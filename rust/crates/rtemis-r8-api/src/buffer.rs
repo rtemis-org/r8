@@ -62,7 +62,10 @@ pub trait Element: Copy + Send + Sync + 'static {
     ) -> abi::Status;
     /// The elements of an array node that R8 lends through `r`: numbers for
     /// a double or an integer, logicals, or a base64 string for bytes.
-    fn from_node<'a>(r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>) -> Result<Vec<Self>>;
+    fn from_node<'a>(
+        r: &crate::reader::Reader<'a>,
+        n: crate::reader::Node<'a>,
+    ) -> Result<Vec<Self>>;
 }
 
 /// A vector of `len` elements of `T` filled in one block by `fill`, whose
@@ -98,7 +101,10 @@ macro_rules! element {
                     None => abi::ERROR,
                 }
             }
-            fn from_node<'a>(r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>) -> Result<Vec<Self>> {
+            fn from_node<'a>(
+                r: &crate::reader::Reader<'a>,
+                n: crate::reader::Node<'a>,
+            ) -> Result<Vec<Self>> {
                 ($from_node)(r, n)
             }
         }
@@ -141,7 +147,9 @@ element!(
     RAW_GET_REGION,
     view_bytes,
     u8,
-    |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| { r.string(n).map(rtemis_r8::access::base64_decode) }
+    |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {
+        r.string(n).map(rtemis_r8::access::base64_decode)
+    }
 );
 
 enum Backing<T> {

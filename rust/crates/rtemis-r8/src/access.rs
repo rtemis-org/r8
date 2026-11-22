@@ -1138,7 +1138,11 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
 
     fn map(self, _value: &FieldType, ordered: bool) -> Read<usize> {
         let v = self.val();
-        match (ordered, v.and_then(Node::object_len), v.and_then(Node::array_len)) {
+        match (
+            ordered,
+            v.and_then(Node::object_len),
+            v.and_then(Node::array_len),
+        ) {
             (false, Some(n), _) => Ok(n),
             (true, _, Some(n)) => Ok(n),
             (false, ..) => Err(self.mismatch("an object")),
@@ -1179,7 +1183,11 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
             )
         };
         let v = self.val();
-        match (declared, v.and_then(Node::array_len), v.and_then(Node::object_len)) {
+        match (
+            declared,
+            v.and_then(Node::array_len),
+            v.and_then(Node::object_len),
+        ) {
             (Some(_), Some(n), _) => {
                 let v = v.expect("an array");
                 let mut levels: Vec<Cow<'a, str>> = Vec::new();
