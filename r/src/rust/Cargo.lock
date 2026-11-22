@@ -109,6 +109,9 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "foldhash",
+]
 
 [[package]]
 name = "hybrid-array"
@@ -185,11 +188,12 @@ dependencies = [
 
 [[package]]
 name = "r8-r"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "extendr-api",
  "extendr-ffi",
  "rtemis-r8",
+ "serde",
  "serde_json",
 ]
 
@@ -235,10 +239,11 @@ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rtemis-r8"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5bb25fa1f094fbfe5642d77a99015796fe7767132c1a0300fe154bb8fa105a7"
+checksum = "ce32d2fc27c4feea310ca54da74b09716be5b9477aca0cc3a15dfd89862ffcbd"
 dependencies = [
+ "hashbrown",
  "regex",
  "ryu-js",
  "serde",
