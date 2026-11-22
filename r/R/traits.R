@@ -6,12 +6,18 @@
 # a trait looks up the impl for the qualified type of its first argument.
 .r8_impls <- new.env(parent = emptyenv())
 
-# The dispatch index: by `"Trait|method"`, an environment of each impl of
-# the method by qualified type; a trait's default stays in `.r8_impls`, which
-# `r8_find_impl()` reads when the index has no impl. A generic reads
-# it in R8's namespace, so a generic sent to a worker finds the worker's
-# impls. `set_impl()` keeps it with `.r8_impls`.
+# The dispatch cache: by `"Trait|method"`, an environment of the resolved
+# impl of the method by qualified type, or by `class:` and the class of an
+# object of another class; `r8_find_impl()` fills it from `.r8_impls` on a
+# miss of the C routine `find`. A generic reads it in R8's namespace, so a
+# generic sent to a worker resolves the worker's impls. `put_impl()` drops a
+# method's index when one of its impls changes; unloading a package and
+# declaring a type clear the cache.
 .r8_dispatch <- new.env(parent = emptyenv())
+
+# The native symbol of the C routine `find` (`r/src/view.c`), bound when the
+# package loads.
+.r8_c_find <- NULL
 
 # Trait objects by qualified name, for the impls of compiled code.
 .r8_traits <- new.env(parent = emptyenv())
@@ -161,15 +167,11 @@ make_generic <- function(trait_name, method, fn) {
     if (a == "...") quote(...) else as.name(a)
   })
   names(call_args) <- ifelse(args == "...", "", args)
-  key <- paste(trait_name, method, sep = "|")
-  body <- bquote({
-    .r8_type_ <- attr(.(first), "r8_type", exact = TRUE)
-    .r8_impl_ <- if (!is.null(.r8_type_)) .r8_dispatch[[.(key)]][[.r8_type_]]
-    if (is.null(.r8_impl_)) {
-      .r8_impl_ <- r8_find_impl(.(trait_name), .(method), .(first))
-    }
-    .(as.call(c(list(quote(.r8_impl_)), call_args)))
-  })
+  key <- as.name(paste(trait_name, method, sep = "|"))
+  # Constants only: the method's key as a symbol and namespace bindings, so
+  # a generic sent to a worker dispatches through the worker's impls.
+  find <- bquote(.Call(.r8_c_find, .(first), quote(.(key)), .r8_dispatch))
+  body <- as.call(c(list(call("(", find)), call_args))
   g <- as.function(c(formals(fn), body), envir = asNamespace("R8"))
   structure(
     g,
@@ -178,6 +180,96 @@ make_generic <- function(trait_name, method, fn) {
     r8_method = method
   )
 } # /R8::make_generic
+
+
+# %% dispatch_resolve ----
+#' Resolve the impl of a trait method for a value on a miss of the cache
+#'
+#' Called by the C routine `find` when the dispatch cache has no impl for the
+#' value's type; `r8_find_impl()` finds the impl and stores it.
+#'
+#' @param key Character: `"Trait|method"`.
+#' @param x The value dispatched on.
+#'
+#' @return The impl function.
+#'
+#' @keywords internal
+#' @noRd
+dispatch_resolve <- function(key, x) {
+  at <- regexpr("|", key, fixed = TRUE)
+  r8_find_impl(substr(key, 1L, at - 1L), substr(key, at + 1L, nchar(key)), x)
+} # /R8::dispatch_resolve
+
+
+# %% cache_impl ----
+#' Store a resolved impl in the dispatch cache
+#'
+#' Under the value's qualified type, or under `class:` and the first class of
+#' an object with a class attribute: the keys the C routine `find` reads, and
+#' the type key that generics of packages installed against R8 before the
+#' routine read.
+#'
+#' @param key Character: `"Trait|method"`.
+#' @param x The value dispatched on.
+#' @param impl Function: The impl.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+cache_impl <- function(key, x, impl) {
+  type <- attr(x, "r8_type", exact = TRUE)
+  name <- if (is.character(type) && length(type) == 1L) {
+    type
+  } else if (!is.null(attr(x, "class", exact = TRUE))) {
+    paste0("class:", class(x)[[1L]])
+  }
+  if (!is.null(name)) {
+    index <- .r8_dispatch[[key]]
+    if (is.null(index)) {
+      index <- new.env(parent = emptyenv())
+      assign(key, index, envir = .r8_dispatch)
+    }
+    assign(name, impl, envir = index)
+  }
+  invisible(NULL)
+} # /R8::cache_impl
+
+
+# %% put_impl ----
+#' Record an impl and drop its method's cached dispatch
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param method Character: The method name.
+#' @param type Character: The qualified type name, a class, or `""` for the
+#'   trait's default.
+#' @param fn Function: The impl.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+put_impl <- function(trait_name, method, type, fn) {
+  assign(paste(trait_name, method, type, sep = "|"), fn, envir = .r8_impls)
+  key <- paste(trait_name, method, sep = "|")
+  if (exists(key, envir = .r8_dispatch, inherits = FALSE)) {
+    rm(list = key, envir = .r8_dispatch)
+  }
+  invisible(NULL)
+} # /R8::put_impl
+
+
+# %% clear_dispatch ----
+#' Clear the dispatch cache
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+clear_dispatch <- function() {
+  rm(list = ls(.r8_dispatch, all.names = TRUE), envir = .r8_dispatch)
+  invisible(NULL)
+} # /R8::clear_dispatch
 
 
 # %% r8_find_impl ----
@@ -194,12 +286,12 @@ make_generic <- function(trait_name, method, fn) {
 r8_find_impl <- function(trait_name, method, x) {
   type <- if (inherits(x, "r8_value")) attr(x, "r8_type") else class(x)[1L]
   impl <- .r8_impls[[paste(trait_name, method, type, sep = "|")]]
-  if (!is.null(impl)) {
-    return(impl)
+  if (is.null(impl)) {
+    impl <- .r8_impls[[paste(trait_name, method, "", sep = "|")]]
   }
-  default <- .r8_impls[[paste(trait_name, method, "", sep = "|")]]
-  if (!is.null(default)) {
-    return(default)
+  if (!is.null(impl)) {
+    cache_impl(paste(trait_name, method, sep = "|"), x, impl)
+    return(impl)
   }
   r8_abort(
     "`",
@@ -585,10 +677,11 @@ register_impl <- function(entry) {
     unclass(.r8_traits[[entry[["trait_name"]]]])
   }
   if (!is.null(entry[["source"]])) {
-    assign(
-      paste("R8::From", entry[["source"]], entry[["type_name"]], sep = "|"),
-      entry[["fns"]][["from"]],
-      envir = .r8_impls
+    put_impl(
+      "R8::From",
+      entry[["source"]],
+      entry[["type_name"]],
+      entry[["fns"]][["from"]]
     )
     register_records(list(entry[["record"]]))
     return(invisible(NULL))
@@ -625,18 +718,7 @@ register_impl <- function(entry) {
 #' @keywords internal
 #' @noRd
 set_impl <- function(trait_name, method, type, fn) {
-  assign(paste(trait_name, method, type, sep = "|"), fn, envir = .r8_impls)
-  if (!nzchar(type)) {
-    return(invisible(NULL))
-  }
-  key <- paste(trait_name, method, sep = "|")
-  index <- .r8_dispatch[[key]]
-  if (is.null(index)) {
-    index <- new.env(parent = emptyenv())
-    assign(key, index, envir = .r8_dispatch)
-  }
-  assign(type, fn, envir = index)
-  invisible(NULL)
+  put_impl(trait_name, method, type, fn)
 } # /R8::set_impl
 
 

@@ -281,9 +281,16 @@ r8_converter <- function(type) {
 # (`r8_native_symbols()`), set when the package loads.
 .r8_native <- new.env(parent = emptyenv())
 
+# The native symbol of the C routine `invoke`, bound when the package loads,
+# which a compiled method's wrapper calls.
+.r8_c_invoke <- NULL
+
 # %% .onLoad ----
 .onLoad <- function(libname, pkgname) {
   list2env(r8_native_symbols(), envir = .r8_native)
+  ns <- topenv()
+  assign(".r8_c_find", .r8_native[["find"]], envir = ns)
+  assign(".r8_c_invoke", .r8_native[["invoke"]], envir = ns)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Dim, PartialOrd, Print)) {
     register_trait(t, "R8")

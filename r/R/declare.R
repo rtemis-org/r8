@@ -312,6 +312,7 @@ declare <- function(
     declaration_failed(qname, out[["problems"]])
   }
   clear_variants()
+  clear_dispatch()
   # A struct's formals and its required fields come from r8_declare(); an
   # enum's constructor takes no arguments.
   formals <- out[["formals"]] %||% list()

@@ -590,15 +590,11 @@ register_s3_method <- function(entry) {
       envir = table
     )
   }
-  assign(
-    paste(
-      paste0(entry[["package"]], "::", entry[["name"]]),
-      entry[["name"]],
-      entry[["type_name"]],
-      sep = "|"
-    ),
-    entry[["fn"]],
-    envir = .r8_impls
+  put_impl(
+    paste0(entry[["package"]], "::", entry[["name"]]),
+    entry[["name"]],
+    entry[["type_name"]],
+    entry[["fn"]]
   )
   invisible(NULL)
 } # /R8::register_s3_method

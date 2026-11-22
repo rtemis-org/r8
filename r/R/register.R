@@ -224,6 +224,7 @@ register_exports <- function(pkg, entries = list()) {
 #' @keywords internal
 #' @noRd
 clear_compiled <- function(pkg) {
+  clear_dispatch()
   ptrs <- .r8_compiled_ptrs[[pkg]]
   if (!is.null(ptrs)) {
     r8_clear_external_ptrs(ptrs)
@@ -335,7 +336,7 @@ compiled_method <- function(trait_name, type_name, method, pkg) {
       formals,
       call(
         ".Call",
-        quote(.r8_native[["invoke"]]),
+        quote(.r8_c_invoke),
         ptr,
         as.call(c(as.name("list"), args))
       )

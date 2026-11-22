@@ -166,3 +166,40 @@ test_that("an impl of the same trait for the same type replaces it", {
   again <- parts[["Tr"]]@again
   expect_identical(again(parts[["Ty"]](a = 0)), 2)
 })
+
+test_that("dispatch follows impls changed after a call, and serves defaults and other classes", {
+  out <- declare_in("trc", {
+    Size <- new_trait(
+      "Size",
+      methods = list(
+        size = trait_method(function(x) NULL, default = function(x) "default")
+      )
+    )
+    Box <- new_struct("Box", fields = list(w = type_double()))
+    impl(Size, Box, methods = list(size = function(x) "first"))
+    list(Size = Size, Box = Box)
+  })
+  size <- out[["Size"]]@size
+  b <- out[["Box"]](w = 1)
+  expect_identical(size(b), "first")
+  expect_identical(size(b), "first")
+  declare_in(
+    "trc",
+    impl(
+      out[["Size"]],
+      out[["Box"]],
+      methods = list(size = function(x) "second")
+    )
+  )
+  expect_identical(size(b), "second")
+  # An object of another class takes the trait's default, through the cache
+  # by its class, on every call.
+  other <- structure(list(), class = "trc_other")
+  expect_identical(size(other), "default")
+  expect_identical(size(other), "default")
+  expect_identical(size(1), "default")
+  # The generic's body holds constants only.
+  bound <- all.names(body(size))
+  expect_true(all(c(".r8_c_find", ".r8_dispatch") %in% bound))
+  expect_false(any(vapply(as.list(body(size)), is.environment, logical(1))))
+})

@@ -31,6 +31,7 @@
 #include <string.h>
 
 #include <R8.h>
+#include <Rversion.h>
 #include <R_ext/Altrep.h>
 #include <R_ext/Rdynload.h>
 
@@ -404,6 +405,18 @@ static SEXP native_symbol(DL_FUNC f) {
   return p;
 }
 
+// The value of `sym` in the frame of `env`, its promise forced; R 4.5.0
+// adds R_getVarEx() to the API, and on earlier R evaluating the symbol in
+// `env` forces the promise the same way. `absent` is returned for a symbol
+// the frame does not bind (R 4.5.0 and later; earlier R raises R's error).
+static SEXP r8_get_var(SEXP sym, SEXP env, SEXP absent) {
+#if R_VERSION >= R_Version(4, 5, 0)
+  return R_getVarEx(sym, env, FALSE, absent);
+#else
+  return Rf_findVarInFrame(env, sym) == R_UnboundValue ? absent : Rf_eval(sym, env);
+#endif
+}
+
 // The Rust routine behind `.Call(wrap__r8_new_value, ...)`.
 SEXP wrap__r8_new_value(SEXP fields, SEXP type_name, SEXP variant);
 
@@ -434,7 +447,7 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
       absent = Rf_asLogical(Rf_eval(test, env)) == 1;
     }
     if (!absent) {
-      SET_VECTOR_ELT(fields, i, R_getVarEx(sym, env, FALSE, R_NilValue));
+      SET_VECTOR_ELT(fields, i, r8_get_var(sym, env, R_NilValue));
     }
   }
   Rf_setAttrib(fields, R_NamesSymbol, names);
@@ -443,19 +456,64 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
   return out;
 }
 
+// The impl of the trait method `key`, a symbol "Trait|method", for the
+// value `x`: from the method's index in `dispatch` (`.r8_dispatch`), by the
+// value's `r8_type` attribute or by `class:` and the first element of its
+// class attribute; on a miss, R8's `dispatch_resolve()` finds the impl, stores it
+// in the index, and returns it, or raises the dispatch error. The routine
+// keeps no SEXP beyond installed symbols.
+// spec: R8/class-system#traits-equality-and-conformance-in-r
+static SEXP r8_find(SEXP x, SEXP key, SEXP dispatch) {
+  static SEXP type_sym = NULL, resolve_sym = NULL;
+  if (type_sym == NULL) {
+    type_sym = Rf_install("r8_type");
+    resolve_sym = Rf_install("dispatch_resolve");
+  }
+  SEXP index = r8_get_var(key, dispatch, R_NilValue);
+  if (TYPEOF(index) == ENVSXP) {
+    SEXP name = R_NilValue;
+    SEXP type = Rf_getAttrib(x, type_sym);
+    if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
+      name = Rf_installTrChar(STRING_ELT(type, 0));
+    } else {
+      SEXP cls = Rf_getAttrib(x, R_ClassSymbol);
+      if (TYPEOF(cls) == STRSXP && XLENGTH(cls) >= 1) {
+        char buf[256];
+        const char *c = Rf_translateCharUTF8(STRING_ELT(cls, 0));
+        if (snprintf(buf, sizeof buf, "class:%s", c) < (int) sizeof buf) {
+          name = Rf_install(buf);
+        }
+      }
+    }
+    if (name != R_NilValue) {
+      SEXP impl = r8_get_var(name, index, R_NilValue);
+      if (impl != R_NilValue) {
+        return impl;
+      }
+    }
+  }
+  SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
+  SEXP call = PROTECT(Rf_lang3(resolve_sym, PROTECT(Rf_ScalarString(PRINTNAME(key))), x));
+  SEXP impl = Rf_eval(call, ns);
+  UNPROTECT(4);
+  return impl;
+}
+
 // The C routines that R calls through `.Call()` on a native symbol:
-// list(invoke, exports, construct). R8's `.Call` routines are the Rust code's,
+// list(invoke, exports, construct, find). R8's `.Call` routines are the Rust code's,
 // registered by extendr; these continue a jump or call R_GetCCallable() from
 // C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 3));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 4));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 3));
+  SET_VECTOR_ELT(out, 3, native_symbol((DL_FUNC) r8_find));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 4));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
+  SET_STRING_ELT(names, 3, Rf_mkChar("find"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;
