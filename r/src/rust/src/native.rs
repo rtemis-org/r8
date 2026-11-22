@@ -243,30 +243,15 @@ fn c_text(p: *const c_char) -> Option<String> {
     (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
 }
 
-/// The bytes of a codec table up to and including its enum members,
-/// `variant` and `from_variant`. A table whose `size` ends before them, as
-/// tables written for R8 0.3.0 do, has none.
-const ENUM_MEMBERS_END: usize =
-    std::mem::offset_of!(TypeVTable, from_variant) + std::mem::size_of::<usize>();
-
-/// Whether a codec table is an enum's: its `size` covers the enum members
-/// and both are set.
+/// Whether a codec table is an enum's: it sets both enum members.
 pub(crate) fn is_enum_codec(vt: *const TypeVTable) -> bool {
     let codec = unsafe { &*vt };
-    codec.size as usize >= ENUM_MEMBERS_END
-        && codec.variant.is_some()
-        && codec.from_variant.is_some()
+    codec.variant.is_some() && codec.from_variant.is_some()
 }
 
-/// The end of the member `from_reader`, which tables written for R8 0.4.0
-/// have.
-const FROM_READER_END: usize =
-    std::mem::offset_of!(TypeVTable, from_reader) + std::mem::size_of::<usize>();
-
-/// Whether a codec table's `size` covers `from_reader` and sets it.
+/// Whether a codec table sets `from_reader`.
 pub(crate) fn has_from_reader(vt: *const TypeVTable) -> bool {
-    let codec = unsafe { &*vt };
-    codec.size as usize >= FROM_READER_END && codec.from_reader.is_some()
+    unsafe { &*vt }.from_reader.is_some()
 }
 
 /// A state built by the codec's `from_reader` from the value at `root`,
@@ -294,8 +279,7 @@ pub(crate) fn from_reader(
 /// Whether a codec table sets either enum member.
 pub(crate) fn has_enum_members(vt: *const TypeVTable) -> bool {
     let codec = unsafe { &*vt };
-    codec.size as usize >= ENUM_MEMBERS_END
-        && (codec.variant.is_some() || codec.from_variant.is_some())
+    codec.variant.is_some() || codec.from_variant.is_some()
 }
 
 /// The variant of a state of an enum's codec; `None` for a struct's codec.

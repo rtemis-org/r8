@@ -11,7 +11,7 @@ static const size_t layout[] = {
   SIZE(R8Writer), OFFSET(R8Writer, write),
   SIZE(R8CallContext), OFFSET(R8CallContext, flags), OFFSET(R8CallContext, seed),
   SIZE(R8TypeVTable), OFFSET(R8TypeVTable, type_name), OFFSET(R8TypeVTable, from_fields),
-  OFFSET(R8TypeVTable, decode), OFFSET(R8TypeVTable, encode),
+  OFFSET(R8TypeVTable, encode),
   OFFSET(R8TypeVTable, write_state), OFFSET(R8TypeVTable, read_state),
   OFFSET(R8TypeVTable, get_field), OFFSET(R8TypeVTable, with_field),
   OFFSET(R8TypeVTable, drop), OFFSET(R8TypeVTable, bytes),

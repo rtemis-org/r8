@@ -205,9 +205,7 @@ dispatch_resolve <- function(key, x) {
 #' Store a resolved impl in the dispatch cache
 #'
 #' Under the value's qualified type, or under `class:` and the first class of
-#' an object with a class attribute: the keys the C routine `find` reads, and
-#' the type key that generics of packages installed against R8 before the
-#' routine read.
+#' an object with a class attribute: the keys the C routine `find` reads.
 #'
 #' @param key Character: `"Trait|method"`.
 #' @param x The value dispatched on.

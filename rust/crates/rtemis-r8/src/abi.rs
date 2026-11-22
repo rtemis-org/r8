@@ -147,11 +147,6 @@ pub struct TypeVTable {
     /// that R8 has validated and converted to their stored forms.
     pub from_fields:
         Option<unsafe extern "C" fn(*const Sexp, usize, *mut *mut c_void, *mut Error) -> Status>,
-    /// A slot that R8 does not call: R8 builds the value of a document
-    /// through `from_fields` or `from_variant`. Generated tables set it to
-    /// `None`; it keeps its place in the table's layout.
-    pub decode:
-        Option<unsafe extern "C" fn(*const u8, usize, *mut *mut c_void, *mut Error) -> Status>,
     /// Writes the state's JSON document to a writer, for export.
     pub encode: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
     /// Writes the state's bytes, in a form of the package's choosing, for
@@ -237,8 +232,8 @@ pub struct Exports {
     /// The package name, NUL-terminated.
     pub package: *const c_char,
     /// The package's IR document as JSON text, read when `ir_record` is
-    /// absent: tables generated before `ir_record` carry it, and tables
-    /// that `rtemis-r8-api` generates set it to NULL.
+    /// NULL: the form of a table written by hand in C. Tables that
+    /// `rtemis-r8-api` generates set it to NULL.
     pub ir_json: *const c_char,
     /// The length of `ir_json` in bytes.
     pub ir_json_len: usize,
@@ -318,7 +313,6 @@ pub fn layout() -> Vec<(&'static str, usize)> {
             "R8TypeVTable.from_fields",
             offset_of!(TypeVTable, from_fields),
         ),
-        ("R8TypeVTable.decode", offset_of!(TypeVTable, decode)),
         ("R8TypeVTable.encode", offset_of!(TypeVTable, encode)),
         (
             "R8TypeVTable.write_state",

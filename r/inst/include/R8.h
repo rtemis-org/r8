@@ -147,7 +147,7 @@ typedef struct R8CallContext {
 } R8CallContext;
 
 /* The codec of a Rust-native type. `state` is the type's Rust value, owned
- * by R8 between `from_fields`, `decode`, or `with_field` and `drop`. A
+ * by R8 between `from_fields`, `from_reader`, or `with_field` and `drop`. A
  * package's `types` array holds codecs of one size, `size`, which is the
  * array's stride; fields are appended within a major version. */
 typedef struct R8TypeVTable {
@@ -158,10 +158,6 @@ typedef struct R8TypeVTable {
   /* Builds a state from the type's fields, `n` R values in declaration
    * order, which R8 has validated and converted to their stored forms. */
   R8Status (*from_fields)(const SEXP *fields, size_t n, void **state, R8Error *err);
-  /* A slot that R8 does not call: R8 builds the value of a document
-   * (`r8_from_json()`) through `from_fields` or `from_variant`. Generated
-   * tables set it to NULL; it keeps its place in the table's layout. */
-  R8Status (*decode)(const uint8_t *json, size_t len, void **state, R8Error *err);
   /* Writes the state's JSON document, for export (`to_json()`). */
   R8Status (*encode)(const void *state, R8Writer *out, R8Error *err);
   /* Writes the state's bytes, in a form of the package's choosing, for
@@ -229,9 +225,9 @@ typedef struct R8Exports {
   uint32_t size;
   /* The R package's name. */
   const char *package;
-  /* The package's IR document as JSON text, read when `ir_record` is absent:
-   * tables written before `ir_record` carry it, and tables that rtemis-r8-api
-   * generates set it to NULL. */
+  /* The package's IR document as JSON text, read when `ir_record` is NULL: the
+   * form of a table written by hand in C. Tables that rtemis-r8-api generates
+   * set it to NULL. */
   const char *ir_json;
   size_t ir_json_len;
   const R8TypeVTable *types;

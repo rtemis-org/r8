@@ -1525,7 +1525,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         };
         if !builds {
             return Err(fail(format!(
-                "the codec of `{q}` reads documents through `decode` only; R8 builds the value of a document through `from_fields` or `from_variant`, so rebuild the package that declares `{q}` against R8 0.4.0 or later [codec_decode]"
+                "the codec of `{q}` builds no value from a document: it sets neither `from_reader` nor `from_fields` (a struct) or `from_variant` (an enum) [codec_read]"
             )));
         }
         let fields = Decoder { lookup: &*docs }.named(v, &q, None)?;

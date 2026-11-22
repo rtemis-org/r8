@@ -28,13 +28,8 @@ fn fail(message: impl Into<String>) -> Error {
     Error::Other(message.into())
 }
 
-/// The fields every `R8Exports` of ABI version 1 holds, through `n_impls`.
-const EXPORTS_SIZE: u32 =
-    (std::mem::offset_of!(Exports, n_impls) + std::mem::size_of::<usize>()) as u32;
-
-/// The end of `ir_record_len`, which tables written for R8 0.4.0 have.
-const RECORD_END: usize =
-    std::mem::offset_of!(Exports, ir_record_len) + std::mem::size_of::<usize>();
+/// The size of `R8Exports`, which every exports table holds.
+const EXPORTS_SIZE: u32 = std::mem::size_of::<Exports>() as u32;
 
 /// A registered impl function.
 #[derive(Clone, Copy)]
@@ -120,9 +115,8 @@ fn r8_compiled_types() -> Result<List> {
     Ok(list!(type_name = type_name, complete = complete))
 }
 
-/// The smallest `R8TypeVTable` of ABI version 1: the members before the enum
-/// members, as tables written for R8 0.3.0 hold them.
-const TYPE_VTABLE_SIZE: u32 = std::mem::offset_of!(TypeVTable, variant) as u32;
+/// The size of `R8TypeVTable`, which every codec table holds.
+const TYPE_VTABLE_SIZE: u32 = std::mem::size_of::<TypeVTable>() as u32;
 
 /// The codec tables of an exports table. The array's stride is the `size` of
 /// its entries, so a package built against a later header, whose entries
@@ -201,7 +195,7 @@ fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
 }
 
 fn ir_document(e: &Exports) -> Result<IrDocument> {
-    if e.size as usize >= RECORD_END && !e.ir_record.is_null() {
+    if !e.ir_record.is_null() {
         let bytes = unsafe { std::slice::from_raw_parts(e.ir_record, e.ir_record_len) };
         return record_document(bytes);
     }

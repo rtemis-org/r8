@@ -173,9 +173,15 @@ static size_t signal_bytes(const void *state) {
 }
 
 const R8TypeVTable pkgc_signal_codec = {
-    sizeof(R8TypeVTable), "pkgc::Signal",   signal_from_fields, NULL,
-    NULL,                 signal_write_state, signal_read_state, signal_get_field,
-    signal_with_field,    signal_drop,       signal_bytes,
+    .size = sizeof(R8TypeVTable),
+    .type_name = "pkgc::Signal",
+    .from_fields = signal_from_fields,
+    .write_state = signal_write_state,
+    .read_state = signal_read_state,
+    .get_field = signal_get_field,
+    .with_field = signal_with_field,
+    .drop = signal_drop,
+    .bytes = signal_bytes,
 };
 
 // The number of live Signal states.

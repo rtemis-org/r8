@@ -128,7 +128,6 @@ const R8TypeVTable pkgc_resampler_codec = {
     .size = sizeof(R8TypeVTable),
     .type_name = "pkgc::Resampler",
     .from_fields = NULL,
-    .decode = NULL,
     .encode = NULL,
     .write_state = resampler_write_state,
     .read_state = resampler_read_state,
