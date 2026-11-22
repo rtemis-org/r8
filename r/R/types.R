@@ -213,6 +213,70 @@ type_json <- function() {
 } # /R8::type_json
 
 
+# %% dyn ----
+#' A field of any implementor of a trait, or of a struct and its descendants
+#'
+#' `dyn(Trait)` holds a value of any type that implements `Trait`, or that
+#' extends a type that does. Its JSON form names the type in the trait's tag
+#' member, or else in `"$type"`. `dyn(Struct)` holds a value of `Struct` or of
+#' any struct that extends it, named in `"$type"`.
+#'
+#' @param x A trait object from [new_trait()], or an R8 struct type object.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Shape <- new_trait("Shape", methods = list(area = trait_method(function(x) NULL)))
+#' Square <- new_struct("Square", fields = list(side = type_double()))
+#' impl(Shape, Square, methods = list(area = function(x) x$side^2))
+#' Drawing <- new_struct("Drawing", fields = list(shape = dyn(Shape)))
+#' Drawing(shape = Square(side = 2))
+#' options(op)
+#'
+#' @export
+dyn <- function(x) {
+  if (inherits(x, "r8_generic")) {
+    r8_abort(
+      "dyn() takes a trait object or a struct type object; a generic from ",
+      "generic() is reserved for impls on classes of other packages.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (inherits(x, "r8_trait")) {
+    return(structure(
+      list(kind = "dyn", `trait` = unclass(x)[["name"]]),
+      class = "r8_field_type"
+    ))
+  }
+  if (inherits(x, "r8_struct_type")) {
+    ensure_registered(x)
+    name <- attr(x, "r8_name")
+    a <- ancestry(name)
+    if (isTRUE(a[["stale"]])) {
+      stale_abort(name, a[["parent"]], "r8_declaration_error")
+    }
+    return(structure(
+      list(kind = "descendant", of = name),
+      class = "r8_field_type"
+    ))
+  }
+  if (inherits(x, "r8_enum_type")) {
+    r8_abort(
+      "dyn() takes a trait object or a struct type object; `",
+      attr(x, "r8_name"),
+      "` is an enum, a closed set of variants: use it as the field type.",
+      class = "r8_declaration_error"
+    )
+  }
+  r8_abort(
+    "dyn() takes a trait object, such as dyn(Shape), or a struct type ",
+    "object, such as dyn(Interval).",
+    class = "r8_declaration_error"
+  )
+} # /R8::dyn
+
+
 # %% type_r ----
 #' Runtime-only R field type
 #'

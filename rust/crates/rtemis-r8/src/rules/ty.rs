@@ -25,6 +25,53 @@ pub trait TypeLookup {
         "$type".to_string()
     }
 
+    /// The impls of the trait `tr` that the lookup holds.
+    fn impls_of(&self, _tr: &QualifiedName) -> Vec<&crate::ir::ImplDef> {
+        Vec::new()
+    }
+
+    /// The structs that descend from `ty` through `extends`, as far as the
+    /// lookup holds them, every parent before its children.
+    fn descendants_of(&self, _ty: &QualifiedName) -> Vec<QualifiedName> {
+        Vec::new()
+    }
+
+    /// The impl of the trait `tr` for the type `ty` itself.
+    fn impl_for(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<&crate::ir::ImplDef> {
+        self.impls_of(tr)
+            .into_iter()
+            .find(|i| matches!(&i.target, crate::ir::ImplTarget::Type { name } if name == ty))
+    }
+
+    /// The type whose impl of the trait `tr` applies to the type `ty`: `ty`,
+    /// or its nearest ancestor through `extends` with an impl, as dispatch
+    /// finds it; `None` when neither has one.
+    fn implements(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<QualifiedName> {
+        if self.impl_for(tr, ty).is_some() {
+            return Some(ty.clone());
+        }
+        self.ancestors(ty)
+            .into_iter()
+            .find(|a| self.impl_for(tr, a).is_some())
+    }
+
+    /// The written tag value of the type `ty` for the trait `tr`, when the
+    /// trait has a tag member: the `tag_value` of `ty`'s own impl, or else
+    /// `ty`'s name, bare when `ty` is in the trait's namespace and prefixed
+    /// with its namespace otherwise.
+    fn tag_value(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<String> {
+        if self.type_member(tr) == "$type" {
+            return None;
+        }
+        let own = self.impl_for(tr, ty).and_then(|i| i.tag_value.clone());
+        let value = own.unwrap_or_else(|| ty.name.to_string());
+        Some(if ty.namespace == tr.namespace {
+            value
+        } else {
+            format!("{}::{value}", ty.namespace)
+        })
+    }
+
     /// Whether the struct `ty` is stale: its inherited fields or rules
     /// disagree with its parent's, or its parent is stale.
     fn is_stale(&self, _ty: &QualifiedName) -> bool {
@@ -99,8 +146,34 @@ impl TypeLookup for crate::ir::IrDocument {
         tr: &QualifiedName,
         value: &serde_json::Value,
     ) -> Result<(QualifiedName, String), String> {
-        let home = (tr.namespace == self.namespace).then_some(self);
-        implementor_in(home, self.impls.iter(), tr, value)
+        implementor_of(self, tr, value)
+    }
+
+    fn impls_of(&self, tr: &QualifiedName) -> Vec<&crate::ir::ImplDef> {
+        self.impls.iter().filter(|i| &i.r#trait == tr).collect()
+    }
+
+    /// The document's structs that descend from `ty`.
+    fn descendants_of(&self, ty: &QualifiedName) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = Vec::new();
+        let mut frontier = vec![ty.clone()];
+        while let Some(p) = frontier.pop() {
+            for t in &self.types {
+                if let TypeDef::Struct(s) = t
+                    && s.extends.as_ref() == Some(&p)
+                {
+                    let q = QualifiedName {
+                        namespace: self.namespace.clone(),
+                        name: s.name.clone(),
+                    };
+                    if &q != ty && !out.contains(&q) {
+                        out.push(q.clone());
+                        frontier.push(q);
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {
@@ -113,44 +186,106 @@ impl TypeLookup for crate::ir::IrDocument {
 }
 
 /// The implementor of the trait `tr` that a `dyn()` value names: through
-/// the trait's tag member when `home`, the trait's declaring document,
-/// declares one, over `impls`; otherwise through `"$type"`.
-fn implementor_in<'d>(
-    home: Option<&crate::ir::IrDocument>,
-    impls: impl Iterator<Item = &'d crate::ir::ImplDef>,
+/// the trait's tag member when the trait declares one, and otherwise through
+/// `"$type"`. A written tag value `v` names, in the trait's namespace, or
+/// `ns::v` in the namespace `ns`, the type whose impl of `tr` gives `v` as
+/// its `tag_value`, or else the type named `v` there whose impl gives none
+/// or which inherits an impl through `extends`.
+fn implementor_of(
+    lookup: &dyn TypeLookup,
     tr: &QualifiedName,
     value: &serde_json::Value,
 ) -> Result<(QualifiedName, String), String> {
-    let tag = home
-        .and_then(|d| d.traits.iter().find(|t| t.name == tr.name))
-        .and_then(|t| t.tag.as_ref());
-    let Some(tag) = tag else {
+    let tag = lookup.type_member(tr);
+    if tag == "$type" {
         return dollar_type(value);
-    };
+    }
     let written = value
         .get(tag.as_str())
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format!("a `dyn({tr})` value names its type in `{tag}`"))?;
-    for imp in impls.filter(|i| &i.r#trait == tr) {
+    resolve_tag(lookup, tr, written)
+        .map(|q| (q, tag.clone()))
+        .ok_or_else(|| {
+            let known = tag_values(lookup, tr);
+            let listed = if known.is_empty() {
+                "none".to_string()
+            } else {
+                known.iter().map(|v| format!("`{v}`")).collect::<Vec<_>>().join(", ")
+            };
+            format!(
+                "no registered implementor of `{tr}` has the tag value `{written}`; the registered tag values are {listed}"
+            )
+        })
+}
+
+/// The written tag values of the registered implementors of `tr`.
+fn tag_values(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<String> {
+    let mut out = Vec::new();
+    for t in implementors(lookup, tr) {
+        if let Some(v) = lookup.tag_value(tr, &t)
+            && !out.contains(&v)
+        {
+            out.push(v);
+        }
+    }
+    out
+}
+
+/// The implementors of `tr` that the lookup holds: the targets of its
+/// impls, each followed by the descendants that inherit its impl.
+pub fn implementors(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<QualifiedName> {
+    let mut out: Vec<QualifiedName> = Vec::new();
+    for imp in lookup.impls_of(tr) {
         let crate::ir::ImplTarget::Type { name } = &imp.target else {
             continue;
         };
-        let bare = imp.tag_value.as_deref().unwrap_or(name.name.as_str());
-        let matches = if name.namespace == tr.namespace {
-            written == bare
-        } else {
-            written
-                .strip_prefix(name.namespace.as_str())
-                .and_then(|r| r.strip_prefix("::"))
-                == Some(bare)
-        };
-        if matches {
-            return Ok((name.clone(), tag.to_string()));
+        for t in std::iter::once(name.clone()).chain(
+            lookup
+                .descendants_of(name)
+                .into_iter()
+                .filter(|d| lookup.implements(tr, d).as_ref() == Some(name)),
+        ) {
+            if !out.contains(&t) {
+                out.push(t);
+            }
         }
     }
-    Err(format!(
-        "no registered implementor of `{tr}` has the tag value `{written}`"
-    ))
+    out
+}
+
+/// The implementor of `tr` whose written tag value is `written`.
+fn resolve_tag(
+    lookup: &dyn TypeLookup,
+    tr: &QualifiedName,
+    written: &str,
+) -> Option<QualifiedName> {
+    let (ns, v) = match written.split_once("::") {
+        Some((ns, v)) => (ns, v),
+        None => (tr.namespace.as_str(), written),
+    };
+    // A prefix names another namespace than the trait's.
+    if written.contains("::") && ns == tr.namespace.as_str() {
+        return None;
+    }
+    for imp in lookup.impls_of(tr) {
+        if let crate::ir::ImplTarget::Type { name } = &imp.target
+            && name.namespace.as_str() == ns
+            && imp.tag_value.as_deref() == Some(v)
+        {
+            return Some(name.clone());
+        }
+    }
+    let candidate = QualifiedName::parse(&format!("{ns}::{v}")).ok()?;
+    lookup.find(&candidate)?;
+    lookup.implements(tr, &candidate)?;
+    match lookup
+        .impl_for(tr, &candidate)
+        .and_then(|i| i.tag_value.as_deref())
+    {
+        Some(own) if own != v => None,
+        _ => Some(candidate),
+    }
 }
 
 /// The static type of an expression.
@@ -749,15 +884,22 @@ impl TypeLookup for DocumentSet {
         tr: &QualifiedName,
         value: &serde_json::Value,
     ) -> Result<(QualifiedName, String), String> {
-        let Some(home) = self.namespace(&tr.namespace) else {
-            return dollar_type(value);
-        };
-        let others = self
-            .docs
-            .iter()
-            .filter(|d| d.namespace != tr.namespace)
-            .flat_map(|d| d.impls.iter());
-        implementor_in(Some(home), home.impls.iter().chain(others), tr, value)
+        implementor_of(self, tr, value)
+    }
+
+    fn descendants_of(&self, ty: &QualifiedName) -> Vec<QualifiedName> {
+        self.descendants(ty)
+    }
+
+    /// The impls of `tr` in every document: the trait's own document's
+    /// first, then the others' in order.
+    fn impls_of(&self, tr: &QualifiedName) -> Vec<&crate::ir::ImplDef> {
+        let home = self.docs.iter().filter(|d| d.namespace == tr.namespace);
+        let others = self.docs.iter().filter(|d| d.namespace != tr.namespace);
+        home.chain(others)
+            .flat_map(|d| d.impls.iter())
+            .filter(|i| &i.r#trait == tr)
+            .collect()
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {

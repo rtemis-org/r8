@@ -12,6 +12,7 @@ mod document;
 mod logic;
 mod lower;
 mod number;
+mod tags;
 mod types;
 
 pub use check::{
@@ -26,6 +27,7 @@ pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use logic::{Logic, Operator};
 pub use lower::{InheritedChange, check_defaults, check_extends, extend};
 pub use number::{EXACT_DOUBLE, Number};
+pub use tags::check_tags;
 pub use types::{Bound, CharacterType, DoubleType, FieldType, IntegerType, Resolve};
 
 /// The JSON Schema (draft 2020-12) of the IR document, generated from the IR

@@ -901,7 +901,17 @@ impl<'l, S: Sink> Emitter<'l, S> {
                                 let t = v.member(m).character().map(|c| c.into_owned());
                                 (m.clone(), t.unwrap_or_else(|_| ty.to_string()))
                             }
-                            None => ("$type".to_string(), ty.to_string()),
+                            // A host form without the member: the trait's tag
+                            // member and the type's tag value, or `"$type"`.
+                            None => match ft {
+                                FieldType::Dyn { r#trait } => {
+                                    match lookup.tag_value(r#trait, &ty) {
+                                        Some(t) => (lookup.type_member(r#trait), t),
+                                        None => ("$type".to_string(), ty.to_string()),
+                                    }
+                                }
+                                _ => ("$type".to_string(), ty.to_string()),
+                            },
                         };
                         self.named(&ty, v, Some(tag));
                     }
@@ -1192,7 +1202,22 @@ impl<'l, S: Sink> Emitter<'l, S> {
                     .iter()
                     .all(|x| matches!(x.shape, VariantShape::Unit))
                 {
-                    return self.w.string(&variant);
+                    // Inside `dyn()`, the type member and the tag.
+                    return match extra {
+                        Some((k, t)) => {
+                            self.w.begin_object();
+                            let mut members = [(k, t), (e.tag.to_string(), variant)];
+                            if self.w.sorted() {
+                                members.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
+                            }
+                            for (k, t) in &members {
+                                self.w.key(k);
+                                self.w.string(t);
+                            }
+                            self.w.end_object();
+                        }
+                        None => self.w.string(&variant),
+                    };
                 }
                 let fields: &[FieldDef] = match e
                     .variants

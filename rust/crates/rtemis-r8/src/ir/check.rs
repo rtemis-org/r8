@@ -98,6 +98,10 @@ impl crate::rules::TypeLookup for Indexed<'_> {
     fn type_member(&self, tr: &QualifiedName) -> String {
         self.doc.type_member(tr)
     }
+
+    fn impls_of(&self, tr: &QualifiedName) -> Vec<&super::decl::ImplDef> {
+        self.doc.impls_of(tr)
+    }
 }
 
 impl Checker<'_> {
@@ -891,6 +895,20 @@ fn check_whole(doc: &IrDocument, defaults: bool) -> Vec<DeclError> {
         c.trait_def(t, &format!("/traits/{i}"));
     }
     c.method_names(&doc.traits);
+    // The tag values of the traits the document declares.
+    for t in &doc.traits {
+        let q = QualifiedName {
+            namespace: doc.namespace.clone(),
+            name: t.name.clone(),
+        };
+        let path_of = |imp: &super::decl::ImplDef| {
+            doc.impls
+                .iter()
+                .position(|i| i == imp)
+                .map_or_else(String::new, |i| format!("/impls/{i}"))
+        };
+        c.errors.extend(super::tags::check_tags(doc, &q, &path_of));
+    }
     c.errors
 }
 

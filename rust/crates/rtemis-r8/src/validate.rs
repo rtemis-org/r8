@@ -1523,11 +1523,16 @@ impl<'l> Validator<'l, '_> {
                         suggestion,
                     );
                 };
-                if unit_only {
-                    return;
-                }
                 let mut allowed: Vec<&str> = envelope.to_vec();
                 allowed.push(tag);
+                if unit_only {
+                    // The object form inside `dyn()` holds the type member
+                    // and the tag only.
+                    if !envelope.is_empty() {
+                        self.object(&format!("{name}@{variant}"), &[], &[], v, path, &allowed);
+                    }
+                    return;
+                }
                 match &def.shape {
                     VariantShape::Unit => {
                         self.object(&format!("{name}@{variant}"), &[], &[], v, path, &allowed)
@@ -1558,6 +1563,16 @@ impl<'l> Validator<'l, '_> {
 
     fn dynamic<'a, A: Access<'a>>(&mut self, tr: &QualifiedName, v: A, path: &P) {
         match v.implementor(tr, self.lookup) {
+            Ok((ty, _)) if self.lookup.find(&ty).is_none() => self.error(
+                "unresolved_type",
+                path,
+                format!("`{ty}` is not a registered type"),
+            ),
+            Ok((ty, _)) if self.lookup.implements(tr, &ty).is_none() => self.error(
+                "not_implementor",
+                path,
+                format!("`{ty}` does not implement `{tr}`, nor does any type it extends"),
+            ),
             // The type member names the type; the rest is the type's value.
             Ok((ty, member)) => match &member {
                 Some(m) => self.named(&ty, v, path, &[m.as_str()]),

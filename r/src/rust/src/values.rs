@@ -453,7 +453,7 @@ impl Encoder<'_> {
                 self.table(x, &fields, false, path)
             }
             FieldType::Named { name } => self.named(x, name, path),
-            FieldType::Dyn { .. } | FieldType::Descendant { .. } => self.dynamic(x, path),
+            FieldType::Dyn { .. } | FieldType::Descendant { .. } => self.dynamic(x, ft, path),
         }
     }
 
@@ -794,23 +794,45 @@ impl Encoder<'_> {
         }
     }
 
-    fn dynamic(&mut self, x: &Robj, path: &str) -> Value {
+    /// The JSON form of a value of a `dyn()` field, as the emitter writes
+    /// it: the type member, the trait's tag member with the type's tag value
+    /// or `"$type"` with the qualified name, beside the value's members; a
+    /// unit-only enum is an object of the type member and its own tag.
+    fn dynamic(&mut self, x: &Robj, ft: &FieldType, path: &str) -> Value {
         let ty = x
             .get_attrib("r8_type")
             .and_then(|t| t.as_str().map(str::to_string));
-        match ty.and_then(|t| QualifiedName::parse(&t).ok()) {
-            Some(q) => {
-                let mut v = self.named(x, &q, path);
-                if let Value::Object(o) = &mut v {
-                    o.insert("$type".into(), Value::from(q.to_string()));
-                }
-                v
-            }
-            None => self.err(
+        let Some(q) = ty.and_then(|t| QualifiedName::parse(&t).ok()) else {
+            return self.err(
                 "r_type",
                 path,
                 "a dyn() field holds an R8 value".to_string(),
-            ),
+            );
+        };
+        let (member, written) = match ft {
+            FieldType::Dyn { r#trait } => match self.lookup.tag_value(r#trait, &q) {
+                Some(t) => (self.lookup.type_member(r#trait), t),
+                None => ("$type".to_string(), q.to_string()),
+            },
+            _ => ("$type".to_string(), q.to_string()),
+        };
+        let v = self.named(x, &q, path);
+        match v {
+            Value::Object(mut o) => {
+                o.insert(member, Value::from(written));
+                Value::Object(o)
+            }
+            Value::String(variant) => {
+                let tag = match self.lookup.find(&q) {
+                    Some(TypeDef::Enum(e)) => e.tag.to_string(),
+                    _ => "type".to_string(),
+                };
+                let mut o = serde_json::Map::new();
+                o.insert(member, Value::from(written));
+                o.insert(tag, Value::from(variant));
+                Value::Object(o)
+            }
+            other => other,
         }
     }
 }
@@ -1288,7 +1310,9 @@ impl Decoder<'_> {
                     .variants
                     .iter()
                     .all(|x| matches!(x.shape, VariantShape::Unit));
-                let variant = if unit_only {
+                // Inside `dyn()`, a unit-only enum is an object of the type
+                // member and its tag.
+                let variant = if unit_only && v.object_len().is_none() {
                     v.as_str().unwrap_or_default().to_string()
                 } else {
                     v.get(e.tag.as_str())

@@ -4,19 +4,27 @@
 \alias{r8_from_json}
 \title{Read an R8 value from JSON}
 \usage{
-r8_from_json(type, json)
+r8_from_json(type, json, load = NULL)
 }
 \arguments{
 \item{type}{An R8 type object.}
 
 \item{json}{Character: The JSON document.}
+
+\item{load}{Optional Character: Packages to load, with \code{loadNamespace()},
+before the read, such as the package that declares an implementor of a
+\code{dyn()} field.}
 }
 \value{
-An R8 value.
+An R8 value. A document that names types no loaded package
+declares raises \code{r8_unresolved_type}, which names each namespace and the
+installed packages that declare it.
 }
 \description{
 Reads a document of \code{type}: checks \code{"$type"} and the versions in
-\code{"$types"}, validates the value, and returns it.
+\code{"$types"}, validates the value, and returns it. A type the document names
+resolves among the registered types only; the document never selects code
+to load.
 }
 \examples{
 op <- options(r8.namespace = "demo")

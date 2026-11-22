@@ -30,6 +30,10 @@ const INT_MAX: i64 = 2_147_483_647;
 struct Writer<'a> {
     lookup: &'a dyn TypeLookup,
     defs: BTreeMap<String, Value>,
+    /// Write a `dyn()` field as the closed list of the registered
+    /// implementors, and a `descendant` field as the struct and its
+    /// registered descendants.
+    implementors: bool,
 }
 
 fn reference(q: &QualifiedName) -> Value {
@@ -223,11 +227,40 @@ impl Writer<'_> {
                 self.define(name);
                 reference(name)
             }
+            FieldType::Dyn { r#trait } if self.implementors => {
+                let member = self.lookup_tag(r#trait);
+                let alternatives: Vec<Value> = crate::rules::implementors(self.lookup, r#trait)
+                    .iter()
+                    .map(|t| {
+                        let written = self
+                            .lookup
+                            .tag_value(r#trait, t)
+                            .unwrap_or_else(|| t.to_string());
+                        self.alternative(t, &member, &written)
+                    })
+                    .collect();
+                json!({
+                    "anyOf": alternatives,
+                    "x-r8": {"dyn": r#trait.to_string(), "implementors": "registered"}
+                })
+            }
             FieldType::Dyn { r#trait } => json!({
                 "type": "object",
                 "required": [self.lookup_tag(r#trait)],
                 "x-r8": {"dyn": r#trait.to_string()}
             }),
+            FieldType::Descendant { of } if self.implementors => {
+                let mut types = vec![of.clone()];
+                types.extend(self.lookup.descendants_of(of));
+                let alternatives: Vec<Value> = types
+                    .iter()
+                    .map(|t| self.alternative(t, "$type", &t.to_string()))
+                    .collect();
+                json!({
+                    "anyOf": alternatives,
+                    "x-r8": {"descendant": of.to_string(), "implementors": "registered"}
+                })
+            }
             FieldType::Descendant { of } => json!({
                 "type": "object",
                 "required": ["$type"],
@@ -370,6 +403,27 @@ impl Writer<'_> {
         s
     }
 
+    /// One alternative of a closed `dyn()` field: the value of the type `t`
+    /// with its type member `member`, the constant `written`; a unit-only
+    /// enum is an object of the type member and its own tag.
+    fn alternative(&mut self, t: &QualifiedName, member: &str, written: &str) -> Value {
+        let named = json!({"const": written});
+        if let Some(TypeDef::Enum(e)) = self.lookup.find(t).cloned()
+            && e.variants
+                .iter()
+                .all(|v| matches!(v.shape, VariantShape::Unit))
+        {
+            let names: Vec<&str> = e.variants.iter().map(|v| v.name.as_str()).collect();
+            let mut s = self.object(&[], &[], &[(member, named)]);
+            s["properties"][e.tag.as_str()] = json!({"enum": names});
+            if let Some(Value::Array(r)) = s.get_mut("required") {
+                r.push(Value::from(e.tag.as_str()));
+            }
+            return s;
+        }
+        self.named(t, &[(member, named)])
+    }
+
     fn define(&mut self, q: &QualifiedName) {
         let key = q.to_string();
         if self.defs.contains_key(&key) {
@@ -444,9 +498,18 @@ fn key_schema(keys: &crate::ir::CharacterType) -> Value {
 
 /// The JSON Schema 2020-12 of the values of a named type.
 pub fn json_schema(ty: &QualifiedName, lookup: &dyn TypeLookup) -> Value {
+    json_schema_with(ty, lookup, false)
+}
+
+/// [`json_schema`]; with `implementors`, a `dyn(Trait)` field is the closed
+/// list (`anyOf`) of the trait's registered implementors, each with its type
+/// member as a constant, and a `descendant` field the struct and its
+/// registered descendants, each with `"$type"` as a constant.
+pub fn json_schema_with(ty: &QualifiedName, lookup: &dyn TypeLookup, implementors: bool) -> Value {
     let mut w = Writer {
         lookup,
         defs: BTreeMap::new(),
+        implementors,
     };
     let envelope = [
         ("$type", json!({"type": "string"})),

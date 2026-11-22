@@ -292,6 +292,17 @@ r8_declare_type <- function(ir, namespace) .Call(wrap__r8_declare_type, ir, name
 #' @noRd
 r8_stale_types <- function(namespaces) .Call(wrap__r8_stale_types, namespaces)
 
+#' The JSON Schema (draft 2020-12) of the values of the registered type
+#' `name` (`value_schema::json_schema_with()`).
+#'
+#' @param name Character: The qualified type name.
+#' @param implementors Logical: Write each `dyn()` field as the closed list
+#'   of the registered implementors.
+#' @return Character: The schema as indented JSON text.
+#' @keywords internal
+#' @noRd
+r8_type_schema <- function(name, implementors) .Call(wrap__r8_type_schema, name, implementors)
+
 #' The IR document of one registered type: its namespace and its
 #' declaration.
 #'

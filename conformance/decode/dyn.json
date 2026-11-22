@@ -1,0 +1,410 @@
+{
+  "$corpus": 1,
+  "description": "dyn(): implementors through extends, tag values in and outside the trait's namespace, and unit-only enums.",
+  "ir": [
+    {
+      "$ir": 1,
+      "namespace": "ns",
+      "types": [
+        {
+          "kind": "struct",
+          "name": "T",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "algo",
+              "type": {
+                "kind": "option",
+                "inner": {
+                  "kind": "dyn",
+                  "trait": "ns::Algorithm"
+                }
+              },
+              "description": ""
+            },
+            {
+              "name": "plain",
+              "type": {
+                "kind": "option",
+                "inner": {
+                  "kind": "dyn",
+                  "trait": "ns::Plain"
+                }
+              },
+              "description": ""
+            }
+          ]
+        },
+        {
+          "kind": "struct",
+          "name": "Glmnet",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "alpha",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ]
+        },
+        {
+          "kind": "struct",
+          "name": "Cart",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "depth",
+              "type": {
+                "kind": "integer"
+              },
+              "description": ""
+            }
+          ]
+        },
+        {
+          "kind": "struct",
+          "name": "Pruned",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "depth",
+              "type": {
+                "kind": "integer"
+              },
+              "description": "",
+              "inherited_from": "ns::Cart"
+            },
+            {
+              "name": "prune",
+              "type": {
+                "kind": "logical"
+              },
+              "description": ""
+            }
+          ],
+          "extends": "ns::Cart"
+        },
+        {
+          "kind": "struct",
+          "name": "Point",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "x",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ]
+        },
+        {
+          "kind": "enum",
+          "name": "Color",
+          "description": "",
+          "tag": "type",
+          "version": 1,
+          "variants": [
+            {
+              "name": "Red",
+              "description": "",
+              "shape": "unit"
+            },
+            {
+              "name": "Blue",
+              "description": "",
+              "shape": "unit"
+            }
+          ]
+        }
+      ],
+      "traits": [
+        {
+          "name": "Algorithm",
+          "description": "",
+          "methods": [
+            {
+              "name": "fit",
+              "description": "",
+              "params": [
+                "x"
+              ]
+            }
+          ],
+          "tag": "algorithm"
+        },
+        {
+          "name": "Plain",
+          "description": "",
+          "methods": [
+            {
+              "name": "show",
+              "description": "",
+              "params": [
+                "x"
+              ]
+            }
+          ]
+        }
+      ],
+      "impls": [
+        {
+          "trait": "ns::Algorithm",
+          "target": {
+            "kind": "type",
+            "name": "ns::Glmnet"
+          },
+          "tag_value": "GLMNET",
+          "methods": []
+        },
+        {
+          "trait": "ns::Algorithm",
+          "target": {
+            "kind": "type",
+            "name": "ns::Cart"
+          },
+          "methods": []
+        },
+        {
+          "trait": "ns::Plain",
+          "target": {
+            "kind": "type",
+            "name": "ns::Cart"
+          },
+          "methods": []
+        },
+        {
+          "trait": "ns::Plain",
+          "target": {
+            "kind": "type",
+            "name": "ns::Color"
+          },
+          "methods": []
+        }
+      ]
+    },
+    {
+      "$ir": 1,
+      "namespace": "other",
+      "types": [
+        {
+          "kind": "struct",
+          "name": "Boost",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "rate",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "impls": [
+        {
+          "trait": "ns::Algorithm",
+          "target": {
+            "kind": "type",
+            "name": "other::Boost"
+          },
+          "methods": []
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "inherited-tag",
+      "description": "A descendant of an implementor, without its own impl, writes its own type name as its tag value.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "algo": {
+          "algorithm": "Pruned",
+          "depth": 3,
+          "prune": true
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "inherited-dollar-type",
+      "description": "A descendant of an implementor named by $type.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "plain": {
+          "$type": "ns::Pruned",
+          "depth": 3,
+          "prune": false
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "not-implementor",
+      "description": "A registered type without an impl of the trait, nor an ancestor with one.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "plain": {
+          "$type": "ns::Point",
+          "x": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_implementor",
+            "path": "/plain"
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-tag",
+      "description": "An implementor in another namespace writes its tag value prefixed with its namespace.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "algo": {
+          "algorithm": "other::Boost",
+          "rate": 0.1
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "foreign-bare",
+      "description": "The bare tag value of an implementor in another namespace names none.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "algo": {
+          "algorithm": "Boost",
+          "rate": 0.1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unresolved_type",
+            "path": "/algo"
+          }
+        ]
+      }
+    },
+    {
+      "id": "own-prefix",
+      "description": "A prefix of the trait's own namespace names none; such a type writes its tag value bare.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "algo": {
+          "algorithm": "ns::Cart",
+          "depth": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unresolved_type",
+            "path": "/algo"
+          }
+        ]
+      }
+    },
+    {
+      "id": "type-name-for-explicit-tag",
+      "description": "A type whose impl gives a tag value is not named by its type name.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "algo": {
+          "algorithm": "Glmnet",
+          "alpha": 0.5
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unresolved_type",
+            "path": "/algo"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-enum",
+      "description": "A unit-only enum inside dyn() is an object of the type member and its own tag.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "plain": {
+          "$type": "ns::Color",
+          "type": "Red"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "unit-enum-member",
+      "description": "The object of a unit-only enum inside dyn() holds no other member.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "plain": {
+          "$type": "ns::Color",
+          "type": "Red",
+          "x": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_field",
+            "path": "/plain/x"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-enum-variant",
+      "description": "A variant the enum does not declare.",
+      "op": "decode",
+      "type": "ns::T",
+      "input": {
+        "plain": {
+          "$type": "ns::Color",
+          "type": "Green"
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_variant",
+            "path": "/plain"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -12,6 +12,10 @@
 - `?R8` lists R8's condition classes, `r8_codec_missing` among them.
 - A generic or trait method called on a child runs the impl of the nearest type in its chain of parents that implements the trait, on the child's value. `r8_next_impl()` calls the impl the running one takes precedence over.
 - `r8_upcast(x, Parent)` returns the value of an ancestor that a child's value holds, and `r8_convert(x, Parent)` calls it; `r8_ancestors()` lists a struct's ancestors. An impl of `From()` from a child to its ancestor is a declaration error.
+- `dyn(Trait)` declares a field of any implementor of a trait, or of a type that extends one; `dyn(Struct)` a field of a struct or any struct that extends it. A value of another type is refused (`not_implementor`), and its JSON names its type by the trait's tag member, or by `"$type"`.
+- A tag value is a name, unique among a trait's implementors (`duplicate_tag`); a descendant without its own impl writes its type name. Inside `dyn()`, a unit-only enum is written as an object of the type member and its tag.
+- `r8_from_json(load =)` loads packages before the read; a document that names unregistered types raises `r8_unresolved_type`, which names the installed packages that declare each namespace.
+- `r8_schema(type, implementors = FALSE)` writes the JSON Schema of a type's values; with `implementors = TRUE`, a `dyn()` field lists the registered implementors.
 
 # R8 0.4.0
 

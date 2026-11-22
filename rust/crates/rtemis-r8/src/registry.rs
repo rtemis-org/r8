@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::ir::{
     DeclError, ImplDef, TraitDef, TypeDef, check_defaults, check_document_records, check_extends,
-    check_trait, check_type,
+    check_tags, check_trait, check_type,
 };
 use crate::name::{Name, QualifiedName};
 use crate::record::{self, Declaration, DeclarationRef, Entry};
@@ -125,6 +125,9 @@ impl State {
                 if p.is_empty() {
                     p = check_defaults(s, &q, &at, &*docs);
                 }
+                if p.is_empty() && s.extends.is_some() {
+                    p = inherited_tag_problems(&*docs, &q);
+                }
             }
             p
         });
@@ -191,6 +194,54 @@ impl State {
 
     /// Puts an impl; an impl of the same trait for the same target, with the
     /// same type arguments, is replaced.
+    /// Puts an impl and checks the tag values of its trait's implementors
+    /// (`check_tags()`); an impl with problems is undone.
+    fn put_impl_checked(&mut self, ns: &Name, def: ImplDef) -> Result<Outcome, RegistryError> {
+        if self
+            .documents
+            .namespace(ns)
+            .is_some_and(|doc| doc.impls.contains(&def))
+        {
+            return Ok(Outcome::default());
+        }
+        let tr = def.r#trait.clone();
+        let docs = Arc::make_mut(&mut self.documents);
+        let d = docs.document_position(ns);
+        let impls = docs.impls_mut(d);
+        let mut removed = Vec::new();
+        impls.retain(|i| {
+            let same =
+                i.r#trait == def.r#trait && i.type_args == def.type_args && i.target == def.target;
+            if same {
+                removed.push(i.clone());
+            }
+            !same
+        });
+        impls.push(def);
+        let checked = guarded(|| check_tags(&*docs, &tr, &|_| String::new()));
+        match checked {
+            Ok(p) if p.is_empty() => {
+                self.changed();
+                Ok(Outcome {
+                    changed: true,
+                    problems: p,
+                    stale: Vec::new(),
+                })
+            }
+            other => {
+                let impls = docs.impls_mut(d);
+                impls.pop();
+                impls.extend(removed);
+                docs.remove_document_if_empty(d);
+                other.map(|p| Outcome {
+                    changed: false,
+                    problems: p,
+                    stale: Vec::new(),
+                })
+            }
+        }
+    }
+
     fn put_impl(&mut self, ns: &Name, def: ImplDef) -> bool {
         if self
             .documents
@@ -243,6 +294,28 @@ impl State {
             Declaration::Impl(i) => self.put_impl(ns, i),
         }
     }
+}
+
+/// The tag problems of the traits that the ancestors of the struct `q`
+/// implement, which `q` inherits: its tag value and its fields enter their
+/// checks.
+fn inherited_tag_problems(docs: &DocumentSet, q: &QualifiedName) -> Vec<DeclError> {
+    let ancestors = docs.ancestors(q);
+    let mut traits: Vec<&QualifiedName> = Vec::new();
+    for doc in docs.documents() {
+        for i in &doc.impls {
+            if let crate::ir::ImplTarget::Type { name } = &i.target
+                && ancestors.contains(name)
+                && !traits.contains(&&i.r#trait)
+            {
+                traits.push(&i.r#trait);
+            }
+        }
+    }
+    traits
+        .into_iter()
+        .flat_map(|t| check_tags(docs, t, &|_| String::new()))
+        .collect()
 }
 
 /// Marks the struct `q` and its descendants stale or not, every parent
@@ -348,8 +421,8 @@ impl Registry {
 
     /// Registers an impl, replacing one of the same trait for the same
     /// target; whether the documents changed.
-    pub fn declare_impl(&self, ns: &Name, def: ImplDef) -> bool {
-        self.state().put_impl(ns, def)
+    pub fn declare_impl(&self, ns: &Name, def: ImplDef) -> Result<Outcome, RegistryError> {
+        self.state().put_impl_checked(ns, def)
     }
 
     /// Declares the entries of declaration records in order, under one
@@ -381,8 +454,12 @@ impl Registry {
                     (name, state.put_trait(&ns, t)?)
                 }
                 Declaration::Impl(i) => {
-                    changed |= state.put_impl(&ns, i);
-                    continue;
+                    let target = match &i.target {
+                        crate::ir::ImplTarget::Type { name } => name.to_string(),
+                        crate::ir::ImplTarget::HostClass { class, .. } => class.clone(),
+                    };
+                    let name = format!("impl {} for {target}", i.r#trait);
+                    (name, state.put_impl_checked(&ns, i)?)
                 }
             };
             changed |= outcome.changed;
@@ -414,6 +491,31 @@ impl Registry {
                         .map(|e| (n.clone(), e)),
                 );
             }
+        }
+        // The tag values of every trait declared or implemented in these
+        // namespaces.
+        let mut traits: Vec<(String, QualifiedName)> = Vec::new();
+        for doc in docs.documents() {
+            if !namespaces.iter().any(|n| n == doc.namespace.as_str()) {
+                continue;
+            }
+            let declared = doc.traits.iter().map(|t| QualifiedName {
+                namespace: doc.namespace.clone(),
+                name: t.name.clone(),
+            });
+            let implemented = doc.impls.iter().map(|i| i.r#trait.clone());
+            for t in declared.chain(implemented) {
+                if !traits.iter().any(|(_, x)| *x == t) {
+                    traits.push((doc.namespace.to_string(), t));
+                }
+            }
+        }
+        for (ns, t) in &traits {
+            out.extend(
+                check_tags(&*docs, t, &|_| String::new())
+                    .into_iter()
+                    .map(|e| (ns.clone(), e)),
+            );
         }
         for doc in docs.documents() {
             if !namespaces.iter().any(|n| n == doc.namespace.as_str()) {

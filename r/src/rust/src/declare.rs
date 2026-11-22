@@ -235,6 +235,26 @@ pub(crate) fn declare_type(def: TypeDef, namespace: &str) -> Result<(List, Vec<S
     Ok((problems_list(&out.problems), stale))
 }
 
+/// The JSON Schema (draft 2020-12) of the values of the registered type
+/// `name` (`value_schema::json_schema_with()`).
+///
+/// @param name Character: The qualified type name.
+/// @param implementors Logical: Write each `dyn()` field as the closed list
+///   of the registered implementors.
+/// @return Character: The schema as indented JSON text.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_type_schema(name: &str, implementors: bool) -> Result<String> {
+    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
+    let docs = registry().snapshot();
+    if rtemis_r8::rules::TypeLookup::find(&*docs, &q).is_none() {
+        return Err(fail(format!("`{name}` is not registered")));
+    }
+    let schema = rtemis_r8::value_schema::json_schema_with(&q, &*docs, implementors);
+    serde_json::to_string_pretty(&schema).map_err(|e| fail(e.to_string()))
+}
+
 /// The qualified names of the stale structs: those whose inherited fields or
 /// rules disagree with their parent's, or whose parent is stale.
 ///
@@ -328,10 +348,18 @@ fn r8_declare_impl(ir: Robj, namespace: &str) -> Result<()> {
     declare_impl(def, namespace)
 }
 
-/// Registers the impl `def` in its namespace, as `r8_declare_impl()` does.
+/// Registers the impl `def` in its namespace, as `r8_declare_impl()` does;
+/// an impl whose trait's tag values it makes ambiguous is an error.
 pub(crate) fn declare_impl(def: rtemis_r8::ir::ImplDef, namespace: &str) -> Result<()> {
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
-    changed(registry().declare_impl(&ns, def));
+    let out = registry()
+        .declare_impl(&ns, def)
+        .map_err(|e| fail(e.to_string()))?;
+    changed(out.changed);
+    if !out.problems.is_empty() {
+        let lines: Vec<String> = out.problems.iter().map(|p| p.to_string()).collect();
+        return Err(fail(lines.join("\n")));
+    }
     Ok(())
 }
 
@@ -716,5 +744,6 @@ extendr_module! {
     fn r8_json_parse;
     fn r8_declare_type;
     fn r8_stale_types;
+    fn r8_type_schema;
     fn r8_type_document;
 }

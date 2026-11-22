@@ -2,6 +2,10 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
+# The installed packages that declare each R8 namespace, by the library
+# paths read, for the message of an unresolved type.
+.r8_providers <- new.env(parent = emptyenv())
+
 # An R8 value in R is a named list of its fields, of classes
 # c("ns::Type", "r8_value"), with the attributes `r8_type`, `r8_version`, and,
 # for an enum value, `r8_variant`. Values are immutable: `$<-` and `[[<-`
@@ -888,12 +892,19 @@ r8_to_json <- function(x) {
 #' Read an R8 value from JSON
 #'
 #' Reads a document of `type`: checks `"$type"` and the versions in
-#' `"$types"`, validates the value, and returns it.
+#' `"$types"`, validates the value, and returns it. A type the document names
+#' resolves among the registered types only; the document never selects code
+#' to load.
 #'
 #' @param type An R8 type object.
 #' @param json Character: The JSON document.
+#' @param load Optional Character: Packages to load, with `loadNamespace()`,
+#'   before the read, such as the package that declares an implementor of a
+#'   `dyn()` field.
 #'
-#' @return An R8 value.
+#' @return An R8 value. A document that names types no loaded package
+#'   declares raises `r8_unresolved_type`, which names each namespace and the
+#'   installed packages that declare it.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -902,10 +913,11 @@ r8_to_json <- function(x) {
 #' options(op)
 #'
 #' @export
-r8_from_json <- function(type, json) {
+r8_from_json <- function(type, json, load = NULL) {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
+  load_packages(load)
   ensure_registered(type)
   if (isTRUE(attr(type, "r8_native"))) {
     check_codec(attr(type, "r8_name"), attr(type, "r8_package") %||% "")
@@ -915,7 +927,206 @@ r8_from_json <- function(type, json) {
     attr(type, "r8_name")
   )
   if (!is.null(res[["errors"]])) {
+    if ("unresolved_type" %in% res[["errors"]][["code"]]) {
+      unresolved_abort(json)
+    }
     value_abort("Cannot read", attr(type, "r8_name"), res[["errors"]])
   }
   res[["value"]]
 } # /R8::r8_from_json
+
+
+# %% load_packages ----
+#' Load the packages that `load =` names
+#'
+#' @param load Optional Character: Package names.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+load_packages <- function(load) {
+  if (is.null(load)) {
+    return(invisible(NULL))
+  }
+  if (!is.character(load) || anyNA(load)) {
+    r8_abort(
+      "`load` names packages, such as load = \"rtemis.ml\".",
+      class = "r8_type_error"
+    )
+  }
+  for (p in load) {
+    if (!requireNamespace(p, quietly = TRUE)) {
+      r8_abort(
+        "Package '",
+        p,
+        "' of `load` is not installed.",
+        class = "r8_type_error"
+      )
+    }
+  }
+  invisible(NULL)
+} # /R8::load_packages
+
+
+# %% unresolved_abort ----
+#' Signal the unregistered types a document names
+#'
+#' Reads the document's `"$type"` and `"$types"`, and names, for each
+#' unregistered type, its namespace and the installed packages that declare
+#' it (`Config/R8/namespace`, or the package name for a package that imports
+#' R8).
+#'
+#' @param json Character: The JSON document.
+#'
+#' @return Does not return; signals `r8_unresolved_type`.
+#'
+#' @keywords internal
+#' @noRd
+unresolved_abort <- function(json) {
+  doc <- r8_json_parse(paste(json, collapse = "\n"))
+  named <- unique(c(
+    if (is.character(doc[["$type"]])) doc[["$type"]],
+    names(doc[["$types"]])
+  ))
+  missing <- named[!vapply(named, r8_is_registered, logical(1))]
+  if (length(missing) == 0L) {
+    return(invisible(NULL))
+  }
+  namespaces <- unique(sub("::.*$", "", missing))
+  providers <- r8_namespace_providers()
+  lines <- vapply(
+    namespaces,
+    function(ns) {
+      types <- missing[startsWith(missing, paste0(ns, "::"))]
+      owner <- r8_namespace_owner(ns)
+      pkgs <- providers[[ns]] %||% character()
+      what <- paste0("`", types, "`", collapse = ", ")
+      if (nzchar(owner)) {
+        paste0(
+          what,
+          ": package '",
+          owner,
+          "' ",
+          utils::packageVersion(owner),
+          " is loaded and declares no such type."
+        )
+      } else if (length(pkgs) > 0L) {
+        paste0(
+          what,
+          ": namespace `",
+          ns,
+          "` is declared by the installed ",
+          if (length(pkgs) == 1L) "package " else "packages ",
+          paste0("'", pkgs, "'", collapse = ", "),
+          "; read with load = \"",
+          pkgs[[1L]],
+          "\"."
+        )
+      } else {
+        paste0(what, ": no installed package declares namespace `", ns, "`.")
+      }
+    },
+    ""
+  )
+  cond <- structure(
+    class = c(
+      "r8_unresolved_type",
+      "r8_value_error",
+      "r8_error",
+      "error",
+      "condition"
+    ),
+    list(
+      message = paste0(
+        "The document names types that no loaded package declares:\n",
+        paste0("- ", lines, collapse = "\n")
+      ),
+      call = NULL,
+      namespace = namespaces,
+      packages = providers[namespaces]
+    )
+  )
+  stop(cond)
+} # /R8::unresolved_abort
+
+
+# %% r8_namespace_providers ----
+#' The installed packages that declare each R8 namespace
+#'
+#' Reads the `DESCRIPTION` of every installed package once per library path
+#' set: a package declares the namespace of its `Config/R8/namespace` field,
+#' or its own name when it imports or depends on R8.
+#'
+#' @return Named list: By namespace, the package names.
+#'
+#' @keywords internal
+#' @noRd
+r8_namespace_providers <- function() {
+  key <- paste(.libPaths(), collapse = "\n")
+  cached <- .r8_providers[[key]]
+  if (!is.null(cached)) {
+    return(cached)
+  }
+  out <- list()
+  for (lib in .libPaths()) {
+    for (pkg in list.files(lib)) {
+      d <- file.path(lib, pkg, "DESCRIPTION")
+      if (!file.exists(d)) {
+        next
+      }
+      f <- tryCatch(
+        read.dcf(
+          d,
+          fields = c("Package", "Config/R8/namespace", "Imports", "Depends")
+        ),
+        error = function(e) NULL
+      )
+      if (is.null(f)) {
+        next
+      }
+      ns <- f[1L, "Config/R8/namespace"]
+      uses_r8 <- any(grepl("\\bR8\\b", c(f[1L, "Imports"], f[1L, "Depends"])))
+      if (is.na(ns)) {
+        if (!uses_r8) {
+          next
+        }
+        ns <- f[1L, "Package"]
+      }
+      out[[ns]] <- unique(c(out[[ns]], f[1L, "Package"]))
+    }
+  }
+  assign(key, out, envir = .r8_providers)
+  out
+} # /R8::r8_namespace_providers
+
+
+# %% r8_schema ----
+#' The JSON Schema of a type's values
+#'
+#' Writes the JSON Schema (draft 2020-12) that the documents of `type`
+#' satisfy, for tools outside R8: each named type it reaches is in `$defs`,
+#' and the root admits the document envelope. R8's facts that JSON Schema
+#' cannot state, such as rules and units, are annotations under `x-r8`.
+#'
+#' @param type An R8 type object.
+#' @param implementors Logical: Write each `dyn()` field as the closed list
+#'   of the implementors registered in the session, each with its tag value
+#'   as a constant, in place of an object that names its type.
+#'
+#' @return Character: The schema as JSON text.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
+#' cat(r8_schema(Point))
+#' options(op)
+#'
+#' @export
+r8_schema <- function(type, implementors = FALSE) {
+  if (!inherits(type, "r8_type")) {
+    r8_abort("`type` is an R8 type object.", class = "r8_type_error")
+  }
+  ensure_registered(type)
+  r8_type_schema(attr(type, "r8_name"), isTRUE(implementors))
+} # /R8::r8_schema

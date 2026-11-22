@@ -1546,12 +1546,15 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
             .variants
             .iter()
             .all(|x| matches!(x.shape, VariantShape::Unit));
-        if unit_only {
+        let tag = def.tag.as_str();
+        // Inside `dyn()`, a unit-only enum's value is an object holding the
+        // type member and its tag.
+        let object = self.val().is_some_and(|v| v.object_len().is_some());
+        if unit_only && !object {
             return self
                 .string(&format!("a variant name of `{name}`"))
                 .map(Cow::Borrowed);
         }
-        let tag = def.tag.as_str();
         match self.val() {
             Some(v) if v.object_len().is_some() => match v.get(tag).and_then(Node::as_str) {
                 Some(s) => Ok(Cow::Borrowed(s)),
