@@ -34,7 +34,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 2;
+pub const FORMAT: u32 = 3;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -577,6 +577,10 @@ fn w_type(w: &mut W, t: &FieldType) {
             w.u8(21);
             w.qn(r#trait);
         }
+        FieldType::Descendant { of } => {
+            w.u8(22);
+            w.qn(of);
+        }
     }
 }
 
@@ -625,8 +629,12 @@ fn w_rule(w: &mut W, r: &RuleDef) {
         when,
         message,
         id,
+        inherited_from,
     } = r;
-    w.u8(u8::from(when.is_some()) | u8::from(message.is_some()) << 1 | u8::from(id.is_some()) << 2);
+    w.u8(u8::from(when.is_some())
+        | u8::from(message.is_some()) << 1
+        | u8::from(id.is_some()) << 2
+        | u8::from(inherited_from.is_some()) << 3);
     w_logic(w, invariant);
     if let Some(x) = when {
         w_logic(w, x);
@@ -636,6 +644,9 @@ fn w_rule(w: &mut W, r: &RuleDef) {
     }
     if let Some(i) = id {
         w.name(i);
+    }
+    if let Some(q) = inherited_from {
+        w.qn(q);
     }
 }
 
@@ -1326,6 +1337,7 @@ fn r_type(r: &mut R) -> Res<FieldType> {
             },
             20 => FieldType::Named { name: r.qn()? },
             21 => FieldType::Dyn { r#trait: r.qn()? },
+            22 => FieldType::Descendant { of: r.qn()? },
             t => return Err(RecordError::Tag("field type", t)),
         })
     })
@@ -1372,7 +1384,7 @@ fn r_field(r: &mut R) -> Res<FieldDef> {
 }
 
 fn r_rule(r: &mut R) -> Res<RuleDef> {
-    let f = r.flags(7, "rule")?;
+    let f = r.flags(15, "rule")?;
     let invariant = r_logic(r)?;
     let when = if f & 1 != 0 { Some(r_logic(r)?) } else { None };
     let message = if f & 2 != 0 {
@@ -1381,11 +1393,17 @@ fn r_rule(r: &mut R) -> Res<RuleDef> {
         None
     };
     let id = if f & 4 != 0 { Some(r.name()?) } else { None };
+    let inherited_from = if f & 8 != 0 {
+        Some(Box::new(r.qn()?))
+    } else {
+        None
+    };
     Ok(RuleDef {
         invariant,
         when,
         message,
         id,
+        inherited_from,
     })
 }
 
@@ -1582,8 +1600,8 @@ fn r_impl(r: &mut R) -> Res<ImplDef> {
     })
 }
 
-/// Reads the payload of format 2.
-fn r_payload_v2(r: &mut R) -> Res<Vec<Entry>> {
+/// Reads the payload of format 3.
+fn r_payload_v3(r: &mut R) -> Res<Vec<Entry>> {
     r.seq(2, |r| {
         let namespace = r.name()?;
         let declaration = match r.u8()? {
@@ -1631,7 +1649,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Entry>, RecordError> {
         depth: 0,
     };
     let entries = match format {
-        2 => r_payload_v2(&mut r)?,
+        3 => r_payload_v3(&mut r)?,
         _ => unreachable!("format checked above"),
     };
     if !r.b.is_empty() {

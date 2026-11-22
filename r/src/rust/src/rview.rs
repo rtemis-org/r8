@@ -625,6 +625,13 @@ impl<'a> RView<'a> {
     }
 }
 
+/// Whether the R8 value `x` is of the type `name` itself, as its `r8_type`
+/// attribute names it; a descendant's class vector also names its
+/// ancestors, so `inherits()` does not decide it.
+fn is_type(x: SEXP, name: &QualifiedName) -> bool {
+    attr_string(x, sym_r8_type()).is_some_and(|t| *t == *name.to_string().as_str())
+}
+
 impl<'a> Access<'a> for RView<'a> {
     fn is_absent(self) -> bool {
         match self {
@@ -1152,7 +1159,7 @@ impl<'a> Access<'a> for RView<'a> {
             RView::Whole(x)
                 if sexptype(x) == SEXPTYPE::VECSXP
                     && inherits(x, "r8_value")
-                    && inherits(x, &name.to_string()) =>
+                    && is_type(x, name) =>
             {
                 Ok(())
             }
@@ -1197,7 +1204,7 @@ impl<'a> Access<'a> for RView<'a> {
     fn variant(self, name: &QualifiedName, _def: &EnumDef) -> Read<Cow<'a, str>> {
         match self {
             RView::Draft(_, v) => Ok(Cow::Borrowed(v)),
-            RView::Whole(x) if inherits(x, "r8_value") && inherits(x, &name.to_string()) => {
+            RView::Whole(x) if inherits(x, "r8_value") && is_type(x, name) => {
                 attr_string(x, sym_r8_variant()).ok_or_else(|| {
                     Form::new(
                         "missing_tag",
@@ -1214,6 +1221,13 @@ impl<'a> Access<'a> for RView<'a> {
         _trait: &QualifiedName,
         _lookup: &dyn TypeLookup,
     ) -> Result<(QualifiedName, Option<String>), String> {
+        let ty = self.sexp().and_then(|x| attr_string(x, sym_r8_type()));
+        ty.and_then(|t| QualifiedName::parse(&t).ok())
+            .map(|q| (q, None))
+            .ok_or_else(|| "a dyn() field holds an R8 value".to_string())
+    }
+
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), String> {
         let ty = self.sexp().and_then(|x| attr_string(x, sym_r8_type()));
         ty.and_then(|t| QualifiedName::parse(&t).ok())
             .map(|q| (q, None))

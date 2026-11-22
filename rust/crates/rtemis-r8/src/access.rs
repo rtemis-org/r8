@@ -640,6 +640,9 @@ pub trait Access<'a>: Copy + 'a {
         r#trait: &QualifiedName,
         lookup: &dyn TypeLookup,
     ) -> Result<(QualifiedName, Option<String>), String>;
+    /// The type a value of a `dyn(Parent)` field names, and the member of
+    /// the value that names it, if the host form has one.
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), String>;
 
     /// Whether two handles name the same object, which is then equal to
     /// itself without a read.
@@ -654,6 +657,21 @@ pub trait Access<'a>: Copy + 'a {
 
     /// The value's JSON form, for the rule evaluator and for export.
     fn to_value(self, ft: &FieldType, lookup: &dyn TypeLookup) -> Value;
+}
+
+/// The concrete type of a value of the field type `ft`, and the member of
+/// the value that names it: a trait's implementor for `dyn(Trait)`, the named
+/// struct for `dyn(Parent)`, and `None` for any other field type.
+pub fn concrete<'a, A: Access<'a>>(
+    v: A,
+    ft: &FieldType,
+    lookup: &dyn TypeLookup,
+) -> Option<Result<(QualifiedName, Option<String>), String>> {
+    match ft {
+        FieldType::Dyn { r#trait } => Some(v.implementor(r#trait, lookup)),
+        FieldType::Descendant { .. } => Some(v.named_type()),
+        _ => None,
+    }
 }
 
 /// A lookup that holds no type.
@@ -1554,6 +1572,14 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         let found = match self.val() {
             Some(v) => v.with_value(|v| lookup.implementor(r#trait, v)),
             None => lookup.implementor(r#trait, &Value::Null),
+        };
+        found.map(|(ty, member)| (ty, Some(member)))
+    }
+
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), String> {
+        let found = match self.val() {
+            Some(v) => v.with_value(crate::rules::dollar_type),
+            None => crate::rules::dollar_type(&Value::Null),
         };
         found.map(|(ty, member)| (ty, Some(member)))
     }

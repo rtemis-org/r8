@@ -22,7 +22,7 @@ test_that("a trait and a generic declared in R dispatch on the value", {
   expect_identical(Size@total(x), 2)
   weight_mean <- declare_in("conftest", {
     weight_mean <- generic("weight_mean", "x")
-    implement(weight_mean, Conform) <- function(x, ...) mean(x$weights)
+    implement(weight_mean, Conform) <- function(x) mean(x$weights)
     weight_mean
   })
   expect_identical(weight_mean(x), 1)

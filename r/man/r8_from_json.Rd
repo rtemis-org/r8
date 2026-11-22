@@ -21,7 +21,7 @@ Reads a document of \code{type}: checks \code{"$type"} and the versions in
 \examples{
 op <- options(r8.namespace = "demo")
 Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-r8_from_json(Point, to_json(Point(x = 1, y = 2)))
+r8_from_json(Point, r8_to_json(Point(x = 1, y = 2)))
 options(op)
 
 }

@@ -23,6 +23,26 @@ r8_abort <- function(..., class = character(), call = NULL, data = list()) {
 } # /R8::r8_abort
 
 
+# %% r8_warn ----
+#' Raise an R8 warning
+#'
+#' @param ... Character: Message parts, pasted without a separator.
+#' @param class Character: Condition classes, before `r8_warning`.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+r8_warn <- function(..., class = character()) {
+  cond <- structure(
+    class = c(class, "r8_warning", "warning", "condition"),
+    list(message = paste0(...), call = NULL)
+  )
+  warning(cond)
+  invisible(NULL)
+} # /R8::r8_warn
+
+
 # %% is_name ----
 #' An R8 name
 #'

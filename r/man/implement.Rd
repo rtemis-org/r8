@@ -18,10 +18,11 @@ implement(generic, type) <- value
 \code{generic}, unchanged.
 }
 \description{
-\code{implement(generic, Type) <- function(x, ...) ...} declares the method
-that \code{generic} calls for values of \code{Type}, and returns \code{generic}
-unchanged. \code{generic} is written as its name; the function's arguments
-begin with the generic's. By the generic:
+\code{implement(generic, Type) <- function(x) ...} declares the method that
+\code{generic} calls for values of \code{Type}, and returns \code{generic} unchanged.
+\code{generic} is written as its name. The function has exactly the generic's
+arguments, or, for a generic with \code{...}, the generic's arguments first,
+\code{...} included, then any named arguments of its own. By the generic:
 }
 \details{
 \itemize{

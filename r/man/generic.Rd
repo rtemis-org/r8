@@ -14,8 +14,12 @@ generic(name, args = "x", description = "")
 \code{"describe"}: a letter, then letters, digits, or underscores. It is the
 name the generic is assigned to.}
 
-\item{args}{Character: The formal argument names. The first is the value
-dispatched on; \code{...} is appended when absent.}
+\item{args}{Character: The formal argument names, in order. The first is
+the value dispatched on. A generic with \code{...} lets each method add named
+arguments after the generic's; a generic without it calls its methods
+with exactly its arguments, and a call with another argument is an
+error. Removing \code{...} from a generic breaks the methods that add
+arguments.}
 
 \item{description}{Character: What the generic does.}
 
@@ -37,7 +41,7 @@ exports it. The generic is a trait with one method named as the generic,
 op <- options(r8.namespace = "models")
 GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
 describe <- generic("describe", "x")
-implement(describe, GBM) <- function(x, ...) {
+implement(describe, GBM) <- function(x) {
   paste("Gradient boosting,", x$n_trees, "trees")
 }
 describe(GBM(n_trees = 100L))

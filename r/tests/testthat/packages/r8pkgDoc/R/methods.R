@@ -12,7 +12,7 @@ NULL
 #' @examples
 #' describe(Resampler(method = Method@Bootstrap, n_resamples = 2L))
 #' @export
-describe <- R8::generic("describe", "x", description = "Describes x.")
+describe <- R8::generic("describe", c("x", "..."), description = "Describes x.")
 
 #' @param verbose Logical: Include the seed.
 implement(describe, Resampler) <- function(x, ..., verbose = FALSE) {

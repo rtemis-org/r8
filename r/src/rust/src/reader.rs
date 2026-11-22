@@ -288,6 +288,10 @@ fn problems_of(p: Problem) -> List {
 /// @param rules List: A struct's rules.
 /// @param namespace Character: The namespace.
 /// @param package Character: The declaring package, or `""`.
+/// @param parent Character: The qualified name of the struct's parent, or
+///   `""`.
+/// @param defaults List: The child's defaults of inherited fields, by name.
+/// @param parent_formals List: The parent constructor's formals.
 /// @return List: `owner`, the package that owns the namespace when it is not
 ///   `package`, otherwise `""`; `problems`, as character vectors `code`,
 ///   `path`, and `message`; `record`, the record when the declaration
@@ -307,6 +311,9 @@ fn r8_declare(
     rules: Robj,
     namespace: &str,
     package: &str,
+    parent: &str,
+    defaults: Robj,
+    parent_formals: Robj,
 ) -> extendr_api::Result<List> {
     let owner = crate::declare::claim_namespace(namespace, package)?;
     let empty = || {
@@ -358,9 +365,24 @@ fn r8_declare(
             })
         })
     })();
+    let def = def.and_then(|d| match d {
+        TypeDef::Struct(s) if !parent.is_empty() => {
+            extended(s, parent, unsafe { defaults.get() }, lookup).map(|r| r.map(TypeDef::Struct))
+        }
+        d => Ok(Ok::<_, Vec<rtemis_r8::ir::DeclError>>(d)),
+    });
     drop(snapshot);
     let def = match def {
-        Ok(d) => d,
+        Ok(Ok(d)) => d,
+        Ok(Err(errors)) => {
+            return Ok(list!(
+                owner = "",
+                problems = decl_problems(&errors),
+                record = (),
+                formals = (),
+                required = Vec::<bool>::new()
+            ));
+        }
         Err(p) => {
             return Ok(list!(
                 owner = "",
@@ -372,14 +394,19 @@ fn r8_declare(
         }
     };
     let (formals, required) = match &def {
-        TypeDef::Struct(s) => struct_formals(unsafe { members.get() }, s),
+        TypeDef::Struct(s) => struct_formals(
+            unsafe { members.get() },
+            unsafe { defaults.get() },
+            unsafe { parent_formals.get() },
+            s,
+        ),
         _ => (Robj::from(()), Vec::new()),
     };
     let q = QualifiedName {
         namespace: Name::new(namespace).map_err(|e| extendr_api::Error::Other(e.to_string()))?,
         name: def.name().clone(),
     };
-    let problems = crate::declare::declare_type(def, namespace)?;
+    let (problems, stale) = crate::declare::declare_type(def, namespace)?;
     let failed = problems.index("code").map(|c| c.len() > 0).unwrap_or(false);
     let record = if failed {
         Robj::from(())
@@ -391,26 +418,50 @@ fn r8_declare(
         problems = problems,
         record = record,
         formals = formals,
-        required = required
+        required = required,
+        stale = stale
     ))
 }
 
 /// The constructor formals of a struct, from the fields as given, and which
 /// fields are required. A required field has no default argument; a field
 /// with a default takes it, except a `json_ir()` default, which construction
-/// fills; any other field takes `NULL`.
-fn struct_formals(members: SEXP, def: &StructDef) -> (Robj, Vec<bool>) {
+/// fills; any other field takes `NULL`. An inherited field takes the child's
+/// default from `defaults`, or else the parent constructor's formal.
+fn struct_formals(
+    members: SEXP,
+    defaults: SEXP,
+    parent_formals: SEXP,
+    def: &StructDef,
+) -> (Robj, Vec<bool>) {
     let mut b = crate::irser::Builder::named(def.fields.len());
     let mut required = Vec::with_capacity(def.fields.len());
-    for ((n, x), f) in entries(members).iter().zip(&def.fields) {
+    let own = entries(members);
+    let parent = entries(parent_formals);
+    let given = entries(defaults);
+    for f in &def.fields {
+        let n = f.name.as_str();
         let r = f.is_required();
         required.push(r);
         let value = if r {
             unsafe { extendr_ffi::R_MissingArg }
+        } else if f.inherited_from.is_some() {
+            match given.iter().find(|(k, _)| k == n) {
+                Some((_, d)) if !inherits(*d, "r8_json_ir") => *d,
+                Some(_) => crate::rview::nil(),
+                None => parent
+                    .iter()
+                    .find(|(k, _)| k == n)
+                    .map_or_else(crate::rview::nil, |(_, d)| *d),
+            }
         } else {
-            let d = member(*x, "default");
-            if inherits(*x, "r8_field")
-                && is_true(member(*x, "has_default"))
+            let x = own
+                .iter()
+                .find(|(k, _)| k == n)
+                .map_or_else(crate::rview::nil, |(_, x)| *x);
+            let d = member(x, "default");
+            if inherits(x, "r8_field")
+                && is_true(member(x, "has_default"))
                 && !is_null(d)
                 && !inherits(d, "r8_json_ir")
             {
@@ -422,6 +473,67 @@ fn struct_formals(members: SEXP, def: &StructDef) -> (Robj, Vec<bool>) {
         b.object(n, value);
     }
     (b.list(), required)
+}
+
+/// The child `s`, which holds the fields and rules it adds, lowered onto
+/// its registered parent `parent` with the defaults `defaults` of inherited
+/// fields; the problems of the lowering, at paths of the child's declaration.
+fn extended(
+    mut s: StructDef,
+    parent: &str,
+    defaults: SEXP,
+    lookup: &(impl TypeLookup + Sized),
+) -> Read<std::result::Result<StructDef, Vec<rtemis_r8::ir::DeclError>>> {
+    let pq = QualifiedName::parse(parent)
+        .map_err(|e| problem("extends_unknown", "/extends", e.to_string()))?;
+    let p = match lookup.find(&pq) {
+        Some(TypeDef::Struct(p)) => p,
+        Some(TypeDef::Enum(_)) => {
+            return Err(problem(
+                "extends_not_struct",
+                "/extends",
+                format!("`{pq}` is an enum; `extends` names a struct"),
+            ));
+        }
+        None => {
+            return Err(problem(
+                "extends_unknown",
+                "/extends",
+                format!("`{pq}` is not a registered type"),
+            ));
+        }
+    };
+    let mut changes = Vec::new();
+    for (i, (n, x)) in entries(defaults).into_iter().enumerate() {
+        let path = format!("/defaults/{i}");
+        let n = name(&n, &path)?;
+        let default = match p.fields.iter().find(|f| f.name == n) {
+            // `NULL` removes the default, which the lowering admits for an
+            // `option()` field only.
+            Some(_) if is_null(x) => Some(None),
+            Some(f) => Some(Some(Box::new(default_value(x, &f.ty, lookup, &path)?))),
+            None => None,
+        };
+        changes.push(rtemis_r8::ir::InheritedChange {
+            name: n,
+            default,
+            sensitive: false,
+            description: None,
+        });
+    }
+    Ok(rtemis_r8::ir::extend(&mut s, &pq, p, &changes).map(|()| s))
+}
+
+/// The problems of a declaration check, as character vectors.
+fn decl_problems(errors: &[rtemis_r8::ir::DeclError]) -> List {
+    list!(
+        code = errors
+            .iter()
+            .map(|e| e.code.to_string())
+            .collect::<Vec<_>>(),
+        path = errors.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+        message = errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>()
+    )
 }
 
 /// `type_table(columns, open, rules)`, its columns as fields.

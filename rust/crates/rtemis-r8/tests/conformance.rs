@@ -70,10 +70,23 @@ fn run_declare(input: &Value, expect: &Value) -> Option<String> {
         (Ok(_), true) => Some("read, but a parse error was expected".to_string()),
         (Ok(doc), false) => {
             let all = check_document(&doc);
-            // The check of one type or trait reports what the check of the
-            // document reports at its path.
+            // The check of one type or trait, with `check_defaults()`, which
+            // a registry runs after `check_type()`, reports what the check of
+            // the document reports at its path.
             let declarations = (0..doc.types.len())
-                .map(|i| (format!("/types/{i}"), check_type(&doc, i)))
+                .map(|i| {
+                    let mut own = check_type(&doc, i);
+                    if own.is_empty()
+                        && let rtemis_r8::ir::TypeDef::Struct(s) = &doc.types[i]
+                    {
+                        let q = rtemis_r8::name::QualifiedName {
+                            namespace: doc.namespace.clone(),
+                            name: s.name.clone(),
+                        };
+                        own = rtemis_r8::ir::check_defaults(s, &q, &format!("/types/{i}"), &doc);
+                    }
+                    (format!("/types/{i}"), own)
+                })
                 .chain(
                     (0..doc.traits.len()).map(|i| (format!("/traits/{i}"), check_trait(&doc, i))),
                 );

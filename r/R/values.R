@@ -855,7 +855,7 @@ guard <- function(what) {
 `levels<-.r8_value` <- guard("levels<-")
 
 
-# %% to_json ----
+# %% r8_to_json ----
 #' Write an R8 value as JSON
 #'
 #' The value's document: `"$type"`, `"$types"` (the version of every type it
@@ -868,11 +868,11 @@ guard <- function(what) {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' to_json(Point(x = 1, y = 2))
+#' r8_to_json(Point(x = 1, y = 2))
 #' options(op)
 #'
 #' @export
-to_json <- function(x) {
+r8_to_json <- function(x) {
   if (!inherits(x, "r8_value")) {
     r8_abort("`x` is an R8 value.", class = "r8_type_error")
   }
@@ -881,7 +881,7 @@ to_json <- function(x) {
     value_abort("Cannot write", attr(x, "r8_type"), res[["errors"]])
   }
   res[["json"]]
-} # /R8::to_json
+} # /R8::r8_to_json
 
 
 # %% r8_from_json ----
@@ -898,7 +898,7 @@ to_json <- function(x) {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' r8_from_json(Point, to_json(Point(x = 1, y = 2)))
+#' r8_from_json(Point, r8_to_json(Point(x = 1, y = 2)))
 #' options(op)
 #'
 #' @export

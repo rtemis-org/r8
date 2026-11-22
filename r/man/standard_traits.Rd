@@ -31,7 +31,8 @@ From(source)
 \item{source}{Character: The class or qualified R8 type converted from.}
 }
 \value{
-A trait object.
+A trait object. \code{From()} returns one of the internal class
+\code{r8_from_trait}, which holds its type parameter \code{source}.
 }
 \description{
 Traits that R8 declares in its namespace \code{R8}, which a type implements
@@ -54,7 +55,7 @@ and \code{r8_converter()} use it.
 }
 
 R8 provides \code{format()}, \code{print()}, and \code{str()} for every value, \code{==} and
-\code{r8_hash()} through \code{r8_equal()}, \code{to_json()} and \code{r8_from_json()}, and a
+\code{r8_hash()} through \code{r8_equal()}, \code{r8_to_json()} and \code{r8_from_json()}, and a
 type whose required fields have defaults is constructed with no
 arguments.
 }

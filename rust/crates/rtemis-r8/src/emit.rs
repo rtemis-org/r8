@@ -893,19 +893,21 @@ impl<'l, S: Sink> Emitter<'l, S> {
                 _ => self.w.null(),
             },
             FieldType::Named { name } => self.named(name, v, None),
-            FieldType::Dyn { r#trait } => match v.implementor(r#trait, lookup) {
-                Ok((ty, member)) => {
-                    let tag = match &member {
-                        Some(m) => {
-                            let t = v.member(m).character().map(|c| c.into_owned());
-                            (m.clone(), t.unwrap_or_else(|_| ty.to_string()))
-                        }
-                        None => ("$type".to_string(), ty.to_string()),
-                    };
-                    self.named(&ty, v, Some(tag));
+            FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+                match crate::access::concrete(v, ft, lookup).expect("a dynamic field type") {
+                    Ok((ty, member)) => {
+                        let tag = match &member {
+                            Some(m) => {
+                                let t = v.member(m).character().map(|c| c.into_owned());
+                                (m.clone(), t.unwrap_or_else(|_| ty.to_string()))
+                            }
+                            None => ("$type".to_string(), ty.to_string()),
+                        };
+                        self.named(&ty, v, Some(tag));
+                    }
+                    Err(_) => self.w.null(),
                 }
-                Err(_) => self.w.null(),
-            },
+            }
         }
     }
 
@@ -1325,15 +1327,18 @@ fn walk<'a, A: Access<'a>>(
     match unwrap_option(ft) {
         FieldType::R { .. } => out.push(path.to_string()),
         FieldType::Named { name } => walk_named(name, v, lookup, path, out),
-        FieldType::Dyn { r#trait } => {
-            if let Ok((ty, _)) = v.implementor(r#trait, lookup) {
+        t @ (FieldType::Dyn { .. } | FieldType::Descendant { .. }) => {
+            if let Some(Ok((ty, _))) = crate::access::concrete(v, t, lookup) {
                 walk_named(&ty, v, lookup, path, out);
             }
         }
         FieldType::Vec { element, .. }
             if matches!(
                 unwrap_option(element),
-                FieldType::Named { .. } | FieldType::Dyn { .. } | FieldType::Vec { .. }
+                FieldType::Named { .. }
+                    | FieldType::Dyn { .. }
+                    | FieldType::Descendant { .. }
+                    | FieldType::Vec { .. }
             ) =>
         {
             let n = v.vec(element).unwrap_or(0);
@@ -1347,7 +1352,10 @@ fn walk<'a, A: Access<'a>>(
         FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. }
             if matches!(
                 unwrap_option(value),
-                FieldType::Named { .. } | FieldType::Dyn { .. } | FieldType::Vec { .. }
+                FieldType::Named { .. }
+                    | FieldType::Dyn { .. }
+                    | FieldType::Descendant { .. }
+                    | FieldType::Vec { .. }
             ) =>
         {
             let ordered = matches!(unwrap_option(ft), FieldType::OrderedMap { .. });

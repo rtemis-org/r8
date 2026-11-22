@@ -453,7 +453,7 @@ impl Encoder<'_> {
                 self.table(x, &fields, false, path)
             }
             FieldType::Named { name } => self.named(x, name, path),
-            FieldType::Dyn { .. } => self.dynamic(x, path),
+            FieldType::Dyn { .. } | FieldType::Descendant { .. } => self.dynamic(x, path),
         }
     }
 
@@ -719,7 +719,13 @@ impl Encoder<'_> {
 
     fn named(&mut self, x: &Robj, name: &QualifiedName, path: &str) -> Value {
         let qname = name.to_string();
-        if !x.inherits("r8_value") || !x.inherits(&qname) {
+        // A field of a named type admits exactly that type: a descendant's
+        // class vector also names its ancestors.
+        let exact = x
+            .get_attrib("r8_type")
+            .and_then(|t| t.as_str().map(|t| t == qname))
+            .unwrap_or(false);
+        if !x.inherits("r8_value") || !exact {
             return self.err("r_type", path, format!("expected a value of `{qname}`"));
         }
         let Some(def) = self.lookup.find(name).cloned() else {
@@ -1052,6 +1058,14 @@ impl Decoder<'_> {
                     .map_err(fail)?;
                 self.named(v, &ty, None)
             }
+            FieldType::Descendant { .. } => {
+                let ty = v
+                    .get("$type")
+                    .and_then(|t| t.as_str())
+                    .and_then(|t| QualifiedName::parse(t).ok())
+                    .ok_or_else(|| fail("a `dyn()` value names its type in `$type`"))?;
+                self.named(v, &ty, None)
+            }
         }
     }
 
@@ -1302,7 +1316,7 @@ impl Decoder<'_> {
         let mut r: Robj = List::from_values(values).into();
         r.set_names(names)?;
         let qname = name.to_string();
-        r.set_class([qname.as_str(), "r8_value"])?;
+        r.set_class(crate::construct::value_class(&qname))?;
         r.set_attrib("r8_type", qname.as_str())?;
         r.set_attrib("r8_version", version as i32)?;
         if let Some(var) = variant {

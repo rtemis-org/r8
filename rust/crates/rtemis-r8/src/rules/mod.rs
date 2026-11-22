@@ -25,6 +25,7 @@ use crate::access::{Access, Json};
 
 pub use compile::RuleError;
 pub use diagnose::{Diagnosis, SHOWN_CHARS, Shown};
+pub(crate) use ty::dollar_type;
 pub use ty::{DocumentSet, Ty, TypeLookup};
 
 use compile::{Expr, Root, Step, compile, compile_computed};

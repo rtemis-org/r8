@@ -193,7 +193,7 @@ test_that("a document round trips to an identical value", {
     kernel = t[["Kernel"]]@Rbf(gamma = 0.5),
     weights = c(1, 2.5)
   )
-  json <- to_json(x)
+  json <- r8_to_json(x)
   expect_identical(
     json,
     '{"$type":"rtemis::Svm","$types":{"rtemis::Kernel":1,"rtemis::Svm":1},"cost":2,"kernel":{"gamma":0.5,"type":"Rbf"},"weights":[1,2.5],"mtry":null}'
@@ -261,7 +261,7 @@ test_that("every field type has an R form that round trips through JSON", {
   expect_identical(names(x$hm), c("a", "b"))
   expect_identical(names(x$om), c("z", "a"))
   expect_identical(x$model, fit)
-  y <- r8_from_json(Every, to_json(x))
+  y <- r8_from_json(Every, r8_to_json(x))
   # The runtime-only field has no JSON form.
   expect_null(y$model)
   x_without <- x
@@ -289,7 +289,7 @@ test_that("a sparse matrix field is a dgCMatrix and round trips", {
   v <- Counts(x = m)
   expect_s4_class(v$x, "dgCMatrix")
   expect_identical(as.matrix(v$x), as.matrix(m))
-  expect_identical(r8_from_json(Counts, to_json(v)), v)
+  expect_identical(r8_from_json(Counts, r8_to_json(v)), v)
   expect_error(Counts(x = as.matrix(m)), "dgCMatrix", class = "r8_value_error")
 })
 
@@ -388,7 +388,7 @@ test_that("matrices compare, hash, and write their dimension names", {
   expect_false(r8_equal(vx, M(m = y)))
   expect_false(r8_equal(vx, M(m = z)))
   expect_false(identical(r8_hash(vx), r8_hash(M(m = y))))
-  expect_identical(r8_from_json(M, to_json(vx)), vx)
+  expect_identical(r8_from_json(M, r8_to_json(vx)), vx)
 })
 
 test_that("sizes print in IEC units, and an R-native value shows none", {

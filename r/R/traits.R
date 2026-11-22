@@ -15,6 +15,17 @@
 # declaring a type clear the cache.
 .r8_dispatch <- new.env(parent = emptyenv())
 
+# The types with an impl of a trait, by `"Trait|type"`: the unit of
+# precedence through `extends`, so that the nearest type with an impl
+# provides every method, and a method its impl omits takes the trait's
+# default.
+.r8_impl_of <- new.env(parent = emptyenv())
+
+# The ancestors of each type through `extends`, by qualified type, as
+# `r8_type_ancestors()` returns them; cleared with the dispatch cache and
+# when records register.
+.r8_ancestry <- new.env(parent = emptyenv())
+
 # The native symbol of the C routine `find` (`r/src/view.c`), bound when the
 # package loads.
 .r8_c_find <- NULL
@@ -54,6 +65,9 @@ trait_method <- function(
       "A trait method's signature is a function with at least one argument.",
       class = "r8_declaration_error"
     )
+  }
+  if (!is.null(default)) {
+    check_method_formals(default, names(formals(fn)), "the default")
   }
   structure(
     list(
@@ -248,7 +262,12 @@ cache_impl <- function(key, x, impl) {
 #' @keywords internal
 #' @noRd
 put_impl <- function(trait_name, method, type, fn) {
+  # The provider, which r8_next_impl() reads from the running impl.
+  attr(fn, "r8_provider") <- c(trait_name, method, type)
   assign(paste(trait_name, method, type, sep = "|"), fn, envir = .r8_impls)
+  if (nzchar(type)) {
+    mark_impl(trait_name, type)
+  }
   key <- paste(trait_name, method, sep = "|")
   if (exists(key, envir = .r8_dispatch, inherits = FALSE)) {
     rm(list = key, envir = .r8_dispatch)
@@ -266,8 +285,183 @@ put_impl <- function(trait_name, method, type, fn) {
 #' @noRd
 clear_dispatch <- function() {
   rm(list = ls(.r8_dispatch, all.names = TRUE), envir = .r8_dispatch)
+  clear_ancestry()
   invisible(NULL)
 } # /R8::clear_dispatch
+
+
+# %% clear_ancestry ----
+#' Clear the memo of ancestors
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+clear_ancestry <- function() {
+  rm(list = ls(.r8_ancestry, all.names = TRUE), envir = .r8_ancestry)
+  invisible(NULL)
+} # /R8::clear_ancestry
+
+
+# %% mark_impl ----
+#' Record that a type has an impl of a trait
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param type Character: The qualified type name or class.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+mark_impl <- function(trait_name, type) {
+  assign(paste(trait_name, type, sep = "|"), TRUE, envir = .r8_impl_of)
+  invisible(NULL)
+} # /R8::mark_impl
+
+
+# %% ancestry ----
+#' The ancestors of a type, memoized
+#'
+#' @param type Character: The qualified type name.
+#'
+#' @return List: `ancestors`, `stale`, and `parent`, as
+#'   `r8_type_ancestors()` returns them.
+#'
+#' @keywords internal
+#' @noRd
+ancestry <- function(type) {
+  a <- .r8_ancestry[[type]]
+  if (is.null(a)) {
+    # A class of another system has no ancestors through `extends`.
+    a <- if (grepl("::", type, fixed = TRUE)) {
+      r8_type_ancestors(type)
+    } else {
+      list(ancestors = character(), stale = FALSE, parent = "")
+    }
+    assign(type, a, envir = .r8_ancestry)
+  }
+  a
+} # /R8::ancestry
+
+
+# %% stale_abort ----
+#' Signal that a stale type refuses an operation
+#'
+#' @param type Character: The qualified type name.
+#' @param parent Character: Its parent.
+#' @param class Character: The condition class, before `r8_error`.
+#'
+#' @return Does not return.
+#'
+#' @keywords internal
+#' @noRd
+stale_abort <- function(type, parent, class) {
+  r8_abort(
+    "`",
+    type,
+    "` was declared against an earlier declaration of `",
+    parent,
+    "`; declare `",
+    type,
+    "` again, or reload or reinstall the package that declares it [type_stale].",
+    class = class
+  )
+} # /R8::stale_abort
+
+
+# %% impl_in_chain ----
+#' The impl of a trait method for a type, through `extends`
+#'
+#' The nearest of `type` and its ancestors with an impl of the trait
+#' provides the method, or the trait's default when that impl omits it;
+#' without such a type, the trait's default applies. With `after`, the search
+#' starts at the parent of `after`, for `r8_next_impl()`.
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param method Character: The method name.
+#' @param type Character: The qualified type name, or a class.
+#' @param r8 Logical: `type` is an R8 type, whose ancestors are searched.
+#' @param after Optional Character: The type whose impl is running.
+#'
+#' @return The impl function, or `NULL`.
+#'
+#' @keywords internal
+#' @noRd
+impl_in_chain <- function(trait_name, method, type, r8 = TRUE, after = NULL) {
+  chain <- type
+  own <- is.null(after) &&
+    exists(
+      paste(trait_name, type, sep = "|"),
+      envir = .r8_impl_of,
+      inherits = FALSE
+    )
+  if (r8 && !own) {
+    a <- ancestry(type)
+    if (isTRUE(a[["stale"]])) {
+      stale_abort(type, a[["parent"]], "r8_dispatch_error")
+    }
+    chain <- c(type, a[["ancestors"]])
+    if (!is.null(after)) {
+      at <- match(after, chain)
+      chain <- if (is.na(at)) character() else chain[-seq_len(at)]
+    }
+  } else if (!is.null(after)) {
+    chain <- character()
+  }
+  default <- .r8_impls[[paste(trait_name, method, "", sep = "|")]]
+  for (t in chain) {
+    if (
+      exists(
+        paste(trait_name, t, sep = "|"),
+        envir = .r8_impl_of,
+        inherits = FALSE
+      )
+    ) {
+      fn <- .r8_impls[[paste(trait_name, method, t, sep = "|")]] %||% default
+      if (!identical(t, type) && is_compiled_impl(fn)) {
+        r8_abort(
+          "The compiled impl of `",
+          trait_name,
+          "` for `",
+          t,
+          "` takes a value of `",
+          t,
+          "`, not of its descendant `",
+          type,
+          "`; implement `",
+          trait_name,
+          "` for `",
+          type,
+          "`.",
+          class = "r8_dispatch_error"
+        )
+      }
+      return(fn)
+    }
+  }
+  # After the running impl, the default follows unless it is running.
+  if (!is.null(after) && !nzchar(after)) {
+    return(NULL)
+  }
+  default
+} # /R8::impl_in_chain
+
+
+# %% is_compiled_impl ----
+#' Whether an impl calls a compiled method
+#'
+#' @param fn Function: The impl.
+#'
+#' @return Logical.
+#'
+#' @keywords internal
+#' @noRd
+is_compiled_impl <- function(fn) {
+  b <- body(fn)
+  is.call(b) &&
+    identical(b[[1L]], quote(.Call)) &&
+    identical(b[[2L]], quote(.r8_c_invoke))
+} # /R8::is_compiled_impl
 
 
 # %% r8_find_impl ----
@@ -282,11 +476,9 @@ clear_dispatch <- function() {
 #' @keywords internal
 #' @noRd
 r8_find_impl <- function(trait_name, method, x) {
-  type <- if (inherits(x, "r8_value")) attr(x, "r8_type") else class(x)[1L]
-  impl <- .r8_impls[[paste(trait_name, method, type, sep = "|")]]
-  if (is.null(impl)) {
-    impl <- .r8_impls[[paste(trait_name, method, "", sep = "|")]]
-  }
+  r8 <- inherits(x, "r8_value")
+  type <- if (r8) attr(x, "r8_type") else class(x)[1L]
+  impl <- impl_in_chain(trait_name, method, type, r8 = r8)
   if (!is.null(impl)) {
     cache_impl(paste(trait_name, method, sep = "|"), x, impl)
     return(impl)
@@ -614,6 +806,15 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
       class = "r8_declaration_error"
     )
   }
+  for (m in names(fns)) {
+    params <- unlist(methods_ir[[match(m, declared)]][["params"]])
+    label <- if (isTRUE(trait_ir(t)[["generic"]])) {
+      m
+    } else {
+      paste0(t[["name"]], "@", m)
+    }
+    check_method_formals(fns[[m]], params, label)
+  }
   for (m in declared) {
     has_default <- isTRUE(Filter(
       function(x) x[["name"]] == m,
@@ -642,6 +843,20 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
   }
   if (inherits(trait, "r8_from_trait")) {
     ir[["type_args"]] <- list(t[["source"]])
+    if (type_name %in% ancestry(t[["source"]])[["ancestors"]]) {
+      r8_abort(
+        "`",
+        t[["source"]],
+        "` extends `",
+        type_name,
+        "`, so r8_convert() upcasts it; an impl of From(\"",
+        t[["source"]],
+        "\") for `",
+        type_name,
+        "` is reserved.",
+        class = "r8_declaration_error"
+      )
+    }
   }
   # The entry names its trait, which registers before the impl.
   entry <- list(
@@ -686,6 +901,9 @@ register_impl <- function(entry) {
     register_records(list(entry[["record"]]))
     return(invisible(NULL))
   }
+  # An impl that defines no method still takes precedence over the impls of
+  # the type's ancestors.
+  mark_impl(t[["name"]], entry[["type_name"]])
   for (m in names(entry[["fns"]])) {
     generic <- t[["generics"]][[m]]
     fn <- entry[["fns"]][[m]]
@@ -768,7 +986,7 @@ trait_ir <- function(trait) {
 #' @export
 print.r8_trait <- function(x, ...) {
   t <- unclass(x)
-  cat("<trait ", t[["name"]], ">\n", sep = "")
+  cat("<r8 trait ", t[["name"]], ">\n", sep = "")
   for (m in trait_ir(t)[["methods"]]) {
     cat(
       "  ",

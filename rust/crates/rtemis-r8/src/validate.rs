@@ -547,6 +547,7 @@ impl<'l> Validator<'l, '_> {
             FieldType::OrderedMap { value, keys } => self.map(value, keys, true, v, path),
             FieldType::Named { name } => self.named(name, v, path, &[]),
             FieldType::Dyn { r#trait } => self.dynamic(r#trait, v, path),
+            FieldType::Descendant { of } => self.descendant(of, v, path),
         }
     }
 
@@ -1467,6 +1468,19 @@ impl<'l> Validator<'l, '_> {
         let lookup = self.lookup;
         match lookup.find(name) {
             None => self.unresolved(name, path),
+            Some(TypeDef::Struct(s)) if lookup.is_stale(name) => {
+                let parent = s
+                    .extends
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.to_string());
+                self.error(
+                    "type_stale",
+                    path,
+                    format!(
+                        "`{name}` was declared against an earlier declaration of `{parent}`; declare `{name}` again, or reload or reinstall the package that declares it"
+                    ),
+                )
+            }
             Some(TypeDef::Struct(s)) => match v.record(name) {
                 Ok(()) => self.object(&name.to_string(), &s.fields, &s.rules, v, path, envelope),
                 Err(f) => self.form(f, path),
@@ -1549,6 +1563,29 @@ impl<'l> Validator<'l, '_> {
                 Some(m) => self.named(&ty, v, path, &[m.as_str()]),
                 None => self.named(&ty, v, path, &[]),
             },
+            Err(msg) => self.error("unresolved_type", path, msg),
+        }
+    }
+
+    /// Checks a value of `dyn(of)` for the struct `of`: the type the value
+    /// names is `of` or descends from it, and the value is valid as that
+    /// type.
+    fn descendant<'a, A: Access<'a>>(&mut self, of: &QualifiedName, v: A, path: &P) {
+        match v.named_type() {
+            Ok((ty, member)) if self.lookup.descends(&ty, of) => match &member {
+                Some(m) => self.named(&ty, v, path, &[m.as_str()]),
+                None => self.named(&ty, v, path, &[]),
+            },
+            Ok((ty, _)) if self.lookup.find(&ty).is_none() => self.error(
+                "unresolved_type",
+                path,
+                format!("`{ty}` is not a registered type"),
+            ),
+            Ok((ty, _)) => self.error(
+                "not_descendant",
+                path,
+                format!("`{ty}` is not `{of}` and does not extend it"),
+            ),
             Err(msg) => self.error("unresolved_type", path, msg),
         }
     }

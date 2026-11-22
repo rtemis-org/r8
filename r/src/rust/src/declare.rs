@@ -219,18 +219,40 @@ fn r8_canonical_json(json: &str) -> Result<String> {
 fn r8_declare_type(ir: Robj, namespace: &str) -> Result<List> {
     let def: TypeDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
-    declare_type(def, namespace)
+    declare_type(def, namespace).map(|(p, _)| p)
 }
 
 /// Checks the type declaration `def` in its namespace and registers it, as
-/// `r8_declare_type()` does.
-pub(crate) fn declare_type(def: TypeDef, namespace: &str) -> Result<List> {
+/// `r8_declare_type()` does; the problems, and the qualified names of the
+/// structs the declaration leaves stale.
+pub(crate) fn declare_type(def: TypeDef, namespace: &str) -> Result<(List, Vec<String>)> {
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
     let out = registry()
         .declare_type(&ns, def)
         .map_err(|e| fail(e.to_string()))?;
     changed(out.changed);
-    Ok(problems_list(&out.problems))
+    let stale = out.stale.iter().map(|q| q.to_string()).collect();
+    Ok((problems_list(&out.problems), stale))
+}
+
+/// The qualified names of the stale structs: those whose inherited fields or
+/// rules disagree with their parent's, or whose parent is stale.
+///
+/// @param namespaces Character: When not empty, only the stale structs
+///   outside these namespaces that descend from a type in them.
+/// @return Character: The names, sorted.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_stale_types(namespaces: Vec<String>) -> Vec<String> {
+    use rtemis_r8::rules::TypeLookup;
+    let docs = registry().snapshot();
+    let within = |q: &QualifiedName| namespaces.iter().any(|n| n == q.namespace.as_str());
+    docs.stale_types()
+        .into_iter()
+        .filter(|q| namespaces.is_empty() || (!within(q) && docs.ancestors(q).iter().any(within)))
+        .map(|q| q.to_string())
+        .collect()
 }
 
 /// The IR document of one registered type: its namespace and its
@@ -468,7 +490,9 @@ fn r8_is_registered(name: &str) -> bool {
 
 /// Declares the entries of declaration records, in order, through the
 /// declaration checks: one call for a package's records at load, or for the
-/// record a type object carries.
+/// record a type object carries. The records of a package declare into the
+/// namespaces it owns and into namespaces no package owns; an entry of a
+/// namespace another package owns is skipped.
 ///
 /// @param records List: Raw vectors, each a record.
 /// @param source Character: The package the records come from, or `""`.
@@ -504,6 +528,16 @@ fn r8_declare_records(records: List, source: &str, check: bool) -> Result<List> 
             ))
         })?;
         all.extend(entries);
+    }
+    // A package's records carry the declarations their types reach, among
+    // them types of other packages' namespaces: the owner's own records
+    // declare those, so an earlier copy never replaces the owner's.
+    if !source.is_empty() {
+        let reg = registry();
+        all.retain(|e| match reg.owner(e.namespace.as_str()) {
+            Some(owner) => owner == source,
+            None => true,
+        });
     }
     let (c, problems) = registry()
         .declare_records(all, check)
@@ -681,5 +715,6 @@ extendr_module! {
     fn r8_canonical_json;
     fn r8_json_parse;
     fn r8_declare_type;
+    fn r8_stale_types;
     fn r8_type_document;
 }

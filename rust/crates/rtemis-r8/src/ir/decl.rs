@@ -106,6 +106,10 @@ pub struct RuleDef {
     /// shows its invariant, rendered by the host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// The ancestor that declared the rule, for a rule that `extends`
+    /// flattened into a child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherited_from: Option<Box<QualifiedName>>,
 }
 
 /// One step of a migration, from the fixed vocabulary that `rtemis-r8` defines.

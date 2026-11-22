@@ -728,6 +728,89 @@
             ],
             "rules": [
               {
+                "id": "ASSAY_ROWS",
+                "invariant": {
+                  "all": [
+                    {
+                      "var": "assays"
+                    },
+                    {
+                      "===": [
+                        {
+                          "nrow": [
+                            {
+                              "var": ".x.values"
+                            }
+                          ]
+                        },
+                        {
+                          "nrow": [
+                            {
+                              "var": "row_data"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "message": "Every assay has one row per feature.",
+                "inherited_from": "SummarizedExperiment::SummarizedExperiment"
+              },
+              {
+                "id": "ASSAY_COLS",
+                "invariant": {
+                  "all": [
+                    {
+                      "var": "assays"
+                    },
+                    {
+                      "===": [
+                        {
+                          "ncol": [
+                            {
+                              "var": ".x.values"
+                            }
+                          ]
+                        },
+                        {
+                          "nrow": [
+                            {
+                              "var": "col_data"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "message": "Every assay has one column per sample.",
+                "inherited_from": "SummarizedExperiment::SummarizedExperiment"
+              },
+              {
+                "id": "COL_NAMES_LENGTH",
+                "invariant": {
+                  "===": [
+                    {
+                      "length": [
+                        {
+                          "var": "col_names"
+                        }
+                      ]
+                    },
+                    {
+                      "nrow": [
+                        {
+                          "var": "col_data"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "message": "col_names has one entry per sample.",
+                "inherited_from": "SummarizedExperiment::SummarizedExperiment"
+              },
+              {
                 "id": "RSE_NO_NAMES",
                 "invariant": {
                   "is_null": [

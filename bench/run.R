@@ -5,7 +5,9 @@
 # Runs every row of the benchmark, each row and system in a fresh
 # `Rscript --vanilla` under /usr/bin/time, and appends the measurements,
 # with the peak resident memory of each process, to
-# bench/results/<commit>.jsonl. The acceptance corpus runs first, and a
+# bench/results/<commit>.jsonl. The rows that report.R reads as a
+# difference from a control process run in alternating rounds
+# (`run_alternating()`). The acceptance corpus runs first, and a
 # mismatch stops the run. Usage: Rscript bench/run.R <library> <commit>,
 # [<library with alloc-stats>], where the library holds the R8 release
 # build, r8benchR, and the packages of syspkg.R and namespace.R, and the
@@ -80,6 +82,15 @@ run_row <- function(row, system, mode = "", repeat_n = 1L, first_lib = NULL) {
   invisible(records)
 }
 
+# Runs the modes of a row in alternation, `ROUNDS` rounds of one process
+# per mode, for the rows that report.R reads as a difference between a mode
+# and its control: a change in the machine's state during the run reaches
+# the mode and its control alike, and the processes of a round form a pair.
+ROUNDS <- 5L
+run_alternating <- function(row, system, modes, rounds = ROUNDS) {
+  for (r in seq_len(rounds)) for (m in modes) run_row(row, system, m)
+}
+
 # A directory the rows' processes share, for the document of the JSON
 # read's peak memory.
 Sys.setenv(R8_BENCH_TMP = local({
@@ -109,10 +120,13 @@ for (s in systems) run_row("cold", s, repeat_n = 5L)
 for (s in r_systems) run_row("types", s, repeat_n = 5L)
 if (!is.null(lib_alloc)) for (s in r_systems) run_row("types", s, "memory", first_lib = lib_alloc)
 for (s in systems) for (m in c("", "compact")) run_row("big", s, m)
-for (s in systems) for (m in c("value", "control")) run_row("peak", s, m)
-for (s in c("R8", "R8 Rust")) for (m in c("json_write", "json", "json_control")) run_row("peak", s, m)
+for (s in systems) run_alternating("peak", s, c("value", "control"))
+for (s in c("R8", "R8 Rust")) {
+  run_row("peak", s, "json_write")
+  run_alternating("peak", s, c("json", "json_control"))
+}
 run_row("table", "R8")
-for (m in c("vec", "table", "rows")) run_row("peak", "R8", m)
-for (s in NAMESPACE_SYSTEMS) for (m in c("pkg", "control")) run_row("namespace", s, m)
+run_alternating("peak", "R8", c("vec", "table", "rows"))
+for (s in NAMESPACE_SYSTEMS) run_alternating("namespace", s, c("pkg", "control"))
 run_row("s7_baseline", "S7")
 message("results: ", out)

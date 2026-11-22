@@ -10,16 +10,21 @@ mod check;
 mod decl;
 mod document;
 mod logic;
+mod lower;
 mod number;
 mod types;
 
-pub use check::{DeclError, check_document, check_trait, check_type, is_column_type, report};
+pub use check::{
+    DeclError, check_document, check_document_records, check_trait, check_type, is_column_type,
+    report,
+};
 pub use decl::{
     ClassSystem, EnumDef, FieldDef, ImplDef, ImplTarget, MethodDef, Migration, MigrationStep,
     RuleDef, SplitTarget, StructDef, TraitDef, VariantDef, VariantShape,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use logic::{Logic, Operator};
+pub use lower::{InheritedChange, check_defaults, check_extends, extend};
 pub use number::{EXACT_DOUBLE, Number};
 pub use types::{Bound, CharacterType, DoubleType, FieldType, IntegerType, Resolve};
 

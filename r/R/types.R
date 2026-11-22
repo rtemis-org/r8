@@ -334,7 +334,7 @@ ordered_map <- function(type, keys = NULL) {
 #'
 #' @export
 print.r8_field_type <- function(x, ...) {
-  cat("<r8_field_type>", r8_ir_json(unclass(x)), "\n")
+  cat("<r8 field type>", r8_ir_json(unclass(x)), "\n")
   invisible(x)
 } # /R8::print.r8_field_type
 

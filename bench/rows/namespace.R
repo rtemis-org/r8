@@ -7,7 +7,10 @@
 # every binding read, which S7, R6, and RC need before their class objects
 # exist in memory; and that time with one value constructed of each type,
 # which R8 needs before it compiles each type's rules. It reports the cons
-# cells at each endpoint and the median of 20 full gc() runs. Mode
+# cells at each endpoint and the median of 20 full gc() runs, each timed
+# with Sys.time(), whose resolution is a microsecond; base R's timer keeps
+# the namespaces of a timing package out of the heap that gc() traverses,
+# and jsonlite, which emit() loads, loads before any measurement. Mode
 # "control" loads the system's own packages only, makes the same four gc()
 # calls, and reports the median gc() time; report.R subtracts its gc() time
 # and peak resident memory. The four calls matter: 20 full gc() runs without
@@ -16,12 +19,18 @@
 
 source(file.path(Sys.getenv("R8_BENCH_DIR", "bench"), "rows", "common.R"))
 source(file.path(BENCH_DIR, "namespace.R"))
-for (p in system_packages(SYSTEM)) suppressPackageStartupMessages(loadNamespace(p))
+for (p in c("jsonlite", system_packages(SYSTEM))) suppressPackageStartupMessages(loadNamespace(p))
 cells <- function() {
   invisible(gc())
   gc()["Ncells", "used"]
 }
-gc_median <- function() stats::median(replicate(20L, system.time(gc(full = TRUE))[["elapsed"]]))
+gc_median <- function() {
+  stats::median(vapply(seq_len(20L), function(i) {
+    t0 <- Sys.time()
+    gc(full = TRUE)
+    as.numeric(Sys.time() - t0, units = "secs")
+  }, 0))
+}
 
 if (MODE == "pkg") {
   pkg <- namespace_package(SYSTEM)

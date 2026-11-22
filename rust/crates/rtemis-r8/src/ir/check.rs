@@ -51,6 +51,53 @@ pub fn report(qname: &str, errors: &[DeclError]) -> String {
 struct Checker<'a> {
     doc: &'a IrDocument,
     errors: Vec<DeclError>,
+    /// The document's types by name, for `check_defaults()`; `None` where
+    /// the caller runs it with its own lookup, or not at all.
+    defaults: Option<Indexed<'a>>,
+}
+
+/// A document's types indexed by name: the lookup of `check_defaults()` over
+/// a whole document, so that each find takes constant time.
+struct Indexed<'a> {
+    doc: &'a IrDocument,
+    types: std::collections::HashMap<&'a str, usize>,
+}
+
+impl<'a> Indexed<'a> {
+    fn new(doc: &'a IrDocument) -> Indexed<'a> {
+        Indexed {
+            doc,
+            types: doc
+                .types
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (t.name().as_str(), i))
+                .collect(),
+        }
+    }
+}
+
+impl crate::rules::TypeLookup for Indexed<'_> {
+    fn find(&self, name: &QualifiedName) -> Option<&TypeDef> {
+        if name.namespace != self.doc.namespace {
+            return None;
+        }
+        self.types
+            .get(name.name.as_str())
+            .map(|&i| &self.doc.types[i])
+    }
+
+    fn implementor(
+        &self,
+        tr: &QualifiedName,
+        value: &serde_json::Value,
+    ) -> Result<(QualifiedName, String), String> {
+        self.doc.implementor(tr, value)
+    }
+
+    fn type_member(&self, tr: &QualifiedName) -> String {
+        self.doc.type_member(tr)
+    }
 }
 
 impl Checker<'_> {
@@ -461,7 +508,8 @@ impl Checker<'_> {
             | FieldType::TableOf { .. }
             | FieldType::Json
             | FieldType::Named { .. }
-            | FieldType::Dyn { .. } => {}
+            | FieldType::Dyn { .. }
+            | FieldType::Descendant { .. } => {}
         }
     }
 
@@ -507,11 +555,35 @@ impl Checker<'_> {
     }
 
     fn struct_def(&mut self, s: &StructDef, path: &str) {
+        let before = self.errors.len();
         self.class_name(&s.name, "type", &format!("{path}/name"));
         self.version(s.version, &format!("{path}/version"));
         self.fields(&s.fields, &format!("{path}/fields"), false);
         self.extensions(s.extensions.keys(), &format!("{path}/extensions"));
         self.rules(&s.rules, &s.fields, &format!("{path}/rules"));
+        self.errors.extend(super::lower::check_order(s, path));
+        // A parent in another document is checked by the registry.
+        if self.errors.len() == before
+            && let Some(parent) = &s.extends
+            && parent.namespace == self.doc.namespace
+        {
+            let q = QualifiedName {
+                namespace: self.doc.namespace.clone(),
+                name: s.name.clone(),
+            };
+            let found = super::lower::check_extends(s, &q, path, self.doc, false);
+            self.errors.extend(found);
+        }
+        if self.errors.len() == before
+            && let Some(lookup) = &self.defaults
+        {
+            let q = QualifiedName {
+                namespace: self.doc.namespace.clone(),
+                name: s.name.clone(),
+            };
+            let found = super::lower::check_defaults(s, &q, path, lookup);
+            self.errors.extend(found);
+        }
     }
 
     /// Checks a newtype variant: the enum wraps each struct at most once, and
@@ -780,6 +852,7 @@ pub fn check_type(doc: &IrDocument, index: usize) -> Vec<DeclError> {
     let mut c = Checker {
         doc,
         errors: Vec::new(),
+        defaults: None,
     };
     c.type_name(index);
     let path = format!("/types/{index}");
@@ -791,11 +864,24 @@ pub fn check_type(doc: &IrDocument, index: usize) -> Vec<DeclError> {
 }
 
 /// Checks one IR document and returns every problem found, in document
-/// order; an empty vector means the document passes.
+/// order; an empty vector means the document passes. `check_defaults()` runs
+/// for each struct, with the document as its lookup.
 pub fn check_document(doc: &IrDocument) -> Vec<DeclError> {
+    check_whole(doc, true)
+}
+
+/// The checks of [`check_document`] without `check_defaults()`, for a
+/// document whose declarations were registered from records, which were
+/// checked whole when they were written.
+pub fn check_document_records(doc: &IrDocument) -> Vec<DeclError> {
+    check_whole(doc, false)
+}
+
+fn check_whole(doc: &IrDocument, defaults: bool) -> Vec<DeclError> {
     let mut c = Checker {
         doc,
         errors: Vec::new(),
+        defaults: defaults.then(|| Indexed::new(doc)),
     };
     c.names();
     for (i, t) in doc.types.iter().enumerate() {
@@ -820,6 +906,7 @@ pub fn check_trait(doc: &IrDocument, index: usize) -> Vec<DeclError> {
     let mut c = Checker {
         doc,
         errors: Vec::new(),
+        defaults: None,
     };
     let path = format!("/traits/{index}");
     c.trait_name(index);

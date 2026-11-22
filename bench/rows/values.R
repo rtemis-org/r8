@@ -32,8 +32,8 @@ mark("GBM", "validate", ops$validate)
 mark("GBM", "dispatch", ops$dispatch)
 
 if (SYSTEM %in% c("R8", "R8 Rust")) {
-  json <- R8::to_json(x)
-  mark("GBM", "json_write", quote(R8::to_json(x)))
+  json <- R8::r8_to_json(x)
+  mark("GBM", "json_write", quote(R8::r8_to_json(x)))
   mark("GBM", "json_read", quote(R8::r8_from_json(GBM, json)))
   emit("GBM", "json_size", nchar(json, type = "bytes"), "B")
 }

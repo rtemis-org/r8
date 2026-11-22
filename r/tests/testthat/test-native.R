@@ -51,14 +51,14 @@ same_construction <- function(type, fields, variant = "") {
 same_identity <- function(x) {
   skip_without_oracle()
   native <- R8:::r8_value_identity(x)
-  ref <- oracle_document_identity(to_json(x), attr(x, "r8_type"))
+  ref <- oracle_document_identity(r8_to_json(x), attr(x, "r8_type"))
   expect_identical(
     native[["canonical"]],
     ref[["canonical"]],
     info = attr(x, "r8_type")
   )
   expect_identical(native[["hash"]], ref[["hash"]], info = attr(x, "r8_type"))
-  expect_true(r8_equal(x, r8_from_json(get_type(x), to_json(x))))
+  expect_true(r8_equal(x, r8_from_json(get_type(x), r8_to_json(x))))
 }
 
 get_type <- function(x) R8:::.r8_types[[attr(x, "r8_type")]]

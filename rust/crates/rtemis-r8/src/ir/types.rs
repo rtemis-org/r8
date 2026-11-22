@@ -527,6 +527,12 @@ pub enum FieldType {
         /// The trait.
         r#trait: QualifiedName,
     },
+    /// `dyn(Parent)` for a struct: the struct or any struct that descends
+    /// from it through `extends`.
+    Descendant {
+        /// The struct.
+        of: QualifiedName,
+    },
 }
 
 fn is_default_keys(k: &CharacterType) -> bool {

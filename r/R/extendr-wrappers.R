@@ -46,6 +46,29 @@ r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, f
 #' @noRd
 r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, value)
 
+#' The ancestors of the registered type `type_name` through `extends`, the
+#' nearest first, and whether the type is stale.
+#'
+#' @param type_name Character: The qualified type name.
+#' @return List: `ancestors`, character; `stale`, logical; `parent`, the
+#'   type's parent or `""`.
+#' @keywords internal
+#' @noRd
+r8_type_ancestors <- function(type_name) .Call(wrap__r8_type_ancestors, type_name)
+
+#' The value of the ancestor `parent` that the R-native value `x` of a
+#' descendant holds: `x`'s first fields, the inherited ones, with the
+#' parent's shared attributes. The elements are the child's, not copies,
+#' and the value is not validated: the child's rules include the parent's,
+#' which read the parent's fields only.
+#'
+#' @param x An R-native struct value.
+#' @param parent Character: The qualified name of an ancestor of `x`'s type.
+#' @return The parent value.
+#' @keywords internal
+#' @noRd
+r8_upcast_value <- function(x, parent) .Call(wrap__r8_upcast_value, x, parent)
+
 #' Saves the registry's documents and namespace owners, which
 #' `r8_registry_restore()` brings back and `r8_registry_release()`
 #' discards; saves nest.
@@ -106,7 +129,9 @@ r8_is_registered <- function(name) .Call(wrap__r8_is_registered, name)
 
 #' Declares the entries of declaration records, in order, through the
 #' declaration checks: one call for a package's records at load, or for the
-#' record a type object carries.
+#' record a type object carries. The records of a package declare into the
+#' namespaces it owns and into namespaces no package owns; an entry of a
+#' namespace another package owns is skipped.
 #'
 #' @param records List: Raw vectors, each a record.
 #' @param source Character: The package the records come from, or `""`.
@@ -256,6 +281,16 @@ r8_json_parse <- function(json) .Call(wrap__r8_json_parse, json)
 #' @keywords internal
 #' @noRd
 r8_declare_type <- function(ir, namespace) .Call(wrap__r8_declare_type, ir, namespace)
+
+#' The qualified names of the stale structs: those whose inherited fields or
+#' rules disagree with their parent's, or whose parent is stale.
+#'
+#' @param namespaces Character: When not empty, only the stale structs
+#'   outside these namespaces that descend from a type in them.
+#' @return Character: The names, sorted.
+#' @keywords internal
+#' @noRd
+r8_stale_types <- function(namespaces) .Call(wrap__r8_stale_types, namespaces)
 
 #' The IR document of one registered type: its namespace and its
 #' declaration.
@@ -458,6 +493,10 @@ r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
 #' @param rules List: A struct's rules.
 #' @param namespace Character: The namespace.
 #' @param package Character: The declaring package, or `""`.
+#' @param parent Character: The qualified name of the struct's parent, or
+#'   `""`.
+#' @param defaults List: The child's defaults of inherited fields, by name.
+#' @param parent_formals List: The parent constructor's formals.
 #' @return List: `owner`, the package that owns the namespace when it is not
 #'   `package`, otherwise `""`; `problems`, as character vectors `code`,
 #'   `path`, and `message`; `record`, the record when the declaration
@@ -465,7 +504,7 @@ r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
 #'   required fields.
 #' @keywords internal
 #' @noRd
-r8_declare <- function(kind, name, description, version, tag, members, rules, namespace, package) .Call(wrap__r8_declare, kind, name, description, version, tag, members, rules, namespace, package)
+r8_declare <- function(kind, name, description, version, tag, members, rules, namespace, package, parent, defaults, parent_formals) .Call(wrap__r8_declare, kind, name, description, version, tag, members, rules, namespace, package, parent, defaults, parent_formals)
 
 #' `type_table(columns, open, rules)`, its columns as fields.
 #' @keywords internal

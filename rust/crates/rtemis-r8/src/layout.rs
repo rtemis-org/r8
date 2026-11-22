@@ -392,11 +392,11 @@ fn value<'a, A: Access<'a>>(
         FieldType::Named { name } => {
             return nested(x, name.clone(), lookup, display, line);
         }
-        FieldType::Dyn { r#trait } => {
-            return match x.implementor(r#trait, lookup) {
+        FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+            return match crate::access::concrete(x, ft, lookup).expect("a dynamic field type") {
                 Ok((name, _)) => nested(x, name, lookup, display, line),
                 Err(_) => {
-                    line.push(Span::new(format!("dyn {}", r#trait), Role::Muted));
+                    line.push(Span::new(element_label(ft), Role::Muted));
                     Nested::None
                 }
             };
@@ -604,6 +604,7 @@ fn element_label(ft: &FieldType) -> String {
         FieldType::Json => "json".into(),
         FieldType::Named { name } => name.to_string(),
         FieldType::Dyn { r#trait } => format!("dyn {}", r#trait),
+        FieldType::Descendant { of } => format!("dyn {of}"),
         FieldType::Vec { element, .. } => format!("vec<{}>", element_label(element)),
         _ => "value".into(),
     }

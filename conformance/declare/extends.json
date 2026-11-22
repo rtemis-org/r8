@@ -1,0 +1,987 @@
+{
+  "$corpus": 1,
+  "description": "`extends`: the flattened fields and rules of a child, checked against a parent in the same document.",
+  "cases": [
+    {
+      "id": "chain",
+      "description": "A three-level chain: each child holds its parent's fields and rules first, marked with the declaring ancestor.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::B"
+              },
+              {
+                "id": "C_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "c"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "unknown-parent",
+      "description": "A parent in the child's namespace that the document does not declare.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_unknown",
+            "path": "/types/0/extends"
+          }
+        ]
+      }
+    },
+    {
+      "id": "enum-parent",
+      "description": "`extends` names an enum.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "A",
+            "description": "",
+            "tag": "type",
+            "version": 1,
+            "variants": [
+              {
+                "name": "X",
+                "description": "",
+                "shape": "unit"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_not_struct",
+            "path": "/types/1/extends"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cycle",
+      "description": "Two structs that extend each other.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "X",
+            "description": "",
+            "version": 1,
+            "fields": [],
+            "extends": "ns::Y"
+          },
+          {
+            "kind": "struct",
+            "name": "Y",
+            "description": "",
+            "version": 1,
+            "fields": [],
+            "extends": "ns::X"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_cycle",
+            "path": "/types/0/extends"
+          },
+          {
+            "code": "extends_cycle",
+            "path": "/types/1/extends"
+          }
+        ]
+      }
+    },
+    {
+      "id": "field-changed",
+      "description": "An inherited field with a unit its parent does not declare.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A",
+                "unit": "mg"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_field_changed",
+            "path": "/types/1/fields/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sensitive-tightens",
+      "description": "A child marks an inherited field sensitive and changes its default and description.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "The a of B.",
+                "inherited_from": "ns::A",
+                "sensitive": true,
+                "default": 2.0
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "sensitive-widens",
+      "description": "A child drops `sensitive` from an inherited field.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "sensitive": true
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_field_changed",
+            "path": "/types/1/fields/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-dropped",
+      "description": "A child without its parent's rule.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_rule_changed",
+            "path": "/types/1/rules"
+          }
+        ]
+      }
+    },
+    {
+      "id": "order",
+      "description": "An inherited field after the child's own.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              },
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_order",
+            "path": "/types/1/fields/1/inherited_from"
+          }
+        ]
+      }
+    },
+    {
+      "id": "inherited-without-extends",
+      "description": "A struct without `extends` with fields and rules marked inherited.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "A_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "inherited_from": "ns::A"
+              },
+              {
+                "id": "B_POS",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "b"
+                    },
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "extends_order",
+            "path": "/types/1/fields/0/inherited_from"
+          },
+          {
+            "code": "extends_order",
+            "path": "/types/1/rules/0/inherited_from"
+          }
+        ]
+      }
+    },
+    {
+      "id": "defaults-violate-rule",
+      "description": "Every field of the child has a default, and the value of the defaults violates the child's rule.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "default": 1.0
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "default": 1.0,
+                "inherited_from": "ns::A"
+              }
+            ],
+            "extends": "ns::A",
+            "rules": [
+              {
+                "id": "BIG",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    5
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_violates_rule",
+            "path": "/types/1/rules/0"
+          }
+        ]
+      }
+    }
+  ]
+}

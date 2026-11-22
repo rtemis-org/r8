@@ -13,7 +13,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use crate::ir::{DeclError, ImplDef, TraitDef, TypeDef, check_document, check_trait, check_type};
+use crate::ir::{
+    DeclError, ImplDef, TraitDef, TypeDef, check_defaults, check_document_records, check_extends,
+    check_trait, check_type,
+};
 use crate::name::{Name, QualifiedName};
 use crate::record::{self, Declaration, DeclarationRef, Entry};
 use crate::rules::{DocumentSet, TypeLookup};
@@ -46,6 +49,10 @@ pub struct Outcome {
     /// The declaration's problems, with paths relative to the declaration;
     /// a declaration with problems leaves the documents unchanged.
     pub problems: Vec<DeclError>,
+    /// The structs that the declaration leaves stale: the declared struct,
+    /// when its parent is stale, and its descendants that disagree with
+    /// their parents.
+    pub stale: Vec<QualifiedName>,
 }
 
 /// A problem of the registry itself.
@@ -108,13 +115,27 @@ impl State {
         let docs = Arc::make_mut(&mut self.documents);
         let placed = docs.put_type(ns, def);
         let (d, index) = (placed.document, placed.index);
-        let checked = guarded(|| check_type(docs.document(d), index));
+        let checked = guarded(|| {
+            let mut p = check_type(docs.document(d), index);
+            if p.is_empty()
+                && let TypeDef::Struct(s) = &docs.document(d).types[index]
+            {
+                let at = format!("/types/{index}");
+                p = check_extends(s, &q, &at, &*docs, false);
+                if p.is_empty() {
+                    p = check_defaults(s, &q, &at, &*docs);
+                }
+            }
+            p
+        });
         match checked {
             Ok(p) if p.is_empty() => {
+                let stale = refresh_stale(docs, &q);
                 self.changed();
                 Ok(Outcome {
                     changed: true,
                     problems: p,
+                    stale,
                 })
             }
             Ok(p) => {
@@ -122,6 +143,7 @@ impl State {
                 Ok(Outcome {
                     changed: false,
                     problems: relative(p, &format!("/types/{index}")),
+                    stale: Vec::new(),
                 })
             }
             Err(e) => {
@@ -149,6 +171,7 @@ impl State {
                 Ok(Outcome {
                     changed: true,
                     problems: p,
+                    stale: Vec::new(),
                 })
             }
             Ok(p) => {
@@ -156,6 +179,7 @@ impl State {
                 Ok(Outcome {
                     changed: false,
                     problems: relative(p, &format!("/traits/{index}")),
+                    stale: Vec::new(),
                 })
             }
             Err(e) => {
@@ -198,7 +222,9 @@ impl State {
                 if TypeLookup::find(&*self.documents, &q) == Some(&t) {
                     return false;
                 }
-                Arc::make_mut(&mut self.documents).put_type(ns, t);
+                let docs = Arc::make_mut(&mut self.documents);
+                let _ = docs.put_type(ns, t);
+                refresh_stale(docs, &q);
                 self.changed();
                 true
             }
@@ -217,6 +243,37 @@ impl State {
             Declaration::Impl(i) => self.put_impl(ns, i),
         }
     }
+}
+
+/// Marks the struct `q` and its descendants stale or not, every parent
+/// before its children: a struct is stale when its parent is stale or its
+/// inherited fields or rules disagree with its parent's. Returns the stale
+/// ones.
+fn refresh_stale(docs: &mut DocumentSet, q: &QualifiedName) -> Vec<QualifiedName> {
+    // A struct outside every chain, when nothing is stale, stays so.
+    let in_chain = matches!(
+        TypeLookup::find(&*docs, q),
+        Some(TypeDef::Struct(s)) if s.extends.is_some()
+    );
+    if !in_chain && docs.children(q).is_empty() && !docs.has_stale() {
+        return Vec::new();
+    }
+    let mut order = vec![q.clone()];
+    order.extend(docs.descendants(q));
+    let mut out = Vec::new();
+    for t in &order {
+        let stale = match TypeLookup::find(&*docs, t) {
+            Some(TypeDef::Struct(s)) => s.extends.as_ref().is_some_and(|p| {
+                docs.is_stale(p) || !check_extends(s, t, "", &*docs, true).is_empty()
+            }),
+            _ => false,
+        };
+        docs.set_stale(t, stale);
+        if stale {
+            out.push(t.clone());
+        }
+    }
+    out
 }
 
 /// Paths of a document's problems, relative to the declaration at `prefix`.
@@ -340,12 +397,45 @@ impl Registry {
     /// The problems of whole namespaces, each document checked once: what a
     /// declaration's own check cannot see, such as a rule that reads a field
     /// of a type declared again without that field.
+    ///
+    /// A struct of these namespaces whose parent is in another namespace is
+    /// checked against it, so that a package built against an earlier
+    /// declaration of a parent reports `extends_stale`. A struct of another
+    /// namespace that the parent's declaration leaves stale is not a problem
+    /// of these namespaces; [`Registry::stale_types`] lists it.
     pub fn check_namespaces(&self, namespaces: &[String]) -> Vec<(String, DeclError)> {
         let docs = self.snapshot();
         let mut out = Vec::new();
         for n in namespaces {
             if let Some(doc) = docs.documents().iter().find(|d| d.namespace.as_str() == n) {
-                out.extend(check_document(doc).into_iter().map(|e| (n.clone(), e)));
+                out.extend(
+                    check_document_records(doc)
+                        .into_iter()
+                        .map(|e| (n.clone(), e)),
+                );
+            }
+        }
+        for doc in docs.documents() {
+            if !namespaces.iter().any(|n| n == doc.namespace.as_str()) {
+                continue;
+            }
+            for (i, t) in doc.types.iter().enumerate() {
+                let TypeDef::Struct(s) = t else { continue };
+                let Some(parent) = &s.extends else { continue };
+                // `check_document()` checks a parent in the child's own
+                // document.
+                if parent.namespace == doc.namespace {
+                    continue;
+                }
+                let q = QualifiedName {
+                    namespace: doc.namespace.clone(),
+                    name: s.name.clone(),
+                };
+                out.extend(
+                    check_extends(s, &q, &format!("/types/{i}"), &*docs, true)
+                        .into_iter()
+                        .map(|e| (doc.namespace.to_string(), e)),
+                );
             }
         }
         out
@@ -368,6 +458,11 @@ impl Registry {
                 None
             }
         }
+    }
+
+    /// The stale structs, sorted by qualified name.
+    pub fn stale_types(&self) -> Vec<QualifiedName> {
+        self.snapshot().stale_types()
     }
 
     /// The package that owns `namespace`, without claiming it.

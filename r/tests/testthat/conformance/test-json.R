@@ -9,7 +9,7 @@
 test_that("a document round trips to an equal value", {
   p <- conformance_provider()
   x <- conform_value(p)
-  json <- to_json(x)
+  json <- r8_to_json(x)
   expect_match(
     json,
     sprintf('"$type":"%s::Conform"', p[["namespace"]]),
@@ -17,13 +17,13 @@ test_that("a document round trips to an equal value", {
   )
   y <- r8_from_json(p[["Conform"]], json)
   expect_true(r8_equal(x, y))
-  expect_identical(to_json(y), json)
+  expect_identical(r8_to_json(y), json)
   expect_identical(r8_hash(y), r8_hash(x))
 })
 
 test_that("a document outside the type reports its problems", {
   p <- conformance_provider()
-  json <- to_json(conform_value(p))
+  json <- r8_to_json(conform_value(p))
   bad <- sub('"ratio":0.5', '"ratio":2', json, fixed = TRUE)
   e <- expect_error(r8_from_json(p[["Conform"]], bad), class = "r8_value_error")
   expect_identical(paste(e$problems$code, e$problems$path), "above_max /ratio")
@@ -60,5 +60,5 @@ test_that("fields of every R8 field type round trip through JSON", {
     map = c(a = 1, b = 2),
     doc = list(k = list(1, "two"))
   )
-  expect_true(r8_equal(r8_from_json(p[["Every"]], to_json(x)), x))
+  expect_true(r8_equal(r8_from_json(p[["Every"]], r8_to_json(x)), x))
 })

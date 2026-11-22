@@ -546,6 +546,7 @@ pub fn rule(
         when,
         message: message.map(str::to_string),
         id,
+        inherited_from: None,
     })
 }
 

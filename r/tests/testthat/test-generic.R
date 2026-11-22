@@ -26,14 +26,14 @@ test_that("generic() declares a generic and implement() its methods", {
   out <- declare_in("gen1", {
     describe <- generic("describe", "x", description = "Describes x.")
     d0 <- describe
-    implement(describe, GBM) <- function(x, ...) paste(x$n_trees, "trees")
-    implement(describe, Kernel) <- function(x, ...) "a kernel"
+    implement(describe, GBM) <- function(x) paste(x$n_trees, "trees")
+    implement(describe, Kernel) <- function(x) "a kernel"
     list(describe = describe, unchanged = identical(describe, d0))
   })
   describe <- out[["describe"]]
   expect_true(out[["unchanged"]])
   expect_s3_class(describe, "r8_generic")
-  expect_identical(names(formals(describe)), c("x", "..."))
+  expect_identical(names(formals(describe)), "x")
   expect_identical(attr(describe, "r8_trait"), "gen1::describe")
   expect_identical(describe(GBM(n_trees = 5L)), "5 trees")
   expect_identical(describe(Kernel@Rbf(gamma = 0.1)), "a kernel")
@@ -42,15 +42,15 @@ test_that("generic() declares a generic and implement() its methods", {
   ir <- unclass(R8:::.r8_traits[["gen1::describe"]])[["ir"]]
   expect_true(ir[["generic"]])
   expect_identical(ir[["methods"]][[1L]][["name"]], "describe")
-  expect_identical(unlist(ir[["methods"]][[1L]][["params"]]), c("x", "..."))
+  expect_identical(unlist(ir[["methods"]][[1L]][["params"]]), "x")
   expect_identical(r8_method(describe, GBM)(GBM(n_trees = 2L)), "2 trees")
-  expect_output(print(describe), "<R8 generic gen1::describe>")
+  expect_output(print(describe), "<r8 generic gen1::describe>")
   expect_output(print(describe), "Methods for: gen1::GBM, gen1::Kernel")
 })
 
-test_that("generic() takes its arguments by name and appends ...", {
+test_that("generic() takes its arguments as given", {
   g <- declare_in("gen2", generic("score", c("model", "data")))
-  expect_identical(names(formals(g)), c("model", "data", "..."))
+  expect_identical(names(formals(g)), c("model", "data"))
   g2 <- declare_in("gen2", generic("rescore", c("model", "...", "data")))
   expect_identical(names(formals(g2)), c("model", "...", "data"))
 })
@@ -229,4 +229,52 @@ test_that("implement() refuses the functions R8 owns, operators, and non-generic
   refuse(try_impl(function(x) x), "not a generic")
   refuse(try_impl(methods::show), "S4 generic")
   refuse(try_impl(1), "takes a generic")
+})
+
+
+test_that("a method has the generic's arguments, and adds its own only after ...", {
+  ty <- gbm_types("gen9")
+  GBM <- ty[["GBM"]]
+  declare_in("gen9", {
+    exact <- generic("exact", "x")
+    expect_error(
+      implement(exact, GBM) <- function(x, ...) NULL,
+      "takes exactly the generic's arguments: function(x)",
+      fixed = TRUE,
+      class = "r8_declaration_error"
+    )
+    expect_error(
+      implement(exact, GBM) <- function(x, digits) NULL,
+      "takes exactly",
+      class = "r8_declaration_error"
+    )
+    implement(exact, GBM) <- function(x) x$n_trees
+    x <- GBM(n_trees = 3L)
+    expect_identical(exact(x), 3L)
+    # An argument the generic does not declare is an error at the call.
+    expect_error(exact(x, digits = 2))
+    open <- generic("open_ended", c("x", "..."))
+    expect_error(
+      implement(open, GBM) <- function(x, digits = 1) NULL,
+      "`...` included",
+      class = "r8_declaration_error"
+    )
+    implement(open, GBM) <- function(x, ..., digits = 1) x$n_trees * digits
+    expect_identical(open(x, digits = 2L), 6L)
+    # impl() checks a method's arguments as implement() does.
+    Size <- new_trait(
+      "Size",
+      methods = list(size = trait_method(function(x) NULL))
+    )
+    expect_error(
+      impl(Size, GBM, methods = list(size = function(x, ...) 1L)),
+      "gen9::Size@size",
+      class = "r8_declaration_error"
+    )
+    expect_error(
+      trait_method(function(x) NULL, default = function(x, y) NULL),
+      "the default",
+      class = "r8_declaration_error"
+    )
+  })
 })

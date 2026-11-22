@@ -175,6 +175,7 @@ fn sample_types() -> Vec<FieldType> {
         invariant: serde_json::from_value(json!({"<": [{"var": "start"}, 10]})).unwrap(),
         when: Some(serde_json::from_value(json!({"!": {"is_null": {"var": "start"}}})).unwrap()),
         message: Some("start is small.".into()),
+        inherited_from: Some(Box::new(q("ns::Grand"))),
     };
     let out = vec![
         FieldType::Logical,
@@ -261,6 +262,7 @@ fn sample_types() -> Vec<FieldType> {
         FieldType::Dyn {
             r#trait: q("ns::Kernel"),
         },
+        FieldType::Descendant { of: q("ns::Base") },
     ];
     for t in &out {
         match t {
@@ -285,7 +287,8 @@ fn sample_types() -> Vec<FieldType> {
             | FieldType::Hashmap { .. }
             | FieldType::OrderedMap { .. }
             | FieldType::Named { .. }
-            | FieldType::Dyn { .. } => {}
+            | FieldType::Dyn { .. }
+            | FieldType::Descendant { .. } => {}
         }
     }
     out
@@ -408,6 +411,7 @@ fn sample_struct() -> TypeDef {
             invariant: serde_json::from_value(json!({"nope": [1], "two": 2})).unwrap(),
             when: None,
             message: Some("kept as written".into()),
+            inherited_from: None,
         }],
         migrations: vec![
             Migration {
@@ -534,11 +538,11 @@ fn samples_of_every_member_round_trip() {
     );
 }
 
-/// The golden record of format 2: `tests/fixtures/sample.r8d` holds the
-/// samples as format 2 wrote them, and `sample.r8d.json` their IR. With
+/// The golden record of format 3: `tests/fixtures/sample.r8d` holds the
+/// samples as format 3 wrote them, and `sample.r8d.json` their IR. With
 /// `R8_UPDATE_RECORD=1`, the test writes both files.
 #[test]
-fn the_golden_record_of_format_2_reads_and_writes_back() {
+fn the_golden_record_of_format_3_reads_and_writes_back() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let (_, entries) = sample_record();
     let bytes = encode_entries(&entries);
@@ -556,7 +560,7 @@ fn the_golden_record_of_format_2_reads_and_writes_back() {
     // The header names the writer; the payload from the checksum on is the
     // format's bytes, which the current encoder reproduces.
     let (format, _) = record::header(&golden).unwrap();
-    assert_eq!(format, 2);
+    assert_eq!(format, 3);
     let payload = |b: &[u8]| {
         let (_, writer) = record::header(b).unwrap();
         b[4 + 1 + 1 + writer.len()..].to_vec()
@@ -609,7 +613,7 @@ fn damaged_and_hostile_records_return_errors() {
     magic[0] = b'X';
     assert_eq!(record::decode(&magic), Err(RecordError::Magic));
     // A format other than the current one is refused.
-    for other in [1u8, 3] {
+    for other in [2u8, 4] {
         let mut b = bytes.clone();
         b[4] = other;
         assert!(matches!(

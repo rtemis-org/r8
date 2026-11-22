@@ -11,6 +11,8 @@ new_struct(
   description = "",
   version = 1L,
   rules = list(),
+  extends = NULL,
+  defaults = list(),
   native = FALSE
 )
 
@@ -26,7 +28,16 @@ types.}
 
 \item{version}{Integer: The type's version, from 1.}
 
-\item{rules}{A \code{rule()}, or a list of \code{rule()} calls, over the fields.}
+\item{rules}{A \code{rule()}, or a list of \code{rule()} calls, over the fields.
+A child's rules add to the rules it inherits.}
+
+\item{extends}{Optional R8 struct type: The parent. The child holds the
+parent's fields, then its own \code{fields}, and the parent's rules, then its
+own \code{rules}; its values belong to the parent's class, and impls of the
+parent apply to them where the child has none.}
+
+\item{defaults}{Named list: The child's defaults of inherited fields, by
+field name. \code{NULL} removes the default of an \code{option()} field.}
 
 \item{native}{Logical: A Rust-native type, whose values the codec in the
 package's compiled exports builds and holds (\code{R8.h}). Its constructor
@@ -55,6 +66,11 @@ console belong to the option \code{r8.namespace}, \code{"global"} by default.
 op <- options(r8.namespace = "demo")
 Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()),
   description = "A point.")
+Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()),
+  rules = rule(lo <= hi, message = "lo is at most hi."))
+Window <- new_struct("Window", fields = list(label = type_character()),
+  extends = Range)
+Window(lo = 1, hi = 2, label = "w")
 options(op)
 
 }

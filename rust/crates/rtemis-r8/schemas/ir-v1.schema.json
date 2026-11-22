@@ -884,6 +884,25 @@
             "trait"
           ],
           "description": "`dyn(Trait)`: any type that implements the trait."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "descendant"
+            },
+            "of": {
+              "$ref": "#/$defs/QualifiedName",
+              "description": "The struct."
+            }
+          },
+          "required": [
+            "kind",
+            "of"
+          ],
+          "description": "`dyn(Parent)` for a struct: the struct or any struct that descends\nfrom it through `extends`."
         }
       ],
       "description": "A field type."
@@ -932,6 +951,17 @@
             "null"
           ],
           "description": "What holds, stated for the user; a violation of a rule without one\nshows its invariant, rendered by the host."
+        },
+        "inherited_from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QualifiedName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ancestor that declared the rule, for a rule that `extends`\nflattened into a child."
         }
       },
       "required": [

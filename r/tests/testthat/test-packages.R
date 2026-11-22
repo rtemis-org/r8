@@ -12,7 +12,13 @@
 run_r <- function(lib, code) {
   script <- tempfile(fileext = ".R")
   writeLines(
-    c(sprintf(".libPaths(c(%s, .libPaths()))", deparse(lib)), code),
+    c(
+      sprintf(
+        ".libPaths(c(%s, .libPaths()))",
+        paste(deparse(lib), collapse = "")
+      ),
+      code
+    ),
     script
   )
   # R_LIBS reaches the worker processes that mirai and future start.
@@ -74,7 +80,7 @@ test_that("packages declaring R8 types register, dispatch, and persist", {
       "cat('class', class(x)[1], '\\n')",
       "r <- tryCatch(Rect(w = 1, h = 2), error = function(e) conditionMessage(e))",
       "cat('rule', grepl('WIDE', r), '\\n')",
-      "y <- R8::r8_from_json(Rect, R8::to_json(x))",
+      "y <- R8::r8_from_json(Rect, R8::r8_to_json(x))",
       "cat('roundtrip', identical(x, y), '\\n')",
       sprintf("saveRDS(x, %s)", deparse(rds)),
       "cat('hash', R8::r8_hash(x), '\\n')"
@@ -211,7 +217,7 @@ test_that("load_all() twice replaces a package's declarations", {
       sprintf("pkgload::load_all(%s, quiet = TRUE)", deparse(path)),
       "x <- Rect(w = 3, h = 2)",
       "cat('area', area(x), '\\n')",
-      "cat('json', nchar(R8::to_json(x)) > 0, '\\n')"
+      "cat('json', nchar(R8::r8_to_json(x)) > 0, '\\n')"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -286,7 +292,7 @@ test_that("Rust-native values read, change, persist, and cross workers", {
       "cat('copy', w[1], s$values[1], '\\n')",
       "cat('equal', R8::r8_equal(s, Signal(name = 'a', values = c(1.5, 2, 3))), '\\n')",
       "cat('hash', R8::r8_hash(s) == R8::r8_hash(Signal(name = 'a', values = c(1.5, 2, 3))), '\\n')",
-      "r <- R8::r8_from_json(Signal, R8::to_json(s))",
+      "r <- R8::r8_from_json(Signal, R8::r8_to_json(s))",
       "cat('json', grepl('r8 native', inspect(r)), R8::r8_equal(r, s), '\\n')",
       "t <- s; t$name <- 'b'",
       "cat('set', t$name, s$name, t$values, '\\n')",
@@ -383,7 +389,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "rn <- unserialize(serialize(b, NULL, version = 2))",
       "e <- tryCatch(distance(a, 1), error = function(e) conditionMessage(e))",
       "cat('distance', distance(a, b), distance(a, rn), grepl('`y` is not a `pkgr::Signal`', e, fixed = TRUE), '\\n')",
-      "r <- R8::r8_from_json(Signal, R8::to_json(s))",
+      "r <- R8::r8_from_json(Signal, R8::r8_to_json(s))",
       "cat('json', R8::r8_equal(r, s), '\\n')",
       "u <- unserialize(serialize(s, NULL))",
       "cat('serialize', R8::r8_equal(u, s), '\\n')",
@@ -476,7 +482,7 @@ test_that("Rust-native enums construct, read, change, persist, and cross workers
       "cat('set', native(k2), k2$k, k$k, attr(k2, 'r8_variant'), '\\n')",
       "e <- tryCatch(k$train, error = function(e) 'no_field')",
       "cat('variant_field', e, '\\n')",
-      "r <- R8::r8_from_json(Resampler, R8::to_json(c1))",
+      "r <- R8::r8_from_json(Resampler, R8::r8_to_json(c1))",
       "cat('json', native(r), R8::r8_equal(r, c1), '\\n')",
       "u <- unserialize(serialize(f, NULL)); v <- unserialize(serialize(l, NULL))",
       "cat('serialize', native(u), R8::r8_equal(u, f), native(v), attr(v, 'r8_variant'), '\\n')",
@@ -550,7 +556,7 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
       "cat('kfold', native(k), k$k, native(k2), k2$k, '\\n')",
       "l <- Resampler@Loocv",
       "cat('unit', native(l), length(l), attr(l, 'r8_variant'), '\\n')",
-      "r <- R8::r8_from_json(Resampler, R8::to_json(k))",
+      "r <- R8::r8_from_json(Resampler, R8::r8_to_json(k))",
       "cat('json', native(r), R8::r8_equal(r, k), '\\n')",
       "u <- unserialize(serialize(l, NULL))",
       "cat('serialize', native(u), attr(u, 'r8_variant'), '\\n')",
@@ -889,4 +895,74 @@ test_that("the conformance tests pass against the Rust-native pkgr::Conform", {
     )
   )
   expect_true("mirror TRUE " %in% out, info = paste(out, collapse = "\n"))
+})
+
+
+test_that("a struct extends another package's struct, and a changed parent refuses it", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({library(r8pkgA); library(r8pkgB)})",
+      "x <- Panel(w = 3, h = 2, label = 'p')",
+      "cat('class', paste(class(x), collapse = ','), '\\n')",
+      "r <- tryCatch(Panel(w = 1, h = 2, label = 'p'), error = function(e) conditionMessage(e))",
+      "cat('rule', grepl('WIDE', r), '\\n')",
+      # pkga::Rect declared again with another field, as a reloaded r8pkgA
+      # would: Panel is stale, and r8pkgA's load warns of it.
+      "ir <- R8:::r8_type_ir('pkga::Rect')",
+      "ir$fields <- c(ir$fields, list(list(name = 'd', type = list(kind = 'double'))))",
+      "invisible(R8:::r8_declare_type(ir, 'pkga'))",
+      "w <- tryCatch(R8:::stale_elsewhere('r8pkgA'), warning = function(w) w)",
+      "cat('warning', inherits(w, 'r8_stale_warning'), grepl('pkgb::Panel', conditionMessage(w)), '\\n')",
+      "e <- tryCatch(Panel(w = 3, h = 2, label = 'p'), error = function(e) conditionMessage(e))",
+      "cat('stale', grepl('declare `pkgb::Panel` again', e, fixed = TRUE), '\\n')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("class pkgb::Panel,pkga::Rect,r8_value " %in% out, info = info)
+  expect_true("rule TRUE " %in% out, info = info)
+  expect_true("warning TRUE TRUE " %in% out, info = info)
+  expect_true("stale TRUE " %in% out, info = info)
+  # r8pkgB installed against an earlier r8pkgA is refused at load.
+  src <- tempfile("r8pkgA2")
+  dir.create(src)
+  file.copy(test_path("packages", "r8pkgA"), src, recursive = TRUE)
+  types <- file.path(src, "r8pkgA", "R", "types.R")
+  writeLines(
+    sub(
+      "h = R8::type_double(min = 0),",
+      "h = R8::type_double(min = 0),\n    d = R8::field(R8::type_double(), default = 0),",
+      readLines(types),
+      fixed = TRUE
+    ),
+    types
+  )
+  lib2 <- tempfile("r8lib2")
+  dir.create(lib2)
+  system2(
+    file.path(R.home("bin"), "R"),
+    c(
+      "CMD",
+      "INSTALL",
+      "--no-test-load",
+      paste0("--library=", lib2),
+      file.path(src, "r8pkgA")
+    ),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  out <- run_r(
+    c(lib2, lib),
+    c(
+      "library(r8pkgA)",
+      "r <- tryCatch(library(r8pkgB), error = function(e) conditionMessage(e))",
+      "cat('refused', grepl('extends_stale', paste(r, collapse = ' ')), '\\n')"
+    )
+  )
+  expect_true("refused TRUE " %in% out, info = paste(out, collapse = "\n"))
 })

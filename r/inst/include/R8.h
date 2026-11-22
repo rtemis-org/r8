@@ -157,7 +157,7 @@ typedef struct R8TypeVTable {
   /* Builds a state from the type's fields, `n` R values in declaration
    * order, which R8 has validated and converted to their stored forms. */
   R8Status (*from_fields)(const SEXP *fields, size_t n, void **state, R8Error *err);
-  /* Writes the state's JSON document, for export (`to_json()`). */
+  /* Writes the state's JSON document, for export (`r8_to_json()`). */
   R8Status (*encode)(const void *state, R8Writer *out, R8Error *err);
   /* Writes the state's bytes, in a form of the package's choosing, for
    * `saveRDS()` and parallel workers. R8 calls it twice per serialization,

@@ -263,7 +263,7 @@ test_that("json_ir() carries JSON into the IR as written", {
   )
   expect_error(json_ir("{not json"), class = "r8_declaration_error")
   expect_error(json_ir(c("1", "2")), class = "r8_declaration_error")
-  expect_output(print(json_ir("[1, 2]")), "<r8_json_ir> [1, 2]", fixed = TRUE)
+  expect_output(print(json_ir("[1, 2]")), "<r8 json_ir> [1, 2]", fixed = TRUE)
 })
 
 test_that("a native type constructs values once its codec is registered", {

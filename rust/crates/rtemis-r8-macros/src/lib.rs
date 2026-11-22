@@ -286,6 +286,7 @@ fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
             when: #when,
             message: #message,
             id: #id,
+            inherited_from: ::std::option::Option::None,
         }
     })
 }

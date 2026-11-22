@@ -23,7 +23,7 @@ for tests and inspection.
 op <- options(r8.namespace = "models")
 GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
 describe <- generic("describe", "x")
-implement(describe, GBM) <- function(x, ...) "Gradient boosting"
+implement(describe, GBM) <- function(x) "Gradient boosting"
 r8_method(describe, GBM)
 options(op)
 

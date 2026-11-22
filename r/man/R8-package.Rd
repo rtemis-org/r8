@@ -14,6 +14,38 @@ with other host languages.
 \code{\link[=r8_core_version]{r8_core_version()}}.
 }
 
+\section{Names}{
+
+A function that a declaration is written with takes no prefix:
+\code{\link[=new_struct]{new_struct()}}, \code{\link[=type_double]{type_double()}}, \code{\link[=field]{field()}}, \code{\link[=rule]{rule()}}, \code{\link[=impl]{impl()}},
+\code{\link[=generic]{generic()}}, and the standard traits. A function that operates on values,
+types, or packages takes the prefix \code{r8_}: \code{\link[=r8_to_json]{r8_to_json()}}, \code{\link[=r8_hash]{r8_hash()}},
+\code{\link[=r8_validate]{r8_validate()}}, \code{\link[=r8_register]{r8_register()}}. S3 classes, condition classes, and value
+attributes take the prefix \code{r8_}; \code{R8_} prefixes the constants of the C
+header \code{R8.h} and the environment variable \code{R8_OUTPUT_TYPE}.
+}
+
+\section{Conditions}{
+
+Every error R8 signals has the class \code{r8_error}, after one of:
+\itemize{
+\item \code{r8_declaration_error}: a declaration of a type, trait, impl, or generic
+that does not pass its checks, or a package whose declarations do not
+register.
+\item \code{r8_type_error}: an argument of the wrong kind, such as a type object
+where a value is expected.
+\item \code{r8_value_error}: a value that does not satisfy its type; its subclass
+\code{r8_codec_missing} is a Rust-native type whose codec is not registered.
+\item \code{r8_dispatch_error}: a generic or trait method with no impl for the
+value's type.
+\item \code{r8_text_error}: text output given invalid arguments.
+}
+
+Every warning R8 signals has the class \code{r8_warning}; \code{r8_stale_warning} is
+a declaration that leaves structs stale, which extend an earlier
+declaration of their parent.
+}
+
 \seealso{
 Useful links:
 \itemize{

@@ -266,12 +266,15 @@ fn named_in(ft: &FieldType, out: &mut Vec<QualifiedName>) {
     }
 }
 
-/// Removes what the declaration hash excludes: descriptions and extensions.
+/// Removes what the declaration hash excludes: descriptions, extensions,
+/// a struct's `extends`, and the `inherited_from` marks of fields and rules,
+/// so that the hash covers the flattened declaration.
 fn strip(def: &mut TypeDef) {
     fn fields(fs: &mut [FieldDef]) {
         for f in fs {
             f.description = Box::default();
             f.extensions = None;
+            f.inherited_from = None;
             if let FieldType::Table { columns, .. } = &mut f.ty {
                 fields(columns);
             }
@@ -286,7 +289,11 @@ fn strip(def: &mut TypeDef) {
         TypeDef::Struct(s) => {
             s.description.clear();
             s.extensions.clear();
+            s.extends = None;
             fields(&mut s.fields);
+            for r in &mut s.rules {
+                r.inherited_from = None;
+            }
         }
         TypeDef::Enum(e) => {
             e.description.clear();
@@ -303,8 +310,9 @@ fn strip(def: &mut TypeDef) {
 
 /// The declaration hash of a type: the SHA-256 of the canonical text of an
 /// object mapping the qualified name of the type and of every named type it
-/// reaches to its declaration, with descriptions emptied and extensions removed. A
-/// reached type outside the lookup maps to `null`.
+/// reaches to its declaration, with descriptions emptied, and extensions,
+/// `extends`, and `inherited_from` removed. A reached type outside the
+/// lookup maps to `null`.
 pub fn declaration_hash(ty: &QualifiedName, lookup: &dyn TypeLookup) -> String {
     let mut seen = std::collections::BTreeMap::new();
     reachable(ty, lookup, &mut seen);
@@ -567,7 +575,7 @@ pub fn read_document_cached(
 /// A field type through which a value can hold a named type.
 fn holds_named(ft: &FieldType) -> bool {
     match ft {
-        FieldType::Named { .. } | FieldType::Dyn { .. } => true,
+        FieldType::Named { .. } | FieldType::Dyn { .. } | FieldType::Descendant { .. } => true,
         FieldType::Option { inner, .. } => holds_named(inner),
         FieldType::Vec { element, .. } => holds_named(element),
         FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
@@ -605,8 +613,8 @@ fn contained<'a, A: Access<'a>>(
             });
         }
         FieldType::Named { name } => contained_named(v, name, lookup, out),
-        FieldType::Dyn { r#trait } => {
-            if let Ok((ty, _)) = v.implementor(r#trait, lookup) {
+        FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+            if let Some(Ok((ty, _))) = crate::access::concrete(v, ft, lookup) {
                 contained_named(v, &ty, lookup, out);
             }
         }
@@ -696,9 +704,10 @@ pub fn fill_defaults(t: &mut Tree, ft: &FieldType, lookup: &dyn TypeLookup) {
             }
         }
         FieldType::Named { name } => fill_named(t, name, lookup),
-        FieldType::Dyn { r#trait } => {
-            let found = crate::access::JsonOf::of(TreeRef::new(t)).implementor(r#trait, lookup);
-            if let Ok((ty, _)) = found {
+        FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+            let found =
+                crate::access::concrete(crate::access::JsonOf::of(TreeRef::new(t)), ft, lookup);
+            if let Some(Ok((ty, _))) = found {
                 fill_named(t, &ty, lookup);
             }
         }

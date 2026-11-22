@@ -120,12 +120,12 @@ impl Eq<'_> {
                 _ => false,
             },
             FieldType::Named { name } => self.named(name, a, b),
-            FieldType::Dyn { r#trait } => {
+            FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
                 match (
-                    a.implementor(r#trait, lookup),
-                    b.implementor(r#trait, lookup),
+                    crate::access::concrete(a, ft, lookup),
+                    crate::access::concrete(b, ft, lookup),
                 ) {
-                    (Ok((x, _)), Ok((y, _))) if x == y => self.named(&x, a, b),
+                    (Some(Ok((x, _))), Some(Ok((y, _)))) if x == y => self.named(&x, a, b),
                     _ => false,
                 }
             }

@@ -100,7 +100,11 @@ generic_formals <- function(f) {
 
 
 # %% check_method_formals ----
-#' Abort unless a method's formals begin with its generic's
+#' Abort unless a method's formals fit its generic's
+#'
+#' A method of a generic without `...` has exactly the generic's formals, in
+#' order. A method of a generic with `...` has the generic's formals in
+#' order, `...` included, and may add named arguments after them.
 #'
 #' @param fn Function: The method.
 #' @param gen_args Character: The generic's formal argument names.
@@ -119,15 +123,22 @@ check_method_formals <- function(fn, gen_args, label) {
       class = "r8_declaration_error"
     )
   }
-  own <- names(formals(fn))
-  if (
-    length(gen_args) > 0L &&
-      !identical(own[seq_along(gen_args)], gen_args)
-  ) {
+  own <- names(formals(fn)) %||% character()
+  dots <- "..." %in% gen_args
+  fits <- if (dots) {
+    identical(own[seq_along(gen_args)], gen_args)
+  } else {
+    identical(own, gen_args)
+  }
+  if (!fits) {
     r8_abort(
       "The method of `",
       label,
-      "` takes the generic's arguments first: function(",
+      if (dots) {
+        "` takes the generic's arguments first, `...` included, and may add named arguments: function("
+      } else {
+        "` takes exactly the generic's arguments: function("
+      },
       paste(gen_args, collapse = ", "),
       ").",
       class = "r8_declaration_error"
@@ -149,8 +160,12 @@ check_method_formals <- function(fn, gen_args, label) {
 #' @param name Character: The generic's name, an R8 name such as
 #'   `"describe"`: a letter, then letters, digits, or underscores. It is the
 #'   name the generic is assigned to.
-#' @param args Character: The formal argument names. The first is the value
-#'   dispatched on; `...` is appended when absent.
+#' @param args Character: The formal argument names, in order. The first is
+#'   the value dispatched on. A generic with `...` lets each method add named
+#'   arguments after the generic's; a generic without it calls its methods
+#'   with exactly its arguments, and a call with another argument is an
+#'   error. Removing `...` from a generic breaks the methods that add
+#'   arguments.
 #' @param description Character: What the generic does.
 #'
 #' @return `generic()`: The generic, a function of class `r8_generic`. `print()`: `x`, invisibly.
@@ -161,7 +176,7 @@ check_method_formals <- function(fn, gen_args, label) {
 #' op <- options(r8.namespace = "models")
 #' GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
 #' describe <- generic("describe", "x")
-#' implement(describe, GBM) <- function(x, ...) {
+#' implement(describe, GBM) <- function(x) {
 #'   paste("Gradient boosting,", x$n_trees, "trees")
 #' }
 #' describe(GBM(n_trees = 100L))
@@ -196,9 +211,6 @@ generic <- function(name, args = "x", description = "") {
       "The first argument of a generic is the value it dispatches on, a name.",
       class = "r8_declaration_error"
     )
-  }
-  if (!"..." %in% args) {
-    args <- c(args, "...")
   }
   env <- parent.frame()
   existing <- existing_generic(name, env)
@@ -283,7 +295,7 @@ classify_generic <- function(g, type_label = "Type") {
       "implement() takes a generic, written as its name: ",
       "implement(describe, ",
       type_label,
-      ") <- function(x, ...) ...",
+      ") <- function(x) ...",
       class = "r8_declaration_error"
     )
   }
@@ -413,10 +425,11 @@ classify_generic <- function(g, type_label = "Type") {
 # %% implement<- ----
 #' Declare the method of a generic for a type
 #'
-#' `implement(generic, Type) <- function(x, ...) ...` declares the method
-#' that `generic` calls for values of `Type`, and returns `generic`
-#' unchanged. `generic` is written as its name; the function's arguments
-#' begin with the generic's. By the generic:
+#' `implement(generic, Type) <- function(x) ...` declares the method that
+#' `generic` calls for values of `Type`, and returns `generic` unchanged.
+#' `generic` is written as its name. The function has exactly the generic's
+#' arguments, or, for a generic with `...`, the generic's arguments first,
+#' `...` included, then any named arguments of its own. By the generic:
 #'
 #' - A generic from `generic()`, or a trait method such as `Fit@fit`: an
 #'   impl of its trait.
@@ -484,7 +497,6 @@ classify_generic <- function(g, type_label = "Type") {
     function(d) identical(d[["name"]], m),
     trait_ir(t)[["methods"]]
   )
-  check_method_formals(value, unlist(decl[[1L]][["params"]]), m)
   impl_declare(
     target[["trait"]],
     type,
@@ -618,7 +630,7 @@ register_s3_method <- function(entry) {
 #' op <- options(r8.namespace = "models")
 #' GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
 #' describe <- generic("describe", "x")
-#' implement(describe, GBM) <- function(x, ...) "Gradient boosting"
+#' implement(describe, GBM) <- function(x) "Gradient boosting"
 #' r8_method(describe, GBM)
 #' options(op)
 #'
@@ -653,6 +665,7 @@ r8_method <- function(generic, type) {
       class = "r8_dispatch_error"
     )
   }
+  attr(fn, "r8_provider") <- NULL
   fn
 } # /R8::r8_method
 
@@ -668,7 +681,7 @@ print.r8_generic <- function(x, ...) {
   t <- .r8_traits[[trait]]
   is_generic <- !is.null(t) && isTRUE(trait_ir(t)[["generic"]])
   cat(
-    "<R8 generic ",
+    "<r8 generic ",
     if (is_generic) trait else paste0(trait, "@", method),
     ">\n",
     sep = ""

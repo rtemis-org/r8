@@ -149,7 +149,7 @@ int64 <- function(text) {
 #'
 #' @export
 print.r8_int64 <- function(x, ...) {
-  cat("<r8_int64>", unclass(x), "\n")
+  cat("<r8 int64>", unclass(x), "\n")
   invisible(x)
 } # /R8::print.r8_int64
 
@@ -164,7 +164,7 @@ print.r8_int64 <- function(x, ...) {
 #'
 #' @export
 print.r8_json_ir <- function(x, ...) {
-  cat("<r8_json_ir>", unclass(x), "\n")
+  cat("<r8 json_ir>", unclass(x), "\n")
   invisible(x)
 } # /R8::print.r8_json_ir
 
@@ -289,7 +289,9 @@ declare <- function(
   rules,
   env,
   class,
-  native = FALSE
+  native = FALSE,
+  extends = NULL,
+  defaults = list()
 ) {
   namespace <- declaring_namespace(env)
   package <- declaring_package(env)
@@ -303,7 +305,10 @@ declare <- function(
     members,
     rules,
     namespace,
-    package
+    package,
+    if (is.null(extends)) "" else attr(extends, "r8_name"),
+    defaults,
+    if (is.null(extends)) list() else as.list(formals(extends))
   )
   if (nzchar(out[["owner"]])) {
     namespace_taken(namespace, package, out[["owner"]])
@@ -317,6 +322,10 @@ declare <- function(
   }
   clear_variants()
   clear_dispatch()
+  stale <- out[["stale"]]
+  if (length(stale) > 0L && !nzchar(package)) {
+    stale_warning(qname, stale)
+  }
   # A struct's formals and its required fields come from r8_declare(); an
   # enum's constructor takes no arguments.
   formals <- out[["formals"]] %||% list()
@@ -382,6 +391,7 @@ register_records <- function(records, source = "", check = TRUE) {
     declaration_failed(problems[["name"]][[1L]], problems)
   }
   clear_variants()
+  clear_ancestry()
   invisible(NULL)
 } # /R8::register_records
 
@@ -560,6 +570,13 @@ type_ir <- function(type) {
 #' @param description Character: What the type is.
 #' @param version Integer: The type's version, from 1.
 #' @param rules A `rule()`, or a list of `rule()` calls, over the fields.
+#'   A child's rules add to the rules it inherits.
+#' @param extends Optional R8 struct type: The parent. The child holds the
+#'   parent's fields, then its own `fields`, and the parent's rules, then its
+#'   own `rules`; its values belong to the parent's class, and impls of the
+#'   parent apply to them where the child has none.
+#' @param defaults Named list: The child's defaults of inherited fields, by
+#'   field name. `NULL` removes the default of an `option()` field.
 #' @param native Logical: A Rust-native type, whose values the codec in the
 #'   package's compiled exports builds and holds (`R8.h`). Its constructor
 #'   signals `r8_codec_missing` until the codec is registered, and
@@ -573,6 +590,11 @@ type_ir <- function(type) {
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()),
 #'   description = "A point.")
+#' Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()),
+#'   rules = rule(lo <= hi, message = "lo is at most hi."))
+#' Window <- new_struct("Window", fields = list(label = type_character()),
+#'   extends = Range)
+#' Window(lo = 1, hi = 2, label = "w")
 #' options(op)
 #'
 #' @export
@@ -582,6 +604,8 @@ new_struct <- function(
   description = "",
   version = 1L,
   rules = list(),
+  extends = NULL,
+  defaults = list(),
   native = FALSE
 ) {
   if (!is_name(name)) {
@@ -593,6 +617,39 @@ new_struct <- function(
     )
   }
   check_members(fields, "fields", paste0("`", name, "`"))
+  if (length(defaults) > 0L) {
+    check_members(defaults, "defaults", paste0("`", name, "`"))
+  }
+  if (!is.null(extends)) {
+    if (!inherits(extends, "r8_struct_type")) {
+      r8_abort(
+        "`extends` of `",
+        name,
+        "` is an R8 struct type, such as `extends = Range`.",
+        class = "r8_declaration_error"
+      )
+    }
+    ensure_registered(extends)
+    if (!identical(isTRUE(native), isTRUE(attr(extends, "r8_native")))) {
+      r8_abort(
+        "`",
+        name,
+        "` and its parent `",
+        attr(extends, "r8_name"),
+        "` are both Rust-native or both R-native; set `native = ",
+        isTRUE(attr(extends, "r8_native")),
+        "`.",
+        class = "r8_declaration_error"
+      )
+    }
+  } else if (length(defaults) > 0L) {
+    r8_abort(
+      "`defaults` of `",
+      name,
+      "` changes inherited fields; set `extends =`, or give the defaults in `fields`.",
+      class = "r8_declaration_error"
+    )
+  }
   declare(
     "struct",
     name,
@@ -603,9 +660,37 @@ new_struct <- function(
     as_rules(rules),
     parent.frame(),
     "r8_struct_type",
-    native = isTRUE(native)
+    native = isTRUE(native),
+    extends = extends,
+    defaults = defaults
   )
 } # /R8::new_struct
+
+
+# %% stale_warning ----
+#' Warn that a declaration leaves structs stale
+#'
+#' @param qname Character: The qualified name of the declared type.
+#' @param stale Character: The qualified names of the stale structs.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+stale_warning <- function(qname, stale) {
+  r8_warn(
+    "The declaration of `",
+    qname,
+    "` leaves ",
+    paste0("`", stale, "`", collapse = ", "),
+    " stale: ",
+    if (length(stale) == 1L) "it extends" else "each extends",
+    " an earlier declaration. Declare ",
+    if (length(stale) == 1L) "it" else "them",
+    " again, parent before child.",
+    class = "r8_stale_warning"
+  )
+} # /R8::stale_warning
 
 
 # %% variant ----
@@ -869,7 +954,7 @@ r8_declaration <- function(type) {
 print.r8_type <- function(x, ...) {
   ir <- type_ir(x)
   cat(
-    "<",
+    "<r8 ",
     ir[["kind"]],
     " ",
     attr(x, "r8_name"),

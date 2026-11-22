@@ -1,3 +1,16 @@
+# R8 0.4.0.9000
+
+- The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "descendant", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
+- The declaration record has format 3; a package installed with R8 0.4.0 is reinstalled.
+- `new_struct(extends = Parent)` declares a child that holds the parent's fields and rules, then its own; `defaults =` changes the defaults of inherited fields. A child's values carry the parent's class after their own, and a field typed as a struct admits that struct only.
+- A struct whose fields all have defaults that violate its rules is a declaration error (`default_violates_rule`).
+- Declaring a parent again leaves the children that extend its earlier declaration stale: they construct and read no values until they are declared again, and the declaration warns (`r8_stale_warning`). A package built against an earlier declaration of another package's parent is refused at load.
+- A package's declaration records declare only into the namespaces it owns; a declaration of another package's type in them is skipped.
+- `to_json()` is `r8_to_json()`: a function a declaration is written with takes no prefix, and an operation on values, types, or packages takes `r8_` (`?R8`, section "Names").
+- `generic(name, args)` takes `args` as given and no longer appends `...`. A method of a generic without `...` has exactly the generic's arguments; a method of a generic with `...` takes them first and may add named arguments. `impl()` checks its methods' arguments as `implement()` does, and `trait_method(default =)` checks its default's.
+- Print headers name R8 and the object's kind: `<r8 generic ns::f>`, `<r8 struct ns::P v1>`, `<r8 enum ns::E v1>`, `<r8 trait ns::T>`, `<r8 int64>`, `<r8 field type>`.
+- `?R8` lists R8's condition classes, `r8_codec_missing` among them.
+
 # R8 0.4.0
 
 - Rust-native enums: `#[derive(R8)]` with `#[r8(native)]` on an enum of unit, struct, and newtype variants keeps every value, unit variants included, in compiled code. `new_enum(native = TRUE)` declares one in R, and `r8_document_native()` writes it.

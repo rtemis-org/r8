@@ -375,9 +375,11 @@ pub(crate) fn normalize(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> Res
         | FieldType::Character(_)
         | FieldType::Date
         | FieldType::Posixct => atomic(x, ft),
-        FieldType::Raw | FieldType::R { .. } | FieldType::Named { .. } | FieldType::Dyn { .. } => {
-            None
-        }
+        FieldType::Raw
+        | FieldType::R { .. }
+        | FieldType::Named { .. }
+        | FieldType::Dyn { .. }
+        | FieldType::Descendant { .. } => None,
         FieldType::Vec { element, .. } => {
             let inner = unwrap_option(element);
             if is_scalar(inner) {
@@ -740,6 +742,18 @@ unsafe fn kept(x: SEXP) -> SEXP {
     x
 }
 
+/// The class vector of a value of the type `qname`: the type, its
+/// ancestors through `extends`, the nearest first, and `r8_value`.
+pub(crate) fn value_class(qname: &str) -> Vec<String> {
+    let mut out = vec![qname.to_string()];
+    if let Ok(q) = rtemis_r8::name::QualifiedName::parse(qname) {
+        let docs = crate::declare::snapshot().map(|d| d.ancestors(&q));
+        out.extend(docs.unwrap_or_default().iter().map(|a| a.to_string()));
+    }
+    out.push("r8_value".to_string());
+    out
+}
+
 /// The shared attribute vectors of values of `qname` (and `variant`), whose
 /// fields are `names`, at the type's `version`.
 pub(crate) fn shared_attributes(
@@ -771,12 +785,14 @@ pub(crate) fn shared_attributes(
     if let Some(a) = guard.1.get(qname).and_then(|m| m.get(v)) {
         return *a;
     }
+    let classes = value_class(qname);
     let a = unsafe {
         let names_v = kept(character(names).get());
         let qchar = mkchar(qname);
-        let class = kept(Rf_allocVector(SEXPTYPE::STRSXP, 2));
-        SET_STRING_ELT(class, 0, qchar);
-        SET_STRING_ELT(class, 1, mkchar("r8_value"));
+        let class = kept(Rf_allocVector(SEXPTYPE::STRSXP, classes.len() as isize));
+        for (i, c) in classes.iter().enumerate() {
+            SET_STRING_ELT(class, i as isize, mkchar(c));
+        }
         let ty = kept(Rf_allocVector(SEXPTYPE::STRSXP, 1));
         SET_STRING_ELT(ty, 0, qchar);
         let ver = kept(Rf_allocVector(SEXPTYPE::INTSXP, 1));
@@ -1169,8 +1185,70 @@ fn reading_rule_errors(
     errors
 }
 
+/// The ancestors of the registered type `type_name` through `extends`, the
+/// nearest first, and whether the type is stale.
+///
+/// @param type_name Character: The qualified type name.
+/// @return List: `ancestors`, character; `stale`, logical; `parent`, the
+///   type's parent or `""`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_type_ancestors(type_name: &str) -> Result<List> {
+    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+    let docs = registry().snapshot();
+    let parent = match docs.find(&q) {
+        Some(TypeDef::Struct(s)) => s.extends.as_ref().map(|p| p.to_string()),
+        _ => None,
+    };
+    let ancestors: Vec<String> = docs.ancestors(&q).iter().map(|a| a.to_string()).collect();
+    Ok(list!(
+        ancestors = ancestors,
+        stale = docs.is_stale(&q),
+        parent = parent.unwrap_or_default()
+    ))
+}
+
+/// The value of the ancestor `parent` that the R-native value `x` of a
+/// descendant holds: `x`'s first fields, the inherited ones, with the
+/// parent's shared attributes. The elements are the child's, not copies,
+/// and the value is not validated: the child's rules include the parent's,
+/// which read the parent's fields only.
+///
+/// @param x An R-native struct value.
+/// @param parent Character: The qualified name of an ancestor of `x`'s type.
+/// @return The parent value.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_upcast_value(x: Robj, parent: &str) -> Result<Robj> {
+    let q = QualifiedName::parse(parent).map_err(|e| fail(e.to_string()))?;
+    let docs = registry().snapshot();
+    let Some(TypeDef::Struct(p)) = docs.find(&q) else {
+        return Err(fail(format!("`{q}` is not a registered struct")));
+    };
+    let x = unsafe { x.get() };
+    let n = p.fields.len();
+    if sexptype(x) != SEXPTYPE::VECSXP || xlen(x) < n {
+        return Err(fail("`x` is an R-native struct value"));
+    }
+    unsafe {
+        let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
+        for k in 0..n {
+            SET_VECTOR_ELT(out, k as R_xlen_t, VECTOR_ELT(x, k as R_xlen_t));
+        }
+        let names: Vec<&str> = p.fields.iter().map(|f| f.name.as_str()).collect();
+        set_value_attributes(out, shared_attributes(parent, p.version, None, &names));
+        let r = own(out);
+        Rf_unprotect(1);
+        Ok(r)
+    }
+}
+
 extendr_module! {
     mod construct;
     fn r8_new_value;
     fn r8_set_field;
+    fn r8_type_ancestors;
+    fn r8_upcast_value;
 }

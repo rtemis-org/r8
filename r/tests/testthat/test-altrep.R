@@ -42,7 +42,7 @@ test_that("operations on a field holding a compact sequence leave it compact", {
   invisible(r8_hash(v))
   invisible(r8_validate(v))
   expect_true(r8_equal(v, V(x = 1:100000)))
-  invisible(to_json(v))
+  invisible(r8_to_json(v))
   expect_true(compact(x))
 })
 
@@ -77,7 +77,7 @@ test_that("a factor over a compact sequence stays compact", {
   invisible(r8_hash(v))
   invisible(r8_validate(v))
   expect_true(r8_equal(v, Fc(f = x)))
-  invisible(to_json(v))
+  invisible(r8_to_json(v))
   expect_true(compact(x))
 })
 
@@ -97,7 +97,7 @@ test_that("a sparse matrix with compact slots leaves them compact", {
   invisible(r8_hash(v))
   invisible(r8_validate(v))
   expect_true(r8_equal(v, S(x = m)))
-  invisible(to_json(v))
+  invisible(r8_to_json(v))
   expect_true(compact(m@p) && compact(m@i))
 })
 

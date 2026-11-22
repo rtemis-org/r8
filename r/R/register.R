@@ -98,6 +98,7 @@ r8_register <- function(pkgname = NULL) {
   clear_variants()
   check_namespaces(pkg)
   done <- TRUE
+  stale_elsewhere(pkg)
   invisible(length(entries) + n_compiled)
 } # /R8::r8_register
 
@@ -140,6 +141,53 @@ check_namespaces <- function(pkg) {
   }
   invisible(NULL)
 } # /R8::check_namespaces
+
+
+# %% stale_elsewhere ----
+#' Warn of the structs of other packages that a package's load leaves stale
+#'
+#' A struct of another package that extends a type of `pkg` and disagrees
+#' with its new declaration stays stale until its own package is loaded
+#' again.
+#'
+#' @param pkg Character: The package.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+stale_elsewhere <- function(pkg) {
+  own <- r8_package_namespaces(pkg)
+  if (length(own) == 0L) {
+    return(invisible(NULL))
+  }
+  stale <- r8_stale_types(own)
+  if (length(stale) > 0L) {
+    owners <- vapply(
+      sub("::.*$", "", stale),
+      function(n) {
+        o <- r8_namespace_owner(n)
+        if (nzchar(o)) paste0("package '", o, "'") else "the console"
+      },
+      ""
+    )
+    r8_warn(
+      "Package '",
+      pkg,
+      "' leaves ",
+      paste0("`", stale, "` (", owners, ")", collapse = ", "),
+      " stale: ",
+      if (length(stale) == 1L) "it extends" else "each extends",
+      " an earlier declaration of a type of '",
+      pkg,
+      "'. Load or reinstall the package that declares ",
+      if (length(stale) == 1L) "it" else "each",
+      " again.",
+      class = "r8_stale_warning"
+    )
+  }
+  invisible(NULL)
+} # /R8::stale_elsewhere
 
 
 # %% register_exports ----

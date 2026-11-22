@@ -24,9 +24,55 @@ pub trait TypeLookup {
     fn type_member(&self, _trait: &QualifiedName) -> String {
         "$type".to_string()
     }
+
+    /// Whether the struct `ty` is stale: its inherited fields or rules
+    /// disagree with its parent's, or its parent is stale.
+    fn is_stale(&self, _ty: &QualifiedName) -> bool {
+        false
+    }
+
+    /// Whether the type `ty` is the struct `base` or descends from it
+    /// through `extends`, as far as the lookup holds the chain.
+    fn descends(&self, ty: &QualifiedName, base: &QualifiedName) -> bool {
+        let mut cur = ty;
+        // A chain longer than the lookup's types is a cycle.
+        for _ in 0..MAX_DEPTH {
+            if cur == base {
+                return true;
+            }
+            match self.find(cur) {
+                Some(TypeDef::Struct(s)) => match &s.extends {
+                    Some(p) => cur = p,
+                    None => return false,
+                },
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// The ancestors of the type `ty` through `extends`, the parent first,
+    /// as far as the lookup holds the chain; a chain that returns to a type
+    /// already listed ends before it.
+    fn ancestors(&self, ty: &QualifiedName) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = Vec::new();
+        let mut cur = ty;
+        while let Some(TypeDef::Struct(s)) = self.find(cur) {
+            let Some(p) = &s.extends else { break };
+            if p == ty || out.contains(p) {
+                break;
+            }
+            out.push(p.clone());
+            cur = p;
+        }
+        out
+    }
 }
 
-fn dollar_type(value: &serde_json::Value) -> Result<(QualifiedName, String), String> {
+/// The longest `extends` chain that [`TypeLookup::descends`] follows.
+const MAX_DEPTH: usize = 1024;
+
+pub(crate) fn dollar_type(value: &serde_json::Value) -> Result<(QualifiedName, String), String> {
     let s = value
         .get("$type")
         .and_then(serde_json::Value::as_str)
@@ -211,7 +257,7 @@ impl Ty {
                 ordered: true,
             },
             FieldType::Named { name } => Ty::Named(name.clone()),
-            FieldType::Dyn { .. } => Ty::Any,
+            FieldType::Dyn { .. } | FieldType::Descendant { .. } => Ty::Any,
         }
     }
 
@@ -305,6 +351,11 @@ pub struct DocumentSet {
     /// `(document, type)` positions, hashed by namespace and name.
     index: hashbrown::HashTable<(u32, u32)>,
     hasher: hashbrown::DefaultHashBuilder,
+    /// The structs that name each struct as their parent, by the parent.
+    children: std::collections::HashMap<QualifiedName, Vec<QualifiedName>>,
+    /// The structs whose inherited fields or rules disagree with their
+    /// parent's, or whose parent is stale.
+    stale: std::collections::HashSet<QualifiedName>,
 }
 
 impl std::fmt::Debug for DocumentSet {
@@ -401,11 +452,93 @@ impl DocumentSet {
 
     fn reindex(&mut self) {
         self.index.clear();
+        self.children.clear();
         for d in 0..self.docs.len() {
             for t in 0..self.docs[d].types.len() {
                 self.insert_slot(d, t);
             }
         }
+        for doc in &self.docs {
+            for t in &doc.types {
+                if let TypeDef::Struct(s) = t
+                    && let Some(parent) = &s.extends
+                {
+                    self.children
+                        .entry(parent.clone())
+                        .or_default()
+                        .push(QualifiedName {
+                            namespace: doc.namespace.clone(),
+                            name: s.name.clone(),
+                        });
+                }
+            }
+        }
+    }
+
+    /// Adds or removes the entry of the struct `def` of the namespace `ns`
+    /// in the index of children.
+    fn link(&mut self, ns: &crate::name::Name, def: &TypeDef, add: bool) {
+        let TypeDef::Struct(s) = def else { return };
+        let Some(parent) = &s.extends else { return };
+        let child = QualifiedName {
+            namespace: ns.clone(),
+            name: s.name.clone(),
+        };
+        let list = self.children.entry(parent.clone()).or_default();
+        if add {
+            if !list.contains(&child) {
+                list.push(child);
+            }
+        } else {
+            list.retain(|c| c != &child);
+            if list.is_empty() {
+                self.children.remove(parent);
+            }
+        }
+    }
+
+    /// The structs whose parent is `q`.
+    pub fn children(&self, q: &QualifiedName) -> &[QualifiedName] {
+        self.children.get(q).map_or(&[], Vec::as_slice)
+    }
+
+    /// The structs that descend from `q`, each once, every parent before its
+    /// children.
+    pub fn descendants(&self, q: &QualifiedName) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = Vec::new();
+        let mut i = 0;
+        let mut next: Vec<QualifiedName> = self.children(q).to_vec();
+        while i < next.len() {
+            let c = next[i].clone();
+            i += 1;
+            if c == *q || out.contains(&c) {
+                continue;
+            }
+            next.extend(self.children(&c).iter().cloned());
+            out.push(c);
+        }
+        out
+    }
+
+    /// Marks the struct `q` stale, or clears its mark.
+    pub fn set_stale(&mut self, q: &QualifiedName, stale: bool) {
+        if stale {
+            self.stale.insert(q.clone());
+        } else {
+            self.stale.remove(q);
+        }
+    }
+
+    /// Whether any struct is stale.
+    pub fn has_stale(&self) -> bool {
+        !self.stale.is_empty()
+    }
+
+    /// The stale structs, sorted.
+    pub fn stale_types(&self) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = self.stale.iter().cloned().collect();
+        out.sort_by_key(|q| q.to_string());
+        out
     }
 
     /// The documents, one per namespace.
@@ -445,9 +578,19 @@ impl DocumentSet {
     /// of the same name.
     pub fn put_type(&mut self, ns: &crate::name::Name, def: TypeDef) -> Placed {
         let (d, new_document) = self.document_of(ns);
+        self.link(ns, &def, true);
         match self.slot(ns.as_str(), def.name().as_str()) {
             Some((_, t)) => {
                 let previous = std::mem::replace(&mut self.docs[d].types[t as usize], def);
+                // Unlink the replaced declaration's parent, unless it is the
+                // new one's.
+                let same_parent = matches!(
+                    (&previous, &self.docs[d].types[t as usize]),
+                    (TypeDef::Struct(a), TypeDef::Struct(b)) if a.extends == b.extends
+                );
+                if !same_parent {
+                    self.link(ns, &previous, false);
+                }
                 Placed {
                     document: d,
                     index: t as usize,
@@ -479,6 +622,12 @@ impl DocumentSet {
             previous,
             new_document,
         } = placed;
+        let ns = self.docs[d].namespace.clone();
+        let current = self.docs[d].types[t].clone();
+        self.link(&ns, &current, false);
+        if let Some(p) = &previous {
+            self.link(&ns, p, true);
+        }
         match previous {
             Some(p) => self.docs[d].types[t] = p,
             None => {
@@ -564,8 +713,8 @@ impl DocumentSet {
     }
 
     /// The qualified names of `q` and of every named type it reaches
-    /// through field types and newtype variants, each once, the reached
-    /// types before the types that reach them.
+    /// through field types, newtype variants, and `extends`, each once, the
+    /// reached types before the types that reach them.
     pub fn reached(&self, q: &crate::name::QualifiedName) -> Vec<crate::name::QualifiedName> {
         let mut out = Vec::new();
         reached_into(self, q, &mut out);
@@ -586,6 +735,10 @@ impl TypeLookup for DocumentSet {
     fn find(&self, name: &QualifiedName) -> Option<&TypeDef> {
         self.slot(name.namespace.as_str(), name.name.as_str())
             .map(|s| self.at(s))
+    }
+
+    fn is_stale(&self, ty: &QualifiedName) -> bool {
+        !self.stale.is_empty() && self.stale.contains(ty)
     }
 
     /// Resolves through the trait's declaring document, over the impls of
@@ -625,7 +778,8 @@ fn reached_into(
         match t {
             FieldType::Named { name }
             | FieldType::MatrixOf { of: name }
-            | FieldType::TableOf { of: name } => reached_into(reg, name, out),
+            | FieldType::TableOf { of: name }
+            | FieldType::Descendant { of: name } => reached_into(reg, name, out),
             FieldType::Matrix { element, .. }
             | FieldType::Array { element, .. }
             | FieldType::SparseMatrix { element, .. }
@@ -657,7 +811,12 @@ fn reached_into(
     out.push(q.clone());
     let mark = out.len() - 1;
     match def {
-        TypeDef::Struct(s) => of_fields(reg, &s.fields, out),
+        TypeDef::Struct(s) => {
+            if let Some(p) = &s.extends {
+                reached_into(reg, p, out);
+            }
+            of_fields(reg, &s.fields, out)
+        }
         TypeDef::Enum(e) => {
             for v in &e.variants {
                 match &v.shape {

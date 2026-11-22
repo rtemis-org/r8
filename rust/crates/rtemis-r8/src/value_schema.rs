@@ -228,6 +228,11 @@ impl Writer<'_> {
                 "required": [self.lookup_tag(r#trait)],
                 "x-r8": {"dyn": r#trait.to_string()}
             }),
+            FieldType::Descendant { of } => json!({
+                "type": "object",
+                "required": ["$type"],
+                "x-r8": {"descendant": of.to_string()}
+            }),
         }
     }
 

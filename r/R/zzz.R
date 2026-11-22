@@ -26,14 +26,15 @@
 #'   and `r8_converter()` use it.
 #'
 #' R8 provides `format()`, `print()`, and `str()` for every value, `==` and
-#' `r8_hash()` through `r8_equal()`, `to_json()` and `r8_from_json()`, and a
+#' `r8_hash()` through `r8_equal()`, `r8_to_json()` and `r8_from_json()`, and a
 #' type whose required fields have defaults is constructed with no
 #' arguments.
 #'
 #' @param source Character: The class or qualified R8 type converted from.
 #' @param x,y Values of one R8 type, for `r8_cmp()`.
 #'
-#' @return A trait object.
+#' @return A trait object. `From()` returns one of the internal class
+#'   `r8_from_trait`, which holds its type parameter `source`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -188,6 +189,14 @@ r8_convert <- function(x, type) {
   target <- attr(type, "r8_name")
   if (inherits(x, "r8_value") && identical(attr(x, "r8_type"), target)) {
     return(x)
+  }
+  # A child converts to an ancestor by upcast.
+  if (
+    inherits(x, "r8_value") &&
+      is.null(attr(x, "r8_variant")) &&
+      target %in% ancestry(attr(x, "r8_type"))[["ancestors"]]
+  ) {
+    return(r8_upcast(x, type))
   }
   sources <- if (inherits(x, "r8_value")) {
     attr(x, "r8_type")

@@ -649,7 +649,7 @@ format.r8_theme <- function(x, ...) {
 #' @rdname r8_theme
 #' @export
 print.r8_theme <- function(x, ...) {
-  cat("<r8_theme>", format(x), sep = "\n")
+  cat("<r8 theme>", format(x), sep = "\n")
   invisible(x)
 } # /R8::print.r8_theme
 
