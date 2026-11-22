@@ -858,48 +858,54 @@ fn na_logical() -> Rbool {
 
 impl Decoder<'_> {
     /// An atomic vector of a scalar type from JSON values, `null` as `NA`.
-    fn atomic(&self, items: &[Value], element: &FieldType) -> Result<Robj> {
+    fn atomic<'v>(
+        &self,
+        items: impl IntoIterator<Item = &'v Value, IntoIter: ExactSizeIterator>,
+        element: &FieldType,
+    ) -> Result<Robj> {
         let (inner, _) = unwrap_option(element);
         Ok(match inner {
             FieldType::Logical => Logicals::from_values(
                 items
-                    .iter()
+                    .into_iter()
                     .map(|v| v.as_bool().map(Rbool::from).unwrap_or_else(na_logical)),
             )
             .into(),
-            FieldType::Integer(_) => Integers::from_values(items.iter().map(|v| {
+            FieldType::Integer(_) => Integers::from_values(items.into_iter().map(|v| {
                 v.as_f64()
                     .map(|d| Rint::from(d as i32))
                     .unwrap_or_else(Rint::na)
             }))
             .into(),
-            FieldType::Double(_) => Doubles::from_values(items.iter().map(|v| match v {
+            FieldType::Double(_) => Doubles::from_values(items.into_iter().map(|v| match v {
                 Value::Null => Rfloat::na(),
                 other => Rfloat::from(rtemis_r8::rules::number_value(other).unwrap_or(f64::NAN)),
             }))
             .into(),
             FieldType::Character(_) => {
-                Strings::from_values(items.iter().map(|v| match v.as_str() {
+                Strings::from_values(items.into_iter().map(|v| match v.as_str() {
                     Some(s) => Rstr::from(s),
                     None => Rstr::na(),
                 }))
                 .into()
             }
             FieldType::Date => {
-                let mut r: Robj = Doubles::from_values(items.iter().map(|v| match v.as_str() {
-                    Some(s) => Rfloat::from(date_days(s) as f64),
-                    None => Rfloat::na(),
-                }))
-                .into();
+                let mut r: Robj =
+                    Doubles::from_values(items.into_iter().map(|v| match v.as_str() {
+                        Some(s) => Rfloat::from(date_days(s) as f64),
+                        None => Rfloat::na(),
+                    }))
+                    .into();
                 r.set_class(["Date"])?;
                 r
             }
             FieldType::Posixct => {
-                let mut r: Robj = Doubles::from_values(items.iter().map(|v| match v.as_str() {
-                    Some(s) => Rfloat::from(datetime_micros(s) as f64 / 1e6),
-                    None => Rfloat::na(),
-                }))
-                .into();
+                let mut r: Robj =
+                    Doubles::from_values(items.into_iter().map(|v| match v.as_str() {
+                        Some(s) => Rfloat::from(datetime_micros(s) as f64 / 1e6),
+                        None => Rfloat::na(),
+                    }))
+                    .into();
                 r.set_class(["POSIXct", "POSIXt"])?;
                 r.set_attrib("tzone", "UTC")?;
                 r
@@ -931,10 +937,11 @@ impl Decoder<'_> {
             }
             FieldType::Factor { levels, ordered } => self.factor(v, levels.as_deref(), *ordered),
             FieldType::Vec { element, .. } => {
-                let items = v.as_array().cloned().unwrap_or_default();
+                // Borrowed: a vector of 10^6 elements is read in place.
+                let items: &[Value] = v.as_array().map_or(&[], Vec::as_slice);
                 let (inner, _) = unwrap_option(element);
                 if is_scalar(inner) {
-                    self.atomic(&items, element)
+                    self.atomic(items, element)
                 } else {
                     let values = items
                         .iter()
@@ -944,21 +951,18 @@ impl Decoder<'_> {
                 }
             }
             FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
-                let (keys, items): (Vec<String>, Vec<Value>) = match v {
+                let (keys, items): (Vec<String>, Vec<&Value>) = match v {
                     Value::Object(m) => {
                         let mut pairs: Vec<(&String, &Value)> = m.iter().collect();
                         pairs.sort_by(|a, b| a.0.cmp(b.0));
-                        pairs
-                            .into_iter()
-                            .map(|(k, x)| (k.clone(), x.clone()))
-                            .unzip()
+                        pairs.into_iter().map(|(k, x)| (k.clone(), x)).unzip()
                     }
                     Value::Array(pairs) => pairs
                         .iter()
                         .map(|p| {
                             (
                                 p["name"].as_str().unwrap_or_default().to_string(),
-                                p["value"].clone(),
+                                &p["value"],
                             )
                         })
                         .unzip(),
@@ -966,7 +970,7 @@ impl Decoder<'_> {
                 };
                 let (inner, _) = unwrap_option(value);
                 let mut r = if is_scalar(inner) && matches!(ft, FieldType::Hashmap { .. }) {
-                    self.atomic(&items, value)?
+                    self.atomic(items.iter().copied(), value)?
                 } else {
                     let values = items
                         .iter()
@@ -1062,8 +1066,8 @@ impl Decoder<'_> {
     }
 
     fn dense(&self, v: &Value, element: &FieldType) -> Result<Robj> {
-        let data = v["data"].as_array().cloned().unwrap_or_default();
-        let mut r = self.atomic(&data, element)?;
+        let data: &[Value] = v["data"].as_array().map_or(&[], Vec::as_slice);
+        let mut r = self.atomic(data, element)?;
         let shape: Vec<i32> = v["shape"]
             .as_array()
             .unwrap()
