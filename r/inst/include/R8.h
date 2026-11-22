@@ -33,11 +33,10 @@
  * - Each side frees only what it allocated. A type's `state` is freed only by
  *   that type's `drop`; encoded JSON passes through an `R8Writer` supplied by
  *   the caller; error text is written into the fixed buffers of `R8Error`.
- * - Strings are UTF-8 and NUL-terminated, except `ir_json`, which has an
- *   explicit length.
+ * - Strings are UTF-8 and NUL-terminated.
  * - Everything an `R8Exports` points to is static: it stays valid while the
- *   package's shared object is loaded. R8 copies the IR document and keeps
- *   the function pointers.
+ *   package's shared object is loaded. R8 reads the declaration record and
+ *   keeps the function pointers.
  * - `abi_version` is the major version: R8 rejects a table of another major
  *   version. Within a major version, fields are only appended to a struct,
  *   and `size` tells the reader which fields are present.
@@ -198,6 +197,13 @@ typedef struct R8TypeVTable {
    * through it when `size` covers it and it is set, and through
    * `from_fields` or `from_variant` otherwise. */
   R8Status (*from_reader)(const R8Reader *reader, R8Node root, void **state, R8Error *err);
+  /* The declaration hash of the type the codec was written against,
+   * "sha256:<hex>": set by a codec written by hand in C, whose type has no
+   * declaration in the exports' record, and NULL otherwise. Registration
+   * requires it to equal the hash of the type's R declaration, since
+   * `from_fields` and `from_variant` read fields by position; a mismatch
+   * reports the declaration's current hash. */
+  const char *declaration_hash;
 } R8TypeVTable;
 
 /* An impl function: a trait method implemented in compiled code. `args`
@@ -218,26 +224,23 @@ typedef struct R8ImplEntry {
   size_t n_params;
 } R8ImplEntry;
 
-/* What a package registers: its IR document, the codecs of its Rust-native
- * types, and its impl functions. */
+/* What a package registers: the declarations of its types in Rust, the
+ * codecs of its Rust-native types, and its impl functions. R8 builds each
+ * impl declaration from the impl entries, grouped by trait and type. */
 typedef struct R8Exports {
   uint32_t abi_version;
   uint32_t size;
   /* The R package's name. */
   const char *package;
-  /* The package's IR document as JSON text, read when `ir_record` is NULL: the
-   * form of a table written by hand in C. Tables that rtemis-r8-api generates
-   * set it to NULL. */
-  const char *ir_json;
-  size_t ir_json_len;
+  /* The declarations of the package's types in Rust as a declaration record,
+   * which rtemis-r8-api writes; NULL in a table written by hand in C, whose
+   * types are the package's R declarations. */
+  const uint8_t *ir_record;
+  size_t ir_record_len;
   const R8TypeVTable *types;
   size_t n_types;
   const R8ImplEntry *impls;
   size_t n_impls;
-  /* The package's declarations as a declaration record, which R8 reads when
-   * `size` covers it and it is set. */
-  const uint8_t *ir_record;
-  size_t ir_record_len;
 } R8Exports;
 
 /* The function a package registers as "r8_exports". */

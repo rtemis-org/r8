@@ -182,6 +182,9 @@ const R8TypeVTable pkgc_signal_codec = {
     .with_field = signal_with_field,
     .drop = signal_drop,
     .bytes = signal_bytes,
+    // The hash of the R declaration of pkgc::Signal (R/types.R), whose
+    // fields from_fields reads by position.
+    .declaration_hash = "sha256:2f398c9789d687098a98bf034139fb1a55f7461062fb2a51a844de4cc9eef34a",
 };
 
 // The number of live Signal states.

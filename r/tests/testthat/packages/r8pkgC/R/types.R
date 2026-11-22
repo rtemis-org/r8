@@ -20,8 +20,8 @@ Norm <- R8::new_trait(
 magnitude <- Norm@magnitude
 ratio <- Norm@ratio
 
-# A Rust-native type whose codec is in C (src/signal.c); the declaration
-# equals the one in the exports' IR document.
+# A Rust-native type whose codec is in C (src/signal.c), which pins the
+# hash of this declaration.
 Signal <- R8::new_struct(
   "Signal",
   fields = list(
@@ -53,6 +53,10 @@ Resampler <- R8::new_enum(
   native = TRUE
 )
 
-# An exports table whose struct codec sets the enum members, which
-# registration refuses.
-bad_exports <- function() .Call(pkgc_bad_exports)
+# Exports tables that registration refuses: a codec of Signal that sets the
+# enum members (1), pins another declaration hash (2), or pins none (3).
+bad_exports <- function(kind = 1L) .Call(pkgc_bad_exports, as.integer(kind))
+
+# Exports tables whose impl entries registration refuses: a repeated method
+# (1) or a NULL function (2).
+bad_impls <- function(kind) .Call(pkgc_bad_impls, as.integer(kind))

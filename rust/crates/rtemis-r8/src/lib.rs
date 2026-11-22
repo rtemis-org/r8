@@ -39,6 +39,7 @@ pub mod codec;
 pub mod derive;
 mod emit;
 pub mod equal;
+pub mod exports;
 pub mod ir;
 pub mod layout;
 pub mod name;

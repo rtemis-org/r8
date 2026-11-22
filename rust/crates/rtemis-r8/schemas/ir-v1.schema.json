@@ -240,7 +240,7 @@
           "description": "The field's type."
         },
         "default": {
-          "description": "A literal default in the field's JSON form, filled by the constructor\nand by `r8_from_json()`."
+          "description": "A literal default in the field's JSON form as a tree, its numbers\nkept as written, filled by the constructor and by `r8_from_json()`."
         },
         "description": {
           "type": "string",

@@ -5,8 +5,9 @@
 //! its static `R8Exports` with `R_RegisterCCallable(pkg, "r8_exports", fn)`
 //! (`R8.h`). `r8_register()` fetches the table through R8's C routine
 //! `exports` (`src/view.c`), as an external pointer tagged with the symbol
-//! `r8_exports`, and passes it to [`r8_exports_info`], which checks the
-//! table, and to [`r8_register_exports`], which declares its IR document and
+//! `r8_exports`, compares the table's types with the package's R
+//! declarations ([`r8_exports_compare`]), and passes it to
+//! [`r8_register_exports`], which declares the impls of its impl entries and
 //! keeps its function pointers. An impl's R method passes the pointer that
 //! [`r8_impl_fn`] returns to R8's C routine `invoke`, which calls it.
 //!
@@ -21,8 +22,8 @@ use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use extendr_ffi::{R_ExternalPtrAddr, R_ExternalPtrTag, Rf_install};
 use rtemis_r8::abi::{ABI_VERSION, Exports, ImplEntry, MethodFn, TypeVTable};
-use rtemis_r8::ir::{ImplTarget, IrDocument};
-use rtemis_r8::name::QualifiedName;
+use rtemis_r8::ir::{IrDocument, TypeDef};
+use rtemis_r8::name::{Name, QualifiedName};
 
 fn fail(message: impl Into<String>) -> Error {
     Error::Other(message.into())
@@ -194,147 +195,166 @@ fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
     Ok(e)
 }
 
-fn ir_document(e: &Exports) -> Result<IrDocument> {
-    if !e.ir_record.is_null() {
-        let bytes = unsafe { std::slice::from_raw_parts(e.ir_record, e.ir_record_len) };
-        return record_document(bytes);
-    }
-    if e.ir_json.is_null() {
-        return Err(fail("the exports table has no IR document"));
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(e.ir_json as *const u8, e.ir_json_len) };
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| fail("the exports table's IR document is not UTF-8"))?;
-    IrDocument::from_json(text).map_err(|e| {
-        fail(format!(
-            "the exports table's IR document does not read: {e}"
-        ))
-    })
-}
-
-/// The IR document of an exports table's declaration record, whose entries
-/// belong to one namespace.
-fn record_document(bytes: &[u8]) -> Result<IrDocument> {
+/// The type declarations of an exports table's declaration record, each of
+/// the namespace `ns`; none for a table without a record, a table written by
+/// hand in C.
+fn record_types(e: &Exports, ns: &str) -> Result<Vec<TypeDef>> {
     use rtemis_r8::record::{self, Declaration};
+    if e.ir_record.is_null() {
+        return Ok(Vec::new());
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(e.ir_record, e.ir_record_len) };
     let entries = record::decode(bytes)
         .map_err(|e| fail(format!("the exports table's record does not read: {e}")))?;
-    let namespace = match entries.first() {
-        Some(e) => e.namespace.clone(),
-        None => return Err(fail("the exports table's record holds no declaration")),
-    };
-    let mut doc = IrDocument {
-        ir_version: rtemis_r8::ir::IR_VERSION,
-        namespace,
-        types: Vec::new(),
-        traits: Vec::new(),
-        impls: Vec::new(),
-    };
-    for e in entries {
-        if e.namespace != doc.namespace {
+    let mut types = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if entry.namespace.as_str() != ns {
             return Err(fail(format!(
-                "the exports table's record holds declarations of `{}` and of `{}`; a package's exports belong to one namespace",
-                doc.namespace, e.namespace
+                "the exports table's record declares a type of `{}`; the package declares its types in `{ns}`",
+                entry.namespace
             )));
         }
-        match e.declaration {
-            Declaration::Type(t) => doc.types.push(t),
-            Declaration::Trait(t) => doc.traits.push(t),
-            Declaration::Impl(i) => doc.impls.push(i),
+        match entry.declaration {
+            Declaration::Type(t) => types.push(t),
+            Declaration::Trait(t) => {
+                return Err(fail(format!(
+                    "the exports table's record declares the trait `{}`; a record holds type declarations only",
+                    t.name
+                )));
+            }
+            Declaration::Impl(i) => {
+                return Err(fail(format!(
+                    "the exports table's record declares an impl of `{}`; R8 builds impl declarations from the impl entries",
+                    i.r#trait
+                )));
+            }
         }
     }
-    Ok(doc)
+    Ok(types)
 }
 
-/// The package and namespace of an exports table, checked.
+/// The IR document of the type declarations of an exports table's record,
+/// as the R lists the declaration functions build.
 ///
 /// @param ptr The external pointer that `r8_exports` returned.
-/// @return List: `package` and `namespace`.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_exports_info(ptr: Robj) -> Result<List> {
-    let e = exports_of(&ptr)?;
-    let package = text(e.package, "package name")?;
-    let doc = ir_document(e)?;
-    Ok(list!(
-        package = package,
-        namespace = doc.namespace.to_string()
-    ))
-}
-
-/// The IR document of an exports table, as the R lists the declaration
-/// functions build.
-///
-/// @param ptr The external pointer that `r8_exports` returned.
+/// @param ns Character: The package's namespace.
 /// @return List: The IR document.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_exports_document(ptr: Robj) -> Result<Robj> {
+fn r8_exports_document(ptr: Robj, ns: &str) -> Result<Robj> {
     let e = exports_of(&ptr)?;
-    let doc = ir_document(e)?;
+    let doc = IrDocument {
+        ir_version: rtemis_r8::ir::IR_VERSION,
+        namespace: Name::new(ns).map_err(|e| fail(e.to_string()))?,
+        types: record_types(e, ns)?,
+        traits: Vec::new(),
+        impls: Vec::new(),
+    };
     crate::irser::to_r(&doc).map_err(|e| fail(e.to_string()))
 }
 
-/// Compares each type of an exports table with the registered declaration of
-/// the same qualified name, by declaration hash. The Rust hash reads the
-/// registry with the exports' IR document in place of its namespace's types
-/// of the same names; the R hash reads the registry alone.
+/// Compares the types of an exports table with the registered declarations.
+/// A type of the record compares by declaration hash: the Rust hash reads
+/// the registry with the record's types in place of its namespace's types
+/// of the same names, and the R hash reads the registry alone. A codec whose
+/// type has no declaration in the record compares the hash it pins
+/// (`declaration_hash`) with the registry's.
 ///
 /// @param ptr The external pointer that `r8_exports` returned.
-/// @return List: `type_name`, the qualified names; `status`, `"same"`,
-///   `"differs"`, or `"missing"` (no registered declaration); and `codec`,
-///   whether the table carries the type's codec.
+/// @param ns Character: The package's namespace.
+/// @return List: `type_name`, the qualified names; `status`, for a type of
+///   the record `"same"`, `"differs"`, or `"missing"` (no registered
+///   declaration), and for a codec's type outside the record `"same"`,
+///   `"stale"` (the pinned hash differs), `"unpinned"` (no pinned hash), or
+///   `"undeclared"`; `codec`, whether the table carries the type's codec; and
+///   `hash`, the registered declaration's hash, `""` without one.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_exports_compare(ptr: Robj) -> Result<List> {
+fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
     let e = exports_of(&ptr)?;
-    let doc = ir_document(e)?;
-    let codecs = type_tables(e)?
-        .into_iter()
-        .map(|v| text(unsafe { (*v).type_name }, "type name"))
-        .collect::<Result<Vec<String>>>()?;
+    let types = record_types(e, ns)?;
+    let namespace = Name::new(ns).map_err(|e| fail(e.to_string()))?;
+    let mut codecs = Vec::new();
+    for v in type_tables(e)? {
+        let name = text(unsafe { (*v).type_name }, "type name")?;
+        let pin = unsafe { (*v).declaration_hash };
+        let pin = if pin.is_null() {
+            None
+        } else {
+            Some(text(pin, "declaration hash")?)
+        };
+        codecs.push((name, pin));
+    }
     let reg = crate::declare::snapshot()?;
     let mut overlay = rtemis_r8::rules::DocumentSet::clone(&reg);
-    for t in &doc.types {
-        overlay.put_type(&doc.namespace, t.clone());
+    for t in &types {
+        overlay.put_type(&namespace, t.clone());
     }
     let lookup_r: &dyn rtemis_r8::rules::TypeLookup = &*reg;
     let lookup_rust: &dyn rtemis_r8::rules::TypeLookup = &overlay;
+    let hash_r = |q: &QualifiedName| {
+        lookup_r
+            .find(q)
+            .map(|_| rtemis_r8::codec::declaration_hash(q, lookup_r))
+    };
     let mut names = Vec::new();
     let mut status = Vec::new();
     let mut codec = Vec::new();
-    for t in &doc.types {
-        let name = format!("{}::{}", doc.namespace, t.name());
+    let mut hash = Vec::new();
+    for t in &types {
+        let name = format!("{ns}::{}", t.name());
         let q = QualifiedName::parse(&name).map_err(|e| fail(e.to_string()))?;
-        let s = if lookup_r.find(&q).is_none() {
-            "missing"
-        } else if rtemis_r8::codec::declaration_hash(&q, lookup_r)
-            == rtemis_r8::codec::declaration_hash(&q, lookup_rust)
-        {
-            "same"
-        } else {
-            "differs"
+        let h = hash_r(&q);
+        let s = match &h {
+            None => "missing",
+            Some(h) if *h == rtemis_r8::codec::declaration_hash(&q, lookup_rust) => "same",
+            Some(_) => "differs",
         };
-        codec.push(codecs.contains(&name));
+        codec.push(codecs.iter().any(|(n, _)| *n == name));
+        hash.push(h.unwrap_or_default());
         names.push(name);
         status.push(s);
     }
-    Ok(list!(type_name = names, status = status, codec = codec))
+    for (name, pin) in &codecs {
+        if names.contains(name) {
+            continue;
+        }
+        let h = QualifiedName::parse(name).ok().and_then(|q| hash_r(&q));
+        let s = match (&h, pin) {
+            (None, _) => "undeclared",
+            (Some(_), None) => "unpinned",
+            (Some(h), Some(p)) if h == p => "same",
+            (Some(_), Some(_)) => "stale",
+        };
+        codec.push(true);
+        hash.push(h.unwrap_or_default());
+        names.push(name.clone());
+        status.push(s);
+    }
+    Ok(list!(
+        type_name = names,
+        status = status,
+        codec = codec,
+        hash = hash
+    ))
 }
 
-/// Registers an exports table: declares its IR document's types, traits, and
-/// impls, and keeps the codecs of its Rust-native types and its impl
-/// functions, replacing the package's earlier entries.
+/// Registers an exports table: declares the impls its impl entries make and
+/// keeps the codecs of its Rust-native types and its impl functions,
+/// replacing the package's earlier entries. The types are the package's R
+/// declarations, registered before, which `r8_exports_compare()` checks
+/// against the table.
 ///
 /// @param ptr The external pointer that `r8_exports` returned.
 /// @param package Character: The registering package.
+/// @param ns Character: The package's namespace.
 /// @return List: `trait_name`, `type_name`, and `method` of each impl function.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
+fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
     let e = exports_of(&ptr)?;
     let declared = text(e.package, "package name")?;
     if declared != package {
@@ -342,107 +362,38 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
             "the exports table names the package `{declared}` and is registered by `{package}`"
         )));
     }
-    let doc = ir_document(e)?;
-    let ns = doc.namespace.to_string();
-    let report = |what: &str, name: &str, problems: List| -> Result<()> {
-        let messages: Vec<String> = problems
-            .dollar("message")
-            .ok()
-            .and_then(|m| m.as_string_vector())
-            .unwrap_or_default();
-        if messages.is_empty() {
-            Ok(())
-        } else {
-            Err(fail(format!(
-                "the {what} `{name}` of `{package}` does not declare: {}",
-                messages.join("; ")
-            )))
+    let in_record: Vec<String> = record_types(e, ns)?
+        .iter()
+        .map(|t| format!("{ns}::{}", t.name()))
+        .collect();
+    // Codecs, checked against the registered declarations of their types.
+    let reg = crate::declare::snapshot()?;
+    let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
+    let mut types = Vec::new();
+    for v in type_tables(e)? {
+        let name = text(unsafe { (*v).type_name }, "type name")?;
+        let q = QualifiedName::parse(&name).map_err(|e| fail(e.to_string()))?;
+        if q.namespace.as_str() != ns {
+            return Err(fail(format!(
+                "the codec of `{name}` of `{package}` names a type of another namespace than `{ns}`"
+            )));
         }
-    };
-    for t in &doc.types {
-        report(
-            "type",
-            t.name().as_str(),
-            crate::declare::declare_type(t.clone(), &ns)?,
-        )?;
+        if in_record.contains(&name) && !unsafe { (*v).declaration_hash }.is_null() {
+            return Err(fail(format!(
+                "the codec of `{name}` of `{package}` sets `declaration_hash`, and its type is declared in the exports' record, which pins it"
+            )));
+        }
+        rtemis_r8::exports::check_codec(&q, unsafe { &*v }, lookup, package).map_err(fail)?;
+        types.push((name, VTable(v)));
     }
-    for t in &doc.traits {
-        report(
-            "trait",
-            t.name.as_str(),
-            crate::declare::declare_trait(t.clone(), &ns)?,
-        )?;
-    }
-    for i in &doc.impls {
-        crate::declare::declare_impl(i.clone(), &ns)?;
-    }
-    // Codecs and impl functions.
-    let vtables = type_tables(e)?;
+    // Impl functions, whose rows make the impl declarations.
     let entries: &[ImplEntry] = if e.impls.is_null() || e.n_impls == 0 {
         &[]
     } else {
         unsafe { std::slice::from_raw_parts(e.impls, e.n_impls) }
     };
-    let mut types = Vec::new();
-    for v in vtables {
-        let name = text(unsafe { (*v).type_name }, "type name")?;
-        let Some(def) = doc
-            .types
-            .iter()
-            .find(|t| format!("{ns}::{}", t.name()) == name)
-        else {
-            return Err(fail(format!(
-                "the codec of `{name}` has no declaration in the IR document of `{package}`"
-            )));
-        };
-        // An enum's codec builds states by variant and names a state's
-        // variant; a struct's builds them from its fields.
-        let shape_ok = match def {
-            rtemis_r8::ir::TypeDef::Struct(_) => {
-                (unsafe { (*v).from_fields.is_some() }) && !crate::native::has_enum_members(v)
-            }
-            rtemis_r8::ir::TypeDef::Enum(_) => {
-                crate::native::is_enum_codec(v) && (unsafe { (*v).from_fields.is_none() })
-            }
-        };
-        if !shape_ok {
-            return Err(fail(format!(
-                "the codec of `{name}` of `{package}` does not match its type: a struct's codec sets `from_fields` and neither `variant` nor `from_variant`, and an enum's sets `variant` and `from_variant` and not `from_fields`"
-            )));
-        }
-        // A codec's state carries every field; an R object has no form in
-        // it, so a Rust-native type has no runtime-only field in any variant.
-        let runtime = |fs: &[rtemis_r8::ir::FieldDef]| {
-            fs.iter()
-                .find(|f| {
-                    matches!(f.ty, rtemis_r8::ir::FieldType::R { .. })
-                        || matches!(&f.ty, rtemis_r8::ir::FieldType::Option { inner, .. } if matches!(**inner, rtemis_r8::ir::FieldType::R { .. }))
-                })
-                .map(|f| f.name.to_string())
-        };
-        let found = match def {
-            rtemis_r8::ir::TypeDef::Struct(st) => runtime(&st.fields),
-            rtemis_r8::ir::TypeDef::Enum(e) => e.variants.iter().find_map(|var| match &var.shape {
-                rtemis_r8::ir::VariantShape::Struct { fields, .. } => runtime(fields),
-                rtemis_r8::ir::VariantShape::Newtype { of } => doc
-                    .types
-                    .iter()
-                    .find(|t| format!("{ns}::{}", t.name()) == of.to_string())
-                    .and_then(|t| match t {
-                        rtemis_r8::ir::TypeDef::Struct(st) => runtime(&st.fields),
-                        _ => None,
-                    }),
-                rtemis_r8::ir::VariantShape::Unit => None,
-            }),
-        };
-        if let Some(field) = found {
-            return Err(fail(format!(
-                "the Rust-native type `{name}` of `{package}` declares the runtime-only field `{field}`; its codec's state holds every field"
-            )));
-        }
-        types.push((name, VTable(v)));
-    }
-    let mut impls = Vec::new();
+    let mut rows = Vec::with_capacity(entries.len());
+    let mut impls = Vec::with_capacity(entries.len());
     for entry in entries {
         let key = (
             text(entry.trait_name, "trait name")?,
@@ -451,54 +402,23 @@ fn r8_register_exports(ptr: Robj, package: &str) -> Result<List> {
         );
         let call = entry.call.ok_or_else(|| {
             fail(format!(
-                "the impl function of `{}` for `{}` is NULL",
-                key.0, key.1
+                "the impl function `{}` of `{}` for `{}` is NULL",
+                key.2, key.0, key.1
             ))
         })?;
-        let declared = doc.impls.iter().any(|i| {
-            i.r#trait.to_string() == key.0
-                && matches!(&i.target, ImplTarget::Type { name } if name.to_string() == key.1)
-                && i.methods.iter().any(|m| m.as_str() == key.2)
+        rows.push(rtemis_r8::exports::ImplRow {
+            trait_name: key.0.clone(),
+            type_name: key.1.clone(),
+            method: key.2.clone(),
+            n_params: entry.n_params,
         });
-        if !declared {
-            return Err(fail(format!(
-                "the impl function `{}` of `{}` for `{}` has no impl in the IR document of `{package}`",
-                key.2, key.0, key.1
-            )));
-        }
-        // The number of parameters agrees with the trait's declaration,
-        // registered by the trait's package.
-        let declared_params = crate::declare::registry().lock().ok().and_then(|docs| {
-            let q = QualifiedName::parse(&key.0).ok()?;
-            let t = docs
-                .documents()
-                .iter()
-                .find(|d| d.namespace == q.namespace)?
-                .traits
-                .iter()
-                .find(|t| t.name == q.name)?;
-            t.methods
-                .iter()
-                .find(|m| m.name.as_str() == key.2)
-                .map(|m| m.params.len())
-        });
-        match declared_params {
-            Some(n) if n != entry.n_params => {
-                return Err(fail(format!(
-                    "the impl function `{}` of `{}` for `{}` takes {} parameters, and the trait declares {n}",
-                    key.2, key.0, key.1, entry.n_params
-                )));
-            }
-            Some(_) => {}
-            None => {
-                return Err(fail(format!(
-                    "the trait `{}` declares no method `{}`; its package declares it before `{package}` registers",
-                    key.0, key.2
-                )));
-            }
-        }
         impls.push((key, ImplFn { call }));
     }
+    for i in rtemis_r8::exports::impls_from_rows(&rows, package).map_err(fail)? {
+        crate::declare::declare_impl(i, ns)?;
+    }
+    let reg = crate::declare::snapshot()?;
+    rtemis_r8::exports::check_params(&rows, &reg, package).map_err(fail)?;
     let mut c = compiled()
         .lock()
         .map_err(|_| fail("the registry of compiled exports is unavailable"))?;
@@ -594,7 +514,6 @@ fn r8_clear_external_ptrs(ptrs: List) {
 extendr_module! {
     mod exports;
     fn r8_clear_external_ptrs;
-    fn r8_exports_info;
     fn r8_exports_document;
     fn r8_exports_compare;
     fn r8_register_exports;

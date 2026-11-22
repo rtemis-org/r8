@@ -199,6 +199,13 @@ pub struct TypeVTable {
     /// `from_fields` or `from_variant` otherwise.
     pub from_reader:
         Option<unsafe extern "C" fn(*const Reader, Node, *mut *mut c_void, *mut Error) -> Status>,
+    /// The declaration hash of the type the codec was written against,
+    /// `sha256:<hex>`, NUL-terminated: set by a codec whose type has no
+    /// declaration in the exports' record, a codec written by hand in C,
+    /// and NULL otherwise. Registration requires it to equal the hash of
+    /// the type's R declaration, since `from_fields` and `from_variant`
+    /// read fields by position.
+    pub declaration_hash: *const c_char,
 }
 
 /// `R8MethodFn`: an impl function.
@@ -231,12 +238,13 @@ pub struct Exports {
     pub size: u32,
     /// The package name, NUL-terminated.
     pub package: *const c_char,
-    /// The package's IR document as JSON text, read when `ir_record` is
-    /// NULL: the form of a table written by hand in C. Tables that
-    /// `rtemis-r8-api` generates set it to NULL.
-    pub ir_json: *const c_char,
-    /// The length of `ir_json` in bytes.
-    pub ir_json_len: usize,
+    /// The declarations of the package's types in Rust as a declaration
+    /// record ([`crate::record`]), which holds type declarations only; NULL
+    /// in a table written by hand in C, whose types are the package's R
+    /// declarations.
+    pub ir_record: *const u8,
+    /// The length of `ir_record` in bytes.
+    pub ir_record_len: usize,
     /// The codecs of the package's Rust-native types.
     pub types: *const TypeVTable,
     /// The number of entries of `types`.
@@ -245,12 +253,6 @@ pub struct Exports {
     pub impls: *const ImplEntry,
     /// The number of entries of `impls`.
     pub n_impls: usize,
-    /// The package's declarations as a declaration record
-    /// ([`crate::record`]), which R8 reads when `size` covers it and it is
-    /// set.
-    pub ir_record: *const u8,
-    /// The length of `ir_record` in bytes.
-    pub ir_record_len: usize,
 }
 
 /// `R8Api`: R8's services to compiled code of other packages.
@@ -338,6 +340,10 @@ pub fn layout() -> Vec<(&'static str, usize)> {
             "R8TypeVTable.from_reader",
             offset_of!(TypeVTable, from_reader),
         ),
+        (
+            "R8TypeVTable.declaration_hash",
+            offset_of!(TypeVTable, declaration_hash),
+        ),
         ("R8Reader", size_of::<Reader>()),
         ("R8Reader.context", offset_of!(Reader, context)),
         ("R8Reader.kind", offset_of!(Reader, kind)),
@@ -358,17 +364,15 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("R8Exports", size_of::<Exports>()),
         ("R8Exports.size", offset_of!(Exports, size)),
         ("R8Exports.package", offset_of!(Exports, package)),
-        ("R8Exports.ir_json", offset_of!(Exports, ir_json)),
-        ("R8Exports.ir_json_len", offset_of!(Exports, ir_json_len)),
-        ("R8Exports.types", offset_of!(Exports, types)),
-        ("R8Exports.n_types", offset_of!(Exports, n_types)),
-        ("R8Exports.impls", offset_of!(Exports, impls)),
-        ("R8Exports.n_impls", offset_of!(Exports, n_impls)),
         ("R8Exports.ir_record", offset_of!(Exports, ir_record)),
         (
             "R8Exports.ir_record_len",
             offset_of!(Exports, ir_record_len),
         ),
+        ("R8Exports.types", offset_of!(Exports, types)),
+        ("R8Exports.n_types", offset_of!(Exports, n_types)),
+        ("R8Exports.impls", offset_of!(Exports, impls)),
+        ("R8Exports.n_impls", offset_of!(Exports, n_impls)),
         ("R8Api", size_of::<Api>()),
         ("R8Api.size", offset_of!(Api, size)),
         ("R8Api.new_value", offset_of!(Api, new_value)),

@@ -276,12 +276,6 @@ pub(crate) fn from_reader(
     Ok(state)
 }
 
-/// Whether a codec table sets either enum member.
-pub(crate) fn has_enum_members(vt: *const TypeVTable) -> bool {
-    let codec = unsafe { &*vt };
-    codec.variant.is_some() || codec.from_variant.is_some()
-}
-
 /// The variant of a state of an enum's codec; `None` for a struct's codec.
 pub(crate) fn state_variant(vt: *const TypeVTable, state: *const c_void) -> Option<String> {
     if !is_enum_codec(vt) {

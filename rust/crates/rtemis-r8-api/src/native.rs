@@ -147,6 +147,7 @@ pub const fn codec<T: Native>() -> Shared<abi::TypeVTable> {
         variant: None,
         from_variant: None,
         from_reader: Some(struct_from_reader::<T>),
+        declaration_hash: std::ptr::null(),
     })
 }
 
@@ -166,6 +167,7 @@ pub const fn enum_codec<T: NativeEnum>() -> Shared<abi::TypeVTable> {
         variant: Some(variant::<T>),
         from_variant: Some(from_variant::<T>),
         from_reader: Some(enum_from_reader::<T>),
+        declaration_hash: std::ptr::null(),
     })
 }
 

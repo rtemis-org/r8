@@ -315,29 +315,6 @@ test_that("a native enum's variants and unit values wait for its codec", {
   expect_true("  native = TRUE" %in% lines)
 })
 
-test_that("a package with a native enum requires R8 0.4.0", {
-  pkg <- tempfile("pkg")
-  dir.create(pkg)
-  desc <- function(imports) {
-    writeLines(
-      c("Package: p", "Version: 0.0.1", paste0("Imports: ", imports)),
-      file.path(pkg, "DESCRIPTION")
-    )
-  }
-  desc("R8 (>= 0.4.0), stats")
-  expect_null(R8:::check_r8_requirement(pkg, "p", "0.4.0"))
-  desc("stats,\n    R8 (>= 0.5.1)")
-  expect_null(R8:::check_r8_requirement(pkg, "p", "0.4.0"))
-  for (imports in c("R8", "R8 (>= 0.3.0)", "R8x (>= 0.4.0)")) {
-    desc(imports)
-    expect_error(
-      R8:::check_r8_requirement(pkg, "p", "0.4.0"),
-      "R8 \\(>= 0.4.0\\)",
-      class = "r8_declaration_error"
-    )
-  }
-})
-
 test_that("generated code compares by tokens, so formatting keeps it current", {
   a <- c(
     "# r8-types.R",

@@ -51,8 +51,15 @@
 #'
 #' @export
 r8_document_native <- function(path = ".", check = FALSE) {
-  desc <- read.dcf(file.path(path, "DESCRIPTION"), fields = "Package")
+  desc <- read.dcf(
+    file.path(path, "DESCRIPTION"),
+    fields = c("Package", "Config/R8/namespace")
+  )
   pkg <- unname(desc[1L, "Package"])
+  namespace <- unname(desc[1L, "Config/R8/namespace"])
+  if (is.na(namespace)) {
+    namespace <- pkg
+  }
   if (isNamespaceLoaded(pkg)) {
     r8_abort(
       "r8_document_native() runs in an R session without '",
@@ -92,22 +99,11 @@ r8_document_native <- function(path = ".", check = FALSE) {
       class = "r8_declaration_error"
     )
   }
-  doc <- r8_exports_document(ptr)
+  doc <- r8_exports_document(ptr, namespace)
   .r8_render_refs[["map"]] <- foreign_refs(doc, path)
   on.exit(.r8_render_refs[["map"]] <- NULL, add = TRUE)
-  codecs <- r8_exports_compare(ptr)
+  codecs <- r8_exports_compare(ptr, namespace)
   codecs <- codecs[["type_name"]][codecs[["codec"]]]
-  native_enums <- vapply(
-    doc[["types"]],
-    function(t) {
-      identical(t[["kind"]], "enum") &&
-        paste0(doc[["namespace"]], "::", t[["name"]]) %in% codecs
-    },
-    logical(1)
-  )
-  if (any(native_enums)) {
-    check_r8_requirement(path, pkg, "0.4.0")
-  }
   lines <- render_document(doc, pkg, codecs)
   verify_document(lines, doc[["namespace"]], ptr)
   file <- file.path(path, "R", "r8-types.R")
@@ -209,51 +205,6 @@ foreign_refs <- function(doc, path) {
 } # /R8::foreign_refs
 
 
-# %% check_r8_requirement ----
-#' Check that a package requires a minimum version of R8
-#'
-#' A Rust-native enum needs R8 0.4.0: R8 0.3.0 registers an enum's codec and
-#' builds R-native values of the type.
-#'
-#' @param path Character: The package's root directory.
-#' @param pkg Character: The package.
-#' @param minimum Character: The version of R8 the package requires.
-#'
-#' @return `NULL`, invisibly; signals `r8_declaration_error` when the
-#'   `Imports` of the package's `DESCRIPTION` admit an earlier R8.
-#'
-#' @keywords internal
-#' @noRd
-check_r8_requirement <- function(path, pkg, minimum) {
-  imports <- read.dcf(file.path(path, "DESCRIPTION"), fields = "Imports")[
-    1L,
-    1L
-  ]
-  req <- regmatches(
-    imports,
-    regexec(
-      "(^|[,[:space:]])R8[[:space:]]*\\([[:space:]]*>=[[:space:]]*([0-9.-]+)[[:space:]]*\\)",
-      imports
-    )
-  )[[1L]]
-  ok <- length(req) == 3L &&
-    package_version(req[[3L]]) >= package_version(minimum)
-  if (!ok) {
-    r8_abort(
-      "Package '",
-      pkg,
-      "' declares a Rust-native enum, which R8 ",
-      minimum,
-      " registers; its DESCRIPTION lists `R8 (>= ",
-      minimum,
-      ")` in Imports.",
-      class = "r8_declaration_error"
-    )
-  }
-  invisible(NULL)
-} # /R8::check_r8_requirement
-
-
 # %% same_code ----
 #' Whether two R sources hold the same tokens
 #'
@@ -307,7 +258,7 @@ verify_document <- function(lines, namespace, ptr) {
   op <- options(r8.namespace = namespace)
   on.exit(options(op), add = TRUE)
   eval(parse(text = lines, keep.source = FALSE), envir = env)
-  compared <- r8_exports_compare(ptr)
+  compared <- r8_exports_compare(ptr, namespace)
   bad <- compared[["type_name"]][compared[["status"]] != "same"]
   if (length(bad) > 0L) {
     r8_abort(

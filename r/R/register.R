@@ -32,7 +32,11 @@
 #' `native = TRUE`, and every type declared with `native = TRUE` has a codec;
 #' otherwise registration signals `r8_declaration_error` and lists each
 #' difference. `r8_document_native()` generates the R declarations of types
-#' declared in Rust.
+#' declared in Rust. A codec written in C, whose type the exports declare
+#' only in R, sets the declaration hash of its type (`declaration_hash`),
+#' which registration compares with the hash of the R declaration, since the
+#' codec reads fields by position. Each impl declaration of the exports is
+#' built from its impl entries, grouped by trait and type.
 #'
 #' @param pkgname Optional Character: The package; by default, the package
 #'   whose code calls `r8_register()`.
@@ -142,9 +146,10 @@ check_namespaces <- function(pkg) {
 #'
 #' Fetches the function the package registered with
 #' `R_RegisterCCallable(pkg, "r8_exports", fn)`, when it registered one, and
-#' registers the `R8Exports` table it returns (`R8.h`): the IR document, the
-#' codecs of Rust-native types, and the impl functions, each of which becomes
-#' the R method of its trait for its type.
+#' registers the `R8Exports` table it returns (`R8.h`): the codecs of
+#' Rust-native types, checked against the package's R declarations, and the
+#' impl functions, whose entries make the impl declarations and each of which
+#' becomes the R method of its trait for its type.
 #'
 #' @param pkg Character: The package.
 #' @param entries List: The package's recorded declarations.
@@ -169,11 +174,11 @@ register_exports <- function(pkg, entries = list()) {
     check_exports(pkg, NULL, native)
     return(0L)
   }
-  info <- r8_exports_info(ptr)
-  claim_namespace(info[["namespace"]], pkg)
-  compared <- r8_exports_compare(ptr)
+  namespace <- declaring_namespace(asNamespace(pkg))
+  claim_namespace(namespace, pkg)
+  compared <- r8_exports_compare(ptr, namespace)
   check_exports(pkg, compared, native)
-  fns <- r8_register_exports(ptr, pkg)
+  fns <- r8_register_exports(ptr, pkg, namespace)
   assign(
     pkg,
     data.frame(
@@ -252,6 +257,8 @@ check_exports <- function(pkg, compared, native) {
   names <- compared[["type_name"]]
   status <- compared[["status"]]
   codec <- compared[["codec"]]
+  hash <- compared[["hash"]]
+  declared <- !status %in% c("missing", "undeclared")
   problems <- c(
     sprintf(
       "`%s` is declared in the compiled exports and has no R declaration.",
@@ -262,8 +269,27 @@ check_exports <- function(pkg, compared, native) {
       names[status == "differs"]
     ),
     sprintf(
+      "`%s` has a codec in the compiled exports and no R declaration.",
+      names[status == "undeclared"]
+    ),
+    sprintf(
+      "The codec of `%s` sets no `declaration_hash`; the hash of its R declaration is \"%s\".",
+      names[status == "unpinned"],
+      hash[status == "unpinned"]
+    ),
+    sprintf(
+      paste0(
+        "The `declaration_hash` of the codec of `%s` differs from the hash of ",
+        "its R declaration, \"%s\". The codec reads fields by position: ",
+        "check it against the declaration, then set its `declaration_hash` to ",
+        "that hash."
+      ),
+      names[status == "stale"],
+      hash[status == "stale"]
+    ),
+    sprintf(
       "`%s` has a codec in the compiled exports; its R declaration takes native = TRUE.",
-      names[codec & status != "missing" & !names %in% native]
+      names[codec & declared & !names %in% native]
     ),
     sprintf(
       "`%s` is declared with native = TRUE; the compiled exports carry no codec for it.",

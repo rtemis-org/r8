@@ -137,31 +137,39 @@ const R8TypeVTable pkgc_resampler_codec = {
     .bytes = resampler_bytes,
     .variant = resampler_variant,
     .from_variant = resampler_from_variant,
+    // The hash of the R declaration of pkgc::Resampler (R/types.R), whose
+    // variants' fields from_variant reads by position.
+    .declaration_hash = "sha256:6524d382fefc9ec03ec1b5b397f1d96851d6f9b0b799e08bb6be30b2c146664f",
 };
 
-// A codec of the struct pkgc::Signal that also sets the enum members: the
-// shape registration refuses.
+// Codecs of pkgc::Signal that registration refuses, by `kind`: 1 sets the
+// enum members, 2 pins another declaration hash, and 3 pins none.
 extern const R8TypeVTable pkgc_signal_codec;
 static R8TypeVTable misshaped;
-
-static const char bad_ir_json[] =
-    "{\"$ir\":1,\"namespace\":\"pkgc\","
-    "\"types\":[{\"kind\":\"struct\",\"name\":\"Signal\",\"description\":\"\",\"version\":1,"
-    "\"fields\":[{\"name\":\"name\",\"type\":{\"kind\":\"character\"},\"description\":\"\"},"
-    "{\"name\":\"values\",\"type\":{\"kind\":\"vec\",\"element\":{\"kind\":\"double\"}},"
-    "\"description\":\"\"}]}]}";
-
 static R8Exports bad_exports;
 
-// An external pointer to an exports table whose codec of pkgc::Signal has
-// the enum members set, for the test of registration's refusal.
-SEXP pkgc_bad_exports(void) {
+// An external pointer to an exports table whose one codec is the codec of
+// pkgc::Signal changed as `kind` says, for the tests of registration's
+// refusals.
+SEXP pkgc_bad_exports(SEXP kind) {
   misshaped = pkgc_signal_codec;
-  misshaped.variant = resampler_variant;
-  misshaped.from_variant = resampler_from_variant;
+  switch (Rf_asInteger(kind)) {
+    case 1:
+      misshaped.variant = resampler_variant;
+      misshaped.from_variant = resampler_from_variant;
+      break;
+    case 2:
+      misshaped.declaration_hash = "sha256:00";
+      break;
+    default:
+      misshaped.declaration_hash = NULL;
+  }
   bad_exports = (R8Exports) {
-      R8_ABI_VERSION, sizeof(R8Exports), "r8pkgC", bad_ir_json, sizeof(bad_ir_json) - 1,
-      &misshaped,     1,                 NULL,     0,
+      .abi_version = R8_ABI_VERSION,
+      .size = sizeof(R8Exports),
+      .package = "r8pkgC",
+      .types = &misshaped,
+      .n_types = 1,
   };
   return R_MakeExternalPtr(&bad_exports, Rf_install("r8_exports"), R_NilValue);
 }

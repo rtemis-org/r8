@@ -72,25 +72,8 @@ static R8Status format_impl(const R8CallContext *ctx, const SEXP *args, size_t n
   return R8_OK;
 }
 
-// pkgc::Signal and pkgc::Resampler are declared in R (R/types.R) and here,
-// identically, since a codec needs a declaration in the exports' IR
-// document.
-static const char ir_json[] =
-    "{\"$ir\":1,\"namespace\":\"pkgc\","
-    "\"types\":[{\"kind\":\"struct\",\"name\":\"Signal\",\"description\":\"\",\"version\":1,"
-    "\"fields\":[{\"name\":\"name\",\"type\":{\"kind\":\"character\"},\"description\":\"\"},"
-    "{\"name\":\"values\",\"type\":{\"kind\":\"vec\",\"element\":{\"kind\":\"double\"}},"
-    "\"description\":\"\"}]},"
-    "{\"kind\":\"enum\",\"name\":\"Resampler\",\"description\":\"\",\"tag\":\"type\",\"version\":1,"
-    "\"variants\":[{\"name\":\"KFold\",\"description\":\"\",\"shape\":\"struct\","
-    "\"fields\":[{\"name\":\"k\",\"type\":{\"kind\":\"integer\"},\"description\":\"\"}]},"
-    "{\"name\":\"Loocv\",\"description\":\"\",\"shape\":\"unit\"}]}],"
-    "\"impls\":["
-    "{\"trait\":\"pkgc::Norm\",\"target\":{\"kind\":\"type\",\"name\":\"pkgc::Point\"},"
-    "\"methods\":[\"magnitude\",\"ratio\"]},"
-    "{\"trait\":\"R8::Display\",\"target\":{\"kind\":\"type\",\"name\":\"pkgc::Point\"},"
-    "\"methods\":[\"format\"]}]}";
-
+// The impls of pkgc::Point, whose declarations R8 builds from these entries;
+// the types are declared in R (R/types.R).
 static const R8ImplEntry impls[] = {
     {"pkgc::Norm", "pkgc::Point", "magnitude", magnitude_impl, 1},
     {"pkgc::Norm", "pkgc::Point", "ratio", ratio_impl, 2},
@@ -103,14 +86,41 @@ static const R8ImplEntry impls[] = {
 extern const R8TypeVTable pkgc_signal_codec;
 extern const R8TypeVTable pkgc_resampler_codec;
 static R8TypeVTable codecs[2];
-SEXP pkgc_bad_exports(void);
+SEXP pkgc_bad_exports(SEXP kind);
 SEXP pkgc_live_signals(void);
 SEXP pkgc_signal_peek(SEXP x);
 SEXP pkgc_signal_make(SEXP name, SEXP n);
 
+// Impl entries that registration refuses, by `kind`: 1 repeats a method,
+// and 2 has a NULL function.
+static R8ImplEntry bad_rows[2];
+static R8Exports bad_impl_exports;
+
+static SEXP pkgc_bad_impls(SEXP kind) {
+  bad_rows[0] = impls[0];
+  bad_rows[1] = impls[0];
+  if (Rf_asInteger(kind) == 2) {
+    bad_rows[1] = impls[1];
+    bad_rows[1].call = NULL;
+  }
+  bad_impl_exports = (R8Exports) {
+      .abi_version = R8_ABI_VERSION,
+      .size = sizeof(R8Exports),
+      .package = "r8pkgC",
+      .impls = bad_rows,
+      .n_impls = 2,
+  };
+  return R_MakeExternalPtr(&bad_impl_exports, Rf_install("r8_exports"), R_NilValue);
+}
+
 static const R8Exports exports = {
-    R8_ABI_VERSION, sizeof(R8Exports), "r8pkgC", ir_json, sizeof(ir_json) - 1,
-    codecs,               2,           impls,    sizeof(impls) / sizeof(impls[0]),
+    .abi_version = R8_ABI_VERSION,
+    .size = sizeof(R8Exports),
+    .package = "r8pkgC",
+    .types = codecs,
+    .n_types = 2,
+    .impls = impls,
+    .n_impls = sizeof(impls) / sizeof(impls[0]),
 };
 
 // The status R8Api.protect returns for a callback that raises an R error,
@@ -132,7 +142,8 @@ static const R_CallMethodDef call_methods[] = {
     {"pkgc_signal_peek", (DL_FUNC) &pkgc_signal_peek, 1},
     {"pkgc_signal_make", (DL_FUNC) &pkgc_signal_make, 2},
     {"pkgc_protect_status", (DL_FUNC) &pkgc_protect_status, 0},
-    {"pkgc_bad_exports", (DL_FUNC) &pkgc_bad_exports, 0},
+    {"pkgc_bad_exports", (DL_FUNC) &pkgc_bad_exports, 1},
+    {"pkgc_bad_impls", (DL_FUNC) &pkgc_bad_impls, 1},
     {NULL, NULL, 0},
 };
 

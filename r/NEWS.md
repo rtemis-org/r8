@@ -1,8 +1,9 @@
 # R8 0.4.0
 
-- Rust-native enums: `#[derive(R8)]` with `#[r8(native)]` on an enum of unit, struct, and newtype variants keeps every value, unit variants included, in compiled code. `new_enum(native = TRUE)` declares one in R, and `r8_document_native()` writes it; a package with a native enum lists `R8 (>= 0.4.0)` in `Imports`.
-- `R8.h`: an enum's codec sets the new members `variant` and `from_variant` of `R8TypeVTable`. The ABI version stays 1, and codecs built for R8 0.3.0 register unchanged.
+- Rust-native enums: `#[derive(R8)]` with `#[r8(native)]` on an enum of unit, struct, and newtype variants keeps every value, unit variants included, in compiled code. `new_enum(native = TRUE)` declares one in R, and `r8_document_native()` writes it.
+- `R8.h`: an enum's codec sets the new members `variant` and `from_variant` of `R8TypeVTable`.
 - `r8_register()` refuses a codec whose shape does not match its type, and a codec whose enum declares a runtime-only field in any variant.
+- `R8.h`: an exports table carries the declarations of its types in Rust only, and R8 builds each impl declaration from the impl entries; a table written in C declares its types in R and carries no IR (`ir_json` is removed). A codec written in C sets `declaration_hash`, the hash of its type's R declaration, which `r8_register()` checks, reporting the current hash when the two differ.
 - `r8::exports!` declares every type of the package's namespace that its listed types reach, such as the struct of a newtype variant.
 - `print()` and `str()` of a Rust-native value show its size in the header, in IEC units (`<pkgc::Signal> 7.63 MiB`); `str()` adds the fields read into R (`+ 112 B read`).
 - A method of `#[r8::methods]` takes another value of a Rust-native type as `&T`, borrowed from its state, or built from an R-native value of the type.

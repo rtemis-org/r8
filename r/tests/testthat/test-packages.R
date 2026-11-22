@@ -554,8 +554,16 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
       "cat('json', native(r), R8::r8_equal(r, k), '\\n')",
       "u <- unserialize(serialize(l, NULL))",
       "cat('serialize', native(u), attr(u, 'r8_variant'), '\\n')",
-      "e <- tryCatch(R8:::r8_register_exports(r8pkgC:::bad_exports(), 'r8pkgC'), error = function(e) conditionMessage(e))",
+      "e <- tryCatch(R8:::r8_register_exports(r8pkgC:::bad_exports(1), 'r8pkgC', 'pkgc'), error = function(e) conditionMessage(e))",
       "cat('misshaped', grepl('does not match its type', e), '\\n')",
+      "st <- function(k) R8:::r8_exports_compare(r8pkgC:::bad_exports(k), 'pkgc')$status",
+      "cat('pins', st(2), st(3), '\\n')",
+      "chk <- function(k) tryCatch(R8:::check_exports('r8pkgC', R8:::r8_exports_compare(r8pkgC:::bad_exports(k), 'pkgc'), 'pkgc::Signal'), error = function(e) conditionMessage(e))",
+      "h <- R8:::r8_exports_compare(r8pkgC:::bad_exports(2), 'pkgc')$hash",
+      "cat('stale', grepl(h, chk(2), fixed = TRUE), grepl('reads fields by position', chk(2)), '\\n')",
+      "cat('unpinned', grepl('sets no `declaration_hash`', chk(3)), grepl(h, chk(3), fixed = TRUE), '\\n')",
+      "ri <- function(k) tryCatch(R8:::r8_register_exports(r8pkgC:::bad_impls(k), 'r8pkgC', 'pkgc'), error = function(e) conditionMessage(e))",
+      "cat('impls', grepl('two impl functions `magnitude`', ri(1)), grepl('`ratio` of `pkgc::Norm` for `pkgc::Point` is NULL', ri(2)), '\\n')",
       "s <- Signal(name = 'a', values = 1)",
       "cat('after', grepl('r8 native pkgc::Signal', inspect(s)), '\\n')"
     )
@@ -567,6 +575,12 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
   expect_true("serialize TRUE Loocv " %in% out, info = info)
   # The refused table leaves the registered codecs as they were.
   expect_true("misshaped TRUE " %in% out, info = info)
+  # A codec written in C pins its type's declaration hash; a stale or missing
+  # pin names the current hash.
+  expect_true("pins stale unpinned " %in% out, info = info)
+  expect_true("stale TRUE TRUE " %in% out, info = info)
+  expect_true("unpinned TRUE TRUE " %in% out, info = info)
+  expect_true("impls TRUE TRUE " %in% out, info = info)
   expect_true("after TRUE " %in% out, info = info)
 })
 

@@ -6,8 +6,8 @@ use std::ffi::{CStr, c_void};
 use std::sync::OnceLock;
 
 use rtemis_r8::abi::{self, ABI_VERSION, MethodFn};
-use rtemis_r8::ir::{IR_VERSION, ImplDef, ImplTarget, IrDocument, TypeDef};
-use rtemis_r8::name::{MethodName, Name, QualifiedName};
+use rtemis_r8::ir::TypeDef;
+use rtemis_r8::name::Name;
 
 use crate::keep;
 use crate::sys;
@@ -33,14 +33,15 @@ pub struct ImplSet {
     pub methods: &'static [MethodRow],
 }
 
-/// The package's exports table, built on first use: the IR document of
-/// `types` (the declarations of the Rust-native types) and the impls, the
-/// codec tables `codecs`, and the impl entries.
+/// The package's exports table, built on first use: the declaration record
+/// of `types` (the declarations of the Rust-native types), the codec tables
+/// `codecs`, and the impl entries, from which R8 builds the impl
+/// declarations.
 ///
 /// # Panics
 ///
-/// When a name is not a valid R8 name, which the macros check at compile
-/// time.
+/// When the namespace is not a valid R8 name, which the macros check at
+/// compile time.
 #[doc(hidden)]
 pub fn table(
     cell: &'static OnceLock<usize>,
@@ -51,45 +52,10 @@ pub fn table(
     impls: &'static [&'static ImplSet],
 ) -> *const abi::Exports {
     *cell.get_or_init(|| {
-        let text = |c: &CStr| c.to_str().expect("names are UTF-8").to_string();
-        let doc = IrDocument {
-            ir_version: IR_VERSION,
-            namespace: Name::new(namespace).expect("the macro checks the namespace"),
-            types: types(),
-            traits: Vec::new(),
-            impls: impls
-                .iter()
-                .map(|s| ImplDef {
-                    r#trait: QualifiedName::parse(&text(s.trait_name))
-                        .expect("the macro checks the trait name"),
-                    type_args: Vec::new(),
-                    target: ImplTarget::Type {
-                        name: QualifiedName::parse(&text(s.type_name))
-                            .expect("the derive checks the type name"),
-                    },
-                    tag_value: None,
-                    methods: s
-                        .methods
-                        .iter()
-                        .map(|m| {
-                            MethodName::new(text(m.name)).expect("the macro checks the method name")
-                        })
-                        .collect(),
-                    codec: false,
-                })
-                .collect(),
-        };
-        // The declarations as a binary record, which R8 decodes into the
-        // typed IR; the table carries no JSON text.
         use rtemis_r8::record::{self, DeclarationRef};
-        let ns = &doc.namespace;
-        let bytes = record::encode(
-            doc.types
-                .iter()
-                .map(|t| (ns, DeclarationRef::Type(t)))
-                .chain(doc.traits.iter().map(|t| (ns, DeclarationRef::Trait(t))))
-                .chain(doc.impls.iter().map(|i| (ns, DeclarationRef::Impl(i)))),
-        );
+        let ns = Name::new(namespace).expect("the macro checks the namespace");
+        let types = types();
+        let bytes = record::encode(types.iter().map(|t| (&ns, DeclarationRef::Type(t))));
         let ir: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let entries: Vec<abi::ImplEntry> = impls
             .iter()
@@ -108,14 +74,12 @@ pub fn table(
             abi_version: ABI_VERSION,
             size: std::mem::size_of::<abi::Exports>() as u32,
             package: package.as_ptr(),
-            ir_json: std::ptr::null(),
-            ir_json_len: 0,
+            ir_record: ir.as_ptr(),
+            ir_record_len: ir.len(),
             types: codecs.as_ptr(),
             n_types: codecs.len(),
             impls: entries.as_ptr(),
             n_impls: entries.len(),
-            ir_record: ir.as_ptr(),
-            ir_record_len: ir.len(),
         }));
         std::ptr::from_ref(e) as usize
     }) as *const abi::Exports

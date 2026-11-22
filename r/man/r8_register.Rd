@@ -28,7 +28,11 @@ declaration hash, the type of every codec is declared with
 \code{native = TRUE}, and every type declared with \code{native = TRUE} has a codec;
 otherwise registration signals \code{r8_declaration_error} and lists each
 difference. \code{r8_document_native()} generates the R declarations of types
-declared in Rust.
+declared in Rust. A codec written in C, whose type the exports declare
+only in R, sets the declaration hash of its type (\code{declaration_hash}),
+which registration compares with the hash of the R declaration, since the
+codec reads fields by position. Each impl declaration of the exports is
+built from its impl entries, grouped by trait and type.
 }
 \examples{
 \dontrun{

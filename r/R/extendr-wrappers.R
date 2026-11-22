@@ -254,46 +254,48 @@ r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 #' @noRd
 r8_clear_external_ptrs <- function(ptrs) .Call(wrap__r8_clear_external_ptrs, ptrs)
 
-#' The package and namespace of an exports table, checked.
+#' The IR document of the type declarations of an exports table's record,
+#' as the R lists the declaration functions build.
 #'
 #' @param ptr The external pointer that `r8_exports` returned.
-#' @return List: `package` and `namespace`.
-#' @keywords internal
-#' @noRd
-r8_exports_info <- function(ptr) .Call(wrap__r8_exports_info, ptr)
-
-#' The IR document of an exports table, as the R lists the declaration
-#' functions build.
-#'
-#' @param ptr The external pointer that `r8_exports` returned.
+#' @param ns Character: The package's namespace.
 #' @return List: The IR document.
 #' @keywords internal
 #' @noRd
-r8_exports_document <- function(ptr) .Call(wrap__r8_exports_document, ptr)
+r8_exports_document <- function(ptr, ns) .Call(wrap__r8_exports_document, ptr, ns)
 
-#' Compares each type of an exports table with the registered declaration of
-#' the same qualified name, by declaration hash. The Rust hash reads the
-#' registry with the exports' IR document in place of its namespace's types
-#' of the same names; the R hash reads the registry alone.
+#' Compares the types of an exports table with the registered declarations.
+#' A type of the record compares by declaration hash: the Rust hash reads
+#' the registry with the record's types in place of its namespace's types
+#' of the same names, and the R hash reads the registry alone. A codec whose
+#' type has no declaration in the record compares the hash it pins
+#' (`declaration_hash`) with the registry's.
 #'
 #' @param ptr The external pointer that `r8_exports` returned.
-#' @return List: `type_name`, the qualified names; `status`, `"same"`,
-#'   `"differs"`, or `"missing"` (no registered declaration); and `codec`,
-#'   whether the table carries the type's codec.
+#' @param ns Character: The package's namespace.
+#' @return List: `type_name`, the qualified names; `status`, for a type of
+#'   the record `"same"`, `"differs"`, or `"missing"` (no registered
+#'   declaration), and for a codec's type outside the record `"same"`,
+#'   `"stale"` (the pinned hash differs), `"unpinned"` (no pinned hash), or
+#'   `"undeclared"`; `codec`, whether the table carries the type's codec; and
+#'   `hash`, the registered declaration's hash, `""` without one.
 #' @keywords internal
 #' @noRd
-r8_exports_compare <- function(ptr) .Call(wrap__r8_exports_compare, ptr)
+r8_exports_compare <- function(ptr, ns) .Call(wrap__r8_exports_compare, ptr, ns)
 
-#' Registers an exports table: declares its IR document's types, traits, and
-#' impls, and keeps the codecs of its Rust-native types and its impl
-#' functions, replacing the package's earlier entries.
+#' Registers an exports table: declares the impls its impl entries make and
+#' keeps the codecs of its Rust-native types and its impl functions,
+#' replacing the package's earlier entries. The types are the package's R
+#' declarations, registered before, which `r8_exports_compare()` checks
+#' against the table.
 #'
 #' @param ptr The external pointer that `r8_exports` returned.
 #' @param package Character: The registering package.
+#' @param ns Character: The package's namespace.
 #' @return List: `trait_name`, `type_name`, and `method` of each impl function.
 #' @keywords internal
 #' @noRd
-r8_register_exports <- function(ptr, package) .Call(wrap__r8_register_exports, ptr, package)
+r8_register_exports <- function(ptr, package, ns) .Call(wrap__r8_register_exports, ptr, package, ns)
 
 #' The compiled impl function of `method` of the trait `trait_name` for the
 #' type `type_name`, as an external pointer to the function, which R passes
