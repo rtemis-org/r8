@@ -29,3 +29,6 @@ bench/r8bench/*/src/rust/target
 
 # Benchmark results; the tables go into the spec repository's notes.md
 /bench/results/
+
+# Tests
+r/tests/testthat/_problems/
