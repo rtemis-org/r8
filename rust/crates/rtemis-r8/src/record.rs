@@ -261,6 +261,69 @@ fn w_number(w: &mut W, base: u8, n: &Number) {
     }
 }
 
+/// An IR number at the tags of [`w_number`]: a non-negative integer, a
+/// negative integer, or a double.
+fn w_num(w: &mut W, base: u8, n: &crate::ir::Number) {
+    use crate::ir::Number as N;
+    match *n {
+        N::U64(u) => {
+            w.u8(base);
+            w.u64(u);
+        }
+        N::I64(i) if i >= 0 => {
+            w.u8(base);
+            w.u64(i as u64);
+        }
+        N::I64(i) => {
+            w.u8(base + 1);
+            w.i64(i);
+        }
+        N::F64(d) => {
+            w.u8(base + 2);
+            w.f64(d);
+        }
+    }
+}
+
+/// A tree at the tags of [`w_value`]; a run of doubles writes as an array of
+/// its numbers, `NA_real_` as `null`.
+fn w_tree(w: &mut W, t: &crate::tree::Tree) {
+    use crate::tree::Tree as T;
+    match t {
+        T::Null => w.u8(0),
+        T::Bool(false) => w.u8(1),
+        T::Bool(true) => w.u8(2),
+        T::Num(n) => w_num(w, 3, n),
+        T::Str(s) => {
+            w.u8(6);
+            w.str(s);
+        }
+        T::Array(a) => {
+            w.u8(7);
+            w.seq(a, w_tree);
+        }
+        T::Doubles(d) => {
+            w.u8(7);
+            w.len(d.len());
+            for &x in d.iter() {
+                if x.to_bits() == crate::abi::NA_DOUBLE_BITS {
+                    w.u8(0);
+                } else {
+                    w_num(w, 3, &crate::ir::Number::of_f64(x));
+                }
+            }
+        }
+        T::Object(m) => {
+            w.u8(8);
+            w.len(m.len());
+            for (k, x) in m.iter() {
+                w.str(k);
+                w_tree(w, x);
+            }
+        }
+    }
+}
+
 fn w_value(w: &mut W, v: &Value) {
     match v {
         Value::Null => w.u8(0),
@@ -291,7 +354,7 @@ fn w_logic(w: &mut W, l: &Logic) {
         Logic::Null => w.u8(0),
         Logic::Bool(false) => w.u8(1),
         Logic::Bool(true) => w.u8(2),
-        Logic::Number(n) => w_number(w, 3, n),
+        Logic::Number(n) => w_num(w, 3, n),
         Logic::String(s) => {
             w.u8(6);
             w.str(s);
@@ -311,7 +374,7 @@ fn w_logic(w: &mut W, l: &Logic) {
         }
         Logic::Other(v) => {
             w.u8(11);
-            w_value(w, v);
+            w_tree(w, v);
         }
     }
 }
@@ -543,7 +606,7 @@ fn w_field(w: &mut W, f: &FieldDef) {
     w_type(w, ty);
     w.str(description);
     if let Some(d) = default {
-        w_value(w, d);
+        w_tree(w, d);
     }
     if let Some(u) = unit {
         w.str(u);
@@ -963,6 +1026,58 @@ fn r_number(r: &mut R, k: u8) -> Res<Number> {
     })
 }
 
+/// An IR number at the tags of [`r_number`].
+fn r_num(r: &mut R, k: u8) -> Res<crate::ir::Number> {
+    use crate::ir::Number as N;
+    Ok(match k {
+        0 => N::U64(r.uv()?),
+        1 => {
+            let i = r.i64()?;
+            if i >= 0 {
+                return Err(RecordError::Tag("negative integer", 1));
+            }
+            N::I64(i)
+        }
+        _ => {
+            let d = r.f64()?;
+            if !d.is_finite() {
+                return Err(RecordError::Tag("number", 2));
+            }
+            N::F64(d)
+        }
+    })
+}
+
+/// A tree at the tags of [`r_value`], its numbers kept as written.
+fn r_tree(r: &mut R) -> Res<crate::tree::Tree> {
+    use crate::tree::Tree as T;
+    r.deeper(|r| {
+        Ok(match r.u8()? {
+            0 => T::Null,
+            1 => T::Bool(false),
+            2 => T::Bool(true),
+            t @ 3..=5 => T::Num(r_num(r, t - 3)?),
+            6 => T::Str(r.str()?.into()),
+            7 => T::Array(r.seq(1, r_tree)?.into_boxed_slice()),
+            8 => {
+                let n = r.len(2)?;
+                let mut m: Vec<(Box<str>, T)> = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let k = r.str()?;
+                    if m.iter().any(|(x, _)| &**x == k) {
+                        return Err(RecordError::Key(k.to_owned()));
+                    }
+                    let k: Box<str> = k.into();
+                    let v = r_tree(r)?;
+                    m.push((k, v));
+                }
+                T::Object(m.into_boxed_slice())
+            }
+            t => return Err(RecordError::Tag("value", t)),
+        })
+    })
+}
+
 fn r_value(r: &mut R) -> Res<Value> {
     r.deeper(|r| {
         Ok(match r.u8()? {
@@ -996,7 +1111,7 @@ fn r_logic(r: &mut R) -> Res<Logic> {
             0 => Logic::Null,
             1 => Logic::Bool(false),
             2 => Logic::Bool(true),
-            t @ 3..=5 => Logic::Number(r_number(r, t - 3)?),
+            t @ 3..=5 => Logic::Number(r_num(r, t - 3)?),
             6 => Logic::String(r.str()?.into()),
             7 => Logic::Array(r.seq(1, r_logic)?.into_boxed_slice()),
             8 => Logic::Var(r.str()?.into()),
@@ -1012,7 +1127,7 @@ fn r_logic(r: &mut R) -> Res<Logic> {
                     args,
                 }
             }
-            11 => Logic::Other(Box::new(r_value(r)?)),
+            11 => Logic::Other(Box::new(r_tree(r)?)),
             t => return Err(RecordError::Tag("expression", t)),
         })
     })
@@ -1221,7 +1336,7 @@ fn r_field(r: &mut R) -> Res<FieldDef> {
         name,
         ty,
         default: if f & 16 != 0 {
-            Some(Box::new(r_value(r)?))
+            Some(Box::new(r_tree(r)?))
         } else {
             None
         },

@@ -334,7 +334,7 @@ impl Writer<'_> {
             s["x-r8"] = json!({"unit": u});
         }
         if let Some(d) = &f.default {
-            s["default"] = (**d).clone();
+            s["default"] = d.to_value();
         }
         s
     }

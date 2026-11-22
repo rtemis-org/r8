@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::access::{Access, Indices, Json, MISSING_CODE, base64_encode};
+use crate::access::{Access, Indices, MISSING_CODE, base64_encode};
 use crate::codec::{date_text, datetime_text};
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use crate::name::QualifiedName;
@@ -1241,7 +1241,10 @@ impl<'l, S: Sink> Emitter<'l, S> {
                     let f = &fields[i];
                     let x = v.member_at(i, k);
                     match (&f.default, x.is_absent()) {
-                        (Some(d), true) => self.value(&f.ty, Json::new(d)),
+                        (Some(d), true) => self.value(
+                            &f.ty,
+                            crate::access::JsonOf::of(crate::tree::TreeRef::new(d)),
+                        ),
                         _ => self.value(&f.ty, x),
                     }
                 }

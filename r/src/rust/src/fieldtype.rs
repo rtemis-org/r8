@@ -12,7 +12,7 @@
 use extendr_api::prelude::*;
 use extendr_ffi::{CAR, CDR, INTEGER, LOGICAL, PRINTNAME, R_CHAR, REAL, SEXP, SEXPTYPE};
 use rtemis_r8::ir::build::{self, Bounds, BuildError};
-use rtemis_r8::ir::{FieldType, Logic, Operator};
+use rtemis_r8::ir::{FieldType, Logic, Number, Operator};
 use rtemis_r8::name::QualifiedName;
 
 use crate::rview::{attr_string, inherits, is_null, sexptype, string_elt, sym_r8_name, xlen};
@@ -597,9 +597,16 @@ fn constant(x: SEXP) -> Option<Logic> {
             },
             SEXPTYPE::INTSXP => match *INTEGER(x) {
                 NA_INTEGER => None,
-                i => Some(Logic::Number(i.into())),
+                i => Some(Logic::Number(if i >= 0 {
+                    Number::U64(i as u64)
+                } else {
+                    Number::I64(i64::from(i))
+                })),
             },
-            SEXPTYPE::REALSXP => serde_json::Number::from_f64(*REAL(x)).map(Logic::Number),
+            SEXPTYPE::REALSXP => {
+                let d = *REAL(x);
+                d.is_finite().then_some(Logic::Number(Number::F64(d)))
+            }
             SEXPTYPE::STRSXP => string_elt(x, 0).map(|s| Logic::String(s.as_ref().into())),
             _ => None,
         }
@@ -680,8 +687,14 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
             [t] if sexptype(*t) == SEXPTYPE::STRSXP && xlen(*t) == 1 => {
                 let text = string_elt(*t, 0).ok_or(BuildError::Int64)?;
                 text.parse::<i64>()
-                    .map(serde_json::Number::from)
-                    .or_else(|_| text.parse::<u64>().map(serde_json::Number::from))
+                    .map(|i| {
+                        if i >= 0 {
+                            Number::U64(i as u64)
+                        } else {
+                            Number::I64(i)
+                        }
+                    })
+                    .or_else(|_| text.parse::<u64>().map(Number::U64))
                     .map(Logic::Number)
                     .map_err(|_| BuildError::Int64)
             }

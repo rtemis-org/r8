@@ -13,7 +13,6 @@ use super::document::{IrDocument, TypeDef};
 use super::types::{FieldType, Resolve};
 use crate::name::{Name, QualifiedName, is_host_keyword, is_syntactic_r_name};
 use crate::rules::{CompiledRule, check_computed};
-use crate::validate::validate_field;
 
 /// A problem in a declaration, located by a JSON Pointer into the document.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,9 +166,14 @@ impl Checker<'_> {
             if let Some(d) = &f.default {
                 // A default whose type lies outside this document is checked
                 // by the registry.
-                for e in validate_field(d, &f.ty, self.doc)
-                    .into_iter()
-                    .filter(|e| e.code != "unresolved_type")
+                for e in crate::validate::validate_field_access(
+                    crate::access::JsonOf::of(crate::tree::TreeRef::new(d)),
+                    &f.ty,
+                    self.doc,
+                    &mut crate::validate::RuleCache::new(),
+                )
+                .into_iter()
+                .filter(|e| e.code != "unresolved_type")
                 {
                     self.report(
                         "default_invalid",

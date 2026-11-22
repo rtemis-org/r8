@@ -585,3 +585,55 @@ test_that("an integer beyond 2^53 in a rule keeps its value through R", {
   expect_identical(r2$invariant, r$invariant)
   expect_error(int64("1.5"), class = "r8_declaration_error")
 })
+
+test_that("a default of an R8 type takes a value with fields, in construction and in a JSON read", {
+  out <- declare_in("dft", {
+    Kernel <- new_enum(
+      "Kernel",
+      variants = list(
+        Rbf = variant(fields = list(gamma = type_double(exclusive_min = 0))),
+        Linear = variant()
+      ),
+      tag = "kind"
+    )
+    Point <- new_struct(
+      "Point",
+      fields = list(x = type_double(), y = type_double())
+    )
+    Svm <- new_struct(
+      "Svm",
+      fields = list(
+        kernel = field(Kernel, default = Kernel@Rbf(gamma = 0.1)),
+        origin = field(Point, default = Point(x = 1, y = 2)),
+        cost = field(type_double(), default = 1)
+      )
+    )
+    list(Svm = Svm, Kernel = Kernel)
+  })
+  s <- out[["Svm"]]()
+  expect_identical(attr(s$kernel, "r8_variant"), "Rbf")
+  expect_identical(s$kernel$gamma, 0.1)
+  expect_identical(s$origin$y, 2)
+  r <- r8_from_json(
+    out[["Svm"]],
+    '{"$type": "dft::Svm", "$types": {"dft::Svm": 1, "dft::Kernel": 1, "dft::Point": 1}, "cost": 3}'
+  )
+  expect_identical(r$kernel$gamma, 0.1)
+  expect_identical(r$origin$x, 1)
+  expect_identical(r$cost, 3)
+})
+
+test_that("a rule's number beyond 2^53 is a declaration error", {
+  e <- expect_error(
+    declare_in(
+      "big",
+      new_struct(
+        "Big",
+        fields = list(a = type_double()),
+        rules = list(rule("TOO_BIG", a < int64("9007199254740993"), "m"))
+      )
+    ),
+    class = "r8_declaration_error"
+  )
+  expect_match(conditionMessage(e), "rule_number", fixed = TRUE)
+})

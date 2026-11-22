@@ -10,9 +10,11 @@
 //! form, compare with [`Access::identical`]. Two handles to the same object
 //! are equal without a read ([`Access::same`]).
 
+use crate::access::JsonOf;
+use crate::tree::TreeRef;
 use std::borrow::Cow;
 
-use crate::access::{Access, Json, Read, same_dimnames};
+use crate::access::{Access, Read, same_dimnames};
 use crate::emit::Emitter;
 use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
 use crate::name::QualifiedName;
@@ -408,8 +410,12 @@ impl Eq<'_> {
                 b.member_at(i, f.name.as_str()),
             );
             match (&f.default, x.is_absent(), y.is_absent()) {
-                (Some(d), true, false) => self.digest(&f.ty, Json::new(d)) == self.digest(&f.ty, y),
-                (Some(d), false, true) => self.digest(&f.ty, x) == self.digest(&f.ty, Json::new(d)),
+                (Some(d), true, false) => {
+                    self.digest(&f.ty, JsonOf::of(TreeRef::new(d))) == self.digest(&f.ty, y)
+                }
+                (Some(d), false, true) => {
+                    self.digest(&f.ty, x) == self.digest(&f.ty, JsonOf::of(TreeRef::new(d)))
+                }
                 _ => self.value(&f.ty, x, y),
             }
         })

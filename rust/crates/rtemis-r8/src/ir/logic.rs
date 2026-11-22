@@ -11,7 +11,10 @@ use std::fmt;
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Number, Value};
+use serde_json::Value;
+
+use crate::ir::Number;
+use crate::tree::{Exact, Tree};
 
 macro_rules! operators {
     ($($(#[$doc:meta])* $v:ident = $s:literal),* $(,)?) => {
@@ -123,7 +126,7 @@ operators! {
 /// An operation is an object of one member, the operator, whose value is its
 /// operands: an array, or one operand written without an array, which
 /// `single` records so that the expression writes back as declared. A number
-/// keeps its JSON form (`1` and `1.0` differ), as `serde_json` reads it.
+/// keeps its JSON form (`1` and `1.0` differ) as an [`ir::Number`](Number).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Logic {
     /// `null`.
@@ -149,8 +152,8 @@ pub enum Logic {
     },
     /// An object that is not an operation of the dialect: an unknown
     /// operator, or not one member. The declaration check reports it with its
-    /// code and path.
-    Other(Box<Value>),
+    /// code and path. Its numbers are kept as written.
+    Other(Box<Tree>),
 }
 
 impl Logic {
@@ -217,9 +220,8 @@ struct LogicVisitor;
 
 /// An object of one member whose key names no operator, kept as written.
 fn other_object(key: String, value: &Logic) -> Logic {
-    let mut m = Map::new();
-    m.insert(key, value.to_value());
-    Logic::Other(Box::new(Value::Object(m)))
+    let member = (key.into_boxed_str(), Tree::from_value(&value.to_value()));
+    Logic::Other(Box::new(Tree::Object(Box::new([member]))))
 }
 
 impl<'de> Visitor<'de> for LogicVisitor {
@@ -246,17 +248,23 @@ impl<'de> Visitor<'de> for LogicVisitor {
     }
 
     fn visit_u64<E>(self, n: u64) -> Result<Logic, E> {
-        Ok(Logic::Number(n.into()))
+        Ok(Logic::Number(Number::U64(n)))
     }
 
     fn visit_i64<E>(self, n: i64) -> Result<Logic, E> {
-        Ok(Logic::Number(n.into()))
+        Ok(Logic::Number(if n >= 0 {
+            Number::U64(n as u64)
+        } else {
+            Number::I64(n)
+        }))
     }
 
     fn visit_f64<E: de::Error>(self, n: f64) -> Result<Logic, E> {
-        Number::from_f64(n)
-            .map(Logic::Number)
-            .ok_or_else(|| E::custom("a JSONLogic number is finite"))
+        if n.is_finite() {
+            Ok(Logic::Number(Number::F64(n)))
+        } else {
+            Err(E::custom("a JSONLogic number is finite"))
+        }
     }
 
     fn visit_str<E>(self, s: &str) -> Result<Logic, E> {
@@ -273,17 +281,18 @@ impl<'de> Visitor<'de> for LogicVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Logic, A::Error> {
         let Some(key) = map.next_key::<String>()? else {
-            return Ok(Logic::Other(Box::new(Value::Object(Map::new()))));
+            return Ok(Logic::Other(Box::new(Tree::Object(Box::new([])))));
         };
         let value: Logic = map.next_value()?;
         if let Some(second) = map.next_key::<String>()? {
-            let mut m = Map::new();
-            m.insert(key, value.to_value());
-            m.insert(second, map.next_value::<Value>()?);
-            while let Some((k, v)) = map.next_entry::<String, Value>()? {
-                m.insert(k, v);
+            let mut m: Vec<(Box<str>, Tree)> = vec![
+                (key.into_boxed_str(), Tree::from_value(&value.to_value())),
+                (second.into_boxed_str(), map.next_value::<Exact>()?.0),
+            ];
+            while let Some((k, v)) = map.next_entry::<String, Exact>()? {
+                m.push((k.into_boxed_str(), v.0));
             }
-            return Ok(Logic::Other(Box::new(Value::Object(m))));
+            return Ok(Logic::Other(Box::new(Tree::Object(m.into_boxed_slice()))));
         }
         let Some(op) = Operator::parse(&key) else {
             return Ok(other_object(key, &value));

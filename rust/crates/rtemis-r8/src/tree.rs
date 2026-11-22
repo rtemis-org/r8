@@ -228,7 +228,12 @@ impl<'a> Node<'a> for TreeRef<'a> {
     }
 }
 
-struct TreeVisitor;
+/// Builds a tree: with numeric runs for a document read, and with every
+/// number kept as written (`exact`) for a value of the IR, such as a default,
+/// whose record keeps each number's form.
+struct TreeVisitor {
+    exact: bool,
+}
 
 impl<'de> Visitor<'de> for TreeVisitor {
     type Value = Tree;
@@ -243,7 +248,7 @@ impl<'de> Visitor<'de> for TreeVisitor {
         Ok(Tree::Null)
     }
     fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Tree, D::Error> {
-        Tree::deserialize(d)
+        d.deserialize_any(self)
     }
     fn visit_bool<E: de::Error>(self, v: bool) -> Result<Tree, E> {
         Ok(Tree::Bool(v))
@@ -269,6 +274,13 @@ impl<'de> Visitor<'de> for TreeVisitor {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Tree, A::Error> {
+        if self.exact {
+            let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+            while let Some(x) = seq.next_element::<Exact>()? {
+                items.push(x.0);
+            }
+            return Ok(Tree::Array(items.into_boxed_slice()));
+        }
         // A run while every item is an exact number or null; nodes after the
         // first other item.
         let mut run: Vec<f64> = Vec::new();
@@ -310,8 +322,14 @@ impl<'de> Visitor<'de> for TreeVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Tree, A::Error> {
         let mut members: Vec<(Box<str>, Tree)> = Vec::with_capacity(map.size_hint().unwrap_or(0));
-        while let Some((k, v)) = map.next_entry::<String, Tree>()? {
-            members.push((k.into_boxed_str(), v));
+        if self.exact {
+            while let Some((k, v)) = map.next_entry::<String, Exact>()? {
+                members.push((k.into_boxed_str(), v.0));
+            }
+        } else {
+            while let Some((k, v)) = map.next_entry::<String, Tree>()? {
+                members.push((k.into_boxed_str(), v));
+            }
         }
         Ok(Tree::Object(members.into_boxed_slice()))
     }
@@ -319,7 +337,120 @@ impl<'de> Visitor<'de> for TreeVisitor {
 
 impl<'de> Deserialize<'de> for Tree {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        d.deserialize_any(TreeVisitor)
+        d.deserialize_any(TreeVisitor { exact: false })
+    }
+}
+
+/// A tree whose numbers are kept as written: no runs.
+pub struct Exact(pub Tree);
+
+impl<'de> Deserialize<'de> for Exact {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(TreeVisitor { exact: true }).map(Exact)
+    }
+}
+
+/// Deserializes an optional boxed tree with its numbers kept as written, for
+/// `#[serde(deserialize_with)]` on a value of the IR.
+pub fn exact_option<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Box<Tree>>, D::Error> {
+    Option::<Exact>::deserialize(d).map(|o| o.map(|e| Box::new(e.0)))
+}
+
+impl Tree {
+    /// The tree of a `serde_json::Value`, its numbers kept as written.
+    pub fn from_value(v: &Value) -> Tree {
+        match v {
+            Value::Null => Tree::Null,
+            Value::Bool(b) => Tree::Bool(*b),
+            Value::Number(n) => Tree::Num(if let Some(u) = n.as_u64() {
+                Number::U64(u)
+            } else if let Some(i) = n.as_i64() {
+                Number::I64(i)
+            } else {
+                Number::F64(n.as_f64().unwrap_or(f64::NAN))
+            }),
+            Value::String(s) => Tree::Str(s.as_str().into()),
+            Value::Array(a) => Tree::Array(a.iter().map(Tree::from_value).collect()),
+            Value::Object(m) => Tree::Object(
+                m.iter()
+                    .map(|(k, x)| (k.as_str().into(), Tree::from_value(x)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// Builds the [`Tree`] of the emitter's stream, its numbers as reading their
+/// ECMAScript text gives them ([`Number::of_f64`]) and no runs: the
+/// normalized form of a value as a tree.
+#[derive(Default)]
+pub struct TreeSink {
+    stack: Vec<Frame>,
+    /// The tree, once the outermost value is written.
+    pub out: Option<Tree>,
+}
+
+enum Frame {
+    Array(Vec<Tree>),
+    Object(Vec<(Box<str>, Tree)>, Option<Box<str>>),
+}
+
+impl TreeSink {
+    fn push(&mut self, t: Tree) {
+        match self.stack.last_mut() {
+            None => self.out = Some(t),
+            Some(Frame::Array(items)) => items.push(t),
+            Some(Frame::Object(m, key)) => {
+                if let Some(k) = key.take() {
+                    m.push((k, t));
+                }
+            }
+        }
+    }
+}
+
+impl crate::emit::Sink for TreeSink {
+    fn sorted(&self) -> bool {
+        false
+    }
+    fn null(&mut self) {
+        self.push(Tree::Null)
+    }
+    fn bool(&mut self, b: bool) {
+        self.push(Tree::Bool(b))
+    }
+    fn number(&mut self, x: f64) {
+        if x.is_nan() {
+            return self.string("NaN");
+        }
+        if x.is_infinite() {
+            return self.string(if x > 0.0 { "Infinity" } else { "-Infinity" });
+        }
+        self.push(Tree::Num(Number::of_f64(x)))
+    }
+    fn string(&mut self, s: &str) {
+        self.push(Tree::Str(s.into()))
+    }
+    fn begin_array(&mut self) {
+        self.stack.push(Frame::Array(Vec::new()))
+    }
+    fn end_array(&mut self) {
+        if let Some(Frame::Array(items)) = self.stack.pop() {
+            self.push(Tree::Array(items.into_boxed_slice()))
+        }
+    }
+    fn begin_object(&mut self) {
+        self.stack.push(Frame::Object(Vec::new(), None))
+    }
+    fn key(&mut self, k: &str) {
+        if let Some(Frame::Object(_, key)) = self.stack.last_mut() {
+            *key = Some(k.into());
+        }
+    }
+    fn end_object(&mut self) {
+        if let Some(Frame::Object(m, _)) = self.stack.pop() {
+            self.push(Tree::Object(m.into_boxed_slice()))
+        }
     }
 }
 

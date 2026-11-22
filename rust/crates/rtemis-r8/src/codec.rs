@@ -745,9 +745,7 @@ fn fill_named(t: &mut Tree, name: &QualifiedName, lookup: &dyn TypeLookup) {
                 let Some(d) = f.default.as_deref() else {
                     continue;
                 };
-                let Ok(value) = <Tree as serde::Deserialize>::deserialize(d) else {
-                    continue;
-                };
+                let value = d.clone();
                 match at {
                     Some(i) => members[i].1 = value,
                     None => added.push((f.name.as_str().into(), value)),
@@ -866,4 +864,17 @@ pub fn read_tree_cached(
     } else {
         Err(errors)
     }
+}
+
+/// The normalized form of a valid value of the named type `ty`, in any host
+/// form, as a [`Tree`] with no runs: what the emitter writes, built without
+/// text. A host turns a value of the type into a field's default with it.
+pub fn normalized_tree<'a, A: Access<'a>>(
+    value: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+) -> Tree {
+    let mut e = Emitter::with_sink(lookup, crate::tree::TreeSink::default(), false);
+    e.named(ty, value, None);
+    e.w.out.take().unwrap_or(Tree::Null)
 }

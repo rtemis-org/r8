@@ -206,8 +206,18 @@ impl Compiler<'_> {
     fn compile(&mut self, logic: &Logic, path: &str) -> (Expr, Ty) {
         match logic {
             Logic::Bool(b) => (Expr::Lit(Scalar::Bool(*b)), Ty::Bool),
+            // Rules evaluate in doubles: a number a double does not hold
+            // exactly, an integer beyond 2^53, would compare as another.
+            Logic::Number(n) if !n.is_exact_f64() => self.error(
+                "rule_number",
+                path,
+                format!(
+                    "{} is beyond 2^53, which a double, the number of rules, does not hold exactly",
+                    n.as_f64()
+                ),
+            ),
             Logic::Number(n) => (
-                Expr::Lit(Scalar::Num(n.as_f64().unwrap_or(f64::NAN))),
+                Expr::Lit(Scalar::Num(n.as_f64())),
                 Ty::Number { unit: None },
             ),
             Logic::String(t) => (Expr::Lit(Scalar::Str(t.to_string())), Ty::String),
@@ -241,16 +251,16 @@ impl Compiler<'_> {
                     &format!("{path}/{}", pointer_segment(op.as_str())),
                 )
             }
-            Logic::Other(v) => match v.as_object() {
-                Some(m) if m.len() == 1 => {
-                    let op = m.keys().next().expect("one member");
+            Logic::Other(v) => match &**v {
+                crate::tree::Tree::Object(m) if m.len() == 1 => {
+                    let op = &*m[0].0;
                     self.error(
                         "rule_operator",
                         &format!("{path}/{}", pointer_segment(op)),
                         format!("`{op}` is not an operator of R8 rules"),
                     )
                 }
-                Some(m) => self.error(
+                crate::tree::Tree::Object(m) => self.error(
                     "rule_operation",
                     path,
                     format!(
@@ -258,7 +268,7 @@ impl Compiler<'_> {
                         m.len()
                     ),
                 ),
-                None => self.error(
+                _ => self.error(
                     "rule_operation",
                     path,
                     "an operation is an object with one member".to_string(),

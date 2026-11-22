@@ -132,39 +132,37 @@ const OPERATORS: &[(&str, &str)] = &[
 
 /// The construction of a `serde_json::Number`.
 fn number_tokens(n: &serde_json::Number) -> Tokens {
+    let ir = quote! { ::rtemis_r8::ir };
     if let Some(u) = n.as_u64() {
-        quote! { ::rtemis_r8::derive::serde_json::Number::from(#u) }
+        quote! { #ir::Number::U64(#u) }
     } else if let Some(i) = n.as_i64() {
-        quote! { ::rtemis_r8::derive::serde_json::Number::from(#i) }
+        quote! { #ir::Number::I64(#i) }
     } else {
         let f = n.as_f64().expect("a JSON number is finite");
-        quote! { ::rtemis_r8::derive::serde_json::Number::from_f64(#f).expect("a finite number") }
+        quote! { #ir::Number::F64(#f) }
     }
 }
 
-/// The construction of a `serde_json::Value`.
-fn value_tokens(v: &serde_json::Value) -> Tokens {
+/// The construction of an `rtemis_r8::tree::Tree` of a JSON value, its
+/// numbers kept as written.
+fn tree_tokens(v: &serde_json::Value) -> Tokens {
     use serde_json::Value as V;
-    let j = quote! { ::rtemis_r8::derive::serde_json };
+    let t = quote! { ::rtemis_r8::tree::Tree };
     match v {
-        V::Null => quote! { #j::Value::Null },
-        V::Bool(b) => quote! { #j::Value::Bool(#b) },
+        V::Null => quote! { #t::Null },
+        V::Bool(b) => quote! { #t::Bool(#b) },
         V::Number(n) => {
             let n = number_tokens(n);
-            quote! { #j::Value::Number(#n) }
+            quote! { #t::Num(#n) }
         }
-        V::String(s) => quote! { #j::Value::String(#s.to_string()) },
+        V::String(s) => quote! { #t::Str(#s.into()) },
         V::Array(a) => {
-            let items = a.iter().map(value_tokens);
-            quote! { #j::Value::Array(::std::vec![#(#items),*]) }
+            let items = a.iter().map(tree_tokens);
+            quote! { #t::Array(::std::boxed::Box::new([#(#items),*])) }
         }
         V::Object(m) => {
-            let (k, x): (Vec<_>, Vec<_>) = m.iter().map(|(k, x)| (k, value_tokens(x))).unzip();
-            quote! {{
-                let mut m = #j::Map::new();
-                #(m.insert(#k.to_string(), #x);)*
-                #j::Value::Object(m)
-            }}
+            let (k, x): (Vec<_>, Vec<_>) = m.iter().map(|(k, x)| (k, tree_tokens(x))).unzip();
+            quote! { #t::Object(::std::boxed::Box::new([#((#k.into(), #x)),*])) }
         }
     }
 }
@@ -175,7 +173,7 @@ fn logic_tokens(v: &serde_json::Value) -> Tokens {
     use serde_json::Value as V;
     let ir = quote! { ::rtemis_r8::ir };
     let other = |v: &V| {
-        let v = value_tokens(v);
+        let v = tree_tokens(v);
         quote! { #ir::Logic::Other(::std::boxed::Box::new(#v)) }
     };
     match v {
@@ -371,7 +369,7 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
                     let s: syn::LitStr = meta.value()?.parse()?;
                     let v: serde_json::Value = serde_json::from_str(&s.value())
                         .map_err(|e| Error::new_spanned(&s, format!("a default is JSON text: {e}")))?;
-                    let v = value_tokens(&v);
+                    let v = tree_tokens(&v);
                     default = quote! { ::std::option::Option::Some(::std::boxed::Box::new(#v)) };
                 }
                 "resolve" => {

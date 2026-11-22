@@ -136,7 +136,9 @@ fn full_field(n: &str, ty: FieldType) -> FieldDef {
     FieldDef {
         name: name(n),
         ty,
-        default: Some(Box::new(json!(0))),
+        default: Some(Box::new(rtemis_r8::tree::Tree::Num(
+            rtemis_r8::ir::Number::U64(0),
+        ))),
         description: "A field.".into(),
         sensitive: true,
         unit: Some("mg/L".into()),
@@ -390,7 +392,7 @@ fn sample_struct() -> TypeDef {
         .collect();
     for (i, v) in edge.into_iter().enumerate() {
         let mut f = bare_field(&format!("j{i}"), FieldType::Json);
-        f.default = Some(Box::new(v));
+        f.default = Some(Box::new(rtemis_r8::tree::Tree::from_value(&v)));
         fields.push(f);
     }
     let mut ext = std::collections::BTreeMap::new();

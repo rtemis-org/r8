@@ -1320,7 +1320,11 @@ pub(crate) fn encode_field(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> 
 
 /// The stored R form of a field's value given in its JSON form, such as a
 /// declared default.
-pub(crate) fn decode_field(v: &Value, ft: &FieldType, lookup: &dyn TypeLookup) -> Result<Robj> {
+pub(crate) fn decode_field<'a, N: Node<'a>>(
+    v: N,
+    ft: &FieldType,
+    lookup: &dyn TypeLookup,
+) -> Result<Robj> {
     Decoder { lookup }.value(v, ft)
 }
 

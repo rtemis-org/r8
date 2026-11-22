@@ -113,9 +113,6 @@ pub enum BuildError {
     /// The default of a field of a named type that is not a value of an R8
     /// enum.
     DefaultNotValue,
-    /// A default that is a struct value; a struct's default is constructed
-    /// with its type.
-    DefaultStruct,
     /// A variant argument of an enum that is not a variant declaration.
     NotVariant {
         /// The variant's name.
@@ -183,9 +180,6 @@ impl fmt::Display for BuildError {
             }
             BuildError::DefaultNotValue => {
                 f.write_str("The default of a field of an R8 type is a value of that type.")
-            }
-            BuildError::DefaultStruct => {
-                f.write_str("Struct values as defaults are constructed with the type.")
             }
             BuildError::NotVariant { name } => write!(f, "Variant `{name}` is a variant() call."),
             BuildError::Int64 => {
@@ -518,27 +512,6 @@ pub fn json_logic(text: &str) -> Built<Logic> {
     serde_json::from_str(text).map_err(|e| BuildError::JsonIr {
         detail: Some(e.to_string()),
     })
-}
-
-/// The JSON form of the default that is the variant `variant` of the enum
-/// `def`: the variant's name for an enum of unit variants, and otherwise an
-/// object holding the tag member alone.
-pub fn enum_default(def: &super::EnumDef, variant: &str) -> serde_json::Value {
-    use super::VariantShape;
-    if def
-        .variants
-        .iter()
-        .all(|v| matches!(v.shape, VariantShape::Unit))
-    {
-        serde_json::Value::String(variant.to_string())
-    } else {
-        let mut m = serde_json::Map::new();
-        m.insert(
-            def.tag.as_str().to_string(),
-            serde_json::Value::String(variant.to_string()),
-        );
-        serde_json::Value::Object(m)
-    }
 }
 
 /// A rule constant: a boolean, a number, or a string.

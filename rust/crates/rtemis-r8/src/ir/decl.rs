@@ -29,10 +29,15 @@ pub struct FieldDef {
     #[serde(rename = "type")]
     /// The field's type.
     pub ty: FieldType,
-    /// A literal default in the field's JSON form, filled by the constructor
-    /// and by `r8_from_json()`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<Box<Value>>,
+    /// A literal default in the field's JSON form as a tree, its numbers
+    /// kept as written, filled by the constructor and by `r8_from_json()`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::tree::exact_option"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Value>"))]
+    pub default: Option<Box<crate::tree::Tree>>,
     #[serde(default)]
     /// The field's description.
     pub description: Box<str>,

@@ -69,7 +69,7 @@ type Defaults = HashMap<QualifiedName, HashMap<Box<str>, Vec<Option<Kept>>>>;
 /// first, since the cache holds a reference. The key names the field, not
 /// the address of its declaration, which a replaced declaration can reuse.
 pub(crate) fn default_r(
-    d: &serde_json::Value,
+    d: &rtemis_r8::tree::Tree,
     ft: &FieldType,
     lookup: &dyn TypeLookup,
     field: (&QualifiedName, &str, usize),
@@ -91,7 +91,7 @@ pub(crate) fn default_r(
     {
         return Ok(unsafe { r.0.get() });
     }
-    let r = crate::values::decode_field(d, ft, lookup)?;
+    let r = crate::values::decode_field(rtemis_r8::tree::TreeRef::new(d), ft, lookup)?;
     let s = unsafe { r.get() };
     let slots = guard
         .1

@@ -12,18 +12,19 @@ use std::collections::BTreeMap;
 
 use extendr_api::prelude::*;
 use extendr_ffi::{SEXP, SEXPTYPE, VECTOR_ELT};
-use rtemis_r8::ir::build::{self, BuildError};
+use rtemis_r8::ir::build::BuildError;
 use rtemis_r8::ir::{
     EnumDef, FieldDef, FieldType, RuleDef, StructDef, TypeDef, VariantDef, VariantShape,
 };
 use rtemis_r8::name::{Name, NameError, QualifiedName};
 use rtemis_r8::rules::TypeLookup;
+use rtemis_r8::tree::{Exact, Tree};
 use serde_json::Value;
 
 use crate::fieldtype::field_type;
 use crate::rview::{
     attr, attr_string, inherits, is_null, sexptype, string_elt, sym_names, sym_r8_name,
-    sym_r8_type, sym_r8_variant, xlen,
+    sym_r8_type, xlen,
 };
 
 /// A problem of reading a declaration.
@@ -46,7 +47,7 @@ fn problem(code: &'static str, path: &str, message: impl Into<String>) -> Proble
 fn built(path: &str, e: BuildError) -> Problem {
     let code = match e {
         BuildError::NotFieldType => "field_type",
-        BuildError::DefaultNotValue | BuildError::DefaultStruct => "field_default",
+        BuildError::DefaultNotValue => "field_default",
         BuildError::NotVariant { .. } => "variant_declaration",
         _ => "declaration_argument",
     };
@@ -103,10 +104,18 @@ fn one_string(x: SEXP) -> Option<String> {
         .flatten()
 }
 
-/// The JSON form of a default `x` of a field of type `ty`.
-fn default_value(x: SEXP, ty: &FieldType, lookup: &impl TypeLookup, path: &str) -> Read<Value> {
+/// The JSON form of a default `x` of a field of type `ty`, as a tree whose
+/// numbers are kept as written. A default of a field of an R8 type is a value
+/// of the type, a struct or an enum variant with its fields, whose normalized
+/// form it takes.
+fn default_value(
+    x: SEXP,
+    ty: &FieldType,
+    lookup: &(impl TypeLookup + Sized),
+    path: &str,
+) -> Read<Tree> {
     if inherits(x, "r8_json_ir") {
-        return read(x, path);
+        return read::<Exact>(x, path).map(|e| e.0);
     }
     match ty {
         FieldType::Option { inner, .. } => default_value(x, inner, lookup, path),
@@ -114,30 +123,31 @@ fn default_value(x: SEXP, ty: &FieldType, lookup: &impl TypeLookup, path: &str) 
             .map(|i| {
                 let e = unsafe { VECTOR_ELT(x, i as isize) };
                 if is_null(e) {
-                    Ok(Value::Null)
+                    Ok(Tree::Null)
                 } else {
                     default_value(e, element, lookup, &format!("{path}/{i}"))
                 }
             })
             .collect::<Read<Vec<_>>>()
-            .map(Value::Array),
-        FieldType::Vec { .. } => read::<Vec<Value>>(x, path).map(Value::Array),
+            .map(|v| Tree::Array(v.into_boxed_slice())),
+        FieldType::Vec { .. } => {
+            read::<Vec<Exact>>(x, path).map(|v| Tree::Array(v.into_iter().map(|e| e.0).collect()))
+        }
         FieldType::Named { .. } => {
             if !inherits(x, "r8_value") {
                 return Err(built(path, BuildError::DefaultNotValue));
             }
-            let variant = attr_string(x, sym_r8_variant())
-                .ok_or_else(|| built(path, BuildError::DefaultStruct))?;
-            let def = attr_string(x, sym_r8_type())
+            let q = attr_string(x, sym_r8_type())
                 .and_then(|q| QualifiedName::parse(&q).ok())
-                .and_then(|q| match lookup.find(&q) {
-                    Some(TypeDef::Enum(e)) => Some(e),
-                    _ => None,
-                })
                 .ok_or_else(|| built(path, BuildError::DefaultNotValue))?;
-            Ok(build::enum_default(def, &variant))
+            let lookup: &dyn TypeLookup = lookup;
+            Ok(rtemis_r8::codec::normalized_tree(
+                crate::rview::RView::Whole(x),
+                &q,
+                lookup,
+            ))
         }
-        _ => read(x, path),
+        _ => read::<Exact>(x, path).map(|e| e.0),
     }
 }
 
@@ -451,7 +461,7 @@ fn r8_default_canonical(x: Robj, r#type: Robj) -> extendr_api::Result<String> {
         return Ok(String::new());
     };
     Ok(default_value(unsafe { x.get() }, &ty, &*snapshot, "")
-        .map(|v| rtemis_r8::codec::canonical_text(&v))
+        .map(|v| rtemis_r8::codec::canonical_text(&v.to_value()))
         .unwrap_or_default())
 }
 
