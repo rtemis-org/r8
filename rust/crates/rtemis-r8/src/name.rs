@@ -260,8 +260,10 @@ impl<'de> Deserialize<'de> for QualifiedName {
 /// A trait method's name: a syntactic R name that is not reserved, optionally
 /// ending in `<-` for a replacement method, or `[`.
 ///
-/// Each binding maps periods to underscores (`as.data.frame` becomes
-/// `as_data_frame`).
+/// Each binding names the method by its host identifier
+/// ([`MethodName::host_identifier`]): periods become underscores
+/// (`as.data.frame` becomes `as_data_frame`), and a replacement method `f<-`,
+/// which returns a new value, becomes `with_f`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MethodName(Box<str>);
 
@@ -287,6 +289,17 @@ impl MethodName {
     /// `true` for a replacement method, whose name ends in `<-`.
     pub fn is_replacement(&self) -> bool {
         self.0.ends_with("<-")
+    }
+
+    /// The identifier that names the method in the bindings other than R:
+    /// periods become underscores, and a replacement method `f<-` becomes
+    /// `with_f` (`labels<-` is `with_labels`, `row.names<-` is
+    /// `with_row_names`); `[` keeps its name.
+    pub fn host_identifier(&self) -> String {
+        match self.0.strip_suffix("<-") {
+            Some(base) => format!("with_{}", base.replace('.', "_")),
+            None => self.0.replace('.', "_"),
+        }
     }
 }
 
@@ -398,6 +411,16 @@ pub fn is_syntactic_r_name(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_identifiers_map_periods_and_replacement_methods() {
+        let id = |s: &str| MethodName::new(s).unwrap().host_identifier();
+        assert_eq!(id("as.data.frame"), "as_data_frame");
+        assert_eq!(id("labels<-"), "with_labels");
+        assert_eq!(id("row.names<-"), "with_row_names");
+        assert_eq!(id("fit"), "fit");
+        assert_eq!(id("["), "[");
+    }
 
     #[test]
     fn names_follow_the_pattern() {

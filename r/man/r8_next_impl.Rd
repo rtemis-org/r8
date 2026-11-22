@@ -7,25 +7,28 @@
 r8_next_impl()
 }
 \value{
-The value of the next impl. Without a next impl, raises
-\code{r8_dispatch_error}.
+The value of the next impl. Without a next impl, and for a first
+argument whose type is not the provider of the running impl or one of
+its descendants, raises \code{r8_dispatch_error}.
 }
 \description{
 Called from the body of an impl, \code{r8_next_impl()} calls the impl that the
 running one takes precedence over: that of the nearest ancestor, after
 the type that provides the running impl, with an impl of the trait, or
-else the trait's default. It passes the running impl's arguments, the
-value dispatched on unchanged, so generics in the next impl dispatch on
-the child. A method of an S3 generic continues with \code{NextMethod()}.
+else the trait's default. It passes the current values of the running
+impl's formals, so an impl may change its arguments first, as with
+\code{NextMethod()}; generics in the next impl dispatch on the value passed.
+Every impl that R8 registers continues this way, an S3 method declared
+with \code{implement()} or \code{impl()} included.
 }
 \examples{
 op <- options(r8.namespace = "demo")
 Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
 Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
-describe <- generic("describe", "x")
-implement(describe, Range) <- function(x) paste(x$lo, "to", x$hi)
-implement(describe, Window) <- function(x) paste(x$label, r8_next_impl())
-describe(Window(lo = 1, hi = 2, label = "w"))
+span_text <- generic("span_text", "x")
+implement(span_text, Range) <- function(x) paste(x$lo, "to", x$hi)
+implement(span_text, Window) <- function(x) paste(x$label, r8_next_impl())
+span_text(Window(lo = 1, hi = 2, label = "w"))
 options(op)
 
 }

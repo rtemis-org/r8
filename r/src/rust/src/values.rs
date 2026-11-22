@@ -726,7 +726,18 @@ impl Encoder<'_> {
             .and_then(|t| t.as_str().map(|t| t == qname))
             .unwrap_or(false);
         if !x.inherits("r8_value") || !exact {
-            return self.err("r_type", path, format!("expected a value of `{qname}`"));
+            // A descendant's class vector names the field's type.
+            let descendant = x.inherits(&qname).then(|| {
+                x.get_attrib("r8_type")
+                    .and_then(|t| t.as_str().map(str::to_string))
+            });
+            let message = match descendant.flatten() {
+                Some(child) => format!(
+                    "expected a value of `{qname}`, found one of its descendant `{child}`; r8_upcast() gives its value of `{qname}`"
+                ),
+                None => format!("expected a value of `{qname}`"),
+            };
+            return self.err("r_type", path, message);
         }
         let Some(def) = self.lookup.find(name).cloned() else {
             return self.err(

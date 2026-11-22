@@ -32,12 +32,14 @@ Every error R8 signals has the class \code{r8_error}, after one of:
 \item \code{r8_declaration_error}: a declaration of a type, trait, impl, or generic
 that does not pass its checks, or a package whose declarations do not
 register.
-\item \code{r8_type_error}: an argument of the wrong kind, such as a type object
-where a value is expected.
+\item \code{r8_type_error}: an argument or an impl's result of the wrong kind,
+such as a type object where a value is expected, or a replacement
+method or \code{From} impl that returns a value of another type.
 \item \code{r8_value_error}: a value that does not satisfy its type; its subclass
 \code{r8_codec_missing} is a Rust-native type whose codec is not registered.
 \item \code{r8_dispatch_error}: a generic or trait method with no impl for the
-value's type.
+value's type, a conversion without a \code{From} impl, or \code{r8_next_impl()}
+without a next impl.
 \item \code{r8_text_error}: text output given invalid arguments.
 }
 

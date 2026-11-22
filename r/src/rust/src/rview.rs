@@ -632,6 +632,22 @@ fn is_type(x: SEXP, name: &QualifiedName) -> bool {
     attr_string(x, sym_r8_type()).is_some_and(|t| *t == *name.to_string().as_str())
 }
 
+/// The error of a value that is not of the named type `name`; a value of a
+/// descendant, whose class vector names `name`, is named with the upcast
+/// that gives its value of `name`.
+fn not_named(x: Option<SEXP>, name: &QualifiedName) -> Form {
+    let qname = name.to_string();
+    let child = x
+        .filter(|&x| inherits(x, "r8_value") && inherits(x, &qname))
+        .and_then(|x| attr_string(x, sym_r8_type()));
+    match child {
+        Some(child) => r_type(format!(
+            "expected a value of `{qname}`, found one of its descendant `{child}`; r8_upcast() gives its value of `{qname}`"
+        )),
+        None => r_type(format!("expected a value of `{qname}`")),
+    }
+}
+
 impl<'a> Access<'a> for RView<'a> {
     fn is_absent(self) -> bool {
         match self {
@@ -1163,7 +1179,7 @@ impl<'a> Access<'a> for RView<'a> {
             {
                 Ok(())
             }
-            _ => Err(r_type(format!("expected a value of `{name}`"))),
+            other => Err(not_named(other.sexp(), name)),
         }
     }
 

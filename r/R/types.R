@@ -227,10 +227,10 @@ type_json <- function() {
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
-#' Shape <- new_trait("Shape", methods = list(area = trait_method(function(x) NULL)))
+#' Planar <- new_trait("Planar", methods = list(area = trait_method(function(x) NULL)))
 #' Square <- new_struct("Square", fields = list(side = type_double()))
-#' impl(Shape, Square, methods = list(area = function(x) x$side^2))
-#' Drawing <- new_struct("Drawing", fields = list(shape = dyn(Shape)))
+#' impl(Planar, Square, methods = list(area = function(x) x$side^2))
+#' Drawing <- new_struct("Drawing", fields = list(shape = dyn(Planar)))
 #' Drawing(shape = Square(side = 2))
 #' options(op)
 #'

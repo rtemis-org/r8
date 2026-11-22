@@ -107,3 +107,148 @@ test_that("From converts through r8_convert(), Type@from(), and r8_converter()",
   expect_error(Money@nothing, class = "r8_dispatch_error")
   expect_match(r8_declaration(Money), "MoneyS")
 })
+
+test_that("a converter is the generic of the conversions to its target", {
+  declare_in("cv1", {
+    Range <- new_struct(
+      "Range",
+      fields = list(lo = type_double(), hi = type_double())
+    )
+    Target <- new_struct("Target", fields = list(width = type_double()))
+    as_target <- r8_converter(Target)
+    expect_s3_class(as_target, "r8_converter")
+    implement(as_target, Range) <- function(x) Target(width = x$hi - x$lo)
+    implement(as_target, "character") <- function(x) Target(width = nchar(x))
+    expect_identical(as_target(Range(lo = 1, hi = 4))$width, 3)
+    expect_identical(r8_convert("abcd", Target)$width, 4)
+    expect_identical(Target@from("ab")$width, 2)
+    expect_output(print(as_target), "<r8 converter cv1::Target>")
+    expect_output(print(as_target), "Methods for: character, cv1::Range")
+    expect_identical(
+      body(r8_method(as_target, "character")),
+      quote(Target(width = nchar(x)))
+    )
+    expect_error(
+      implement(as_target, "integer") <- function(x, y) NULL,
+      "r8_converter\\(Target\\).*function\\(x\\)",
+      class = "r8_declaration_error"
+    )
+    expect_error(
+      implement(as_target, 1) <- function(x) NULL,
+      "an R8 type object or a class name",
+      class = "r8_declaration_error"
+    )
+    implement(as_target, "numeric") <- function(x) Range(lo = 0, hi = x)
+    expect_error(
+      as_target(1),
+      "returned a value of `cv1::Range`",
+      class = "r8_type_error"
+    )
+  })
+})
+
+test_that("a From impl of an ancestor converts a descendant, which it receives unchanged", {
+  declare_in("cv2", {
+    Range <- new_struct(
+      "Range",
+      fields = list(lo = type_double(), hi = type_double())
+    )
+    Window <- new_struct(
+      "Window",
+      fields = list(label = type_character()),
+      extends = Range
+    )
+    Frame <- new_struct(
+      "Frame",
+      fields = list(depth = type_double()),
+      extends = Window
+    )
+    Target <- new_struct("Target", fields = list(what = type_character()))
+    as_target <- r8_converter(Target)
+    implement(as_target, Range) <- function(x) Target(what = class(x)[1L])
+    f <- Frame(lo = 1, hi = 2, label = "f", depth = 3)
+    expect_identical(as_target(f)$what, "cv2::Frame")
+    implement(as_target, Window) <- function(x) Target(what = "window impl")
+    expect_identical(as_target(f)$what, "window impl")
+    expect_identical(as_target(Range(lo = 1, hi = 2))$what, "cv2::Range")
+    impl(
+      From("character"),
+      Range,
+      methods = list(from = function(x) Range(lo = 0, hi = 1))
+    )
+    expect_error(
+      r8_convert("a", Window),
+      "no From impl",
+      class = "r8_dispatch_error"
+    )
+    implement(as_target, Frame) <- function(x) r8_next_impl()
+    expect_error(
+      as_target(f),
+      "r8_convert\\(r8_upcast\\(x, Parent\\), Target\\)",
+      class = "r8_dispatch_error"
+    )
+    Holder <- new_struct("Holder", fields = list(r = Range))
+    expect_error(
+      Holder(r = f),
+      "descendant `cv2::Frame`; r8_upcast\\(\\)",
+      class = "r8_value_error"
+    )
+  })
+})
+
+test_that("a From impl names a registered source and follows the orphan rule with the source", {
+  Target <- declare_in(
+    "cv3",
+    new_struct("Target", fields = list(n = type_double()))
+  )
+  expect_error(
+    declare_in(
+      "cv3",
+      impl(From("cv3::Rnage"), Target, methods = list(from = function(x) x))
+    ),
+    "not a registered type",
+    class = "r8_declaration_error"
+  )
+  Local <- declare_in(
+    "cv4",
+    new_struct("Local", fields = list(n = type_double()))
+  )
+  expect_no_error(declare_in(
+    "cv4",
+    impl(
+      From("cv4::Local"),
+      Target,
+      methods = list(from = function(x) Target(n = x$n))
+    )
+  ))
+  expect_identical(r8_convert(Local(n = 2), Target)$n, 2)
+  expect_error(
+    declare_in(
+      "cv5",
+      impl(
+        From("character"),
+        Target,
+        methods = list(from = function(x) Target(n = 1))
+      )
+    ),
+    "orphan rule",
+    class = "r8_declaration_error"
+  )
+})
+
+test_that("Enum@from converts, and from is a reserved variant name", {
+  declare_in("cv6", {
+    Kind <- new_enum("Kind", variants = list(A = variant(), B = variant()))
+    as_kind <- r8_converter(Kind)
+    implement(as_kind, "character") <- function(x) {
+      if (x == "a") Kind@A else Kind@B
+    }
+    expect_identical(attr(Kind@from("a"), "r8_variant"), "A")
+    expect_identical(attr(as_kind("b"), "r8_variant"), "B")
+    expect_error(
+      new_enum("K2", variants = list(from = variant())),
+      "variant name `from` is reserved",
+      class = "r8_declaration_error"
+    )
+  })
+})

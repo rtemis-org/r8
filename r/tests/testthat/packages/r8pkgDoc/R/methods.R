@@ -55,3 +55,30 @@ n_resamples <- function(x, ...) {
 implement(n_resamples, Resampler) <- function(x, ...) {
   x$n_resamples
 }
+
+#' Replace the seed of a value
+#'
+#' @param x A value of a type with a method of `seed<-`.
+#' @param value Integer: The seed.
+#'
+#' @return A value of the type of `x`, with the seed replaced.
+#'
+#' @examples
+#' r <- Resampler(method = Method@Bootstrap, n_resamples = 2L)
+#' seed(r) <- 7L
+#' r$seed
+#' @export
+`seed<-` <- R8::generic(
+  "seed<-",
+  c("x", "value"),
+  description = "Replaces the seed."
+)
+
+implement(`seed<-`, Resampler) <- function(x, value) {
+  x$seed <- value
+  x
+}
+
+implement(as_resampler, "character") <- function(x) {
+  Resampler(method = Method@Bootstrap, n_resamples = nchar(x))
+}

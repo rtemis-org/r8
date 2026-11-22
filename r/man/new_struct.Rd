@@ -60,7 +60,8 @@ Types declared in a package belong to its namespace (the \code{DESCRIPTION}
 field \code{Config/R8/namespace}, or the package name); types declared at the
 console belong to the option \code{r8.namespace}, \code{"global"} by default.
 
-\code{Type@from(x)} converts \code{x} with the type's \code{From} impls.
+\code{Type@from(x)} converts \code{x} with the type's \code{From} impls, as
+\code{r8_converter(Type)(x)} does.
 }
 \examples{
 op <- options(r8.namespace = "demo")

@@ -165,14 +165,20 @@ From <- function(source) {
 # %% r8_convert ----
 #' Convert a value to an R8 type
 #'
-#' Calls the `From(source)` impl of `type` for the class of `x`, or for its
-#' R8 type when `x` is an R8 value, and checks that the result is a value of
-#' `type`.
+#' Returns `x` when it is a value of `type`, and its upcast when `type` is an
+#' ancestor of its type (`r8_upcast()`). Otherwise calls the `From(source)`
+#' impl of `type` for the nearest source with one: for an R8 value, its type,
+#' then its ancestors through `extends`, nearest first; for any other object,
+#' its classes, then `"numeric"` for a number. The impl receives `x`
+#' unchanged, and its result must be a value of `type`. Conversions are not
+#' chained.
 #'
 #' @param x The value to convert.
 #' @param type An R8 type object.
 #'
-#' @return A value of `type`.
+#' @return A value of `type`. A source without an impl raises
+#'   `r8_dispatch_error`, and an impl's result of another type
+#'   `r8_type_error`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -187,25 +193,42 @@ r8_convert <- function(x, type) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
   target <- attr(type, "r8_name")
-  if (inherits(x, "r8_value") && identical(attr(x, "r8_type"), target)) {
+  r8 <- inherits(x, "r8_value")
+  if (r8 && identical(attr(x, "r8_type"), target)) {
     return(x)
   }
+  struct <- r8 && is.null(attr(x, "r8_variant"))
+  ancestors <- if (struct) r8_ancestors(x) else character()
   # A child converts to an ancestor by upcast.
-  if (
-    inherits(x, "r8_value") &&
-      is.null(attr(x, "r8_variant")) &&
-      target %in% ancestry(attr(x, "r8_type"))[["ancestors"]]
-  ) {
+  if (target %in% ancestors) {
     return(r8_upcast(x, type))
   }
-  sources <- if (inherits(x, "r8_value")) {
-    attr(x, "r8_type")
+  sources <- if (r8) {
+    c(attr(x, "r8_type"), ancestors)
   } else {
     unique(c(class(x), if (is.numeric(x)) "numeric"))
   }
   for (s in sources) {
     fn <- .r8_impls[[paste("R8::From", s, target, sep = "|")]]
     if (!is.null(fn)) {
+      if (r8 && !identical(s, attr(x, "r8_type")) && is_compiled_impl(fn)) {
+        r8_abort(
+          "The compiled From(\"",
+          s,
+          "\") impl of `",
+          target,
+          "` takes a value of `",
+          s,
+          "`, not of its descendant `",
+          attr(x, "r8_type"),
+          "`; convert r8_upcast(x, ",
+          sub("^.*::", "", s),
+          "), or declare From(\"",
+          attr(x, "r8_type"),
+          "\").",
+          class = "r8_dispatch_error"
+        )
+      }
       out <- fn(x)
       if (
         !inherits(out, "r8_value") || !identical(attr(out, "r8_type"), target)
@@ -215,8 +238,17 @@ r8_convert <- function(x, type) {
           s,
           "\") impl of `",
           target,
-          "` returned another kind of value.",
-          class = "r8_dispatch_error"
+          "` returned ",
+          if (inherits(out, "r8_value")) {
+            paste0("a value of `", attr(out, "r8_type"), "`")
+          } else {
+            paste0(
+              "an object of class ",
+              paste0("\"", class(out), "\"", collapse = ", ")
+            )
+          },
+          "; a From impl returns a value of its target.",
+          class = "r8_type_error"
         )
       }
       return(out)
@@ -237,31 +269,127 @@ r8_convert <- function(x, type) {
 #' A conversion function for an R8 type
 #'
 #' Returns `function(x) r8_convert(x, type)`, which a type's package exports
-#' under a name of its choice, such as `as_granges()`.
+#' under a name of its choice, such as `as_granges()`. The converter is also
+#' the generic of the conversions to `type`: `implement(as_target, Source)
+#' <- function(x) ...` declares the conversion from the R8 type `Source`, and
+#' `implement(as_target, "character") <- function(x) ...` the conversion from
+#' a class, each an impl of `From(source)` for `type`.
 #'
 #' @param type An R8 type object.
 #'
-#' @return Function.
+#' @return `r8_converter()`: A function of class `r8_converter`.
+#'   `print()`: `x`, invisibly.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Pct <- new_struct("Pct2", fields = list(p = type_double(min = 0, max = 100)))
-#' impl(From("numeric"), Pct, methods = list(from = function(x) Pct(p = x * 100)))
 #' as_pct <- r8_converter(Pct)
+#' implement(as_pct, "numeric") <- function(x) Pct(p = x * 100)
 #' as_pct(0.5)$p
+#' as_pct
 #' options(op)
 #'
 #' @export
 r8_converter <- function(type) {
+  if (!inherits(type, "r8_type")) {
+    r8_abort("`type` is an R8 type object.", class = "r8_type_error")
+  }
   force(type)
-  function(x) r8_convert(x, type)
+  structure(
+    function(x) r8_convert(x, type),
+    class = c("r8_converter", "function")
+  )
 } # /R8::r8_converter
+
+
+# %% converter_target ----
+#' The target type object of a converter
+#'
+#' @param f A function of class `r8_converter`.
+#'
+#' @return An R8 type object.
+#'
+#' @keywords internal
+#' @noRd
+converter_target <- function(f) {
+  get("type", envir = environment(f), inherits = FALSE)
+} # /R8::converter_target
+
+
+# %% print.r8_converter ----
+#' @rdname r8_converter
+#' @param x A function of class `r8_converter`.
+#' @param ... Not used.
+#' @export
+print.r8_converter <- function(x, ...) {
+  target <- attr(converter_target(x), "r8_name")
+  cat("<r8 converter ", target, ">\n", sep = "")
+  keys <- ls(.r8_impls, all.names = TRUE)
+  keys <- keys[
+    startsWith(keys, "R8::From|") & endsWith(keys, paste0("|", target))
+  ]
+  sources <- substr(
+    keys,
+    nchar("R8::From|") + 1L,
+    nchar(keys) - nchar(target) - 1L
+  )
+  if (length(sources) > 0L) {
+    cat("Methods for: ", paste(sort(sources), collapse = ", "), "\n", sep = "")
+  }
+  invisible(x)
+} # /R8::print.r8_converter
+
+
+# %% declare_conversion ----
+#' Declare a conversion through a converter
+#'
+#' `implement(converter, source) <- fn` lowers to `impl(From(source),
+#' Target, methods = list(from = fn))`.
+#'
+#' @param converter A function of class `r8_converter`.
+#' @param source An R8 type object, or Character: a class name.
+#' @param fn Function: The conversion, of one argument `x`.
+#' @param env Environment: The declaring environment.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+declare_conversion <- function(converter, source, fn, env) {
+  target <- converter_target(converter)
+  name <- if (inherits(source, "r8_type")) {
+    ensure_registered(source)
+    attr(source, "r8_name")
+  } else if (
+    is.character(source) &&
+      length(source) == 1L &&
+      !is.na(source) &&
+      nzchar(source)
+  ) {
+    source
+  } else {
+    r8_abort(
+      "A converter's method is declared for the class of `x`: an R8 type ",
+      "object or a class name, such as implement(as_",
+      tolower(sub("^.*::", "", attr(target, "r8_name"))),
+      ", \"character\") <- function(x) ...",
+      class = "r8_declaration_error"
+    )
+  }
+  check_method_formals(
+    fn,
+    "x",
+    paste0("r8_converter(", sub("^.*::", "", attr(target, "r8_name")), ")")
+  )
+  impl_declare(From(name), target, list(from = fn), NULL, env)
+} # /R8::declare_conversion
 
 
 # %% @.r8_struct_type ----
 #' Items of a struct type
 #'
-#' `Type@from(x)` converts `x` with the type's `From` impls.
+#' `Type@from(x)` converts `x` with the type's `From` impls, as
+#' `r8_converter(Type)(x)` does.
 #'
 #' @param object A struct type object.
 #' @param name The item's name.
@@ -299,6 +427,7 @@ r8_converter <- function(type) {
   list2env(r8_native_symbols(), envir = .r8_native)
   ns <- topenv()
   assign(".r8_c_find", .r8_native[["find"]], envir = ns)
+  assign(".r8_c_replaced", .r8_native[["replaced"]], envir = ns)
   assign(".r8_c_invoke", .r8_native[["invoke"]], envir = ns)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Dim, PartialOrd, Print)) {

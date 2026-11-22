@@ -11,8 +11,9 @@ generic(name, args = "x", description = "")
 }
 \arguments{
 \item{name}{Character: The generic's name, an R8 name such as
-\code{"describe"}: a letter, then letters, digits, or underscores. It is the
-name the generic is assigned to.}
+\code{"describe"}: a letter, then letters, digits, or underscores; or such a
+name followed by \verb{<-} for a replacement generic, such as \code{"labels<-"}.
+It is the name the generic is assigned to.}
 
 \item{args}{Character: The formal argument names, in order. The first is
 the value dispatched on. A generic with \code{...} lets each method add named
@@ -37,6 +38,15 @@ package assigns it to the generic's name, documents it with roxygen2, and
 exports it. The generic is a trait with one method named as the generic,
 \code{ns::describe}, which Rust and the C interface implement as any trait.
 }
+\details{
+A replacement generic, \code{generic("labels<-", c("x", "value"))}, is called
+as \code{labels(x) <- value}, which rebinds \code{x} to the method's result; the
+original value is unchanged. Its last argument is \code{value}, and each
+method returns a value of the type of \code{x}: for a child type, the child,
+such as \code{x} after \code{x$label <- value}; any other result raises
+\code{r8_type_error}. Its trait is \code{ns::with_labels}, the method's name in the
+bindings other than R.
+}
 \examples{
 op <- options(r8.namespace = "models")
 GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
@@ -45,6 +55,15 @@ implement(describe, GBM) <- function(x) {
   paste("Gradient boosting,", x$n_trees, "trees")
 }
 describe(GBM(n_trees = 100L))
+
+`n_trees<-` <- generic("n_trees<-", c("x", "value"))
+implement(`n_trees<-`, GBM) <- function(x, value) {
+  x$n_trees <- value
+  x
+}
+m <- GBM(n_trees = 100L)
+n_trees(m) <- 200L
+m$n_trees
 options(op)
 
 }

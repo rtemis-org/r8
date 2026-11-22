@@ -41,7 +41,10 @@ text. The declaration states this in a message.
 \verb{length<-}, \verb{dim<-}, \verb{levels<-}, \code{==}, \code{!=}), the comparison and other
 operators, S4 generics, and functions that are not generics raise
 \code{r8_declaration_error}. For \code{r8_convert} and \code{r8_converter}, the error
-names \code{impl(From(source), Type, ...)}, which declares a conversion.
+names the converter's form. A converter from \code{r8_converter(Target)} is
+the generic of the conversions to \code{Target}: \code{implement(as_target, Source)} and \code{implement(as_target, "character")} declare the conversion
+from an R8 type or a class, an impl of \code{From(source)} for \code{Target}, and
+the method takes exactly \code{(x)}.
 }
 
 An impl is declared in the namespace of its generic or of its type.

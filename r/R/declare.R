@@ -822,6 +822,10 @@ new_enum <- function(
 #' @export
 `@.r8_enum_type` <- function(object, name) {
   name <- as.character(substitute(name))
+  # `from` is a reserved variant name.
+  if (identical(name, "from")) {
+    return(r8_converter(object))
+  }
   qname <- attr(object, "r8_name")
   variants <- .r8_variants[[qname]] %||% enum_variants(qname, object)
   v <- variants[[name]]

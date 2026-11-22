@@ -56,7 +56,7 @@ test_that("generic() takes its arguments as given", {
 })
 
 test_that("generic() refuses names and arguments outside the rules", {
-  for (bad in c("describe.gbm", "describe<-", "1st", "")) {
+  for (bad in c("describe.gbm", "describe.x<-", "1st", "")) {
     expect_error(
       declare_in("gen3", generic(bad, "x")),
       "rule of trait names",
@@ -224,8 +224,8 @@ test_that("implement() refuses the functions R8 owns, operators, and non-generic
   refuse(try_impl(`+`), "operators")
   refuse(try_impl(Ops), "operators")
   refuse(try_impl(nrow), "implement\\(dim, GBM\\)")
-  refuse(try_impl(r8_convert), "impl\\(From\\(\"character\"\\), GBM")
-  refuse(try_impl(r8_converter), "r8_converter\\(GBM\\)")
+  refuse(try_impl(r8_convert), "implement\\(as_target, GBM\\)")
+  refuse(try_impl(r8_converter), "r8_converter\\(Target\\)")
   refuse(try_impl(function(x) x), "not a generic")
   refuse(try_impl(methods::show), "S4 generic")
   refuse(try_impl(1), "takes a generic")

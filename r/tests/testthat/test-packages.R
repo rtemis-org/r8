@@ -703,7 +703,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "Summarize.Rd",
       "as_resampler.Rd",
       "describe.Rd",
-      "n_resamples.Rd"
+      "n_resamples.Rd",
+      "seed-set.Rd"
     )
   )
   ns <- readLines(file.path(pkg, "NAMESPACE"))
@@ -755,6 +756,18 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     "## R8 method for struct 'Resampler'\n\\special{n_resamples(x, ...)}",
     fixed = TRUE
   )
+  # A replacement generic's method, written as its call, and a converter's
+  # method for a class, in the Rd files of the generic and the converter.
+  expect_match(
+    rd("seed-set.Rd"),
+    "## R8 method for struct 'Resampler'\n\\special{seed(x) <- value}",
+    fixed = TRUE
+  )
+  expect_match(
+    rd("as_resampler.Rd"),
+    "## R8 method for class 'character'\n\\special{as_resampler(x)}",
+    fixed = TRUE
+  )
   # A second run writes nothing.
   again <- run_r(
     character(),
@@ -797,7 +810,9 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "cat(describe(Method@Bootstrap), '\\n')",
       "cat(toString(r), '\\n')",
       "cat(n_resamples(r), '\\n')",
-      "print(Method@Bootstrap)"
+      "print(Method@Bootstrap)",
+      "seed(r) <- 9L",
+      "cat(r$seed, n_resamples(as_resampler('abc')), '\\n')"
     )
   )
   expect_identical(
@@ -807,7 +822,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "a resampling method",
       "Resampler(2)",
       "2",
-      "A resampling method"
+      "A resampling method",
+      "9 3"
     ),
     info = paste(used, collapse = "\n")
   )

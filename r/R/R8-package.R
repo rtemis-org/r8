@@ -27,12 +27,14 @@
 #' - `r8_declaration_error`: a declaration of a type, trait, impl, or generic
 #'   that does not pass its checks, or a package whose declarations do not
 #'   register.
-#' - `r8_type_error`: an argument of the wrong kind, such as a type object
-#'   where a value is expected.
+#' - `r8_type_error`: an argument or an impl's result of the wrong kind,
+#'   such as a type object where a value is expected, or a replacement
+#'   method or `From` impl that returns a value of another type.
 #' - `r8_value_error`: a value that does not satisfy its type; its subclass
 #'   `r8_codec_missing` is a Rust-native type whose codec is not registered.
 #' - `r8_dispatch_error`: a generic or trait method with no impl for the
-#'   value's type.
+#'   value's type, a conversion without a `From` impl, or `r8_next_impl()`
+#'   without a next impl.
 #' - `r8_text_error`: text output given invalid arguments.
 #'
 #' Every warning R8 signals has the class `r8_warning`; `r8_stale_warning` is

@@ -646,6 +646,22 @@ impl Checker<'_> {
             "duplicate_method",
         );
         for (i, m) in t.methods.iter().enumerate() {
+            let id = m.name.host_identifier();
+            if let Some(other) = t.methods[..i]
+                .iter()
+                .find(|o| o.name != m.name && o.name.host_identifier() == id)
+            {
+                self.report(
+                    "duplicate_method",
+                    &format!("{path}/methods/{i}/name"),
+                    format!(
+                        "methods `{}` and `{}` share the identifier `{id}` of the other bindings",
+                        other.name, m.name
+                    ),
+                );
+            }
+        }
+        for (i, m) in t.methods.iter().enumerate() {
             self.method(m, &format!("{path}/methods/{i}"));
         }
         self.fields(
@@ -668,14 +684,24 @@ impl Checker<'_> {
     }
 
     /// Checks the trait of a generic: exactly one method, named as the trait,
-    /// and no tag, required fields, or supertraits.
+    /// or, for a replacement generic `f<-`, named `f<-` under the trait
+    /// `with_f`, the method's host identifier; and no tag, required fields,
+    /// or supertraits.
     fn generic_def(&mut self, t: &TraitDef, path: &str) {
-        if t.methods.len() != 1 || t.methods[0].name.as_str() != t.name.as_str() {
+        let fits = t.methods.len() == 1 && {
+            let m = &t.methods[0].name;
+            if m.is_replacement() {
+                m.host_identifier() == t.name.as_str()
+            } else {
+                m.as_str() == t.name.as_str()
+            }
+        };
+        if !fits {
             self.report(
                 "generic_methods",
                 &format!("{path}/methods"),
                 format!(
-                    "the trait of generic `{}` has exactly one method, named `{}`",
+                    "the trait of generic `{}` has exactly one method, named `{}`, or `f<-` when the trait is `with_f`",
                     t.name, t.name
                 ),
             );
@@ -703,6 +729,10 @@ impl Checker<'_> {
         }
     }
 }
+
+/// The one variant name R8 reserves: `Enum@from` names the enum's
+/// conversion, as `Type@from` does for a struct.
+pub const RESERVED_VARIANT: &str = "from";
 
 /// `true` for the types a table column holds: a scalar base type, a factor,
 /// or `option()` of one.
@@ -750,10 +780,22 @@ impl Checker<'_> {
         if doc.traits[..index].iter().any(|t| t.name.as_str() == name)
             || doc.types.iter().any(|t| t.name().as_str() == name)
         {
+            // The trait of a replacement generic is named by its method's
+            // host identifier, which the message names.
+            let setter = doc
+                .traits
+                .iter()
+                .filter(|t| t.name.as_str() == name && t.generic)
+                .filter_map(|t| t.methods.first())
+                .find(|m| m.name.is_replacement());
+            let note = match setter {
+                Some(m) => format!("; `{name}` is the trait of generic `{}`", m.name),
+                None => String::new(),
+            };
             self.report(
                 "duplicate_type",
                 &format!("/traits/{index}/name"),
-                format!("duplicate type or trait `{name}`"),
+                format!("duplicate type or trait `{name}`{note}"),
             );
         }
     }
@@ -764,24 +806,44 @@ impl Checker<'_> {
         let traits = &self.doc.traits;
         let t = &traits[index];
         for (j, m) in t.methods.iter().enumerate() {
-            if let Some(other) = traits
+            let id = m.name.host_identifier();
+            if let Some((other, om)) = traits
                 .iter()
                 .enumerate()
-                .find(|(k, o)| *k != index && o.methods.iter().any(|om| om.name == m.name))
-                .map(|(_, o)| o)
+                .filter(|(k, _)| *k != index)
+                .find_map(|(_, o)| {
+                    o.methods
+                        .iter()
+                        .find(|om| om.name.host_identifier() == id)
+                        .map(|om| (o, om))
+                })
             {
+                // A generic is named by its method, which differs from its
+                // trait's name for a replacement generic.
                 let what = |x: &TraitDef| {
                     if x.generic {
-                        format!("generic `{}`", x.name)
+                        let shown = x
+                            .methods
+                            .first()
+                            .map_or(x.name.as_str(), |m| m.name.as_str());
+                        format!("generic `{shown}`")
                     } else {
                         format!("trait `{}`", x.name)
                     }
+                };
+                let shared = if om.name == m.name {
+                    String::new()
+                } else {
+                    format!(
+                        " (as `{}`, by the identifier `{id}` of the other bindings)",
+                        om.name
+                    )
                 };
                 self.report(
                     "duplicate_generic",
                     &format!("/traits/{index}/methods/{j}/name"),
                     format!(
-                        "`{}` of {} is also a method of {}; a namespace has one generic per name",
+                        "`{}` of {} is also a method of {}{shared}; a namespace has one generic per name",
                         m.name,
                         what(t),
                         what(other)
@@ -819,7 +881,18 @@ impl Checker<'_> {
                 let mut wrapped = HashSet::new();
                 for (j, v) in e.variants.iter().enumerate() {
                     let vpath = format!("{path}/variants/{j}");
-                    c.class_name(&v.name, "variant", &format!("{vpath}/name"));
+                    if v.name.as_str() == RESERVED_VARIANT {
+                        c.report(
+                            "name_reserved",
+                            &format!("{vpath}/name"),
+                            format!(
+                                "variant name `{RESERVED_VARIANT}` is reserved: `{}@{RESERVED_VARIANT}` converts to the enum through its `From` impls",
+                                e.name
+                            ),
+                        );
+                    } else {
+                        c.class_name(&v.name, "variant", &format!("{vpath}/name"));
+                    }
                     if let VariantShape::Newtype { of } = &v.shape {
                         c.newtype(doc, of, &e.tag, &format!("{vpath}/of"), &mut wrapped);
                     }

@@ -12,12 +12,18 @@ r8_convert(x, type)
 \item{type}{An R8 type object.}
 }
 \value{
-A value of \code{type}.
+A value of \code{type}. A source without an impl raises
+\code{r8_dispatch_error}, and an impl's result of another type
+\code{r8_type_error}.
 }
 \description{
-Calls the \code{From(source)} impl of \code{type} for the class of \code{x}, or for its
-R8 type when \code{x} is an R8 value, and checks that the result is a value of
-\code{type}.
+Returns \code{x} when it is a value of \code{type}, and its upcast when \code{type} is an
+ancestor of its type (\code{r8_upcast()}). Otherwise calls the \code{From(source)}
+impl of \code{type} for the nearest source with one: for an R8 value, its type,
+then its ancestors through \code{extends}, nearest first; for any other object,
+its classes, then \code{"numeric"} for a number. The impl receives \code{x}
+unchanged, and its result must be a value of \code{type}. Conversions are not
+chained.
 }
 \examples{
 op <- options(r8.namespace = "demo")

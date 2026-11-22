@@ -25,8 +25,11 @@ adds its \verb{@param} entries to that file; a call without a block is found by
 scanning \verb{R/}, and is left out when neither the generic nor the type has an
 Rd file in the package. A method the package implements in compiled code
 (\code{R8.h}), registered when roxygen2 loads the package, takes an entry by the
-same rules, with the formals of the trait's method. The usage of an enum lists its variants, such as
-\code{Method@KFold(k)} and \code{Method@Bootstrap}.
+same rules, with the formals of the trait's method. A replacement method
+is written as its call, \code{labels(x) <- value}. A method of a converter
+from \code{r8_converter()}, \code{implement(as_target, "character") <- function(x) ...}, takes the entry \verb{## R8 method for class 'character'} in the Rd
+file of the converter, or else of its target type. The usage of an enum
+lists its variants, such as \code{Method@KFold(k)} and \code{Method@Bootstrap}.
 }
 \examples{
 \dontrun{

@@ -30,6 +30,11 @@
 # package loads.
 .r8_c_find <- NULL
 
+# The native symbol of the C routine `replaced` (`r/src/view.c`), which a
+# replacement generic calls on its impl's result, bound when the package
+# loads.
+.r8_c_replaced <- NULL
+
 # Trait objects by qualified name, for the impls of compiled code.
 .r8_traits <- new.env(parent = emptyenv())
 
@@ -158,6 +163,11 @@ RESERVED_METHODS <- c(
   `[[` = "",
   `$<-` = "",
   `[[<-` = "",
+  `[<-` = "",
+  `names<-` = "",
+  `length<-` = "",
+  `dim<-` = "",
+  `levels<-` = "",
   `@` = "",
   as.list = ""
 )
@@ -165,6 +175,11 @@ RESERVED_METHODS <- c(
 
 # %% make_generic ----
 #' A new generic for a trait method
+#'
+#' The generic finds the impl for its first argument and calls it with its
+#' formals. A replacement generic, whose method name ends in `<-`, passes the
+#' impl's result to the C routine `replaced`, which returns it when it is a
+#' value of the first argument's type.
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
@@ -186,6 +201,9 @@ make_generic <- function(trait_name, method, fn) {
   # a generic sent to a worker dispatches through the worker's impls.
   find <- bquote(.Call(.r8_c_find, .(first), quote(.(key)), .r8_dispatch))
   body <- as.call(c(list(call("(", find)), call_args))
+  if (endsWith(method, "<-")) {
+    body <- bquote(.Call(.r8_c_replaced, .(first), .(body), quote(.(key))))
+  }
   g <- as.function(c(formals(fn), body), envir = asNamespace("R8"))
   structure(
     g,
@@ -194,6 +212,117 @@ make_generic <- function(trait_name, method, fn) {
     r8_method = method
   )
 } # /R8::make_generic
+
+
+# %% replacement_method ----
+#' The S3 method of a replacement impl, with the result check
+#'
+#' Calls the impl and passes its result to the C routine `replaced`, as a
+#' replacement generic of R8 does.
+#'
+#' @param fn Function: The impl, with its `r8_provider` stamp.
+#' @param key Character: `"Trait|method"`.
+#'
+#' @return Function: The S3 method, with `fn`'s formals.
+#'
+#' @keywords internal
+#' @noRd
+replacement_method <- function(fn, key) {
+  args <- names(formals(fn))
+  call_args <- lapply(args, function(a) {
+    if (a == "...") quote(...) else as.name(a)
+  })
+  names(call_args) <- ifelse(args == "...", "", args)
+  body <- bquote(.Call(
+    .r8_c_replaced,
+    .(as.name(args[[1L]])),
+    .(as.call(c(list(quote(.r8_impl)), call_args))),
+    quote(.(as.name(key)))
+  ))
+  env <- new.env(parent = asNamespace("R8"))
+  assign(".r8_impl", fn, envir = env)
+  as.function(c(formals(fn), body), envir = env)
+} # /R8::replacement_method
+
+
+# %% replacement_abort ----
+#' Signal that a replacement method returned a value of another type
+#'
+#' Called by the C routine `replaced`.
+#'
+#' @param key Character: `"Trait|method"`.
+#' @param x The value the method received.
+#' @param out The value it returned.
+#'
+#' @return Does not return.
+#'
+#' @keywords internal
+#' @noRd
+replacement_abort <- function(key, x, out) {
+  at <- regexpr("|", key, fixed = TRUE)
+  trait_name <- substr(key, 1L, at - 1L)
+  method <- substr(key, at + 1L, nchar(key))
+  r8 <- inherits(x, "r8_value")
+  type <- if (r8) attr(x, "r8_type") else class(x)[1L]
+  fn <- tryCatch(
+    impl_in_chain(trait_name, method, type, r8 = r8),
+    error = function(e) NULL
+  )
+  provider <- attr(fn, "r8_provider")[3L]
+  got <- if (inherits(out, "r8_value")) {
+    paste0("a value of `", attr(out, "r8_type"), "`")
+  } else {
+    paste0(
+      "an object of class ",
+      paste0("\"", class(out), "\"", collapse = ", ")
+    )
+  }
+  t <- .r8_traits[[trait_name]]
+  # A generic is named by its method, which differs from its trait's name
+  # for a replacement generic.
+  what <- if (is.null(t)) {
+    # The method of an S3 generic that implement() declares.
+    paste0("method of `", trait_name, "`")
+  } else if (isTRUE(trait_ir(t)[["generic"]])) {
+    paste0("generic `", sub("::.*$", "", trait_name), "::", method, "`")
+  } else {
+    paste0("method `", method, "` of `", trait_name, "`")
+  }
+  r8_abort(
+    "The replacement ",
+    what,
+    if (!is.null(provider) && !is.na(provider) && nzchar(provider)) {
+      paste0(
+        if (startsWith(what, "generic")) {
+          ", from the method for `"
+        } else {
+          ", from the impl for `"
+        },
+        provider,
+        "`,"
+      )
+    } else if (!is.null(provider) && !is.na(provider)) {
+      ", from the trait's default,"
+    },
+    " returned ",
+    got,
+    " for a value of `",
+    type,
+    "`; a replacement method returns a value of its argument's type, ",
+    "such as x after `x$field <- value`",
+    if (
+      r8 &&
+        !is.null(provider) &&
+        !is.na(provider) &&
+        nzchar(provider) &&
+        !identical(provider, type)
+    ) {
+      paste0(", or declare the method for `", type, "`")
+    },
+    " [replacement_type].",
+    class = "r8_type_error"
+  )
+} # /R8::replacement_abort
 
 
 # %% dispatch_resolve ----
@@ -546,6 +675,22 @@ new_trait <- function(name, methods = list(), description = "", tag = NULL) {
   env <- parent.frame()
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
+  held <- .r8_traits[[paste0(namespace, "::", name)]]
+  if (!is.null(held) && isTRUE(trait_ir(held)[["generic"]])) {
+    held_method <- trait_ir(held)[["methods"]][[1L]][["name"]]
+    if (endsWith(held_method, "<-")) {
+      r8_abort(
+        "`",
+        namespace,
+        "::",
+        name,
+        "` is the trait of the replacement generic `",
+        held_method,
+        "`; name the trait otherwise.",
+        class = "r8_declaration_error"
+      )
+    }
+  }
   trait <- with_record(
     build_trait(name, methods, description, tag, namespace, env),
     namespace
@@ -774,16 +919,33 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
   claim_namespace(namespace, declaring_package(env))
   trait_ns <- sub("::.*", "", t[["name"]])
   type_ns <- sub("::.*", "", type_name)
-  if (!namespace %in% c(trait_ns, type_ns)) {
+  from <- inherits(trait, "r8_from_trait")
+  source <- if (from) t[["source"]] else ""
+  # A conversion from an R8 type may also be declared by the source's
+  # namespace, as Rust admits `impl From<Local> for Foreign`.
+  source_ns <- if (grepl("::", source, fixed = TRUE)) {
+    sub("::.*", "", source)
+  }
+  if (!namespace %in% c(trait_ns, type_ns, source_ns)) {
     r8_abort(
       "An impl of `",
       t[["name"]],
       "` for `",
       type_name,
-      "` is declared in the namespace of the trait or of the type ",
-      "(Rust's orphan rule); this code is in `",
+      "` is declared in the namespace of the trait or of the type",
+      if (!is.null(source_ns)) " or of the source",
+      " (Rust's orphan rule); this code is in `",
       namespace,
       "`.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (!is.null(source_ns) && !r8_is_registered(source)) {
+    r8_abort(
+      "The source of From(\"",
+      source,
+      "\") is not a registered type; a qualified source names a declared ",
+      "type, and a class name has no `::`.",
       class = "r8_declaration_error"
     )
   }
@@ -909,10 +1071,15 @@ register_impl <- function(entry) {
     fn <- entry[["fns"]][[m]]
     set_impl(t[["name"]], m, entry[["type_name"]], fn)
     if (!inherits(generic, "r8_generic")) {
+      # The S3 method is the stamped impl, from which r8_next_impl() reads
+      # its provider.
+      fn <- .r8_impls[[paste(t[["name"]], m, entry[["type_name"]], sep = "|")]]
       if (identical(t[["name"]], "R8::Print")) {
         fn <- print_method(fn)
       } else if (identical(t[["name"]], "R8::Display")) {
         fn <- display_method(fn)
+      } else if (endsWith(m, "<-")) {
+        fn <- replacement_method(fn, paste(t[["name"]], m, sep = "|"))
       }
       registerS3method(m, entry[["type_name"]], fn, envir = s3_envir(generic))
     }

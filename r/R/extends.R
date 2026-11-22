@@ -134,21 +134,24 @@ r8_upcast <- function(x, type) {
 #' Called from the body of an impl, `r8_next_impl()` calls the impl that the
 #' running one takes precedence over: that of the nearest ancestor, after
 #' the type that provides the running impl, with an impl of the trait, or
-#' else the trait's default. It passes the running impl's arguments, the
-#' value dispatched on unchanged, so generics in the next impl dispatch on
-#' the child. A method of an S3 generic continues with `NextMethod()`.
+#' else the trait's default. It passes the current values of the running
+#' impl's formals, so an impl may change its arguments first, as with
+#' `NextMethod()`; generics in the next impl dispatch on the value passed.
+#' Every impl that R8 registers continues this way, an S3 method declared
+#' with `implement()` or `impl()` included.
 #'
-#' @return The value of the next impl. Without a next impl, raises
-#'   `r8_dispatch_error`.
+#' @return The value of the next impl. Without a next impl, and for a first
+#'   argument whose type is not the provider of the running impl or one of
+#'   its descendants, raises `r8_dispatch_error`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
 #' Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
-#' describe <- generic("describe", "x")
-#' implement(describe, Range) <- function(x) paste(x$lo, "to", x$hi)
-#' implement(describe, Window) <- function(x) paste(x$label, r8_next_impl())
-#' describe(Window(lo = 1, hi = 2, label = "w"))
+#' span_text <- generic("span_text", "x")
+#' implement(span_text, Range) <- function(x) paste(x$lo, "to", x$hi)
+#' implement(span_text, Window) <- function(x) paste(x$label, r8_next_impl())
+#' span_text(Window(lo = 1, hi = 2, label = "w"))
 #' options(op)
 #'
 #' @export
@@ -157,8 +160,15 @@ r8_next_impl <- function() {
   provider <- attr(caller, "r8_provider")
   if (is.null(provider)) {
     r8_abort(
-      "r8_next_impl() is called from the body of an impl of an R8 generic or ",
-      "trait method; a method of an S3 generic continues with NextMethod().",
+      "r8_next_impl() is called from the body of an impl that R8 registers: ",
+      "a method declared with implement() or impl().",
+      class = "r8_dispatch_error"
+    )
+  }
+  if (identical(provider[[1L]], "R8::From")) {
+    r8_abort(
+      "A From impl has no next impl; convert the value of an ancestor ",
+      "explicitly, as r8_convert(r8_upcast(x, Parent), Target).",
       class = "r8_dispatch_error"
     )
   }
@@ -167,12 +177,32 @@ r8_next_impl <- function() {
   x <- get(formal_names[[1L]], envir = frame)
   r8 <- inherits(x, "r8_value")
   type <- if (r8) attr(x, "r8_type") else class(x)[1L]
+  after <- provider[[3L]]
+  if (nzchar(after)) {
+    chain <- if (r8 && is.null(attr(x, "r8_variant"))) {
+      c(type, r8_ancestors(x))
+    } else {
+      class(x)
+    }
+    if (!after %in% chain) {
+      r8_abort(
+        "r8_next_impl() continues the impl for `",
+        after,
+        "` on a value of `",
+        type,
+        "`, which is neither `",
+        after,
+        "` nor one of its descendants.",
+        class = "r8_dispatch_error"
+      )
+    }
+  }
   fn <- impl_in_chain(
     provider[[1L]],
     provider[[2L]],
     type,
     r8 = r8,
-    after = provider[[3L]]
+    after = after
   )
   if (is.null(fn)) {
     r8_abort(
@@ -183,7 +213,7 @@ r8_next_impl <- function() {
       "`) for `",
       type,
       "` has no next impl: no ancestor after `",
-      if (nzchar(provider[[3L]])) provider[[3L]] else "the trait's default",
+      if (nzchar(after)) after else "the trait's default",
       "` implements it.",
       class = "r8_dispatch_error"
     )

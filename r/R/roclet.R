@@ -24,8 +24,12 @@
 #' scanning `R/`, and is left out when neither the generic nor the type has an
 #' Rd file in the package. A method the package implements in compiled code
 #' (`R8.h`), registered when roxygen2 loads the package, takes an entry by the
-#' same rules, with the formals of the trait's method. The usage of an enum lists its variants, such as
-#' `Method@KFold(k)` and `Method@Bootstrap`.
+#' same rules, with the formals of the trait's method. A replacement method
+#' is written as its call, `labels(x) <- value`. A method of a converter
+#' from `r8_converter()`, `implement(as_target, "character") <- function(x)
+#' ...`, takes the entry `## R8 method for class 'character'` in the Rd
+#' file of the converter, or else of its target type. The usage of an enum
+#' lists its variants, such as `Method@KFold(k)` and `Method@Bootstrap`.
 #'
 #' @return A roxygen2 roclet, of class `roclet_r8_rd`.
 #'
@@ -111,6 +115,7 @@ roxy_tag_of <- function(block, tag, val) {
 #' @keywords internal
 #' @noRd
 call_text <- function(name, formals) {
+  replacement <- endsWith(name, "<-") && length(formals) >= 2L
   args <- vapply(
     names(formals),
     function(n) {
@@ -122,8 +127,35 @@ call_text <- function(name, formals) {
     },
     character(1)
   )
+  if (replacement) {
+    # A replacement function is called as f(x) <- value.
+    n <- length(args)
+    return(paste0(
+      substr(name, 1L, nchar(name) - 2L),
+      "(",
+      paste(args[-n], collapse = ", "),
+      ") <- ",
+      args[[n]]
+    ))
+  }
   paste0(name, "(", paste(args, collapse = ", "), ")")
 } # /R8::call_text
+
+
+# %% rd_stem ----
+#' The Rd file name, without `.Rd`, that roxygen2 writes for a topic
+#'
+#' roxygen2 names the file of a replacement function `f<-` `f-set`.
+#'
+#' @param topic Character: The topic.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+rd_stem <- function(topic) {
+  sub("<-$", "-set", topic)
+} # /R8::rd_stem
 
 
 # %% topic_of ----
@@ -234,11 +266,29 @@ method_block <- function(block, blocks, env) {
   generic <- eval(call[[2L]][[2L]], env)
   type <- eval(call[[2L]][[3L]], env)
   fn <- eval(call[[3L]], env)
-  gname <- paste(deparse(call[[2L]][[2L]]), collapse = "")
-  tname <- sub("^.*::", "", attr(type, "r8_name"))
-  target <- classify_generic(generic, tname)
+  gcall <- call[[2L]][[2L]]
+  # A symbol such as `tag<-` names the generic without its backticks.
+  gname <- if (is.symbol(gcall)) {
+    as.character(gcall)
+  } else {
+    paste(deparse(gcall), collapse = "")
+  }
+  converter <- inherits(generic, "r8_converter")
+  tname <- if (is.character(type)) {
+    type
+  } else {
+    sub("^.*::", "", attr(type, "r8_name"))
+  }
+  target <- if (converter) {
+    list(kind = "converter")
+  } else {
+    classify_generic(generic, tname)
+  }
   topic <- NULL
-  if (identical(target[["kind"]], "trait")) {
+  if (converter) {
+    topic <- topic_of(blocks, generic) %||%
+      topic_of(blocks, converter_target(generic))
+  } else if (identical(target[["kind"]], "trait")) {
     trait_ns <- sub("::.*", "", unclass(target[["trait"]])[["name"]])
     if (identical(trait_ns, declaring_namespace(env))) {
       topic <- topic_of(blocks, generic)
@@ -246,7 +296,7 @@ method_block <- function(block, blocks, env) {
   } else if (identical(target[["package"]], declaring_package(env))) {
     topic <- topic_of(blocks, generic)
   }
-  if (is.null(topic)) {
+  if (is.null(topic) && !is.character(type)) {
     topic <- topic_of(blocks, type)
   }
   documented <- length(block$tags) > 0L
@@ -254,11 +304,11 @@ method_block <- function(block, blocks, env) {
     if (!documented) {
       return(NULL)
     }
-    topic <- paste0(gname, "-", tname)
+    topic <- paste0(rd_stem(gname), "-", tname)
   }
   usage <- paste0(
     "## R8 method for ",
-    type_kind(type),
+    if (is.character(type)) "class" else type_kind(type),
     " '",
     tname,
     "'\n\\special{",
@@ -274,7 +324,7 @@ method_block <- function(block, blocks, env) {
       new,
       list(
         roxy_tag_of(block, "name", topic),
-        roxy_tag_of(block, "rdname", topic)
+        roxy_tag_of(block, "rdname", rd_stem(topic))
       )
     )
   } else if (!roxygen2::block_has_tags(block, "name")) {

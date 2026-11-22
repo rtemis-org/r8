@@ -16,6 +16,13 @@
 - A tag value is a name, unique among a trait's implementors (`duplicate_tag`); a descendant without its own impl writes its type name. Inside `dyn()`, a unit-only enum is written as an object of the type member and its tag.
 - `r8_from_json(load =)` loads packages before the read; a document that names unregistered types raises `r8_unresolved_type`, which names the installed packages that declare each namespace.
 - `r8_schema(type, implementors = FALSE)` writes the JSON Schema of a type's values; with `implementors = TRUE`, a `dyn()` field lists the registered implementors.
+- A replacement method (`f<-`) returns a value of its argument's type, the child for a child's value; another result raises `r8_type_error`. A `From` impl's result of another type also raises `r8_type_error`.
+- `generic("labels<-", c("x", "value"))` declares a replacement generic, called as `labels(x) <- value`; its trait is `ns::with_labels`. A method `f<-` is named `with_f` in the other bindings, and two methods of one namespace that share that name are a declaration error.
+- `r8_next_impl()` continues every impl R8 registers, S3 methods declared with `implement()` or `impl()` and `Print` impls included; it passes the current values of the impl's arguments.
+- `new_trait()` refuses the methods `names<-`, `length<-`, `dim<-`, `levels<-`, and `[<-`, as `implement()` does.
+- `r8_convert()` uses the `From` impl of a value's nearest ancestor when its own type has none, and passes the value unchanged.
+- A converter from `r8_converter(Target)` is the generic of the conversions to `Target`: `implement(as_target, Source) <- function(x) ...` and `implement(as_target, "character") <- function(x) ...` declare them, and the roclet `r8_rd()` documents them. `Enum@from` converts to an enum, and `from` is a reserved variant name.
+- `From("ns::Source")` names a registered type, and the source's namespace may declare the impl.
 
 # R8 0.4.0
 

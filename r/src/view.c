@@ -499,21 +499,70 @@ static SEXP r8_find(SEXP x, SEXP key, SEXP dispatch) {
   return impl;
 }
 
+// The result `out` of a replacement method called on `x`, through the trait
+// method `key`, a symbol "Trait|method": `out` when it is a value of `x`'s
+// type, the same `r8_type` for an R8 value and an identical class vector for
+// any other object, implicit class included. Otherwise R8's
+// `replacement_abort()` raises the error. The routine keeps no SEXP beyond
+// installed symbols.
+// spec: R8/class-system#replacement-methods
+static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
+  static SEXP type_sym = NULL, abort_sym = NULL, class_sym = NULL;
+  if (type_sym == NULL) {
+    type_sym = Rf_install("r8_type");
+    abort_sym = Rf_install("replacement_abort");
+    class_sym = Rf_install("class");
+  }
+  SEXP type = Rf_getAttrib(x, type_sym);
+  int same;
+  if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
+    SEXP got = Rf_getAttrib(out, type_sym);
+    same = TYPEOF(got) == STRSXP && XLENGTH(got) == 1 &&
+           (STRING_ELT(got, 0) == STRING_ELT(type, 0) ||
+            strcmp(Rf_translateCharUTF8(STRING_ELT(got, 0)),
+                   Rf_translateCharUTF8(STRING_ELT(type, 0))) == 0);
+  } else if (Rf_getAttrib(out, type_sym) != R_NilValue) {
+    same = 0;
+  } else {
+    SEXP cx = Rf_getAttrib(x, R_ClassSymbol);
+    SEXP co = Rf_getAttrib(out, R_ClassSymbol);
+    if (cx != R_NilValue || co != R_NilValue) {
+      same = R_compute_identical(cx, co, 16);
+    } else {
+      SEXP base = R_BaseEnv;
+      SEXP ix = PROTECT(Rf_eval(PROTECT(Rf_lang2(class_sym, x)), base));
+      SEXP io = PROTECT(Rf_eval(PROTECT(Rf_lang2(class_sym, out)), base));
+      same = R_compute_identical(ix, io, 16);
+      UNPROTECT(4);
+    }
+  }
+  if (same) {
+    return out;
+  }
+  SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
+  SEXP call = PROTECT(Rf_lang4(abort_sym, PROTECT(Rf_ScalarString(PRINTNAME(key))), x, out));
+  Rf_eval(call, ns);
+  UNPROTECT(4);
+  return out;
+}
+
 // The C routines that R calls through `.Call()` on a native symbol:
-// list(invoke, exports, construct, find). R8's `.Call` routines are the Rust code's,
+// list(invoke, exports, construct, find, replaced). R8's `.Call` routines are the Rust code's,
 // registered by extendr; these continue a jump or call R_GetCCallable() from
 // C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 4));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 5));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
   SET_VECTOR_ELT(out, 3, native_symbol((DL_FUNC) r8_find));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 4));
+  SET_VECTOR_ELT(out, 4, native_symbol((DL_FUNC) r8_replaced));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 5));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
   SET_STRING_ELT(names, 3, Rf_mkChar("find"));
+  SET_STRING_ELT(names, 4, Rf_mkChar("replaced"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

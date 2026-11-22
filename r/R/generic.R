@@ -157,9 +157,18 @@ check_method_formals <- function(fn, gen_args, label) {
 #' exports it. The generic is a trait with one method named as the generic,
 #' `ns::describe`, which Rust and the C interface implement as any trait.
 #'
+#' A replacement generic, `generic("labels<-", c("x", "value"))`, is called
+#' as `labels(x) <- value`, which rebinds `x` to the method's result; the
+#' original value is unchanged. Its last argument is `value`, and each
+#' method returns a value of the type of `x`: for a child type, the child,
+#' such as `x` after `x$label <- value`; any other result raises
+#' `r8_type_error`. Its trait is `ns::with_labels`, the method's name in the
+#' bindings other than R.
+#'
 #' @param name Character: The generic's name, an R8 name such as
-#'   `"describe"`: a letter, then letters, digits, or underscores. It is the
-#'   name the generic is assigned to.
+#'   `"describe"`: a letter, then letters, digits, or underscores; or such a
+#'   name followed by `<-` for a replacement generic, such as `"labels<-"`.
+#'   It is the name the generic is assigned to.
 #' @param args Character: The formal argument names, in order. The first is
 #'   the value dispatched on. A generic with `...` lets each method add named
 #'   arguments after the generic's; a generic without it calls its methods
@@ -180,15 +189,30 @@ check_method_formals <- function(fn, gen_args, label) {
 #'   paste("Gradient boosting,", x$n_trees, "trees")
 #' }
 #' describe(GBM(n_trees = 100L))
+#'
+#' `n_trees<-` <- generic("n_trees<-", c("x", "value"))
+#' implement(`n_trees<-`, GBM) <- function(x, value) {
+#'   x$n_trees <- value
+#'   x
+#' }
+#' m <- GBM(n_trees = 100L)
+#' n_trees(m) <- 200L
+#' m$n_trees
 #' options(op)
 #'
 #' @export
 generic <- function(name, args = "x", description = "") {
-  if (!is_name(name)) {
+  replacement <- is.character(name) &&
+    length(name) == 1L &&
+    !is.na(name) &&
+    endsWith(name, "<-")
+  base <- if (replacement) substr(name, 1L, nchar(name) - 2L) else name
+  if (!is_name(base)) {
     r8_abort(
       "A generic's name follows the rule of trait names in new_trait(): ",
-      "a letter, then letters, digits, or underscores, such as \"describe\"",
-      name_reason(name),
+      "a letter, then letters, digits, or underscores, such as \"describe\", ",
+      "or such a name followed by `<-` for a replacement generic",
+      name_reason(base),
       ".",
       class = "r8_declaration_error"
     )
@@ -212,6 +236,26 @@ generic <- function(name, args = "x", description = "") {
       class = "r8_declaration_error"
     )
   }
+  if (
+    replacement &&
+      (length(args) < 2L || !identical(args[[length(args)]], "value"))
+  ) {
+    r8_abort(
+      "A replacement generic takes the value it replaces in and the ",
+      "replacement, the last argument `value`: generic(\"",
+      name,
+      "\", c(\"x\", \"value\")).",
+      class = "r8_declaration_error"
+    )
+  }
+  if (name %in% names(RESERVED_METHODS)[!nzchar(RESERVED_METHODS)]) {
+    r8_abort(
+      "`",
+      name,
+      "` is reserved for R8 and its standard traits.",
+      class = "r8_declaration_error"
+    )
+  }
   env <- parent.frame()
   existing <- existing_generic(name, env)
   if (!is.null(existing)) {
@@ -222,7 +266,7 @@ generic <- function(name, args = "x", description = "") {
         "` is a generic of '",
         existing[["package"]],
         "'; declare its method for a type with implement(",
-        name,
+        if (make.names(name) == name) name else paste0("`", name, "`"),
         ", Type) <- function(",
         paste(generic_formals(existing[["fn"]]), collapse = ", "),
         ") ...",
@@ -240,11 +284,15 @@ generic <- function(name, args = "x", description = "") {
   }
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
-  qname <- paste0(namespace, "::", name)
+  # The trait of a replacement generic `f<-` is named `with_f`, the
+  # method's identifier in the other bindings.
+  trait_name <- if (replacement) paste0("with_", base) else name
+  qname <- paste0(namespace, "::", trait_name)
+  check_generic_trait(qname, name)
   formals <- stats::setNames(rep(list(quote(expr = )), length(args)), args)
   g <- make_generic(qname, name, as.function(c(formals, list(NULL))))
   ir <- list(
-    name = name,
+    name = trait_name,
     description = description,
     methods = list(list(
       name = name,
@@ -271,6 +319,43 @@ generic <- function(name, args = "x", description = "") {
   )
   g
 } # /R8::generic
+
+
+# %% check_generic_trait ----
+#' Refuse a generic whose trait name another generic's trait holds
+#'
+#' The trait of the generic `f` is `ns::f` and that of `f<-` is
+#' `ns::with_f`, so the generics `with_f` and `f<-` would share one trait.
+#'
+#' @param qname Character: The qualified name of the generic's trait.
+#' @param method Character: The generic's name.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+check_generic_trait <- function(qname, method) {
+  t <- .r8_traits[[qname]]
+  if (is.null(t)) {
+    return(invisible(NULL))
+  }
+  ir <- trait_ir(t)
+  other <- ir[["methods"]][[1L]][["name"]]
+  if (isTRUE(ir[["generic"]]) && !identical(other, method)) {
+    r8_abort(
+      "The generics `",
+      method,
+      "` and `",
+      other,
+      "` share the trait `",
+      qname,
+      "`: the trait of a replacement generic `f<-` is `with_f`; ",
+      "name the generic otherwise.",
+      class = "r8_declaration_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::check_generic_trait
 
 
 # %% classify_generic ----
@@ -397,12 +482,12 @@ classify_generic <- function(g, type_label = "Type") {
   }
   if (identical(g, r8_convert) || identical(g, r8_converter)) {
     r8_abort(
-      "Conversions use the From trait: impl(From(\"character\"), ",
+      "A conversion is a method of the target's converter: as_target <- ",
+      "r8_converter(Target), then implement(as_target, ",
       type_label,
-      ", methods = list(from = function(x) ...)) declares one, and ",
-      "r8_converter(",
+      ") <- function(x) ... declares the conversion from ",
       type_label,
-      ") returns a conversion function.",
+      " to Target, as impl(From(source), Target, ...) does.",
       class = "r8_declaration_error"
     )
   }
@@ -446,7 +531,11 @@ classify_generic <- function(g, type_label = "Type") {
 #'   `length<-`, `dim<-`, `levels<-`, `==`, `!=`), the comparison and other
 #'   operators, S4 generics, and functions that are not generics raise
 #'   `r8_declaration_error`. For `r8_convert` and `r8_converter`, the error
-#'   names `impl(From(source), Type, ...)`, which declares a conversion.
+#'   names the converter's form. A converter from `r8_converter(Target)` is
+#'   the generic of the conversions to `Target`: `implement(as_target,
+#'   Source)` and `implement(as_target, "character")` declare the conversion
+#'   from an R8 type or a class, an impl of `From(source)` for `Target`, and
+#'   the method takes exactly `(x)`.
 #'
 #' An impl is declared in the namespace of its generic or of its type.
 #'
@@ -480,6 +569,10 @@ classify_generic <- function(g, type_label = "Type") {
 #' @name implement
 #' @export
 `implement<-` <- function(generic, type, value) {
+  if (inherits(generic, "r8_converter")) {
+    declare_conversion(generic, type, value, parent.frame())
+    return(generic)
+  }
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_declaration_error")
   }
@@ -581,11 +674,24 @@ declare_s3_method <- function(target, type, fn, env) {
 #' @keywords internal
 #' @noRd
 register_s3_method <- function(entry) {
+  trait_name <- paste0(entry[["package"]], "::", entry[["name"]])
+  put_impl(trait_name, entry[["name"]], entry[["type_name"]], entry[["fn"]])
+  # The S3 method is the stamped impl, from which r8_next_impl() reads its
+  # provider; a replacement method's result is checked.
+  fn <- .r8_impls[[paste(
+    trait_name,
+    entry[["name"]],
+    entry[["type_name"]],
+    sep = "|"
+  )]]
+  if (endsWith(entry[["name"]], "<-")) {
+    fn <- replacement_method(fn, paste(trait_name, entry[["name"]], sep = "|"))
+  }
   if (nzchar(entry[["package"]])) {
     registerS3method(
       entry[["name"]],
       entry[["type_name"]],
-      entry[["fn"]],
+      fn,
       envir = asNamespace(entry[["package"]])
     )
   } else {
@@ -600,16 +706,10 @@ register_s3_method <- function(entry) {
     }
     assign(
       paste0(entry[["name"]], ".", entry[["type_name"]]),
-      entry[["fn"]],
+      fn,
       envir = table
     )
   }
-  put_impl(
-    paste0(entry[["package"]], "::", entry[["name"]]),
-    entry[["name"]],
-    entry[["type_name"]],
-    entry[["fn"]]
-  )
   invisible(NULL)
 } # /R8::register_s3_method
 
@@ -636,6 +736,23 @@ register_s3_method <- function(entry) {
 #'
 #' @export
 r8_method <- function(generic, type) {
+  if (inherits(generic, "r8_converter")) {
+    source <- if (inherits(type, "r8_type")) attr(type, "r8_name") else type
+    target <- attr(converter_target(generic), "r8_name")
+    fn <- .r8_impls[[paste("R8::From", source, target, sep = "|")]]
+    if (is.null(fn)) {
+      r8_abort(
+        "`",
+        target,
+        "` has no conversion from `",
+        source,
+        "`.",
+        class = "r8_dispatch_error"
+      )
+    }
+    attr(fn, "r8_provider") <- NULL
+    return(fn)
+  }
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_dispatch_error")
   }
@@ -670,6 +787,33 @@ r8_method <- function(generic, type) {
 } # /R8::r8_method
 
 
+# %% usage_line ----
+#' The call of a generic, as its usage
+#'
+#' A replacement generic `f<-` is called as `f(x) <- value`.
+#'
+#' @param method Character: The method's name.
+#' @param args Character: Its formal argument names.
+#'
+#' @return Character: The usage.
+#'
+#' @keywords internal
+#' @noRd
+usage_line <- function(method, args) {
+  if (endsWith(method, "<-") && length(args) >= 2L) {
+    base <- substr(method, 1L, nchar(method) - 2L)
+    return(paste0(
+      base,
+      "(",
+      paste(args[-length(args)], collapse = ", "),
+      ") <- ",
+      args[[length(args)]]
+    ))
+  }
+  paste0(method, "(", paste(args, collapse = ", "), ")")
+} # /R8::usage_line
+
+
 # %% print.r8_generic ----
 #' @rdname generic
 #' @param x A generic of class `r8_generic`.
@@ -682,11 +826,15 @@ print.r8_generic <- function(x, ...) {
   is_generic <- !is.null(t) && isTRUE(trait_ir(t)[["generic"]])
   cat(
     "<r8 generic ",
-    if (is_generic) trait else paste0(trait, "@", method),
+    if (is_generic) {
+      paste0(sub("::.*$", "", trait), "::", method)
+    } else {
+      paste0(trait, "@", method)
+    },
     ">\n",
     sep = ""
   )
-  cat(method, "(", paste(names(formals(x)), collapse = ", "), ")\n", sep = "")
+  cat(usage_line(method, names(formals(x))), "\n", sep = "")
   prefix <- paste(trait, method, "", sep = "|")
   keys <- ls(.r8_impls, all.names = TRUE)
   types <- substring(keys[startsWith(keys, prefix)], nchar(prefix) + 1L)
