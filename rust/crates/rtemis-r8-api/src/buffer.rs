@@ -60,10 +60,26 @@ pub trait Element: Copy + Send + Sync + 'static {
         value: *mut SEXP,
         err: *mut abi::Error,
     ) -> abi::Status;
+    /// The elements of an array node that R8 lends through `r`: numbers for
+    /// a double or an integer, logicals, or a base64 string for bytes.
+    fn from_node<'a>(r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>) -> Result<Vec<Self>>;
+}
+
+/// A vector of `len` elements of `T` filled in one block by `fill`, whose
+/// items have the layout of `U`.
+fn block<T: Copy, U>(len: usize, fill: impl FnOnce(&mut [U]) -> Result<()>) -> Result<Vec<T>> {
+    const { assert!(std::mem::size_of::<T>() == std::mem::size_of::<U>()) };
+    let mut out: Vec<T> = Vec::with_capacity(len);
+    // `fill` writes every item or fails; on failure the vector is dropped
+    // without reading its items, which are plain numbers.
+    let items = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<U>(), len) };
+    fill(items)?;
+    unsafe { out.set_len(len) };
+    Ok(out)
 }
 
 macro_rules! element {
-    ($t:ty, $sexptype:expr, $region:ident, $view:ident, $vt:ty) => {
+    ($t:ty, $sexptype:expr, $region:ident, $view:ident, $vt:ty, $from_node:expr) => {
         impl Element for $t {
             const SEXPTYPE: c_int = $sexptype;
             unsafe fn region(x: SEXP, i: R_xlen_t, n: R_xlen_t, buf: *mut Self) -> R_xlen_t {
@@ -82,14 +98,51 @@ macro_rules! element {
                     None => abi::ERROR,
                 }
             }
+            fn from_node<'a>(r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>) -> Result<Vec<Self>> {
+                ($from_node)(r, n)
+            }
         }
     };
 }
 
-element!(f64, sys::REALSXP, REAL_GET_REGION, view_doubles, f64);
-element!(i32, sys::INTSXP, INTEGER_GET_REGION, view_integers, i32);
-element!(Logical, sys::LGLSXP, LOGICAL_GET_REGION, view_logicals, i32);
-element!(u8, sys::RAWSXP, RAW_GET_REGION, view_bytes, u8);
+element!(
+    f64,
+    sys::REALSXP,
+    REAL_GET_REGION,
+    view_doubles,
+    f64,
+    |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {
+        block::<f64, f64>(r.length(n), |out| r.doubles(n, 0, out))
+    }
+);
+element!(
+    i32,
+    sys::INTSXP,
+    INTEGER_GET_REGION,
+    view_integers,
+    i32,
+    |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {
+        block::<i32, i32>(r.length(n), |out| r.integers(n, 0, out))
+    }
+);
+element!(
+    Logical,
+    sys::LGLSXP,
+    LOGICAL_GET_REGION,
+    view_logicals,
+    i32,
+    |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {
+        block::<Logical, i32>(r.length(n), |out| r.logicals(n, 0, out))
+    }
+);
+element!(
+    u8,
+    sys::RAWSXP,
+    RAW_GET_REGION,
+    view_bytes,
+    u8,
+    |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| { r.string(n).map(rtemis_r8::access::base64_decode) }
+);
 
 enum Backing<T> {
     /// Elements of an R vector, which the token keeps alive.

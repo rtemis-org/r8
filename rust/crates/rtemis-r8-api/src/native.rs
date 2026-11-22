@@ -3,6 +3,7 @@
 //! codec tables R8 calls; `Codec`, which both kinds implement; and the
 //! `extern "C"` functions behind them.
 
+use crate::reader::{Node, Reader};
 use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -27,6 +28,10 @@ pub trait Native: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     ///
     /// On R's main thread, with valid R objects.
     unsafe fn from_fields(fields: &[SEXP]) -> Result<Self>;
+
+    /// The value from the root node of a value R8 has read from a document
+    /// and validated; each field is read by name.
+    fn from_reader<'a>(r: &Reader<'a>, root: Node<'a>) -> Result<Self>;
 
     /// The field `name` as an R value; `owner` keeps the state alive, for a
     /// view of its memory.
@@ -67,6 +72,11 @@ pub trait NativeEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     ///
     /// On R's main thread, with valid R objects.
     unsafe fn from_variant(variant: &str, fields: &[SEXP]) -> Result<Self>;
+
+    /// The value from the root node of a value R8 has read from a document
+    /// and validated: the variant from the variant's name, or from the tag
+    /// member of an object, and its fields by name.
+    fn from_reader<'a>(r: &Reader<'a>, root: Node<'a>) -> Result<Self>;
 
     /// The name of the value's variant.
     fn variant(&self) -> &'static CStr;
@@ -137,6 +147,7 @@ pub const fn codec<T: Native>() -> Shared<abi::TypeVTable> {
         bytes: Some(struct_fns::bytes::<T>),
         variant: None,
         from_variant: None,
+        from_reader: Some(struct_from_reader::<T>),
     })
 }
 
@@ -156,6 +167,7 @@ pub const fn enum_codec<T: NativeEnum>() -> Shared<abi::TypeVTable> {
         bytes: Some(enum_fns::bytes::<T>),
         variant: Some(variant::<T>),
         from_variant: Some(from_variant::<T>),
+        from_reader: Some(enum_from_reader::<T>),
     })
 }
 
@@ -202,6 +214,34 @@ unsafe extern "C" fn from_fields<T: Native>(
             unsafe { std::slice::from_raw_parts(fields, n) }
         };
         let v = unsafe { T::from_fields(f) }?;
+        unsafe { *out = Box::into_raw(Box::new(v)).cast() };
+        Ok(())
+    })
+}
+
+unsafe extern "C" fn struct_from_reader<T: Native>(
+    r: *const abi::Reader,
+    root: abi::Node,
+    out: *mut *mut c_void,
+    err: *mut abi::Error,
+) -> Status {
+    guard(err, || {
+        let reader = unsafe { Reader::new(r) }?;
+        let v = T::from_reader(&reader, reader.root(root))?;
+        unsafe { *out = Box::into_raw(Box::new(v)).cast() };
+        Ok(())
+    })
+}
+
+unsafe extern "C" fn enum_from_reader<T: NativeEnum>(
+    r: *const abi::Reader,
+    root: abi::Node,
+    out: *mut *mut c_void,
+    err: *mut abi::Error,
+) -> Status {
+    guard(err, || {
+        let reader = unsafe { Reader::new(r) }?;
+        let v = T::from_reader(&reader, reader.root(root))?;
         unsafe { *out = Box::into_raw(Box::new(v)).cast() };
         Ok(())
     })

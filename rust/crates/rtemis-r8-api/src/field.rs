@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::api::{self, Error, Result};
 use crate::buffer::{Buffer, Element, Logical};
+use crate::reader::{Node, Reader};
 use crate::state::{StateReader, StateWriter};
 use crate::sys::{self, SEXP};
 
@@ -21,6 +22,9 @@ pub trait Field: Clone + Send + Sync + 'static {
     ///
     /// On R's main thread, with a valid `x`.
     unsafe fn from_r(x: SEXP) -> Result<Self>;
+    /// The field from the node of a value R8 has read from a document and
+    /// validated.
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self>;
     /// The field as an R value; `owner` keeps the struct's state alive, for
     /// a view of its memory.
     fn to_r(&self, owner: SEXP) -> Result<SEXP>;
@@ -54,6 +58,9 @@ impl Field for f64 {
         scalar(x, sys::REALSXP, "a double")?;
         Ok(unsafe { sys::REAL_ELT(x, 0) })
     }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        r.number(n)
+    }
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         let v = *self;
         alloc(&|| unsafe { sys::Rf_ScalarReal(v) })
@@ -70,6 +77,20 @@ impl Field for i32 {
     unsafe fn from_r(x: SEXP) -> Result<Self> {
         scalar(x, sys::INTSXP, "an integer")?;
         Ok(unsafe { sys::INTEGER_ELT(x, 0) })
+    }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        if r.is_none(n) {
+            return Ok(i32::MIN);
+        }
+        let x = r.number(n)?;
+        if x.fract() == 0.0 && (-2147483647.0..=2147483647.0).contains(&x) {
+            Ok(x as i32)
+        } else {
+            Err(Error::new(
+                "type_mismatch",
+                format!("{x} is not an integer"),
+            ))
+        }
     }
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         let v = *self;
@@ -89,6 +110,13 @@ impl Field for bool {
         Logical(unsafe { sys::LOGICAL_ELT(x, 0) })
             .get()
             .ok_or_else(|| Error::new("na_value", "the logical is NA"))
+    }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        match r.logical(n)? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Error::new("na_value", "the logical is NA")),
+        }
     }
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         let v = i32::from(*self);
@@ -113,6 +141,9 @@ impl Field for String {
         Ok(unsafe { std::ffi::CStr::from_ptr(p) }
             .to_string_lossy()
             .into_owned())
+    }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        r.string(n).map(str::to_string)
     }
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         let s: &str = self;
@@ -150,6 +181,12 @@ impl<T: Field> Field for Option<T> {
         }
         unsafe { T::from_r(x) }.map(Some)
     }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        if r.is_none(n) {
+            return Ok(None);
+        }
+        T::from_node(r, n).map(Some)
+    }
     fn to_r(&self, owner: SEXP) -> Result<SEXP> {
         match self {
             Some(v) => v.to_r(owner),
@@ -179,6 +216,9 @@ impl<T: Field> Field for Option<T> {
 impl<T: Element> Field for Buffer<T> {
     unsafe fn from_r(x: SEXP) -> Result<Self> {
         unsafe { Buffer::from_r(x) }
+    }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        T::from_node(r, n).map(Buffer::from)
     }
     fn to_r(&self, owner: SEXP) -> Result<SEXP> {
         Buffer::to_r(self, owner)

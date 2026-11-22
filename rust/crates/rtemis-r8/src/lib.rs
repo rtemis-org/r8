@@ -42,6 +42,7 @@ pub mod equal;
 pub mod ir;
 pub mod layout;
 pub mod name;
+pub mod reader;
 pub mod record;
 pub mod rules;
 pub mod text;

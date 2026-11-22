@@ -18,6 +18,7 @@ pub mod exports;
 pub mod field;
 pub mod keep;
 pub mod native;
+pub mod reader;
 pub mod state;
 pub mod sys;
 pub mod traits;
@@ -28,6 +29,7 @@ pub use call::{Dots, FromR, IntoR, Receiver, Sexp, Value};
 pub use exports::{ImplSet, MethodRow};
 pub use field::Field;
 pub use native::{Codec, Native, NativeEnum, Shared, codec, enum_codec};
+pub use reader::{Node, Reader};
 pub use state::{StateReader, StateWriter};
 pub use traits::{Debug, Dim, Display, PartialOrd};
 

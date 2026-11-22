@@ -258,6 +258,39 @@ pub(crate) fn is_enum_codec(vt: *const TypeVTable) -> bool {
         && codec.from_variant.is_some()
 }
 
+/// The end of the member `from_reader`, which tables written for R8 0.4.0
+/// have.
+const FROM_READER_END: usize =
+    std::mem::offset_of!(TypeVTable, from_reader) + std::mem::size_of::<usize>();
+
+/// Whether a codec table's `size` covers `from_reader` and sets it.
+pub(crate) fn has_from_reader(vt: *const TypeVTable) -> bool {
+    let codec = unsafe { &*vt };
+    codec.size as usize >= FROM_READER_END && codec.from_reader.is_some()
+}
+
+/// A state built by the codec's `from_reader` from the value at `root`,
+/// which `reader` lends.
+pub(crate) fn from_reader(
+    vt: *const TypeVTable,
+    reader: &rtemis_r8::abi::Reader,
+    root: rtemis_r8::abi::Node,
+) -> Result<*mut c_void, String> {
+    let f = unsafe { &*vt }
+        .from_reader
+        .ok_or_else(|| "the codec has no `from_reader`".to_string())?;
+    let mut state: *mut c_void = std::ptr::null_mut();
+    let mut err = Error {
+        code: [0; 64],
+        message: [0; 1024],
+    };
+    let status = unsafe { f(reader, root, &mut state, &mut err) };
+    if status != OK || state.is_null() {
+        return Err(error_text(&err));
+    }
+    Ok(state)
+}
+
 /// Whether a codec table sets either enum member.
 pub(crate) fn has_enum_members(vt: *const TypeVTable) -> bool {
     let codec = unsafe { &*vt };

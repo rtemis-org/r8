@@ -499,7 +499,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             )
         }
         Data::Enum(e) => {
-            let tag = attrs.tag.unwrap_or_else(|| "type".to_string());
+            let tag = attrs.tag.clone().unwrap_or_else(|| "type".to_string());
             let unit_only = e.variants.iter().all(|v| matches!(v.fields, Fields::Unit));
             let mut variant_defs = Vec::new();
             let mut enc_arms = Vec::new();
@@ -637,7 +637,9 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     let native = if attrs.native {
         match &input.data {
             Data::Struct(st) => native_impl(ident, &qualified, &fields_of(&st.fields)?)?,
-            Data::Enum(e) => native_enum_impl(ident, &qualified, e)?,
+            Data::Enum(e) => {
+                native_enum_impl(ident, &qualified, e, attrs.tag.as_deref().unwrap_or("type"))?
+            }
             Data::Union(_) => {
                 return Err(Error::new(
                     Span::call_site(),
@@ -680,8 +682,16 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
 /// each a `Field`, and newtype variants whose struct implements `Native`.
 /// The state's bytes are the variant's declaration index, a `u32`, then its
 /// fields.
-fn native_enum_impl(ident: &syn::Ident, qualified: &str, e: &syn::DataEnum) -> Result<Tokens> {
+fn native_enum_impl(
+    ident: &syn::Ident,
+    qualified: &str,
+    e: &syn::DataEnum,
+    tag: &str,
+) -> Result<Tokens> {
     let type_c = c_str(qualified);
+    let unit_only = e.variants.iter().all(|v| matches!(v.fields, Fields::Unit));
+    let tag_c = c_str(tag);
+    let mut from_node = Vec::new();
     let api = quote! { ::rtemis_r8_api };
     let unknown_field = quote! {
         Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name)))
@@ -708,6 +718,7 @@ fn native_enum_impl(ident: &syn::Ident, qualified: &str, e: &syn::DataEnum) -> R
                         Ok(Self::#vid)
                     }
                 });
+                from_node.push(quote! { #vname => Ok(Self::#vid) });
                 variant.push(quote! { Self::#vid => #vname_c });
                 get.push(quote! { Self::#vid => #unknown_field });
                 with.push(quote! { Self::#vid => #unknown_field });
@@ -744,6 +755,19 @@ fn native_enum_impl(ident: &syn::Ident, qualified: &str, e: &syn::DataEnum) -> R
                         Ok(Self::#vid { #(#conv),* })
                     }
                 });
+                let node_conv: Vec<Tokens> = idents
+                    .iter()
+                    .zip(&tys)
+                    .zip(&names)
+                    .map(|((i, t), name)| {
+                        let name_c = c_str(name);
+                        quote! {
+                            #i: <#t as #api::Field>::from_node(r, r.field(root, #name_c))
+                                .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
+                        }
+                    })
+                    .collect();
+                from_node.push(quote! { #vname => Ok(Self::#vid { #(#node_conv),* }) });
                 variant.push(quote! { Self::#vid { .. } => #vname_c });
                 get.push(quote! {
                     Self::#vid { #(#idents),* } => match name {
@@ -794,6 +818,9 @@ fn native_enum_impl(ident: &syn::Ident, qualified: &str, e: &syn::DataEnum) -> R
                 from.push(quote! {
                     #vname => Ok(Self::#vid(unsafe { <#inner as #api::Native>::from_fields(fields) }?))
                 });
+                from_node.push(quote! {
+                    #vname => Ok(Self::#vid(<#inner as #api::Native>::from_reader(r, root)?))
+                });
                 variant.push(quote! { Self::#vid(_) => #vname_c });
                 get.push(quote! { Self::#vid(inner) => <#inner as #api::Native>::get_field(inner, owner, name) });
                 with.push(quote! {
@@ -835,6 +862,13 @@ fn native_enum_impl(ident: &syn::Ident, qualified: &str, e: &syn::DataEnum) -> R
             unsafe fn from_variant(variant: &str, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 match variant {
                     #(#from,)*
+                    _ => Err(#api::Error::new("unknown_variant", format!("`{}` has no variant `{}`", #qualified, variant))),
+                }
+            }
+            fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
+                let variant = if #unit_only { r.string(root)? } else { r.string(r.field(root, #tag_c))? };
+                match variant {
+                    #(#from_node,)*
                     _ => Err(#api::Error::new("unknown_variant", format!("`{}` has no variant `{}`", #qualified, variant))),
                 }
             }
@@ -892,6 +926,18 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
             }
         })
         .collect();
+    let from_node: Vec<Tokens> = idents
+        .iter()
+        .zip(&tys)
+        .zip(&names)
+        .map(|((i, t), name)| {
+            let name_c = c_str(name);
+            quote! {
+                #i: <#t as #api::Field>::from_node(r, r.field(root, #name_c))
+                    .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
+            }
+        })
+        .collect();
     let with_arms: Vec<Tokens> = idents
         .iter()
         .zip(&tys)
@@ -928,6 +974,9 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
                     ));
                 }
                 Ok(Self { #(#from),* })
+            }
+            fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
+                Ok(Self { #(#from_node),* })
             }
             fn get_field(&self, owner: #api::sys::SEXP, name: &str) -> #api::Result<#api::sys::SEXP> {
                 match name {

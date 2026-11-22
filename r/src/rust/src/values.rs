@@ -1410,10 +1410,55 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     };
     let lookup: &dyn TypeLookup = &*docs;
     // A Rust-native struct or enum: the codec builds the state from the
-    // validated fields as R values, through `from_fields` (a struct) or
-    // `from_variant` (an enum, checked against the document's variant); the
-    // codec receives no JSON text.
+    // read value through `from_reader` when its table has it, and otherwise
+    // from the validated fields as R values, through `from_fields` (a struct)
+    // or `from_variant` (an enum); the state's variant is checked against the
+    // document's, and the codec receives no JSON text.
     if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name)) {
+        if crate::native::has_from_reader(vt) {
+            let reader = rtemis_r8::reader::json_reader();
+            let state = crate::native::from_reader(vt, &reader, rtemis_r8::reader::node(&v))
+                .map_err(fail)?;
+            let variant = crate::native::state_variant(vt, state);
+            let drop_state = || {
+                if let Some(d) = unsafe { (*vt).drop } {
+                    unsafe { d(state) };
+                }
+            };
+            if let TypeDef::Enum(e) = def {
+                let read = match &v {
+                    serde_json::Value::String(s) => Some(s.as_str()),
+                    other => other
+                        .get(e.tag.as_str())
+                        .and_then(serde_json::Value::as_str),
+                };
+                if read != variant.as_deref() {
+                    drop_state();
+                    return Err(fail(format!(
+                        "the codec of `{q}` read the variant `{}` from a document of the variant `{}` [codec_variant]",
+                        variant.unwrap_or_default(),
+                        read.unwrap_or_default()
+                    )));
+                }
+            }
+            let Some((names, version)) =
+                crate::native::value_fields(def, variant.as_deref(), lookup)
+            else {
+                drop_state();
+                return Err(fail(format!(
+                    "the codec of `{q}` built a state of the undeclared variant `{}` [codec_variant]",
+                    variant.unwrap_or_default()
+                )));
+            };
+            let value = unsafe {
+                let like =
+                    crate::native::template(&q.to_string(), &names, version, variant.as_deref());
+                let r = Robj::from_sexp(crate::native::wrap(vt, state, like));
+                extendr_ffi::Rf_unprotect(1);
+                r
+            };
+            return Ok(list!(value = value));
+        }
         let builds = match def {
             TypeDef::Struct(_) => unsafe { (*vt).from_fields.is_some() },
             TypeDef::Enum(_) => crate::native::is_enum_codec(vt),

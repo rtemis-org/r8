@@ -79,6 +79,61 @@ typedef struct R8Writer {
   R8Status (*write)(void *context, const uint8_t *bytes, size_t len);
 } R8Writer;
 
+/* A part of a value that R8 has read and validated, lent to a codec for the
+ * length of one call and read only through `R8Reader`. */
+typedef const void *R8Node;
+
+/* The kinds `R8Reader.kind` reports; a NULL node is absent. */
+#define R8_NODE_ABSENT 0u
+#define R8_NODE_NULL 1u
+#define R8_NODE_LOGICAL 2u
+#define R8_NODE_NUMBER 3u
+#define R8_NODE_STRING 4u
+#define R8_NODE_ARRAY 5u
+#define R8_NODE_OBJECT 6u
+
+/* The integer and logical a null reads as (R's NA_integer_), and the bits of
+ * the double a null reads as (R's NA_real_, a NaN whose low word is 1954). */
+#define R8_NA_INTEGER INT32_MIN
+#define R8_NA_DOUBLE_BITS UINT64_C(0x7FF00000000007A2)
+
+/* The functions through which a codec reads a value R8 lends it. The reader,
+ * its nodes, and the strings it lends live for the call that receives them;
+ * the codec writes block reads into memory it owns. */
+typedef struct R8Reader {
+  /* The size of this struct in bytes. */
+  uint32_t size;
+  /* The reader's state, passed to every function. */
+  void *context;
+  /* The node's kind, an R8_NODE_* constant. */
+  uint32_t (*kind)(void *context, R8Node node);
+  /* An object's member by name, or NULL when the object has none. */
+  R8Node (*field)(void *context, R8Node node, const char *name);
+  /* An array's item, or NULL past its end. */
+  R8Node (*item)(void *context, R8Node node, size_t i);
+  /* An array's or an object's length; 0 for any other node. */
+  size_t (*length)(void *context, R8Node node);
+  /* A logical: 0 or 1, and R8_NA_INTEGER for null. */
+  R8Status (*logical)(void *context, R8Node node, int32_t *out, R8Error *err);
+  /* A number: a non-finite double from its string form, and the double of
+   * R8_NA_DOUBLE_BITS for null. */
+  R8Status (*number)(void *context, R8Node node, double *out, R8Error *err);
+  /* A string, UTF-8, lent with its length in bytes. */
+  R8Status (*string)(void *context, R8Node node, const char **utf8, size_t *len, R8Error *err);
+  /* Items start..start + count of an array of numbers, as `number` reads
+   * each, into `out`. */
+  R8Status (*doubles)(void *context, R8Node node, size_t start, size_t count, double *out,
+                      R8Error *err);
+  /* Items start..start + count of an array of whole numbers into `out`,
+   * R8_NA_INTEGER for null. */
+  R8Status (*integers)(void *context, R8Node node, size_t start, size_t count, int32_t *out,
+                       R8Error *err);
+  /* Items start..start + count of an array of logicals into `out`, as
+   * `logical` reads each. */
+  R8Status (*logicals)(void *context, R8Node node, size_t start, size_t count, int32_t *out,
+                       R8Error *err);
+} R8Reader;
+
 /* Set in `R8CallContext.flags` when `seed` holds a seed. */
 #define R8_CONTEXT_HAS_SEED 1u
 
@@ -142,6 +197,11 @@ typedef struct R8TypeVTable {
    * variant has the fields of its struct. */
   R8Status (*from_variant)(const char *variant, const SEXP *fields, size_t n, void **state,
                            R8Error *err);
+  /* Builds a state from the value R8 has read from a document and validated,
+   * through the reader, from the value's root node. R8 reads a document
+   * through it when `size` covers it and it is set, and through
+   * `from_fields` or `from_variant` otherwise. */
+  R8Status (*from_reader)(const R8Reader *reader, R8Node root, void **state, R8Error *err);
 } R8TypeVTable;
 
 /* An impl function: a trait method implemented in compiled code. `args`
