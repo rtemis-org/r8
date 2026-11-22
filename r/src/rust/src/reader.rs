@@ -200,11 +200,14 @@ fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Fie
 
 /// The fields of a named list of field objects.
 pub(crate) fn fields(x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Vec<FieldDef>> {
-    entries(x)
-        .into_iter()
-        .enumerate()
-        .map(|(i, (n, f))| field_def(&n, f, lookup, &format!("{path}/{i}")))
-        .collect()
+    // Sized exactly: the registry keeps the vector for the session, and a
+    // collect through `Result` grows it by doubling.
+    let items = entries(x);
+    let mut out = Vec::with_capacity(items.len());
+    for (i, (n, f)) in items.into_iter().enumerate() {
+        out.push(field_def(&n, f, lookup, &format!("{path}/{i}"))?);
+    }
+    Ok(out)
 }
 
 /// The rules of a list of `rule()` objects.
@@ -217,7 +220,9 @@ pub(crate) fn rules(x: SEXP, path: &str) -> Read<Vec<RuleDef>> {
 
 /// The variants of a named list of `variant()` objects.
 fn variants(x: SEXP, lookup: &impl TypeLookup) -> Read<Vec<VariantDef>> {
-    entries(x)
+    let items = entries(x);
+    let n_items = items.len();
+    let mut out: Vec<VariantDef> = items
         .into_iter()
         .enumerate()
         .map(|(i, (n, v))| {
@@ -247,7 +252,9 @@ fn variants(x: SEXP, lookup: &impl TypeLookup) -> Read<Vec<VariantDef>> {
                 shape,
             })
         })
-        .collect()
+        .collect::<Read<Vec<_>>>()?;
+    out.shrink_to(n_items);
+    Ok(out)
 }
 
 /// The problems of a declaration that does not read, in the form of the
