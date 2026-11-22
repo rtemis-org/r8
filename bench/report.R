@@ -101,7 +101,10 @@ table_of("GBM with vectors of 10^6 (median time, ms)", list(
   row_spec("Field write keeping the original", "ms", big("write_keep")),
   row_spec("Whole-value validation", "ms", big("validate")),
   row_spec("Whole-value validation, compact feature indices", "ms", big("validate", "compact", "GBM 1e6 compact")),
-  row_spec("Peak resident memory beyond the input, MB", "MB", function(s) peak_delta("peak", s, "value", "control"))
+  row_spec("Peak resident memory beyond the input, MB", "MB", function(s) peak_delta("peak", s, "value", "control")),
+  row_spec("JSON write (R8)", "ms", big("json_write")),
+  row_spec("JSON read (R8)", "ms", big("json_read")),
+  row_spec("Peak resident memory of a JSON read beyond its text, MB (R8)", "MB", function(s) peak_delta("peak", s, "json", "json_control"))
 ))
 ns <- function(metric, mode = "pkg") function(s) value_of("namespace", s, "GBM x 200", metric, mode)
 table_of("Types: 200 GBM types", list(

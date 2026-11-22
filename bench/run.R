@@ -80,6 +80,14 @@ run_row <- function(row, system, mode = "", repeat_n = 1L, first_lib = NULL) {
   invisible(records)
 }
 
+# A directory the rows' processes share, for the document of the JSON
+# read's peak memory.
+Sys.setenv(R8_BENCH_TMP = local({
+  d <- tempfile("r8bench")
+  dir.create(d)
+  d
+}))
+
 systems <- c("S3", "S4", "RC", "R6", "S7", "R8", "R8 Rust")
 r_systems <- setdiff(systems, "R8 Rust")
 
@@ -102,6 +110,7 @@ for (s in r_systems) run_row("types", s, repeat_n = 5L)
 if (!is.null(lib_alloc)) for (s in r_systems) run_row("types", s, "memory", first_lib = lib_alloc)
 for (s in systems) for (m in c("", "compact")) run_row("big", s, m)
 for (s in systems) for (m in c("value", "control")) run_row("peak", s, m)
+for (s in c("R8", "R8 Rust")) for (m in c("json_write", "json", "json_control")) run_row("peak", s, m)
 run_row("table", "R8")
 for (m in c("vec", "table", "rows")) run_row("peak", "R8", m)
 for (s in NAMESPACE_SYSTEMS) for (m in c("pkg", "control")) run_row("namespace", s, m)
