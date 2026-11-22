@@ -10,6 +10,8 @@
 - `generic(name, args)` takes `args` as given and no longer appends `...`. A method of a generic without `...` has exactly the generic's arguments; a method of a generic with `...` takes them first and may add named arguments. `impl()` checks its methods' arguments as `implement()` does, and `trait_method(default =)` checks its default's.
 - Print headers name R8 and the object's kind: `<r8 generic ns::f>`, `<r8 struct ns::P v1>`, `<r8 enum ns::E v1>`, `<r8 trait ns::T>`, `<r8 int64>`, `<r8 field type>`.
 - `?R8` lists R8's condition classes, `r8_codec_missing` among them.
+- A generic or trait method called on a child runs the impl of the nearest type in its chain of parents that implements the trait, on the child's value. `r8_next_impl()` calls the impl the running one takes precedence over.
+- `r8_upcast(x, Parent)` returns the value of an ancestor that a child's value holds, and `r8_convert(x, Parent)` calls it; `r8_ancestors()` lists a struct's ancestors. An impl of `From()` from a child to its ancestor is a declaration error.
 
 # R8 0.4.0
 
