@@ -4395,6 +4395,459 @@
           }
         ]
       }
+    },
+    {
+      "id": "float-equality",
+      "description": "Strict equality of a double computed by arithmetic is an error.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                }
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "===": [
+                    {
+                      "+": [
+                        {
+                          "var": "a"
+                        },
+                        {
+                          "var": "b"
+                        }
+                      ]
+                    },
+                    1
+                  ]
+                },
+                "message": "m"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_float_equality",
+            "path": "/types/0/rules/0/invariant/===/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "float-equality-sum",
+      "description": "Strict equality of a sum of doubles is an error.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "p",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "double"
+                  }
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "!==": [
+                    {
+                      "sum": {
+                        "var": "p"
+                      }
+                    },
+                    1
+                  ]
+                },
+                "message": "m"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_float_equality",
+            "path": "/types/0/rules/0/invariant/!==/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "integer-equality",
+      "description": "Strict equality of integer arithmetic is exact.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "integer"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "===": [
+                    {
+                      "+": [
+                        {
+                          "var": "a"
+                        },
+                        {
+                          "var": "b"
+                        }
+                      ]
+                    },
+                    1
+                  ]
+                },
+                "message": "m"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "double-field-equality",
+      "description": "A double field compared with a literal is legal.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  "===": [
+                    {
+                      "var": "a"
+                    },
+                    0.5
+                  ]
+                },
+                "message": "m"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "sum-of-strings",
+      "description": "sum() takes an array of numbers.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "s",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "character"
+                  }
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">": [
+                    {
+                      "sum": {
+                        "var": "s"
+                      }
+                    },
+                    0
+                  ]
+                },
+                "message": "m"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/0/rules/0/invariant/>/0/sum/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nchar-of-number",
+      "description": "nchar() takes a string.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">": [
+                    {
+                      "nchar": {
+                        "var": "a"
+                      }
+                    },
+                    0
+                  ]
+                },
+                "message": "m"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/0/rules/0/invariant/>/0/nchar/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "array-and-number",
+      "description": "An array compared with a number is a type error.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "p",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "double"
+                  }
+                }
+              }
+            ],
+            "rules": [
+              {
+                "id": "R",
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "p"
+                    },
+                    0
+                  ]
+                },
+                "message": "m"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/types/0/rules/0/invariant/>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-unnamed-rule",
+      "description": "The same rule declared twice without an ID is an error.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                }
+              },
+              {
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "message": "a is positive."
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_rule",
+            "path": "/types/0/rules/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "blank-message",
+      "description": "A present message is not blank.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "a"
+                    },
+                    0
+                  ]
+                },
+                "message": " "
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_message_empty",
+            "path": "/types/0/rules/0/message"
+          }
+        ]
+      }
     }
   ]
 }

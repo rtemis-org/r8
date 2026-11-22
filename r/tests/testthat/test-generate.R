@@ -96,7 +96,11 @@ test_that("every field type renders as R that declares the same IR", {
             label = field(type_character(), optional = TRUE)
           ),
           open = TRUE,
-          rules = list(rule("END_FITS", start + width <= 100L, "The end fits."))
+          rules = list(rule(
+            start + width <= 100L,
+            message = "The end fits.",
+            id = "END_FITS"
+          ))
         ),
         tp = type_table(P)
       ),
@@ -138,7 +142,12 @@ test_that("a declaration read back from the registry as R lists declares the sam
           label = field(type_character(), optional = TRUE)
         ))
       ),
-      rules = list(rule("I_SMALL", i < 5L, "i is small.", when = !is.null(o)))
+      rules = list(rule(
+        i < 5L,
+        when = !is.null(o),
+        message = "i is small.",
+        id = "I_SMALL"
+      ))
     )
     list(K, S)
   })
@@ -175,20 +184,28 @@ test_that("field facts, defaults, and rules render as R that declares the same I
         )
       ),
       rules = list(
-        rule("COST_MAX", cost <= 100 && cost > 0, "cost is in (0, 100]."),
         rule(
-          "POLY",
-          n >= 2L,
-          "Poly takes n >= 2.",
-          when = is_variant(k, "Poly")
+          cost <= 100 && cost > 0,
+          message = "cost is in (0, 100].",
+          id = "COST_MAX"
         ),
-        rule("NAME", !is.null(name) || name %in% c("a", "b"), "name is set."),
         rule(
-          "ALL",
+          n >= 2L,
+          when = is_variant(k, "Poly"),
+          message = "Poly takes n >= 2.",
+          id = "POLY"
+        ),
+        rule(
+          !is.null(name) || name %in% c("a", "b"),
+          message = "name is set.",
+          id = "NAME"
+        ),
+        rule(
           json_ir(
             '{"and": [{">": [{"var": "n"}, 0]}, {"<": [{"var": "n"}, 9]}, {"!==": [{"var": "name"}, ""]}]}'
           ),
-          "Three conditions."
+          message = "Three conditions.",
+          id = "ALL"
         )
       )
     )
@@ -235,7 +252,11 @@ test_that("JSONLogic renders as R when R compiles back to it, and as json_ir() o
 })
 
 test_that("json_ir() carries JSON into the IR as written", {
-  r <- rule("BIG", json_ir('{">": [{"var": "a"}, 9007199254740993]}'), "m")
+  r <- rule(
+    json_ir('{">": [{"var": "a"}, 9007199254740993]}'),
+    message = "m",
+    id = "BIG"
+  )
   expect_identical(
     R8:::r8_ir_json(unclass(r)),
     '{"id":"BIG","invariant":{">":[{"var":"a"},9007199254740993]},"message":"m"}'

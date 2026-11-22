@@ -75,7 +75,10 @@ impl Encoder<'_> {
             code,
             path: path.to_string(),
             rule: None,
+            rule_index: None,
             message,
+            diagnosis: None,
+            ..Default::default()
         });
         Value::Null
     }
@@ -381,17 +384,22 @@ impl Encoder<'_> {
             }
             FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
                 let ordered = matches!(ft, FieldType::OrderedMap { .. });
-                let names: Vec<String> = x
-                    .names()
-                    .map(|n| n.map(str::to_string).collect())
-                    .unwrap_or_default();
-                if names.len() != x.len() {
-                    return self.err(
-                        "r_type",
-                        path,
-                        "a map is a named list or a named vector".to_string(),
-                    );
-                }
+                // `list()`, a zero-length list without names, is the empty
+                // map; another value without names is not a map.
+                let empty_list = x.is_list() && x.is_empty();
+                let names: Option<Vec<String>> = x.names().map(|n| n.map(str::to_string).collect());
+                let names = match names {
+                    Some(n) if n.len() == x.len() => n,
+                    None if empty_list => Vec::new(),
+                    _ => {
+                        return self.err(
+                            "r_type",
+                            path,
+                            "a map is a named list or a named vector; `list()` is the empty map"
+                                .to_string(),
+                        );
+                    }
+                };
                 let items: Vec<Value> = match x.as_list() {
                     Some(list) => list
                         .values()
@@ -1331,12 +1339,224 @@ pub(crate) fn decode_field<'a, N: Node<'a>>(
 pub(crate) fn errors_list(errors: &[ValueError]) -> List {
     let code: Vec<String> = errors.iter().map(|e| e.code.to_string()).collect();
     let path: Vec<String> = errors.iter().map(|e| e.path.clone()).collect();
-    let rule: Vec<String> = errors
+    let rule: Vec<Option<String>> = errors
         .iter()
-        .map(|e| e.rule.as_ref().map(|r| r.to_string()).unwrap_or_default())
+        .map(|e| e.rule.as_ref().map(|r| r.to_string()))
         .collect();
-    let message: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
-    list!(code = code, path = path, rule = rule, message = message)
+    let rule_index: Vec<Option<i32>> = errors
+        .iter()
+        .map(|e| e.rule_index.and_then(|i| i32::try_from(i).ok()))
+        .collect();
+    let message: Vec<String> = errors
+        .iter()
+        .map(|e| match &e.problem {
+            Some(p) => p.sentence(
+                &e.segments,
+                e.found.as_ref(),
+                e.suggestion.as_deref(),
+                &RSyntax,
+            ),
+            None => e.message.clone(),
+        })
+        .collect();
+    let where_: Vec<String> = errors.iter().map(|e| r_path(&e.segments)).collect();
+    let suggestion: Vec<Option<String>> = errors.iter().map(|e| e.suggestion.clone()).collect();
+    let diagnosis = List::from_values(
+        errors
+            .iter()
+            .map(|e| e.diagnosis.as_deref().map_or(Robj::from(()), diagnosis_r)),
+    );
+    List::from_names_and_values(
+        [
+            "code",
+            "path",
+            "rule",
+            "rule_index",
+            "message",
+            "where",
+            "suggestion",
+            "diagnosis",
+        ],
+        [
+            Robj::from(code),
+            Robj::from(path),
+            Robj::from(rule),
+            Robj::from(rule_index),
+            Robj::from(message),
+            Robj::from(where_),
+            Robj::from(suggestion),
+            Robj::from(diagnosis),
+        ],
+    )
+    .unwrap_or_default()
+}
+
+/// A name as R writes it in code: bare when syntactic, in backticks
+/// otherwise.
+fn r_name(n: &str) -> String {
+    let syntactic = n
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '.')
+        && n.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_');
+    if syntactic {
+        n.to_string()
+    } else {
+        format!("`{}`", n.replace('`', "\\`"))
+    }
+}
+
+/// A problem's path as an R expression: `kernel$gamma`, `w[[3]]` (1-based),
+/// `params[["key"]]`, `levels(g)[[2]]`, `dim(m)[[1]]`, `names(m)[[4]]`; `""`
+/// for the value itself. The parts of a value's JSON form that R does not
+/// spell, such as an enum's tag, are skipped.
+pub(crate) fn r_path(segments: &[rtemis_r8::problem::Segment]) -> String {
+    use rtemis_r8::problem::Segment as S;
+    let mut out = String::new();
+    let mut i = 0;
+    while i < segments.len() {
+        match &segments[i] {
+            S::Field(k) | S::Column(k) => {
+                if out.is_empty() {
+                    out = r_name(k);
+                } else {
+                    out = format!("{out}${}", r_name(k));
+                }
+            }
+            S::Key(k) => out = format!("{out}[[{k:?}]]"),
+            S::Element(n) => {
+                // An ordered map's item: its name or its value.
+                match segments.get(i + 1) {
+                    Some(S::Form(f)) if f == "/name" => {
+                        out = format!("names({out})[[{}]]", n + 1);
+                        i += 1;
+                    }
+                    Some(S::Form(f)) if f == "/value" => {
+                        out = format!("{out}[[{}]]", n + 1);
+                        i += 1;
+                    }
+                    _ => out = format!("{out}[[{}]]", n + 1),
+                }
+            }
+            S::Form(f) => match f.as_str() {
+                "/levels" => out = format!("levels({out})"),
+                "/shape" => out = format!("dim({out})"),
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    out
+}
+
+/// How R writes the parts of a validation message.
+struct RSyntax;
+
+impl rtemis_r8::problem::Syntax for RSyntax {
+    fn path(&self, segments: &[rtemis_r8::problem::Segment]) -> String {
+        format!("`{}`", r_path(segments))
+    }
+    fn lit(&self, x: &rtemis_r8::problem::Lit) -> String {
+        match x {
+            rtemis_r8::problem::Lit::Num(n) => rtemis_r8::problem::number_text(*n),
+            rtemis_r8::problem::Lit::Str(t) => format!("{t:?}"),
+        }
+    }
+    fn shown(&self, x: &rtemis_r8::rules::Shown) -> String {
+        use rtemis_r8::rules::Shown;
+        match x {
+            Shown::Length(n) => format!("length {n}"),
+            Shown::Dim(d) => d.iter().map(u64::to_string).collect::<Vec<_>>().join(" x "),
+            Shown::Other => "a value of another kind".to_string(),
+            _ => shown_value(x).unwrap_or_default(),
+        }
+    }
+    fn name(&self, n: &str) -> String {
+        format!("`{}`", r_name(n))
+    }
+}
+
+/// A scalar value of a diagnosis as R writes it: a number in its shortest
+/// exact form, `TRUE` or `FALSE`, a quoted string, a date, `NULL` for an
+/// absent value, and `<sensitive>`; `None` for a value shown by its size or
+/// not shown.
+fn shown_value(s: &rtemis_r8::rules::Shown) -> Option<String> {
+    use rtemis_r8::rules::Shown;
+    Some(match s {
+        Shown::Number(t) | Shown::Date(t) | Shown::DateTime(t) => t.clone(),
+        Shown::Bool(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+        Shown::String { text, cut } => {
+            let q = format!("{text:?}");
+            if *cut {
+                format!("{}...\"", &q[..q.len() - 1])
+            } else {
+                q
+            }
+        }
+        Shown::Sensitive => "<sensitive>".to_string(),
+        Shown::Absent => "NULL".to_string(),
+        Shown::Missing => "NA".to_string(),
+        Shown::Kind(k) => k.clone(),
+        Shown::Length(_) | Shown::Dim(_) | Shown::Other => return None,
+    })
+}
+
+/// The line of a value of a diagnosis at `path`, as R writes it: `lo = 2`,
+/// `length(values) = 14`, `dim(m) = 3 x 4`; `None` for a value not shown.
+fn shown_text(s: &rtemis_r8::rules::Shown, path: &str) -> Option<String> {
+    use rtemis_r8::rules::Shown;
+    match s {
+        Shown::Length(n) => Some(format!("length({path}) = {n}")),
+        Shown::Dim(d) => Some(format!(
+            "dim({path}) = {}",
+            d.iter().map(u64::to_string).collect::<Vec<_>>().join(" x ")
+        )),
+        _ => shown_value(s).map(|v| format!("{path} = {v}")),
+    }
+}
+
+/// A diagnosis as an R list: `invariant` and `when`, the rule's expressions
+/// as the lists `rule()` builds; `fields`, one line per field read
+/// (`lo = 2`, `length(values) = 14`); `operands`, the computed operands'
+/// values, named by their JSON Pointers into the invariant; and `element`,
+/// the line of `.x`, or `NULL`.
+fn diagnosis_r(d: &rtemis_r8::rules::Diagnosis) -> Robj {
+    let logic = |l: &Option<rtemis_r8::ir::Logic>| {
+        l.as_ref()
+            .and_then(|l| crate::irser::to_r(l).ok())
+            .unwrap_or_else(|| Robj::from(()))
+    };
+    let fields: Vec<String> = d
+        .fields
+        .iter()
+        .filter_map(|(p, s)| shown_text(s, &r_path(p)))
+        .collect();
+    let mut operands = Robj::from(
+        d.operands
+            .iter()
+            .map(|(_, s)| shown_value(s).unwrap_or_default())
+            .collect::<Vec<_>>(),
+    );
+    let _ = operands.set_names(
+        d.operands
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .collect::<Vec<_>>(),
+    );
+    let element = d
+        .element
+        .as_ref()
+        .and_then(|s| shown_text(s, ".x"))
+        .map_or(Robj::from(()), Robj::from);
+    list!(
+        invariant = logic(&d.invariant),
+        when = logic(&d.when),
+        fields = fields,
+        operands = operands,
+        element = element
+    )
+    .into()
 }
 
 /// The identity of an R8 value: the canonical text of its normalized form,
@@ -1351,7 +1571,7 @@ pub(crate) fn errors_list(errors: &[ValueError]) -> List {
 fn r8_value_identity(x: Robj) -> Result<List> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
+    let lookup: &dyn TypeLookup = &*docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(v, &q, lookup, cache)
@@ -1375,7 +1595,7 @@ fn r8_value_identity(x: Robj) -> Result<List> {
 fn r8_value_hash(x: Robj) -> Result<Robj> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
+    let lookup: &dyn TypeLookup = &*docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(v, &q, lookup, cache)
@@ -1401,7 +1621,7 @@ fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
     {
         return Ok(false.into());
     }
-    let lookup: &dyn TypeLookup = &**docs;
+    let lookup: &dyn TypeLookup = &*docs;
     let eq = rtemis_r8::equal::equal_access(
         &q,
         crate::rview::RView::Whole(xs),
@@ -1411,19 +1631,12 @@ fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
     Ok(eq.into())
 }
 
-/// The qualified type of an R8 value, with the registry locked.
-fn value_type(
-    x: SEXP,
-) -> Result<(
-    QualifiedName,
-    std::sync::MutexGuard<'static, std::sync::Arc<DocumentSet>>,
-)> {
+/// The qualified type of an R8 value, with a snapshot of the registry.
+fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::Arc<DocumentSet>)> {
     let type_name = crate::rview::attr_string(x, crate::rview::sym_r8_type())
         .ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+    let docs = registry().snapshot();
     Ok((q, docs))
 }
 
@@ -1437,7 +1650,7 @@ fn value_type(
 fn r8_value_to_document(x: Robj) -> Result<List> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
+    let lookup: &dyn TypeLookup = &*docs;
     let v = crate::rview::RView::Whole(xs);
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(v, &q, lookup, cache)
@@ -1569,10 +1782,8 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
     };
     use rtemis_r8::ir::Resolve;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let lookup: &dyn TypeLookup = &**docs;
+    let docs = registry().snapshot();
+    let lookup: &dyn TypeLookup = &*docs;
     let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
         return Err(fail(format!("`{type_name}` is not a registered struct")));
     };
@@ -1655,7 +1866,10 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
                             code: "computed_error",
                             path: at,
                             rule: None,
+                            rule_index: None,
                             message: format!("the fields list has no member `{}`", f.name),
+                            diagnosis: None,
+                            ..Default::default()
                         });
                         continue;
                     }
@@ -1666,16 +1880,22 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
                 code: "computed_absent",
                 path: at,
                 rule: None,
+                rule_index: None,
                 message: format!(
                     "computed field `{}` reads a field that is absent; resolve that field first",
                     f.name
                 ),
+                diagnosis: None,
+                ..Default::default()
             }),
             Err(e) => errors.push(ValueError {
                 code: "computed_error",
                 path: at,
                 rule: None,
+                rule_index: None,
                 message: e,
+                diagnosis: None,
+                ..Default::default()
             }),
         }
     }
@@ -1703,7 +1923,7 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
 fn r8_value_check(x: Robj) -> Result<Robj> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
+    let lookup: &dyn TypeLookup = &*docs;
     let errors = crate::construct::with_cache(|cache| {
         rtemis_r8::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
     });

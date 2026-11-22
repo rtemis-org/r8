@@ -83,9 +83,9 @@ field <- function(
 #' @return An `r8_json_ir`: the text, of that class.
 #'
 #' @examples
-#' rule("COST_RANGE", json_ir('{"and": [{">": [{"var": "cost"}, 0]},
+#' rule(json_ir('{"and": [{">": [{"var": "cost"}, 0]},
 #'   {"<=": [{"var": "cost"}, 100]}, {"!==": [{"var": "name"}, ""]}]}'),
-#'   "cost is in (0, 100] and name is not empty.")
+#'   message = "cost is in (0, 100] and name is not empty.", id = "COST_RANGE")
 #' field(type_double(), default = json_ir("0.5"))
 #'
 #' @export
@@ -309,7 +309,11 @@ declare <- function(
     namespace_taken(namespace, package, out[["owner"]])
   }
   if (length(out[["problems"]][["code"]]) > 0L) {
-    declaration_failed(qname, out[["problems"]])
+    declaration_failed(
+      qname,
+      out[["problems"]],
+      list(rules = rules, members = members)
+    )
   }
   clear_variants()
   clear_dispatch()
@@ -417,15 +421,35 @@ ensure_registered <- function(type) {
 #'
 #' @param qname Character: The qualified name of the declaration.
 #' @param problems List: `code`, `path`, and `message` of each problem.
+#' @param decl Optional list: The declaration's `rules` and `members`, from
+#'   which a problem in a rule shows the R expression at its path.
 #'
 #' @return Does not return; signals `r8_declaration_error`.
 #'
 #' @keywords internal
 #' @noRd
-declaration_failed <- function(qname, problems) {
+declaration_failed <- function(qname, problems, decl = NULL) {
+  msg <- problems[["message"]]
+  # A name that is not a field may be an R variable, whose value lit() reads.
+  pattern <- "^`([A-Za-z][A-Za-z0-9_.]*)` is not a field in scope"
+  hint <- problems[["code"]] == "rule_field" & grepl(pattern, msg)
+  name <- regmatches(msg[hint], regexpr("^`[^`]+`", msg[hint]))
+  msg[hint] <- paste0(
+    msg[hint],
+    "; if ",
+    name,
+    " is an R variable, write `lit(",
+    gsub("`", "", name),
+    ")`"
+  )
+  where <- if (is.null(decl)) {
+    character(length(msg))
+  } else {
+    vapply(problems[["path"]], problem_expr, "", decl = decl)
+  }
   lines <- paste0(
     "- ",
-    problems[["message"]],
+    msg,
     " [",
     problems[["code"]],
     ifelse(
@@ -433,7 +457,8 @@ declaration_failed <- function(qname, problems) {
       paste0(" at ", problems[["path"]]),
       ""
     ),
-    "]"
+    "]",
+    ifelse(nzchar(where), paste0("\n  in `", where, "`"), "")
   )
   r8_abort(
     "Declaration of `",
@@ -443,6 +468,52 @@ declaration_failed <- function(qname, problems) {
     class = "r8_declaration_error"
   )
 } # /R8::declaration_failed
+
+
+# %% problem_expr ----
+#' The R expression at the path of a problem in a rule
+#'
+#' @param path Character: The problem's JSON Pointer into the declaration,
+#'   such as `/rules/0/invariant/>/0` or `/variants/1/rules/0/when`.
+#' @param decl List: The declaration's `rules` and `members`.
+#'
+#' @return Character: The R expression at the path, or `""` for a path
+#'   outside a rule's expression.
+#'
+#' @keywords internal
+#' @noRd
+problem_expr <- function(path, decl) {
+  m <- regmatches(
+    path,
+    regexec(
+      "^(?:/variants/([0-9]+))?/rules/([0-9]+)(/(?:invariant|when)(?:/.*)?)$",
+      path,
+      perl = TRUE
+    )
+  )[[1L]]
+  if (length(m) == 0L) {
+    return("")
+  }
+  rules <- if (nzchar(m[[2L]])) {
+    decl[["members"]][[as.integer(m[[2L]]) + 1L]][["rules"]]
+  } else {
+    decl[["rules"]]
+  }
+  r <- rules[[as.integer(m[[3L]]) + 1L]]
+  # A path ending at an operator names the operation: its operands' list
+  # sits under the operator's key.
+  pointer <- m[[4L]]
+  # A field shows with the operation that reads it.
+  if (grepl("/[0-9]+/var$", pointer)) {
+    pointer <- sub("/[^/]+/[0-9]+/var$", "", pointer)
+  }
+  last <- sub("^.*/", "", pointer)
+  if (!grepl("^[0-9]+$", last) && !last %in% c("invariant", "when")) {
+    pointer <- sub("/[^/]*$", "", pointer)
+  }
+  x <- tryCatch(logic_at(r, pointer), error = function(e) NULL)
+  if (is.null(x)) "" else logic_text(x)
+} # /R8::problem_expr
 
 
 # %% clear_variants ----
@@ -488,7 +559,7 @@ type_ir <- function(type) {
 #'   types.
 #' @param description Character: What the type is.
 #' @param version Integer: The type's version, from 1.
-#' @param rules List: `rule()` calls over the fields.
+#' @param rules A `rule()`, or a list of `rule()` calls, over the fields.
 #' @param native Logical: A Rust-native type, whose values the codec in the
 #'   package's compiled exports builds and holds (`R8.h`). Its constructor
 #'   signals `r8_codec_missing` until the codec is registered, and
@@ -515,7 +586,9 @@ new_struct <- function(
 ) {
   if (!is_name(name)) {
     r8_abort(
-      "A type name is an R8 name, such as \"Svm\".",
+      "A type name is an R8 name, such as \"Svm\"",
+      name_reason(name),
+      ".",
       class = "r8_declaration_error"
     )
   }
@@ -527,7 +600,7 @@ new_struct <- function(
     version,
     "type",
     fields,
-    rules,
+    as_rules(rules),
     parent.frame(),
     "r8_struct_type",
     native = isTRUE(native)
@@ -543,7 +616,8 @@ new_struct <- function(
 #'
 #' @param fields Named list: The fields of a struct variant.
 #' @param description Character: What the variant is.
-#' @param rules List: `rule()` calls over the variant's fields.
+#' @param rules A `rule()`, or a list of `rule()` calls, over the variant's
+#'   fields.
 #' @param of Optional R8 struct type: The struct a newtype variant holds.
 #'
 #' @return An `r8_variant`.
@@ -561,6 +635,15 @@ variant <- function(
   of = NULL
 ) {
   check_members(fields, "fields", "a variant")
+  rules <- as_rules(rules)
+  problem <- r8_variant_problem(
+    !is.null(of),
+    length(fields) > 0L,
+    length(rules) > 0L
+  )
+  if (nzchar(problem)) {
+    r8_abort(problem, class = "r8_declaration_error")
+  }
   structure(
     list(
       fields = fields,
@@ -614,7 +697,9 @@ new_enum <- function(
 ) {
   if (!is_name(name)) {
     r8_abort(
-      "A type name is an R8 name, such as \"Kernel\".",
+      "A type name is an R8 name, such as \"Kernel\"",
+      name_reason(name),
+      ".",
       class = "r8_declaration_error"
     )
   }

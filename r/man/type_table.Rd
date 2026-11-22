@@ -11,7 +11,8 @@ type_table(columns = list(), open = FALSE, rules = list())
 
 \item{open}{Logical: Accept columns the declaration does not name.}
 
-\item{rules}{List: \code{rule()} calls over a row's columns.}
+\item{rules}{A \code{rule()}, or a list of \code{rule()} calls, over a row's
+columns.}
 }
 \value{
 An \code{r8_field_type}.
@@ -26,7 +27,7 @@ columns are the struct's fields.
 \examples{
 type_table(
   list(start = type_integer(), width = type_integer(min = 0L)),
-  rules = list(rule("END_FITS", start + width - 1 <= 2147483647, "The end fits in an integer."))
+  rules = list(rule(start + width - 1 <= 2147483647, message = "The end fits in an integer.", id = "END_FITS"))
 )
 
 }

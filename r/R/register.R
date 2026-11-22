@@ -66,15 +66,16 @@ r8_register <- function(pkgname = NULL) {
     NULL
   }
   entries <- if (is.null(table)) list() else table[["entries"]]
+  # The records were checked when the package was installed; they register
+  # without the per-type check, and check_namespaces() checks every namespace
+  # the package owns whole. A failure restores the registry, the namespace
+  # claims included.
+  token <- r8_registry_save()
+  done <- FALSE
+  on.exit(if (done) r8_registry_release(token) else r8_registry_restore(token))
   for (ns_name in unique(vapply(entries, function(e) e[["namespace"]], ""))) {
     claim_namespace(ns_name, pkg)
   }
-  # The records were checked when the package was installed; they register
-  # without the per-type check, and check_namespaces() checks every namespace
-  # the package owns whole. A failure restores the registry.
-  r8_registry_save()
-  done <- FALSE
-  on.exit(if (done) r8_registry_release() else r8_registry_restore())
   # Consecutive type records register in one call, before the next entry of
   # another kind, so the declarations replay in their order.
   pending <- list()

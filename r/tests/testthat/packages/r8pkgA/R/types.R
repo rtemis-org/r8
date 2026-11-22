@@ -18,10 +18,10 @@ Rect <- R8::new_struct(
     shape = R8::field(Shape, default = Shape@Wide)
   ),
   rules = list(R8::rule(
-    "WIDE",
     w >= h,
-    "A wide rectangle is at least as wide as it is tall.",
-    when = R8::is_variant(shape, "Wide")
+    when = R8::is_variant(shape, "Wide"),
+    message = "A wide rectangle is at least as wide as it is tall.",
+    id = "WIDE"
   ))
 )
 

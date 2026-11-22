@@ -62,6 +62,10 @@
         },
         "rule": {
           "type": "string"
+        },
+        "rule_index": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

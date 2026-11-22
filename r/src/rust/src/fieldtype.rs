@@ -444,23 +444,29 @@ fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, sparse: bool) -
     built.unwrap_or_else(message)
 }
 
-/// `rule()`: `invariant` and `when` are the unevaluated expressions.
+/// `rule()`: `invariant` and `when` are the unevaluated expressions;
+/// `message` and `id` are `NULL` or one string.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_rule(id: Robj, invariant: Robj, message: Robj, when: Robj) -> Robj {
+fn r8_rule(invariant: Robj, when: Robj, message: Robj, id: Robj) -> Robj {
     let built = (|| unsafe {
-        let id = string(id.get(), "id")
-            .ok()
-            .flatten()
-            .ok_or(BuildError::RuleId)?;
-        let message = string(message.get(), "message")
-            .ok()
-            .flatten()
-            .ok_or(BuildError::RuleMessage)?;
+        let text = |x: &Robj, e: BuildError| -> Built<Option<String>> {
+            if is_null(x.get()) {
+                return Ok(None);
+            }
+            string(x.get(), "").ok().flatten().map(Some).ok_or(e)
+        };
+        let id = text(&id, BuildError::RuleId)?;
+        let message = text(&message, BuildError::RuleMessage)?;
         let w = when.get();
         let when = if is_null(w) { None } else { Some(logic(w)?) };
-        build::rule(&id, logic(invariant.get())?, &message, when)
+        build::rule(
+            logic(invariant.get())?,
+            when,
+            message.as_deref(),
+            id.as_deref(),
+        )
     })();
     match built {
         Ok(r) => {
@@ -517,6 +523,9 @@ const OPERATORS: &[(&str, Operator)] = &[
     ("round", Operator::Round),
     ("min", Operator::Min),
     ("max", Operator::Max),
+    ("abs", Operator::Abs),
+    ("sum", Operator::Sum),
+    ("nchar", Operator::Nchar),
     ("all", Operator::All),
     ("any", Operator::Any),
     ("subset", Operator::Subset),
@@ -548,9 +557,26 @@ fn r8_rule_operators() -> Robj {
 }
 
 /// The functions of the dialect, as R writes them, for a message.
-const KNOWN_FUNCTIONS: &str = "comparisons, arithmetic, logical operators, %in%, is.null(), \
-is_variant(), length(), nrow(), ncol(), dim(), levels(), floor(), ceiling(), round(), min(), max(), \
-all(), any(), subset(), non_increasing(), and non_decreasing()";
+const KNOWN_FUNCTIONS: &str = "comparisons, arithmetic, logical operators, %in%, if, is.null(), \
+is_variant(), length(), nchar(), nrow(), ncol(), dim(), levels(), abs(), floor(), ceiling(), \
+round(), min(), max(), sum(), all(), any(), subset(), non_increasing(), non_decreasing(), and \
+lit() for a constant from R";
+
+/// The function of rules nearest to `name`, as R writes it.
+fn nearest_function(name: &str) -> Option<String> {
+    rtemis_r8::name::nearest(
+        name,
+        OPERATORS
+            .iter()
+            .map(|(r, _)| *r)
+            .chain(["if", "is_variant", "lit", "c"])
+            .filter(|r| {
+                r.chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            }),
+    )
+    .map(str::to_string)
+}
 
 /// The name of a symbol.
 fn symbol_name(x: SEXP) -> String {
@@ -737,12 +763,14 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
             ),
             _ => Err(BuildError::VariantName),
         },
+        "[[" | "[" => Err(BuildError::RuleIndex { expr: deparsed(x) }),
         _ => match operator(&name) {
             Some(op) => Ok(build::call(
                 op,
                 a.iter().map(|&v| logic(v)).collect::<Built<Vec<_>>>()?,
             )),
             None => Err(BuildError::UnknownFunction {
+                nearest: nearest_function(&name),
                 name,
                 known: KNOWN_FUNCTIONS,
             }),

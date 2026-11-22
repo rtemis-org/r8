@@ -901,8 +901,15 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "$ref": "#/$defs/Name",
-          "description": "The rule's ID, unique within its type."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The rule's ID, unique within its scope: the stable handle by which\ncode refers to the rule."
         },
         "invariant": {
           "$ref": "#/$defs/Logic",
@@ -920,14 +927,15 @@
           "description": "The condition under which the rule applies."
         },
         "message": {
-          "type": "string",
-          "description": "The message of a violation."
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What holds, stated for the user; a violation of a rule without one\nshows its invariant, rendered by the host."
         }
       },
       "required": [
-        "id",
-        "invariant",
-        "message"
+        "invariant"
       ],
       "description": "`rule(id, invariant, message, when = )`: what must hold.\n\nA rule holds when `when` is `false` or when a field that `invariant` or\n`when` reads is absent, and reports a violation when `invariant` is\n`false`. The IR stores both expressions as declared."
     },

@@ -1,0 +1,126 @@
+{
+  "$corpus": 1,
+  "description": "Rules without an ID or a message, matched by position.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "struct",
+        "name": "U",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "lo",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          },
+          {
+            "name": "hi",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          }
+        ],
+        "rules": [
+          {
+            "invariant": {
+              "<": [
+                {
+                  "var": "lo"
+                },
+                {
+                  "var": "hi"
+                }
+              ]
+            }
+          },
+          {
+            "invariant": {
+              ">": [
+                {
+                  "var": "lo"
+                },
+                0
+              ]
+            },
+            "message": "lo is positive."
+          },
+          {
+            "id": "HI_MAX",
+            "invariant": {
+              "<": [
+                {
+                  "var": "hi"
+                },
+                10
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "all-hold",
+      "description": "Rules without an ID or a message hold.",
+      "op": "decode",
+      "type": "ns::U",
+      "input": {
+        "lo": 1,
+        "hi": 2
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "two-unnamed",
+      "description": "Two rules without IDs fail at one path and are told apart by their positions.",
+      "op": "decode",
+      "type": "ns::U",
+      "input": {
+        "lo": -2,
+        "hi": -3
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule_index": 0
+          },
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule_index": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "named",
+      "description": "A rule with an ID reports it.",
+      "op": "decode",
+      "type": "ns::U",
+      "input": {
+        "lo": 1,
+        "hi": 20
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "HI_MAX"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -13,9 +13,7 @@ use std::collections::BTreeMap;
 use extendr_api::prelude::*;
 use extendr_ffi::{SEXP, SEXPTYPE, VECTOR_ELT};
 use rtemis_r8::ir::build::BuildError;
-use rtemis_r8::ir::{
-    EnumDef, FieldDef, FieldType, RuleDef, StructDef, TypeDef, VariantDef, VariantShape,
-};
+use rtemis_r8::ir::{EnumDef, FieldDef, FieldType, RuleDef, StructDef, TypeDef, VariantDef};
 use rtemis_r8::name::{Name, NameError, QualifiedName};
 use rtemis_r8::rules::TypeLookup;
 use rtemis_r8::tree::{Exact, Tree};
@@ -241,21 +239,21 @@ fn variants(x: SEXP, lookup: &impl TypeLookup) -> Read<Vec<VariantDef>> {
                 return Err(built(&path, BuildError::NotVariant { name: n }));
             }
             let of = member(v, "of");
-            let fs = member(v, "fields");
-            let shape = if !is_null(of) {
-                VariantShape::Newtype {
-                    of: attr_string(of, sym_r8_name())
-                        .and_then(|q| QualifiedName::parse(&q).ok())
-                        .ok_or_else(|| built(&format!("{path}/of"), BuildError::NotFieldType))?,
-                }
-            } else if xlen(fs) == 0 {
-                VariantShape::Unit
+            let of = if is_null(of) {
+                None
             } else {
-                VariantShape::Struct {
-                    fields: fields(fs, lookup, &format!("{path}/fields"))?,
-                    rules: rules(member(v, "rules"), &format!("{path}/rules"))?,
-                }
+                Some(
+                    attr_string(of, sym_r8_name())
+                        .and_then(|q| QualifiedName::parse(&q).ok())
+                        .ok_or_else(|| built(&format!("{path}/of"), BuildError::VariantOf))?,
+                )
             };
+            let shape = rtemis_r8::ir::build::variant_shape(
+                fields(member(v, "fields"), lookup, &format!("{path}/fields"))?,
+                rules(member(v, "rules"), &format!("{path}/rules"))?,
+                of,
+            )
+            .map_err(|e| built(&path, e))?;
             Ok(VariantDef {
                 name: name(&n, &format!("{path}/name"))?,
                 description: one_string(member(v, "description")).unwrap_or_default(),

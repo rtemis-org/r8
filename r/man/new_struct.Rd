@@ -26,7 +26,7 @@ types.}
 
 \item{version}{Integer: The type's version, from 1.}
 
-\item{rules}{List: \code{rule()} calls over the fields.}
+\item{rules}{A \code{rule()}, or a list of \code{rule()} calls, over the fields.}
 
 \item{native}{Logical: A Rust-native type, whose values the codec in the
 package's compiled exports builds and holds (\code{R8.h}). Its constructor

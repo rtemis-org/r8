@@ -145,17 +145,17 @@ Conform <- R8::new_struct(
   version = 1L,
   rules = list(
     R8::rule(
-      "seed_below_count",
       seed < count,
-      "The seed is below the count.",
-      when = R8::json_ir('{"!==":[{"var":"seed"},null]}')
+      when = R8::json_ir('{"!==":[{"var":"seed"},null]}'),
+      message = "The seed is below the count.",
+      id = "seed_below_count"
     ),
     R8::rule(
-      "weights_match_index",
       R8::json_ir(
         '{"===":[{"length":{"var":"weights"}},{"length":{"var":"index"}}]}'
       ),
-      "There is one weight per index."
+      message = "There is one weight per index.",
+      id = "weights_match_index"
     )
   ),
   native = TRUE

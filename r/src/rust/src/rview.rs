@@ -317,8 +317,43 @@ pub(crate) fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usiz
     }
 }
 
+/// `r_type`: the R object is not of the kind the field holds. A message
+/// "expected <kind>" states the kind as a requirement.
 fn r_type(message: impl Into<String>) -> Form {
-    Form::new("r_type", message)
+    let message = message.into();
+    match message.strip_prefix("expected ") {
+        Some(kind) => Form::problem(
+            "r_type",
+            rtemis_r8::problem::Problem::Kind(kind.to_string()),
+            None,
+        ),
+        None => Form::new("r_type", message),
+    }
+}
+
+/// The kind of an R object, as a message names it: "a character vector",
+/// "a factor", "a list".
+fn r_kind(x: SEXP) -> String {
+    if inherits(x, "factor") {
+        return "a factor".to_string();
+    }
+    if inherits(x, "Date") {
+        return "a Date".to_string();
+    }
+    if inherits(x, "POSIXct") {
+        return "a POSIXct".to_string();
+    }
+    match sexptype(x) {
+        SEXPTYPE::LGLSXP => "a logical vector",
+        SEXPTYPE::INTSXP => "an integer vector",
+        SEXPTYPE::REALSXP => "a numeric vector",
+        SEXPTYPE::STRSXP => "a character vector",
+        SEXPTYPE::VECSXP => "a list",
+        SEXPTYPE::NILSXP => "NULL",
+        SEXPTYPE::CLOSXP | SEXPTYPE::BUILTINSXP | SEXPTYPE::SPECIALSXP => "a function",
+        _ => "another kind of R object",
+    }
+    .to_string()
 }
 
 fn unwrap_option(ft: &FieldType) -> &FieldType {
@@ -405,11 +440,10 @@ fn plain(x: SEXP, allowed: &[fn() -> SEXP]) -> Read<()> {
         .into_iter()
         .filter(|a| !allowed_names.contains(a))
         .collect();
-    Err(Form::new(
+    Err(Form::problem(
         "r_attributes",
-        format!(
-            "the value carries the attributes {extra:?}, which this field's type does not hold; r8_conform() removes them"
-        ),
+        rtemis_r8::problem::Problem::Attributes(extra.iter().map(|a| a.to_string()).collect()),
+        None,
     ))
 }
 
@@ -445,15 +479,20 @@ fn atomic_kind(x: SEXP, ft: &FieldType) -> Read<()> {
     if ok {
         return Ok(());
     }
-    Err(r_type(match ft {
-        FieldType::Logical => "expected a logical vector",
-        FieldType::Integer(_) => "expected an integer vector",
-        FieldType::Double(_) => "expected a numeric vector",
-        FieldType::Character(_) => "expected a character vector",
-        FieldType::Date => "expected a Date",
-        FieldType::Posixct => "expected a POSIXct",
-        _ => "expected an atomic vector",
-    }))
+    let want = match ft {
+        FieldType::Logical => "a logical vector",
+        FieldType::Integer(_) => "an integer vector",
+        FieldType::Double(_) => "a numeric vector",
+        FieldType::Character(_) => "a character vector",
+        FieldType::Date => "a Date",
+        FieldType::Posixct => "a POSIXct",
+        _ => "an atomic vector",
+    };
+    Err(Form::problem(
+        "r_type",
+        rtemis_r8::problem::Problem::Kind(want.to_string()),
+        Some(rtemis_r8::rules::Shown::Kind(r_kind(x))),
+    ))
 }
 
 fn date_days(d: f64) -> Read<i64> {
@@ -470,9 +509,13 @@ fn whole(d: f64) -> Read<i64> {
     if d.fract() == 0.0 && d.abs() <= 2_147_483_647.0 {
         Ok(d as i64)
     } else {
-        Err(r_type(format!(
-            "{d} is not a whole number in the integer range"
-        )))
+        Err(Form::problem(
+            "r_type",
+            rtemis_r8::problem::Problem::Kind(
+                "a whole number from -2147483647 to 2147483647".to_string(),
+            ),
+            Some(rtemis_r8::rules::Shown::number(d)),
+        ))
     }
 }
 
@@ -557,16 +600,18 @@ impl<'a> RView<'a> {
             RView::Whole(x) => {
                 plain(x, allowed_attributes(ft))?;
                 if xlen(x) != 1 {
-                    return Err(Form::new(
+                    return Err(Form::problem(
                         "r_length",
-                        format!("expected one value, found {}", xlen(x)),
+                        rtemis_r8::problem::Problem::OneValue,
+                        Some(rtemis_r8::rules::Shown::Length(xlen(x) as u64)),
                     ));
                 }
                 atomic_kind(x, ft)?;
                 if RView::Elem(x, 0).is_absent() {
-                    return Err(Form::new(
+                    return Err(Form::problem(
                         "na_value",
-                        "NA is not a value of this field; an absent value is declared option()",
+                        rtemis_r8::problem::Problem::Present,
+                        Some(rtemis_r8::rules::Shown::Missing),
                     ));
                 }
                 Ok((x, 0))
@@ -895,8 +940,14 @@ impl<'a> Access<'a> for RView<'a> {
             return Err(Form::mismatch("a map", self.found()));
         };
         let names = attr(x, sym_names());
+        // `list()`, a zero-length list without names, is the empty map.
+        if sexptype(x) == SEXPTYPE::VECSXP && xlen(x) == 0 && is_null(names) {
+            return Ok(0);
+        }
         if sexptype(names) != SEXPTYPE::STRSXP || xlen(names) != xlen(x) {
-            return Err(r_type("a map is a named list or a named vector"));
+            return Err(r_type(
+                "a map is a named list or a named vector; `list()` is the empty map",
+            ));
         }
         if sexptype(x) != SEXPTYPE::VECSXP {
             let inner = unwrap_option(value);

@@ -25,6 +25,29 @@ pub struct DeclError {
     pub message: String,
 }
 
+impl std::fmt::Display for DeclError {
+    /// The problem as one line of a host-neutral report: the message, the
+    /// code, and the path.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.path.is_empty() {
+            write!(f, "{} [{}]", self.message, self.code)
+        } else {
+            write!(f, "{} [{} at {}]", self.message, self.code, self.path)
+        }
+    }
+}
+
+/// The report of a declaration's problems, one line each, as a host
+/// without its own rendering writes it: "Declaration of `ns::T` failed:".
+pub fn report(qname: &str, errors: &[DeclError]) -> String {
+    let mut out = format!("Declaration of `{qname}` failed:");
+    for e in errors {
+        out.push_str("\n- ");
+        out.push_str(&e.to_string());
+    }
+    out
+}
+
 struct Checker<'a> {
     doc: &'a IrDocument,
     errors: Vec<DeclError>,
@@ -228,23 +251,37 @@ impl Checker<'_> {
         }
     }
 
-    /// Checks rules in the scope of `scope`: distinct IDs, a message, and an
-    /// invariant and condition that compile against the scope.
+    /// Checks rules in the scope of `scope`: distinct IDs, distinct rules
+    /// without IDs, a message that is not blank, and an invariant and
+    /// condition that compile against the scope.
     fn rules(&mut self, rules: &[RuleDef], scope: &[FieldDef], path: &str) {
         self.unique(
             rules
                 .iter()
                 .enumerate()
-                .map(|(i, r)| (r.id.as_str(), format!("{path}/{i}/id"))),
+                .filter_map(|(i, r)| Some((r.id.as_ref()?.as_str(), format!("{path}/{i}/id")))),
             "rule ID",
             "duplicate_rule",
         );
+        // The same rule declared twice without an ID.
+        for (i, r) in rules.iter().enumerate().filter(|(_, r)| r.id.is_none()) {
+            if let Some(j) = rules[..i]
+                .iter()
+                .position(|p| p.id.is_none() && p.invariant == r.invariant && p.when == r.when)
+            {
+                self.report(
+                    "duplicate_rule",
+                    &format!("{path}/{i}"),
+                    format!("rule {i} repeats rule {j}"),
+                );
+            }
+        }
         for (i, r) in rules.iter().enumerate() {
-            if r.message.trim().is_empty() {
+            if r.message.as_deref().is_some_and(|m| m.trim().is_empty()) {
                 self.report(
                     "rule_message_empty",
                     &format!("{path}/{i}/message"),
-                    format!("rule `{}` has no message", r.id),
+                    format!("rule {i} has a blank message"),
                 );
             }
             if let Err(errors) = CompiledRule::compile(r, scope, self.doc) {

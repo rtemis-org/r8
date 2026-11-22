@@ -518,15 +518,15 @@ r8_declarations <- function() {
       ),
       rules = list(
         R8::rule(
-          "early_stop_below_trees",
           early_stopping_rounds < n_trees,
-          "early_stopping_rounds is below n_trees.",
-          when = !is.null(early_stopping_rounds)
+          when = !is.null(early_stopping_rounds),
+          message = "early_stopping_rounds is below n_trees.",
+          id = "early_stop_below_trees"
         ),
         R8::rule(
-          "num_class_iff_multiclass",
           (objective == "multiclass") == !is.null(num_class),
-          "num_class is present exactly when the objective is multiclass."
+          message = "num_class is present exactly when the objective is multiclass.",
+          id = "num_class_iff_multiclass"
         )
       )
     ))
@@ -566,7 +566,7 @@ declare_r8 <- function(where = globalenv(), native = FALSE) {
         folds = R8::vec(where$Resampler)
       ),
       rules = list(
-        R8::rule("folds_per_resample", length(folds) == resampler$n, "There is one fold per resample.")
+        R8::rule(length(folds) == resampler$n, message = "There is one fold per resample.", id = "folds_per_resample")
       )
     )
   }

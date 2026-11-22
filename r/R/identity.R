@@ -30,13 +30,7 @@ r8_hash <- function(x) {
   }
   res <- r8_value_hash(x)
   if (is.list(res)) {
-    r8_abort(
-      "Invalid `",
-      attr(x, "r8_type"),
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = "r8_value_error"
-    )
+    value_abort("Invalid", attr(x, "r8_type"), res[["errors"]])
   }
   res
 } # /R8::r8_hash

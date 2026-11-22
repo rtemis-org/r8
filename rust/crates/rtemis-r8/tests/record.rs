@@ -171,10 +171,10 @@ fn bare_field(n: &str, ty: FieldType) -> FieldDef {
 fn sample_types() -> Vec<FieldType> {
     let logic: Logic = serde_json::from_value(json!({"+": [{"var": "a"}, 1]})).unwrap();
     let rule = RuleDef {
-        id: name("R"),
+        id: Some(name("R")),
         invariant: serde_json::from_value(json!({"<": [{"var": "start"}, 10]})).unwrap(),
         when: Some(serde_json::from_value(json!({"!": {"is_null": {"var": "start"}}})).unwrap()),
-        message: "start is small.".into(),
+        message: Some("start is small.".into()),
     };
     let out = vec![
         FieldType::Logical,
@@ -404,10 +404,10 @@ fn sample_struct() -> TypeDef {
         fields,
         extends: Some(q("ns::Base")),
         rules: vec![RuleDef {
-            id: name("ODD"),
+            id: Some(name("ODD")),
             invariant: serde_json::from_value(json!({"nope": [1], "two": 2})).unwrap(),
             when: None,
-            message: "kept as written".into(),
+            message: Some("kept as written".into()),
         }],
         migrations: vec![
             Migration {
@@ -534,11 +534,11 @@ fn samples_of_every_member_round_trip() {
     );
 }
 
-/// The golden record of format 1: `tests/fixtures/sample.r8d` holds the
-/// samples as format 1 wrote them, and `sample.r8d.json` their IR. With
+/// The golden record of format 2: `tests/fixtures/sample.r8d` holds the
+/// samples as format 2 wrote them, and `sample.r8d.json` their IR. With
 /// `R8_UPDATE_RECORD=1`, the test writes both files.
 #[test]
-fn the_golden_record_of_format_1_reads_and_writes_back() {
+fn the_golden_record_of_format_2_reads_and_writes_back() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let (_, entries) = sample_record();
     let bytes = encode_entries(&entries);
@@ -556,7 +556,7 @@ fn the_golden_record_of_format_1_reads_and_writes_back() {
     // The header names the writer; the payload from the checksum on is the
     // format's bytes, which the current encoder reproduces.
     let (format, _) = record::header(&golden).unwrap();
-    assert_eq!(format, 1);
+    assert_eq!(format, 2);
     let payload = |b: &[u8]| {
         let (_, writer) = record::header(b).unwrap();
         b[4 + 1 + 1 + writer.len()..].to_vec()
@@ -608,12 +608,15 @@ fn damaged_and_hostile_records_return_errors() {
     let mut magic = bytes.clone();
     magic[0] = b'X';
     assert_eq!(record::decode(&magic), Err(RecordError::Magic));
-    let mut newer = bytes.clone();
-    newer[4] = 2;
-    assert!(matches!(
-        record::decode(&newer),
-        Err(RecordError::Newer { format: 2, .. })
-    ));
+    // A format other than the current one is refused.
+    for other in [1u8, 3] {
+        let mut b = bytes.clone();
+        b[4] = other;
+        assert!(matches!(
+            record::decode(&b),
+            Err(RecordError::Newer { format, .. }) if format == u32::from(other)
+        ));
+    }
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert_eq!(

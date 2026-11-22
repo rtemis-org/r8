@@ -13,7 +13,7 @@ mod logic;
 mod number;
 mod types;
 
-pub use check::{DeclError, check_document, check_trait, check_type, is_column_type};
+pub use check::{DeclError, check_document, check_trait, check_type, is_column_type, report};
 pub use decl::{
     ClassSystem, EnumDef, FieldDef, ImplDef, ImplTarget, MethodDef, Migration, MigrationStep,
     RuleDef, SplitTarget, StructDef, TraitDef, VariantDef, VariantShape,

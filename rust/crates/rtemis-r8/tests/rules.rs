@@ -24,12 +24,31 @@ fn fixture_rule(doc: &IrDocument, id: &str) -> CompiledRule {
     let TypeDef::Struct(s) = &doc.types[1] else {
         panic!()
     };
-    let r = s.rules.iter().find(|r| r.id.as_str() == id).unwrap();
+    let r = s
+        .rules
+        .iter()
+        .find(|r| r.id.as_ref().is_some_and(|i| i.as_str() == id))
+        .unwrap();
     CompiledRule::compile(r, &s.fields, doc).unwrap()
 }
 
+/// A violation at JSON Pointers whose parts are fields and positions.
 fn violated(paths: &[&str]) -> Outcome {
-    Outcome::Violated(paths.iter().map(|p| p.to_string()).collect())
+    use rtemis_r8::problem::Segment;
+    Outcome::Violated(
+        paths
+            .iter()
+            .map(|p| {
+                p.split('/')
+                    .skip(1)
+                    .map(|k| match k.parse::<u64>() {
+                        Ok(i) => Segment::Element(i),
+                        Err(_) => Segment::Field(k.to_string()),
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
 }
 
 #[test]
@@ -135,7 +154,11 @@ fn rule_of(doc: &IrDocument, ty: &str, id: &str) -> CompiledRule {
             _ => None,
         })
         .unwrap();
-    let r = s.rules.iter().find(|r| r.id.as_str() == id).unwrap();
+    let r = s
+        .rules
+        .iter()
+        .find(|r| r.id.as_ref().is_some_and(|i| i.as_str() == id))
+        .unwrap();
     CompiledRule::compile(r, &s.fields, doc).unwrap()
 }
 
@@ -150,10 +173,23 @@ fn all_reports_each_failing_element_of_an_ordered_map() {
         "col_data": {"$length": 2},
         "metadata": {}
     });
+    // An ordered map's item: its position, then the value's part of the
+    // item's JSON form.
+    use rtemis_r8::problem::Segment;
+    let item = |i| {
+        vec![
+            Segment::Field("assays".into()),
+            Segment::Element(i),
+            Segment::Form("/value".into()),
+        ]
+    };
     assert_eq!(
         rows.check(&se).unwrap(),
-        violated(&["/assays/1/value", "/assays/2/value"])
+        Outcome::Violated(vec![item(1), item(2)])
     );
+    if let Outcome::Violated(p) = rows.check(&se).unwrap() {
+        assert_eq!(rtemis_r8::problem::pointer(&p[0]), "/assays/1/value");
+    }
 }
 
 #[test]
@@ -173,10 +209,13 @@ fn row_rules_report_the_cell_and_decode_factors() {
         "width": [10, 100, 0],
         "strand": ["+", "-", "*"]
     });
-    assert_eq!(
-        end_fits.check_rows(&ranges).unwrap(),
-        vec!["/start/1".to_string()]
-    );
+    let paths: Vec<String> = end_fits
+        .check_rows(&ranges)
+        .unwrap()
+        .iter()
+        .map(|p| rtemis_r8::problem::pointer(p))
+        .collect();
+    assert_eq!(paths, vec!["/start/1".to_string()]);
 }
 
 #[test]

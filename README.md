@@ -1,15 +1,25 @@
 # R8
 
-R8 is a developer-facing type system for R whose runtime is written in Rust. Types are structs, enums, and traits, declared in R or in Rust with `#[derive(R8)]`; values are immutable and validated once per value, and one declaration drives validation, JSON encoding, and every export. The Rust runtime serves R and is designed to serve Python and web applications through their own bindings.
+R8 is a type system whose runtime is written in Rust, with an API for R. Types are structs, enums, and traits, declared in Rust with `#[derive(R8)]` or in a host language; values are immutable and validated once per value, and one declaration drives validation, JSON encoding, and every export. The Rust crates hold everything independent of the host language, and each host's API is a binding over them: R's in `r/`, and Python's and web applications' through their own bindings.
 
-| Directory | Contents |
+## Rust crates
+
+The Cargo workspace is `rust/`.
+
+| Crate | Contents |
 |---|---|
-| `rust` | The Cargo workspace |
-| `rust/crates/rtemis-r8` | The runtime: declaration IR, validation, rules, the value-access trait, the JSON codec, equality, and hashing |
-| `rust/crates/rtemis-r8-macros` | The procedural macros, `#[derive(R8)]` |
-| `rust/crates/rtemis-r8-abi-check` | Test-only: the Rust ABI types of `rtemis-r8` match the C header |
-| `r` | The R package `R8`, which binds `rtemis-r8` through extendr; `r/inst/include/R8.h` is the C interface for other packages |
-| `conformance` | Language-neutral test cases that every host runs, with their format and JSON Schema |
+| `rtemis-r8` | The runtime: the declaration IR, validation, rules, the value-access trait, the JSON codec, equality, hashing, the declaration record, and the C ABI types |
+| `rtemis-r8-macros` | The procedural macros: `#[derive(R8)]`, `#[r8::methods]`, and `r8::exports!` |
+| `rtemis-r8-api` | R8's C services for a package's Rust code: Rust-native types, their codecs, and trait impls registered with R8 |
+| `rtemis-r8-abi-check` | Test-only: the ABI types of `rtemis-r8` match the C header |
+
+## R API
+
+`r/` is the R package `R8`, which binds `rtemis-r8` through extendr. `r/inst/include/R8.h` is its C interface for other packages' compiled code, in C, C++, or Rust through `rtemis-r8-api`.
+
+## Conformance
+
+`conformance/` holds language-neutral test cases, with their format and JSON Schema, that every host's API runs.
 
 ## Development
 

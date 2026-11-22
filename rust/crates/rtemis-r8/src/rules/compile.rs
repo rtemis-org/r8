@@ -33,9 +33,13 @@ pub enum Root {
 /// One step of a resolved path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    /// An object member: a struct field, an enum value's field, a table
-    /// column, or a `hashmap()` key.
-    Member(String),
+    /// A field of a struct or an enum value, or a member of a value of
+    /// unknown type.
+    Field(String),
+    /// A key of a `hashmap()`.
+    Key(String),
+    /// A column of a table.
+    Column(String),
     /// A key of an `ordered_map()`, whose JSON is an array of `{"name",
     /// "value"}` pairs.
     OrderedKey(String),
@@ -96,6 +100,9 @@ pub enum Op {
     Nrow,
     Ncol,
     Dim,
+    Abs,
+    Sum,
+    Nchar,
 }
 
 /// A compiled expression.
@@ -141,9 +148,50 @@ fn pointer_segment(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
 }
 
+/// The hint of a comparison of an array: `all` tests a condition on each
+/// element, and a table's row rules compare paired columns.
+fn elementwise_hint(a: &Ty, b: &Ty) -> &'static str {
+    match (a, b) {
+        (Ty::Array(_), Ty::Array(_)) => {
+            "; to compare paired elements of two arrays, declare them as columns of a table and write a row rule"
+        }
+        (Ty::Array(_), _) | (_, Ty::Array(_)) => {
+            "; to test each element of an array, write the comparison as the condition of `all` over the array"
+        }
+        _ => "",
+    }
+}
+
+/// Whether a number holds an integer exactly; an operand of another or an
+/// unknown type counts as exact, so that only a known double is flagged.
+fn exact_of(t: &Ty) -> bool {
+    match t {
+        Ty::Number { exact, .. } => *exact,
+        _ => true,
+    }
+}
+
+/// A type with every number's `exact` set, for comparing the types of a
+/// field in two variants, where an integer and a double are both numbers.
+fn erase_exact(t: &Ty) -> Ty {
+    match t {
+        Ty::Number { unit, .. } => Ty::Number {
+            unit: unit.clone(),
+            exact: true,
+        },
+        Ty::Array(e) => Ty::Array(Box::new(erase_exact(e))),
+        Ty::Matrix(e) => Ty::Matrix(Box::new(erase_exact(e))),
+        Ty::Map { value, ordered } => Ty::Map {
+            value: Box::new(erase_exact(value)),
+            ordered: *ordered,
+        },
+        other => other.clone(),
+    }
+}
+
 fn unit_of(t: &Ty) -> Option<&str> {
     match t {
-        Ty::Number { unit } => unit.as_deref(),
+        Ty::Number { unit, .. } => unit.as_deref(),
         _ => None,
     }
 }
@@ -179,6 +227,9 @@ fn evaluated(op: Operator) -> Option<(Op, std::ops::RangeInclusive<usize>)> {
         O::Nrow => (Op::Nrow, 1..=1),
         O::Ncol => (Op::Ncol, 1..=1),
         O::Dim => (Op::Dim, 1..=1),
+        O::Abs => (Op::Abs, 1..=1),
+        O::Sum => (Op::Sum, 1..=1),
+        O::Nchar => (Op::Nchar, 1..=1),
         O::Var
         | O::LooseEq
         | O::LooseNe
@@ -218,7 +269,10 @@ impl Compiler<'_> {
             ),
             Logic::Number(n) => (
                 Expr::Lit(Scalar::Num(n.as_f64())),
-                Ty::Number { unit: None },
+                Ty::Number {
+                    unit: None,
+                    exact: n.as_i64().is_some() || n.as_u64().is_some(),
+                },
             ),
             Logic::String(t) => (Expr::Lit(Scalar::Str(t.to_string())), Ty::String),
             Logic::Null => (Expr::Lit(Scalar::Null), Ty::Any),
@@ -361,9 +415,10 @@ impl Compiler<'_> {
                 "rule_type",
                 path,
                 format!(
-                    "`{op}` compares two numbers, two dates, or two date-times, found {} and {}",
+                    "`{op}` compares two numbers, two dates, or two date-times, found {} and {}{}",
                     a.describe(),
-                    b.describe()
+                    b.describe(),
+                    elementwise_hint(a, b)
                 ),
             );
         }
@@ -393,7 +448,7 @@ impl Compiler<'_> {
                         "; to test an enum's variant, write `is_variant(x, \"Variant\")` for `{q}`"
                     )
                 }
-                _ => String::new(),
+                _ => elementwise_hint(a, b).to_string(),
             };
             self.error(
                 "rule_type",
@@ -439,14 +494,18 @@ impl Compiler<'_> {
             let first = segments.remove(0);
             match self.fields.iter().find(|f| f.name.as_str() == first) {
                 Some(f) => {
-                    steps.push(Step::Member(first.to_string()));
+                    steps.push(Step::Field(first.to_string()));
                     (Root::Data, Ty::of(&f.ty, f.unit.as_deref()))
                 }
                 None => {
+                    let near =
+                        crate::name::nearest(first, self.fields.iter().map(|f| f.name.as_str()))
+                            .map(|n| format!("; the nearest field is `{n}`"))
+                            .unwrap_or_default();
                     return self.error(
                         "rule_field",
                         path,
-                        format!("`{first}` is not a field in scope"),
+                        format!("`{first}` is not a field in scope{near}"),
                     );
                 }
             }
@@ -471,16 +530,17 @@ impl Compiler<'_> {
     }
 
     fn step(&mut self, ty: &Ty, seg: &str, path: &str) -> Option<(Step, Ty)> {
-        let member = |t: Ty| Some((Step::Member(seg.to_string()), t));
+        let member = |t: Ty| Some((Step::Field(seg.to_string()), t));
+        let column = |t: Ty| Some((Step::Column(seg.to_string()), t));
         match ty {
             Ty::Any | Ty::Json => member(Ty::Any),
             Ty::Table { columns, open } => match columns.iter().find(|c| c.name.as_str() == seg) {
                 // A column is a vector of its type; a factor is one already.
-                Some(c) => member(match Ty::of(&c.ty, c.unit.as_deref()) {
+                Some(c) => column(match Ty::of(&c.ty, c.unit.as_deref()) {
                     f @ Ty::Factor { .. } => f,
                     t => Ty::Array(Box::new(t)),
                 }),
-                None if *open => member(Ty::Array(Box::new(Ty::Any))),
+                None if *open => column(Ty::Array(Box::new(Ty::Any))),
                 None => {
                     self.error(
                         "rule_field",
@@ -494,7 +554,7 @@ impl Compiler<'_> {
                 let s = if *ordered {
                     Step::OrderedKey(seg.to_string())
                 } else {
-                    Step::Member(seg.to_string())
+                    Step::Key(seg.to_string())
                 };
                 Some((s, (**value).clone()))
             }
@@ -528,7 +588,7 @@ impl Compiler<'_> {
                         if let Some(f) = fields.iter().find(|f| f.name.as_str() == seg) {
                             let t = Ty::of(&f.ty, f.unit.as_deref());
                             match &found {
-                                Some(prev) if *prev != t => {
+                                Some(prev) if erase_exact(prev) != erase_exact(&t) => {
                                     self.error(
                                         "rule_field_ambiguous",
                                         path,
@@ -676,6 +736,23 @@ impl Compiler<'_> {
         let parts = self.operands(args, path);
         let tys: Vec<Ty> = parts.iter().map(|(_, t)| t.clone()).collect();
         let result = self.type_op(code, op, &tys, path);
+        // Strict equality of a double that arithmetic computed fails on a
+        // rounding difference: 0.1 + 0.2 is not 0.3.
+        if matches!(code, Op::Eq | Op::Ne) {
+            for (i, (e, t)) in parts.iter().enumerate() {
+                let computed = matches!(
+                    e,
+                    Expr::Op(Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Sum, _)
+                );
+                if computed && matches!(t, Ty::Number { exact: false, .. }) {
+                    self.error(
+                        "rule_float_equality",
+                        &format!("{path}/{i}"),
+                        format!("`{op}` compares a double computed by arithmetic, which rounding makes inexact; compare the difference with a tolerance, as in `abs(a - b) <= 1e-9`"),
+                    );
+                }
+            }
+        }
         (
             Expr::Op(code, parts.into_iter().map(|(e, _)| e).collect()),
             result,
@@ -683,7 +760,10 @@ impl Compiler<'_> {
     }
 
     fn type_op(&mut self, code: Op, op: &str, t: &[Ty], path: &str) -> Ty {
-        let num = Ty::Number { unit: None };
+        let num = Ty::Number {
+            unit: None,
+            exact: true,
+        };
         match code {
             Op::Eq | Op::Ne => {
                 self.equality(&t[0], &t[1], path, op);
@@ -697,28 +777,86 @@ impl Compiler<'_> {
                 self.expect_bool(&t[0], &format!("{path}/0"), "the operand of `!`");
                 Ty::Bool
             }
+            // `min()` and `max()` of one array: its smallest or largest
+            // element.
+            Op::Min | Op::Max if t.len() == 1 && matches!(t[0], Ty::Array(_)) => {
+                let Ty::Array(e) = &t[0] else { unreachable!() };
+                self.expect_number(e, &format!("{path}/0"), op);
+                match &**e {
+                    n @ Ty::Number { .. } => n.clone(),
+                    _ => num,
+                }
+            }
             Op::Add | Op::Sub | Op::Min | Op::Max => {
                 for (i, x) in t.iter().enumerate() {
                     self.expect_number(x, &format!("{path}/{i}"), op);
                 }
                 let mut unit = unit_of(&t[0]).map(str::to_string);
                 for x in &t[1..] {
-                    let a = Ty::Number { unit: unit.clone() };
+                    let a = Ty::Number {
+                        unit: unit.clone(),
+                        exact: true,
+                    };
                     unit = self.same_unit(&a, x, path, op);
                 }
-                Ty::Number { unit }
+                Ty::Number {
+                    unit,
+                    exact: t.iter().all(exact_of),
+                }
             }
             Op::Mul | Op::Div | Op::Mod => {
                 for (i, x) in t.iter().enumerate() {
                     self.expect_number(x, &format!("{path}/{i}"), op);
                 }
-                num
+                Ty::Number {
+                    unit: None,
+                    exact: code != Op::Div && t.iter().all(exact_of),
+                }
             }
             Op::Floor | Op::Ceiling | Op::Round => {
                 self.expect_number(&t[0], &format!("{path}/0"), op);
                 Ty::Number {
                     unit: unit_of(&t[0]).map(str::to_string),
+                    exact: true,
                 }
+            }
+            Op::Abs => {
+                self.expect_number(&t[0], &format!("{path}/0"), op);
+                Ty::Number {
+                    unit: unit_of(&t[0]).map(str::to_string),
+                    exact: exact_of(&t[0]),
+                }
+            }
+            Op::Sum => match &t[0] {
+                Ty::Array(e) => {
+                    self.expect_number(e, &format!("{path}/0"), op);
+                    match &**e {
+                        n @ Ty::Number { .. } => n.clone(),
+                        _ => num,
+                    }
+                }
+                Ty::Any | Ty::Json => num,
+                other => {
+                    self.error(
+                        "rule_type",
+                        &format!("{path}/0"),
+                        format!(
+                            "`sum` takes an array of numbers, found {}",
+                            other.describe()
+                        ),
+                    );
+                    num
+                }
+            },
+            Op::Nchar => {
+                if !matches!(t[0], Ty::String | Ty::Any | Ty::Json) {
+                    self.error(
+                        "rule_type",
+                        &format!("{path}/0"),
+                        format!("`nchar` takes a string, found {}", t[0].describe()),
+                    );
+                }
+                num
             }
             Op::In => {
                 if !matches!(
@@ -748,12 +886,34 @@ impl Compiler<'_> {
                 }
                 Ty::String
             }
+            // R's length(): the number of elements of a vector or a factor.
             Op::Length => {
-                if !matches!(
-                    t[0],
-                    Ty::Array(_) | Ty::String | Ty::Factor { .. } | Ty::Any | Ty::Json
-                ) {
-                    self.error("rule_type", &format!("{path}/0"), format!("`length` takes an array, a factor, or a string, found {}; use `nrow()` for a table", t[0].describe()));
+                match &t[0] {
+                    Ty::Array(_) | Ty::Factor { .. } | Ty::Any | Ty::Json => {}
+                    Ty::String => {
+                        self.error(
+                            "rule_type",
+                            &format!("{path}/0"),
+                            "`length` counts the elements of a vector or a factor, found a string; `nchar` counts a string's characters".to_string(),
+                        );
+                    }
+                    Ty::Table { .. } => {
+                        self.error(
+                            "rule_type",
+                            &format!("{path}/0"),
+                            "`length` counts the elements of a vector or a factor, found a table; `nrow` counts its rows".to_string(),
+                        );
+                    }
+                    other => {
+                        self.error(
+                            "rule_type",
+                            &format!("{path}/0"),
+                            format!(
+                                "`length` counts the elements of a vector or a factor, found {}",
+                                other.describe()
+                            ),
+                        );
+                    }
                 }
                 num
             }

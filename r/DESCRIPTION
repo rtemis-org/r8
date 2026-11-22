@@ -9,12 +9,11 @@ Authors@R: c(
     person(given = "Authors of the bundled Rust crates", role = c("ctb", "cph"),
            comment = "Rust crates compiled into the package; see inst/AUTHORS")
     )
-Description: A developer-facing type system for R whose runtime is the
-    'rtemis-r8' 'Rust' crate, shared with other host languages. Types are
-    structs, enums, and traits, declared in R or in 'Rust'; values are
-    immutable and validated once per value. This version reports the version
-    of the compiled 'rtemis-r8' crate; declarations, validation, and JSON
-    encoding are under development.
+Description: A type system for R whose runtime is the 'rtemis-r8' 'Rust'
+    crate, shared with other host languages. Types are structs, enums, and
+    traits, declared in R or in 'Rust'; values are immutable and validated
+    once per value, and one declaration drives validation, JSON encoding,
+    and hashing.
 URL: https://www.rtemis.org, https://github.com/rtemis-org/r8
 BugReports: https://github.com/rtemis-org/r8/issues
 License: BSD_3_clause + file LICENSE

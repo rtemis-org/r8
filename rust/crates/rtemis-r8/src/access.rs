@@ -36,6 +36,10 @@ pub struct Form {
     pub suffix: String,
     /// The message.
     pub message: String,
+    /// What the value fails and the value found, when the reader states the
+    /// problem by its parts; `None` reports `message` as text. Boxed, so a
+    /// read's result stays small.
+    pub detail: Option<Box<(crate::problem::Problem, Option<crate::rules::Shown>)>>,
 }
 
 impl Form {
@@ -45,6 +49,22 @@ impl Form {
             code,
             suffix: String::new(),
             message: message.into(),
+            detail: None,
+        }
+    }
+
+    /// A problem with the value itself, stated by its parts.
+    pub fn problem(
+        code: &'static str,
+        problem: crate::problem::Problem,
+        found: Option<crate::rules::Shown>,
+    ) -> Self {
+        let message = problem.sentence(&[], found.as_ref(), None, &crate::problem::Neutral);
+        Form {
+            code,
+            suffix: String::new(),
+            message,
+            detail: Some(Box::new((problem, found))),
         }
     }
 
@@ -56,7 +76,11 @@ impl Form {
 
     /// `type_mismatch`: the value is not of the expected kind.
     pub fn mismatch(want: &str, found: &str) -> Self {
-        Form::new("type_mismatch", format!("expected {want}, found {found}"))
+        Form::problem(
+            "type_mismatch",
+            crate::problem::Problem::Kind(want.to_string()),
+            Some(crate::rules::Shown::Kind(found.to_string())),
+        )
     }
 }
 

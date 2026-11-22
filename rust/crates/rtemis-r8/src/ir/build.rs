@@ -102,11 +102,27 @@ pub enum BuildError {
         /// The call.
         expr: String,
     },
+    /// A newtype variant (`of`) given fields.
+    VariantOfFields,
+    /// A newtype variant (`of`) given rules.
+    VariantOfRules,
+    /// A variant given rules without fields to read.
+    VariantRulesWithoutFields,
+    /// A newtype variant's `of` that is not a struct type.
+    VariantOf,
+    /// A rule indexes a field, as in `values[[1]]`.
+    RuleIndex {
+        /// The expression, as the host writes it.
+        expr: String,
+    },
     /// A rule calls a function outside the dialect; `known` lists the
     /// functions the dialect has, as the host writes them.
     UnknownFunction {
         /// The function.
         name: String,
+        /// The function of the dialect nearest to `name`, as the host
+        /// writes it, if one is near.
+        nearest: Option<String>,
         /// The functions of the dialect.
         known: &'static str,
     },
@@ -175,8 +191,32 @@ impl fmt::Display for BuildError {
             BuildError::RuleCallee { expr } => {
                 write!(f, "A rule calls a function by name: {expr}.")
             }
-            BuildError::UnknownFunction { name, known } => {
-                write!(f, "`{name}()` is not a function of R8 rules. Rules use {known}.")
+            BuildError::VariantOfFields => f.write_str(
+                "A newtype variant, `of`, holds its struct's fields; it takes no fields of its own.",
+            ),
+            BuildError::VariantOfRules => f.write_str(
+                "A newtype variant, `of`, takes its struct's rules; it takes no rules of its own.",
+            ),
+            BuildError::VariantRulesWithoutFields => {
+                f.write_str("A variant's rules read its fields; a variant without fields takes no rules.")
+            }
+            BuildError::VariantOf => {
+                f.write_str("A newtype variant's `of` is an R8 struct type.")
+            }
+            BuildError::RuleIndex { expr } => write!(
+                f,
+                "`{expr}` indexes a field; a rule reads whole fields: `all()` and `any()` test each element of a vector, and `$` reads a field of a field."
+            ),
+            BuildError::UnknownFunction {
+                name,
+                nearest,
+                known,
+            } => {
+                write!(f, "`{name}()` is not a function of R8 rules")?;
+                if let Some(n) = nearest {
+                    write!(f, "; the nearest is `{n}()`")?;
+                }
+                write!(f, ". Rules use {known}.")
             }
             BuildError::DefaultNotValue => {
                 f.write_str("The default of a field of an R8 type is a value of that type.")
@@ -490,20 +530,49 @@ impl FieldDef {
 
 /// `rule(id, invariant, message, when)`.
 pub fn rule(
-    id: &str,
     invariant: Logic,
-    message: &str,
     when: Option<Logic>,
+    message: Option<&str>,
+    id: Option<&str>,
 ) -> Built<super::RuleDef> {
-    let id = crate::name::Name::new(id).map_err(|_| BuildError::RuleId)?;
-    if message.trim().is_empty() {
+    let id = id
+        .map(|i| crate::name::Name::new(i).map_err(|_| BuildError::RuleId))
+        .transpose()?;
+    if message.is_some_and(|m| m.trim().is_empty()) {
         return Err(BuildError::RuleMessage);
     }
     Ok(super::RuleDef {
-        id,
         invariant,
         when,
-        message: message.to_string(),
+        message: message.map(str::to_string),
+        id,
+    })
+}
+
+/// Checks the parts of a variant: a newtype variant (`of`) takes neither
+/// fields nor rules, and rules need fields to read.
+pub fn variant_parts(has_of: bool, has_fields: bool, has_rules: bool) -> Built<()> {
+    match (has_of, has_fields, has_rules) {
+        (true, true, _) => Err(BuildError::VariantOfFields),
+        (true, false, true) => Err(BuildError::VariantOfRules),
+        (false, false, true) => Err(BuildError::VariantRulesWithoutFields),
+        _ => Ok(()),
+    }
+}
+
+/// The shape of a variant: a newtype for `of`, a unit variant without
+/// fields, and a struct variant otherwise; the parts are checked by
+/// [`variant_parts`].
+pub fn variant_shape(
+    fields: Vec<super::FieldDef>,
+    rules: Vec<super::RuleDef>,
+    of: Option<crate::name::QualifiedName>,
+) -> Built<super::VariantShape> {
+    variant_parts(of.is_some(), !fields.is_empty(), !rules.is_empty())?;
+    Ok(match of {
+        Some(of) => super::VariantShape::Newtype { of },
+        None if fields.is_empty() => super::VariantShape::Unit,
+        None => super::VariantShape::Struct { fields, rules },
     })
 }
 

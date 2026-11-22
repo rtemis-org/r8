@@ -333,7 +333,9 @@ r8_find_impl <- function(trait_name, method, x) {
 new_trait <- function(name, methods = list(), description = "", tag = NULL) {
   if (!is_name(name)) {
     r8_abort(
-      "A trait name is an R8 name, such as \"Fit\".",
+      "A trait name is an R8 name, such as \"Fit\"",
+      name_reason(name),
+      ".",
       class = "r8_declaration_error"
     )
   }

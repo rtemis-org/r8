@@ -443,14 +443,8 @@ fn new_value(
             return Err(("unknown_type", e.to_string()));
         }
     };
-    let docs = match registry().lock() {
-        Ok(d) => d,
-        Err(_) => {
-            drop_state();
-            return Err(("registry", "the registry is unavailable".to_string()));
-        }
-    };
-    let lookup: &dyn TypeLookup = &**docs;
+    let docs = registry().snapshot();
+    let lookup: &dyn TypeLookup = &*docs;
     let Some(def) = lookup.find(&q) else {
         drop_state();
         return Err(("unknown_type", format!("`{q}` is not a registered type")));
@@ -626,8 +620,8 @@ pub unsafe extern "C" fn r8_native_meta(type_name: *const c_char) -> Sexp {
     let result = catch_unwind(AssertUnwindSafe(|| -> Option<Sexp> {
         let name = c_text(type_name)?;
         let q = QualifiedName::parse(&name).ok()?;
-        let docs = registry().lock().ok()?;
-        let lookup: &dyn TypeLookup = &**docs;
+        let docs = registry().snapshot();
+        let lookup: &dyn TypeLookup = &*docs;
         let def = lookup.find(&q)?;
         let version = def_version(def);
         let hash = crate::construct::registry_declaration_hash(&q, lookup);
@@ -682,10 +676,8 @@ pub unsafe extern "C" fn r8_native_resolve(
                 ));
             };
             let q = QualifiedName::parse(&name).map_err(|e| ("unknown_type", e.to_string()))?;
-            let docs = registry()
-                .lock()
-                .map_err(|_| ("registry", "the registry is unavailable".to_string()))?;
-            let lookup: &dyn TypeLookup = &**docs;
+            let docs = registry().snapshot();
+            let lookup: &dyn TypeLookup = &*docs;
             let Some(def) = lookup.find(&q) else {
                 return Err(("unknown_type", format!("`{name}` is not a registered type")));
             };

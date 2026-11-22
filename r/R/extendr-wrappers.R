@@ -46,27 +46,30 @@ r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, f
 #' @noRd
 r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, value)
 
-#' Saves the registry's state, which `r8_registry_restore()` brings back
-#' and `r8_registry_release()` discards; saves nest.
+#' Saves the registry's documents and namespace owners, which
+#' `r8_registry_restore()` brings back and `r8_registry_release()`
+#' discards; saves nest.
 #'
-#' @return `NULL`.
+#' @return Double: The saved state's token.
 #' @keywords internal
 #' @noRd
 r8_registry_save <- function() .Call(wrap__r8_registry_save)
 
-#' Restores the registry to its most recently saved state.
+#' Restores the registry to the saved state `token`, the most recent.
 #'
+#' @param token Double: The token of `r8_registry_save()`.
 #' @return `NULL`.
 #' @keywords internal
 #' @noRd
-r8_registry_restore <- function() .Call(wrap__r8_registry_restore)
+r8_registry_restore <- function(token) .Call(wrap__r8_registry_restore, token)
 
-#' Discards the most recently saved state of the registry.
+#' Discards the saved state `token`, the most recent.
 #'
+#' @param token Double: The token of `r8_registry_save()`.
 #' @return `NULL`.
 #' @keywords internal
 #' @noRd
-r8_registry_release <- function() .Call(wrap__r8_registry_release)
+r8_registry_release <- function(token) .Call(wrap__r8_registry_release, token)
 
 #' The declaration record of a registered trait (`rtemis_r8::record`).
 #'
@@ -146,6 +149,25 @@ r8_pending_fields <- function(x) .Call(wrap__r8_pending_fields, x)
 #' @keywords internal
 #' @noRd
 r8_claim_namespace <- function(namespace, package) .Call(wrap__r8_claim_namespace, namespace, package)
+
+#' Why `x` is not an R8 name, or `""` for a name: one string that
+#' `rtemis_r8::name::Name::new()` accepts, the grammar every host shares.
+#'
+#' @param x Object.
+#' @return Character: The reason, or `""`.
+#' @keywords internal
+#' @noRd
+r8_name_problem <- function(x) .Call(wrap__r8_name_problem, x)
+
+#' The problem of a variant's parts, or `""`: a newtype variant takes
+#' neither fields nor rules, and rules need fields to read
+#' (`rtemis_r8::ir::build::variant_parts()`).
+#'
+#' @param has_of,has_fields,has_rules Logical: What the variant holds.
+#' @return Character: The message, or `""`.
+#' @keywords internal
+#' @noRd
+r8_variant_problem <- function(has_of, has_fields, has_rules) .Call(wrap__r8_variant_problem, has_of, has_fields, has_rules)
 
 #' The package that owns a namespace, without claiming it.
 #'
@@ -370,10 +392,11 @@ r8_ft_map <- function(type, keys, ordered) .Call(wrap__r8_ft_map, type, keys, or
 #' @noRd
 r8_ft_matrix <- function(type, nrow, ncol, dim, sparse) .Call(wrap__r8_ft_matrix, type, nrow, ncol, dim, sparse)
 
-#' `rule()`: `invariant` and `when` are the unevaluated expressions.
+#' `rule()`: `invariant` and `when` are the unevaluated expressions;
+#' `message` and `id` are `NULL` or one string.
 #' @keywords internal
 #' @noRd
-r8_rule <- function(id, invariant, message, when) .Call(wrap__r8_rule, id, invariant, message, when)
+r8_rule <- function(invariant, when, message, id) .Call(wrap__r8_rule, invariant, when, message, id)
 
 #' The dialect expression of an R expression, as the list `rule()` holds,
 #' or the message of an expression the dialect does not hold.

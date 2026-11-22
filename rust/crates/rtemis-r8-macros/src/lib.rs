@@ -234,9 +234,10 @@ struct TypeAttrs {
     native: bool,
 }
 
-/// One `rule(id = ..., invariant = ..., when = ..., message = ...)`, as the
+/// One `rule(invariant = ..., when = ..., message = ..., id = ...)`, as the
 /// construction of an `rtemis_r8::ir::RuleDef`; the expressions are
-/// JSONLogic text, parsed when the crate compiles.
+/// JSONLogic text, parsed when the crate compiles, and `invariant` alone is
+/// required.
 fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
     let (mut id, mut invariant, mut when, mut message) = (None, None, None, None);
     meta.parse_nested_meta(|m| {
@@ -246,20 +247,32 @@ fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
             Some("invariant") => invariant = Some(s),
             Some("when") => when = Some(s),
             Some("message") => message = Some(s),
-            _ => return Err(m.error("a rule takes id, invariant, when, and message")),
+            _ => return Err(m.error("a rule takes invariant, when, message, and id")),
         }
         Ok(())
     })?;
-    let missing = |what: &str| meta.error(format!("a rule needs `{what}`"));
-    let id = id.ok_or_else(|| missing("id"))?;
-    if !valid_name(&id.value()) {
-        return Err(Error::new_spanned(
-            &id,
-            "a rule ID matches [A-Za-z][A-Za-z0-9_]*",
-        ));
-    }
-    let invariant = logic_attr(&invariant.ok_or_else(|| missing("invariant"))?)?;
-    let message = message.ok_or_else(|| missing("message"))?;
+    let invariant = logic_attr(&invariant.ok_or_else(|| meta.error("a rule needs `invariant`"))?)?;
+    let id = match id {
+        Some(id) => {
+            if !valid_name(&id.value()) {
+                return Err(Error::new_spanned(
+                    &id,
+                    "a rule ID matches [A-Za-z][A-Za-z0-9_]*",
+                ));
+            }
+            quote! { ::std::option::Option::Some(::rtemis_r8::derive::name(#id)) }
+        }
+        None => quote! { ::std::option::Option::None },
+    };
+    let message = match message {
+        Some(m) => {
+            if m.value().trim().is_empty() {
+                return Err(Error::new_spanned(&m, "a rule's message is not blank"));
+            }
+            quote! { ::std::option::Option::Some(#m.to_string()) }
+        }
+        None => quote! { ::std::option::Option::None },
+    };
     let when = match when {
         Some(w) => {
             let w = logic_attr(&w)?;
@@ -269,10 +282,10 @@ fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
     };
     Ok(quote! {
         ::rtemis_r8::ir::RuleDef {
-            id: ::rtemis_r8::derive::name(#id),
             invariant: #invariant,
             when: #when,
-            message: #message.to_string(),
+            message: #message,
+            id: #id,
         }
     })
 }

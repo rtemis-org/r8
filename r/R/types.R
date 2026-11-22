@@ -413,14 +413,15 @@ type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
 #'
 #' @param columns Named list of fields or field types, or an R8 struct type.
 #' @param open Logical: Accept columns the declaration does not name.
-#' @param rules List: `rule()` calls over a row's columns.
+#' @param rules A `rule()`, or a list of `rule()` calls, over a row's
+#'   columns.
 #'
 #' @return An `r8_field_type`.
 #'
 #' @examples
 #' type_table(
 #'   list(start = type_integer(), width = type_integer(min = 0L)),
-#'   rules = list(rule("END_FITS", start + width - 1 <= 2147483647, "The end fits in an integer."))
+#'   rules = list(rule(start + width - 1 <= 2147483647, message = "The end fits in an integer.", id = "END_FITS"))
 #' )
 #'
 #' @export
@@ -440,5 +441,5 @@ type_table <- function(columns = list(), open = FALSE, rules = list()) {
       class = "r8_declaration_error"
     )
   }
-  declared(r8_ft_table(columns, open, rules))
+  declared(r8_ft_table(columns, open, as_rules(rules)))
 } # /R8::type_table

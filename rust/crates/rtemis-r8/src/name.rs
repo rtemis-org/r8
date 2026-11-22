@@ -480,3 +480,45 @@ mod tests {
         assert!(MethodName::new("labels<-").unwrap().is_replacement());
     }
 }
+
+/// The candidate nearest to `name` by edit distance (Levenshtein, in
+/// characters), when it is within one edit, or two for a name of six
+/// characters or more; the first of equally near candidates.
+pub fn nearest<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    fn distance(a: &str, b: &str) -> usize {
+        let b: Vec<char> = b.chars().collect();
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.chars().enumerate() {
+            let mut prev = row[0];
+            row[0] = i + 1;
+            for (j, &cb) in b.iter().enumerate() {
+                let next = (prev + usize::from(ca != cb))
+                    .min(row[j] + 1)
+                    .min(row[j + 1] + 1);
+                prev = row[j + 1];
+                row[j + 1] = next;
+            }
+        }
+        row[b.len()]
+    }
+    let limit = if name.chars().count() >= 6 { 2 } else { 1 };
+    candidates
+        .into_iter()
+        .map(|c| (distance(name, c), c))
+        .filter(|&(d, c)| d <= limit && c != name)
+        .min_by_key(|&(d, _)| d)
+        .map(|(_, c)| c)
+}
+
+#[cfg(test)]
+mod nearest_tests {
+    use super::nearest;
+
+    #[test]
+    fn nearest_within_the_limit() {
+        assert_eq!(nearest("hj", ["lo", "hi", "values"]), Some("hi"));
+        assert_eq!(nearest("valeus", ["lo", "hi", "values"]), Some("values"));
+        assert_eq!(nearest("mean", ["min", "max"]), None);
+        assert_eq!(nearest("sum", ["sum"]), None);
+    }
+}

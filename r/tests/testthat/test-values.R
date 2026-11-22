@@ -43,12 +43,16 @@ svm_types <- function() {
         )
       ),
       rules = list(
-        rule("RBF_GAMMA", kernel$gamma <= 10, "gamma is at most 10."),
         rule(
-          "RBF_COST",
+          kernel$gamma <= 10,
+          message = "gamma is at most 10.",
+          id = "RBF_GAMMA"
+        ),
+        rule(
           cost <= 100,
-          "cost is at most 100 with the Rbf kernel.",
-          when = is_variant(kernel, "Rbf")
+          when = is_variant(kernel, "Rbf"),
+          message = "cost is at most 100 with the Rbf kernel.",
+          id = "RBF_COST"
         )
       ),
       description = "Support vector machine settings."
@@ -79,8 +83,12 @@ test_that("construction reports every problem with its path and rule", {
   Svm <- t[["Svm"]]
   Kernel <- t[["Kernel"]]
   e <- expect_error(Svm(cost = -1, mtry = 0L), class = "r8_value_error")
-  expect_match(conditionMessage(e), "below_min at /cost")
-  expect_match(conditionMessage(e), "below_min at /mtry")
+  expect_match(
+    conditionMessage(e),
+    "`cost` must be above 0; found -1. [below_min]",
+    fixed = TRUE
+  )
+  expect_identical(e$problems$path, c("/cost", "/mtry"))
   expect_error(
     Svm(kernel = Kernel@Rbf(gamma = 20)),
     "RBF_GAMMA",
@@ -88,7 +96,8 @@ test_that("construction reports every problem with its path and rule", {
   )
   expect_error(
     Kernel@Rbf(gamma = -1),
-    "below_min at /gamma",
+    "`gamma` must be above 0; found -1.",
+    fixed = TRUE,
     class = "r8_value_error"
   )
   expect_error(Svm(cost = NA_real_), "na_value", class = "r8_value_error")
@@ -123,16 +132,16 @@ test_that("a field write runs the rules whose invariant or condition reads the f
       ),
       rules = list(
         rule(
-          "STOP_BELOW_TREES",
           stop_at < n_trees,
-          "stop_at is below n_trees.",
-          when = !is.null(stop_at)
+          when = !is.null(stop_at),
+          message = "stop_at is below n_trees.",
+          id = "STOP_BELOW_TREES"
         ),
         rule(
-          "LOG_NEEDS_VERBOSE",
           verbose == TRUE,
-          "a log file requires verbose output.",
-          when = !is.null(log_file)
+          when = !is.null(log_file),
+          message = "a log file requires verbose output.",
+          id = "LOG_NEEDS_VERBOSE"
         )
       )
     )
@@ -160,7 +169,7 @@ test_that("a redeclared rule applies to the next field write", {
     new_struct(
       "Capped",
       fields = list(n = type_integer()),
-      rules = list(rule("CAP", n <= 10L, "n is at most 10."))
+      rules = list(rule(n <= 10L, message = "n is at most 10.", id = "CAP"))
     )
   })
   x <- Capped(n = 1L)
@@ -169,7 +178,7 @@ test_that("a redeclared rule applies to the next field write", {
     new_struct(
       "Capped",
       fields = list(n = type_integer()),
-      rules = list(rule("CAP", n <= 5L, "n is at most 5."))
+      rules = list(rule(n <= 5L, message = "n is at most 5.", id = "CAP"))
     )
   })
   expect_error(x$n <- 8L, "CAP", class = "r8_value_error")
@@ -450,10 +459,10 @@ test_that("a constructor forces its arguments in order and reports a missing one
         shape = field(Shape, default = Shape@Wide)
       ),
       rules = list(rule(
-        "WIDE",
         w >= h,
-        "wide",
-        when = is_variant(shape, "Wide")
+        when = is_variant(shape, "Wide"),
+        message = "wide",
+        id = "WIDE"
       ))
     )
   })

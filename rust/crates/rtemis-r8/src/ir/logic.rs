@@ -119,6 +119,13 @@ operators! {
     And = "and",
     /// `or`.
     Or = "or",
+    /// `abs`: the absolute value of a number.
+    Abs = "abs",
+    /// `sum`: the sum of an array of numbers, added left to right in
+    /// doubles; the empty sum is 0.
+    Sum = "sum",
+    /// `nchar`: the number of Unicode code points of a string.
+    Nchar = "nchar",
 }
 
 /// A JSONLogic expression of the rule dialect, as declared.

@@ -4,34 +4,134 @@
 \alias{rule}
 \title{Declare a rule}
 \usage{
-rule(id, invariant, message, when = NULL)
+rule(invariant, when = NULL, message = NULL, id = NULL)
 }
 \arguments{
-\item{id}{Character: The rule's ID, an R8 name such as \code{"RBF_GAMMA"}.}
-
 \item{invariant}{Expression: What must hold.}
-
-\item{message}{Character: What a violation means, for the user.}
 
 \item{when}{Optional expression: The condition under which the rule
 applies.}
+
+\item{message}{Optional character: What holds, stated for the user, such
+as \code{"lo is below hi."}; without it, a violation shows the invariant.}
+
+\item{id}{Optional character: The rule's ID, an R8 name such as
+\code{"LO_HI"}, unique among its type's rules, which a violation and
+\code{problems$rule} report.}
 }
 \value{
 An \code{r8_rule}.
 }
 \description{
-A rule states what must hold for a value. The invariant is an R
-expression over the type's fields, captured unevaluated: \code{cost <= 100},
-\code{kernel$gamma <= 10}, \code{is.null(a) || !is.null(b)}. R's \code{==} and \code{!=} are
-strict equality. A rule holds when its \code{when} condition is \code{FALSE}, or when
-a field it reads is absent; \code{is.null()} tests presence and is not a read.
-Inside \code{all()} and \code{any()}, \code{.x} is the element. \code{json_ir()} gives an
-invariant or a condition as JSONLogic text, for JSONLogic without an R
-form.
+A rule states what must hold for a value of a struct, an enum variant, or
+a table row: an R expression over its fields, captured unevaluated,
+compiled when the type is declared, and evaluated in Rust each time a
+value is built or a field it reads is replaced. \code{rule(lo < hi)} is a
+complete rule; \code{message} states the requirement for the user, and \code{id}
+gives the rule a stable name by which code and tests refer to it.
 }
+\section{One field}{
+
+A bound, a set of allowed values, a pattern, or a length on one field is
+an argument of the field's type, checked before any rule:
+\code{type_double(min = 0)}, \code{type_integer(values = 1:3)},
+\code{type_character(pattern = "^[A-Z]")}, \code{vec(type_double(), min_length = 1)}.
+A rule on one field states what those arguments do not: \code{k \%\% 2 == 0},
+\code{abs(x) <= 1}, \code{nchar(name) <= 20}.
+}
+
+\section{Several fields}{
+
+A rule reads any fields by name, and nested fields with \code{$}:
+\code{lo < hi}, \code{lo + hi <= 1}, \code{kernel$gamma <= 10}.
+\code{when} limits a rule to the values for which a condition holds:
+\code{when = is_variant(kernel, "Rbf")}.
+}
+
+\section{Optional fields}{
+
+A rule holds when a field it reads is absent, so a rule over an
+\code{option()} field applies once the field is present. \code{is.null(x)} tests
+presence and is not a read: \code{is.null(a) || !is.null(b)} requires \code{b}
+whenever \code{a} is present.
+}
+
+\section{Vectors}{
+
+\verb{all(x, <condition>)} and \verb{any(x, <condition>)} test a condition on each
+element of the vector \code{x}, with \code{.x} the element: \code{all(values, .x > 0)}.
+A violation of an invariant that is an \code{all()} reports each failing
+element's path. \code{length()}, \code{sum()}, \code{min()}, \code{max()},
+\code{non_decreasing()}, and \code{non_increasing()} read a whole vector, without
+copying it. Paired elements of two vectors are columns of a
+\code{type_table()}, whose \code{rules} apply to each row.
+}
+
+\section{Constants}{
+
+A bare name in a rule is always a field. \code{lit(expr)} is the value of the
+R expression \code{expr}, evaluated once when \code{rule()} runs: \code{cost <= lit(max_cost)}.
+}
+
+\section{Operators and functions}{
+
+Comparisons (\code{==}, \code{!=}, \code{<}, \code{<=}, \code{>}, \code{>=}), arithmetic (\code{+}, \code{-},
+\code{*}, \code{/}, \code{\%\%}), logical operators (\code{&&}, \code{||}, \code{!}; \code{&} and \code{|} are the
+same as \code{&&} and \code{||}), \code{\%in\%}, \code{if}, \code{is.null()}, \code{is_variant()},
+\code{length()}, \code{nchar()}, \code{nrow()}, \code{ncol()}, \code{dim()}, \code{levels()},
+\code{abs()}, \code{floor()}, \code{ceiling()}, \code{round()}, \code{min()}, \code{max()}, \code{sum()},
+\code{all()}, \code{any()}, \code{subset()}, \code{non_decreasing()}, \code{non_increasing()},
+\code{paste0()}, \code{c()} of constants, and \code{lit()}.
+
+Rules follow the strict semantics of R8's rule language, which is the
+same in every host: \code{==} is strict equality, so an integer never equals a
+string; strings do not order; division by zero is an error; and \code{==} on a
+double computed by arithmetic or \code{sum()} is a declaration error, since
+rounding makes it inexact: \code{abs(sum(p) - 1) <= 1e-9} states the
+tolerance.
+}
+
+\section{Violations}{
+
+A violation is an \code{r8_value_error} that shows the rule's ID and message,
+when it has them, the path, the rule in R, and the values it read: the scalar fields, the
+length or dimensions of larger fields, computed operands such as
+\code{sum(p)}, and the failing elements \code{.x} of an \code{all()}. A field declared
+\code{field(..., sensitive = TRUE)} shows as \verb{<sensitive>}, and
+\code{options(r8.show_values = FALSE)} shows no values. The condition's field
+\code{problems} is a data frame of the problems: \code{code}, \code{path}, \code{rule},
+\code{message}, \code{rule_index} (the rule's position among its type's rules), and
+the list column \code{diagnosis}.
+}
+
 \examples{
-rule("COST_MAX", cost <= 100, "cost is at most 100.")
-rule("RBF_COST", cost <= 100, "cost is at most 100 with the Rbf kernel.",
-  when = is_variant(kernel, "Rbf"))
+op <- options(r8.namespace = "demo")
+max_cost <- 100
+Kernel <- new_enum(
+  "Kernel",
+  variants = list(
+    Linear = variant(),
+    Rbf = variant(fields = list(gamma = type_double(exclusive_min = 0)))
+  )
+)
+Model <- new_struct(
+  "Model",
+  fields = list(
+    cost = type_double(min = 0),
+    kernel = Kernel,
+    lo = type_double(),
+    hi = type_double(),
+    weights = vec(type_double(min = 0))
+  ),
+  rules = list(
+    rule(lo < hi),
+    rule(cost <= lit(max_cost), message = "cost is at most max_cost."),
+    rule(abs(sum(weights) - 1) <= 1e-9, message = "weights sum to 1.", id = "WEIGHTS"),
+    rule(kernel$gamma <= 10, when = is_variant(kernel, "Rbf"), message = "gamma is at most 10.")
+  )
+)
+Model(cost = 1, kernel = Kernel@Linear, lo = 0, hi = 1, weights = c(0.5, 0.5))
+try(Model(cost = 1, kernel = Kernel@Linear, lo = 2, hi = 1, weights = 1))
+options(op)
 
 }

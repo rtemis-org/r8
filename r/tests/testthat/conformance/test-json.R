@@ -25,11 +25,8 @@ test_that("a document outside the type reports its problems", {
   p <- conformance_provider()
   json <- to_json(conform_value(p))
   bad <- sub('"ratio":0.5', '"ratio":2', json, fixed = TRUE)
-  expect_error(
-    r8_from_json(p[["Conform"]], bad),
-    "above_max at /ratio",
-    class = "r8_value_error"
-  )
+  e <- expect_error(r8_from_json(p[["Conform"]], bad), class = "r8_value_error")
+  expect_identical(paste(e$problems$code, e$problems$path), "above_max /ratio")
   ruled <- sub('"seed":1', '"seed":7', json, fixed = TRUE)
   expect_error(
     r8_from_json(p[["Conform"]], ruled),

@@ -77,7 +77,10 @@ fn encode_error(message: String) -> ValueError {
         code: "encode_failed",
         path: String::new(),
         rule: None,
+        rule_index: None,
         message,
+        diagnosis: None,
+        ..Default::default()
     }
 }
 

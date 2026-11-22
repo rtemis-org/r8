@@ -15,6 +15,7 @@
 //! and `any`; inside `all()` and `any()`, `.x` is the element.
 
 mod compile;
+mod diagnose;
 mod eval;
 mod ty;
 
@@ -23,6 +24,7 @@ use serde_json::Value;
 use crate::access::{Access, Json};
 
 pub use compile::RuleError;
+pub use diagnose::{Diagnosis, SHOWN_CHARS, Shown};
 pub use ty::{DocumentSet, Ty, TypeLookup};
 
 use compile::{Expr, Root, Step, compile, compile_computed};
@@ -35,10 +37,10 @@ use crate::name::Name;
 /// A rule compiled against its scope.
 #[derive(Debug, Clone)]
 pub struct CompiledRule {
-    /// The rule's ID.
-    pub id: Name,
-    /// The message of a violation.
-    pub message: String,
+    /// The rule's ID, if it has one.
+    pub id: Option<Name>,
+    /// The rule's message, if it has one.
+    pub message: Option<String>,
     invariant: Expr,
     when: Option<Expr>,
     /// The fields the invariant and the condition read, presence tests
@@ -51,24 +53,24 @@ pub struct CompiledRule {
 pub enum Outcome {
     /// The rule holds.
     Holds,
-    /// The rule is violated; each path is a JSON Pointer relative to the
-    /// value checked: `""` for the value itself, and for an invariant that is
-    /// an `all()`, the path of each failing element.
-    Violated(Vec<String>),
+    /// The rule is violated; each path is relative to the value checked:
+    /// empty for the value itself, and for an invariant that is an `all()`,
+    /// the path of each failing element.
+    Violated(Vec<Vec<crate::problem::Segment>>),
 }
 
-fn var_pointer(steps: &[Step]) -> Option<String> {
-    let mut out = String::new();
-    for s in steps {
-        match s {
-            Step::Member(k) => {
-                out.push_str(&format!("/{}", k.replace('~', "~0").replace('/', "~1")))
-            }
+fn var_segments(steps: &[Step]) -> Option<Vec<crate::problem::Segment>> {
+    use crate::problem::Segment;
+    steps
+        .iter()
+        .map(|s| match s {
+            Step::Field(k) => Some(Segment::Field(k.clone())),
+            Step::Key(k) => Some(Segment::Key(k.clone())),
+            Step::Column(k) => Some(Segment::Column(k.clone())),
             // The position of a key in an ordered map is known at run time.
-            Step::OrderedKey(_) => return None,
-        }
-    }
-    Some(out)
+            Step::OrderedKey(_) => None,
+        })
+        .collect()
 }
 
 impl CompiledRule {
@@ -158,7 +160,10 @@ impl CompiledRule {
         }
     }
 
-    fn violation_paths<'a, A: Access<'a>>(&self, env: &Env<'_, A>) -> Result<Vec<String>, String> {
+    fn violation_paths<'a, A: Access<'a>>(
+        &self,
+        env: &Env<'_, A>,
+    ) -> Result<Vec<Vec<crate::problem::Segment>>, String> {
         let Expr::Quantifier {
             all: true,
             collection,
@@ -166,20 +171,20 @@ impl CompiledRule {
             condition,
         } = &self.invariant
         else {
-            return Ok(vec![String::new()]);
+            return Ok(vec![Vec::new()]);
         };
         let Expr::Var {
             root: Root::Data,
             steps,
         } = collection.as_ref()
         else {
-            return Ok(vec![String::new()]);
+            return Ok(vec![Vec::new()]);
         };
-        let Some(base) = var_pointer(steps) else {
-            return Ok(vec![String::new()]);
+        let Some(base) = var_segments(steps) else {
+            return Ok(vec![Vec::new()]);
         };
         let Ok(c) = env.eval(collection)? else {
-            return Ok(vec![String::new()]);
+            return Ok(vec![Vec::new()]);
         };
         let mut failing = Vec::new();
         env.each_element(c, *kind, &mut |suffix, el| {
@@ -192,7 +197,9 @@ impl CompiledRule {
             if let Ok(v) = e.eval(condition)?
                 && truth(&e, v) == Some(false)
             {
-                failing.push(format!("{base}{suffix}"));
+                let mut path = base.clone();
+                path.extend(suffix.segments());
+                failing.push(path);
             }
             // One path past the limit marks the list as truncated.
             Ok(failing.len() <= crate::validate::ERROR_LIMIT)
@@ -201,7 +208,7 @@ impl CompiledRule {
     }
 
     /// Checks a table's row rule against every row of the table's JSON form.
-    pub fn check_rows(&self, table: &Value) -> Result<Vec<String>, String> {
+    pub fn check_rows(&self, table: &Value) -> Result<Vec<Vec<crate::problem::Segment>>, String> {
         let rows = table
             .get("$length")
             .and_then(Value::as_u64)
@@ -212,24 +219,27 @@ impl CompiledRule {
     /// Checks a table's row rule against rows `0..rows` of a table in any
     /// host form, whose columns are `scope`. Each violation's path is the
     /// cell of the first column the rule reads, relative to the table, such
-    /// as `/start/4`; a rule that reads no column reports the row number
-    /// alone.
+    /// as the column `start` and the row 4; a rule that reads no column
+    /// reports the row alone.
     pub fn check_rows_access<'a, A: Access<'a>>(
         &self,
         table: A,
         rows: usize,
         scope: &[FieldDef],
         lookup: &dyn TypeLookup,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<Vec<crate::problem::Segment>>, String> {
+        use crate::problem::Segment;
         let first =
             first_column(&self.invariant).or_else(|| self.when.as_ref().and_then(first_column));
         let mut paths = Vec::new();
         for i in 0..rows {
             if let Outcome::Violated(_) = self.check_access(table.row(i), scope, lookup)? {
-                paths.push(match &first {
-                    Some(c) => format!("/{}/{i}", c.replace('~', "~0").replace('/', "~1")),
-                    None => format!("/{i}"),
-                });
+                let mut path = Vec::with_capacity(2);
+                if let Some(c) = &first {
+                    path.push(Segment::Column(c.clone()));
+                }
+                path.push(Segment::Element(i as u64));
+                paths.push(path);
                 // One path past the limit marks the list as truncated.
                 if paths.len() > crate::validate::ERROR_LIMIT {
                     break;
@@ -401,7 +411,7 @@ fn first_column(e: &Expr) -> Option<String> {
             root: Root::Data,
             steps,
         } => match steps.first() {
-            Some(Step::Member(k)) => Some(k.clone()),
+            Some(Step::Field(k) | Step::Column(k)) => Some(k.clone()),
             _ => None,
         },
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {

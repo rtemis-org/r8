@@ -11,7 +11,7 @@
 //! format. Every struct is destructured without `..`, every enum tag is an
 //! explicit literal, and the writer's methods are typed, so a change to an
 //! IR type fails to compile here until the format accounts for it. The
-//! encoder writes [`FORMAT`]; a decoder per format version reads into the
+//! encoder writes [`FORMAT`], the one format the decoder reads, into the
 //! current IR types. Optional members and booleans pack into one flag byte
 //! per node, whose unused bits are rejected; varints are canonical; every
 //! length is checked against the bytes that remain; trees have a depth
@@ -34,7 +34,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -76,8 +76,8 @@ pub enum DeclarationRef<'a> {
 pub enum RecordError {
     /// The bytes do not start with [`MAGIC`].
     Magic,
-    /// The record's format version is newer than this crate reads; `writer`
-    /// is the version of `rtemis-r8` that wrote it.
+    /// The record's format version is another than [`FORMAT`]; `writer` is
+    /// the version of `rtemis-r8` that wrote it.
     Newer {
         /// The record's format version.
         format: u32,
@@ -110,7 +110,7 @@ impl fmt::Display for RecordError {
             RecordError::Magic => f.write_str("the bytes are not an R8 declaration record"),
             RecordError::Newer { format, writer } => write!(
                 f,
-                "the record has format {format}, written by rtemis-r8 {writer}; this rtemis-r8 {} reads format {FORMAT} and earlier",
+                "the record has format {format}, written by rtemis-r8 {writer}; this rtemis-r8 {} reads format {FORMAT}; reinstall the package that holds the record",
                 env!("CARGO_PKG_VERSION")
             ),
             RecordError::Checksum => {
@@ -240,7 +240,7 @@ operator_tags! {
     10 Add, 11 Sub, 12 Mul, 13 Div, 14 Mod, 15 Min, 16 Max, 17 In, 18 Cat, 19 Length,
     20 Subset, 21 NonIncreasing, 22 NonDecreasing, 23 Floor, 24 Ceiling, 25 Round,
     26 Nrow, 27 Ncol, 28 Dim, 29 IsNull, 30 IsVariant, 31 Levels, 32 All, 33 Any,
-    34 If, 35 And, 36 Or,
+    34 If, 35 And, 36 Or, 37 Abs, 38 Sum, 39 Nchar,
 }
 
 /// A number at the tags `base` (a `u64`), `base + 1` (a negative `i64`), and
@@ -621,18 +621,22 @@ fn w_field(w: &mut W, f: &FieldDef) {
 
 fn w_rule(w: &mut W, r: &RuleDef) {
     let RuleDef {
-        id,
         invariant,
         when,
         message,
+        id,
     } = r;
-    w.name(id);
-    w.u8(u8::from(when.is_some()));
+    w.u8(u8::from(when.is_some()) | u8::from(message.is_some()) << 1 | u8::from(id.is_some()) << 2);
     w_logic(w, invariant);
     if let Some(x) = when {
         w_logic(w, x);
     }
-    w.str(message);
+    if let Some(m) = message {
+        w.str(m);
+    }
+    if let Some(i) = id {
+        w.name(i);
+    }
 }
 
 fn w_step(w: &mut W, s: &MigrationStep) {
@@ -1368,15 +1372,20 @@ fn r_field(r: &mut R) -> Res<FieldDef> {
 }
 
 fn r_rule(r: &mut R) -> Res<RuleDef> {
-    let id = r.name()?;
-    let f = r.flags(1, "rule")?;
+    let f = r.flags(7, "rule")?;
     let invariant = r_logic(r)?;
-    let when = if f != 0 { Some(r_logic(r)?) } else { None };
+    let when = if f & 1 != 0 { Some(r_logic(r)?) } else { None };
+    let message = if f & 2 != 0 {
+        Some(r.str()?.to_owned())
+    } else {
+        None
+    };
+    let id = if f & 4 != 0 { Some(r.name()?) } else { None };
     Ok(RuleDef {
-        id,
         invariant,
         when,
-        message: r.str()?.to_owned(),
+        message,
+        id,
     })
 }
 
@@ -1573,8 +1582,8 @@ fn r_impl(r: &mut R) -> Res<ImplDef> {
     })
 }
 
-/// Reads the payload of format 1.
-fn r_payload_v1(r: &mut R) -> Res<Vec<Entry>> {
+/// Reads the payload of format 2.
+fn r_payload_v2(r: &mut R) -> Res<Vec<Entry>> {
     r.seq(2, |r| {
         let namespace = r.name()?;
         let declaration = match r.u8()? {
@@ -1607,7 +1616,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Entry>, RecordError> {
     let mut r = R { b: rest, depth: 0 };
     let format = r.u32()?;
     let writer = r.str()?;
-    if format > FORMAT || format == 0 {
+    if format != FORMAT {
         return Err(RecordError::Newer {
             format,
             writer: writer.to_string(),
@@ -1622,7 +1631,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Entry>, RecordError> {
         depth: 0,
     };
     let entries = match format {
-        1 => r_payload_v1(&mut r)?,
+        2 => r_payload_v2(&mut r)?,
         _ => unreachable!("format checked above"),
     };
     if !r.b.is_empty() {

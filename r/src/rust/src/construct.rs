@@ -713,16 +713,7 @@ fn table(x: SEXP, columns: &[FieldDef]) -> Result<Option<Robj>> {
     }
 }
 
-pub(crate) fn errors_list(errors: &[ValueError]) -> List {
-    let code: Vec<String> = errors.iter().map(|e| e.code.to_string()).collect();
-    let path: Vec<String> = errors.iter().map(|e| e.path.clone()).collect();
-    let rule: Vec<String> = errors
-        .iter()
-        .map(|e| e.rule.as_ref().map(|r| r.to_string()).unwrap_or_default())
-        .collect();
-    let message: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
-    list!(code = code, path = path, rule = rule, message = message)
-}
+pub(crate) use crate::values::errors_list;
 
 /// The attribute vectors every value of one type, or of one enum variant,
 /// carries: preserved, marked not mutable, and shared by the values, so a
@@ -921,23 +912,24 @@ pub(crate) fn assemble(
 #[extendr]
 fn r8_new_value(fields: Robj, type_name: &str, variant: &str) -> Result<Robj> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+    let docs = registry().snapshot();
     if docs.find(&q).is_none() {
         return problems(&[ValueError {
             code: "type_unregistered",
             path: String::new(),
             rule: None,
+            rule_index: None,
             message: format!("`{q}` is not registered"),
+            diagnosis: None,
+            ..Default::default()
         }]);
     }
     let x = unsafe { fields.get() };
-    let errors = with_cache(|cache| validate_access(RView::Draft(x, variant), &q, &**docs, cache));
+    let errors = with_cache(|cache| validate_access(RView::Draft(x, variant), &q, &*docs, cache));
     if !errors.is_empty() {
         return problems(&errors);
     }
-    assemble(x, &q, variant, &**docs)
+    assemble(x, &q, variant, &*docs)
 }
 
 /// `list(errors = <problems>)` with the class `r8_problems`, which no R8
@@ -968,10 +960,8 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
     let type_name = attr_string(xs, sym_r8_type()).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
     let variant = attr_string(xs, sym_r8_variant());
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let lookup: &dyn TypeLookup = &**docs;
+    let docs = registry().snapshot();
+    let lookup: &dyn TypeLookup = &*docs;
     let def = lookup
         .find(&q)
         .ok_or_else(|| fail(format!("`{q}` is not registered")))?;
@@ -1007,11 +997,16 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
             Some(d) => default_r(d, &f.ty, lookup, (&q, variant.as_deref().unwrap_or(""), k))?,
             None if matches!(f.ty, FieldType::Option { .. }) => nil(),
             None => {
+                let segments = vec![rtemis_r8::problem::Segment::Field(name.to_string())];
+                let problem = rtemis_r8::problem::Problem::Required;
+                let message = problem.sentence(&segments, None, None, &rtemis_r8::problem::Neutral);
                 return problems(&[ValueError {
                     code: "missing_field",
                     path: at,
-                    rule: None,
-                    message: format!("field `{name}` is required"),
+                    message,
+                    segments,
+                    problem: Some(problem),
+                    ..Default::default()
                 }]);
             }
         }
@@ -1022,6 +1017,16 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
         if !errors.is_empty() {
             for e in &mut errors {
                 e.path = format!("{at}{}", e.path);
+                e.segments
+                    .insert(0, rtemis_r8::problem::Segment::Field(name.to_string()));
+                if let Some(p) = &e.problem {
+                    e.message = p.sentence(
+                        &e.segments,
+                        e.found.as_ref(),
+                        e.suggestion.as_deref(),
+                        &rtemis_r8::problem::Neutral,
+                    );
+                }
             }
             return problems(&errors);
         }
@@ -1101,7 +1106,7 @@ fn reading_rule_errors(
     let mut errors = Vec::new();
     if !rules.is_empty() {
         with_cache(|cache| {
-            for r in rules {
+            for (ri, r) in rules.iter().enumerate() {
                 let Some(rule) = cache.compiled(r, fields, lookup) else {
                     // A rule that does not compile, which a change to a type
                     // it reads can cause, is reported by the writes of the
@@ -1115,8 +1120,11 @@ fn reading_rule_errors(
                     errors.push(ValueError {
                         code: "rule_invalid",
                         path: String::new(),
-                        rule: Some(r.id.clone()),
-                        message: format!("rule `{}` does not compile; check the declaration", r.id),
+                        rule: r.id.clone(),
+                        rule_index: Some(ri),
+                        message: format!("rule {ri} does not compile; check the declaration"),
+                        diagnosis: None,
+                        ..Default::default()
                     });
                     continue;
                 };
@@ -1126,20 +1134,33 @@ fn reading_rule_errors(
                 match rule.check_access(RView::Whole(os), fields, lookup) {
                     Ok(rtemis_r8::rules::Outcome::Holds) => {}
                     Ok(rtemis_r8::rules::Outcome::Violated(paths)) => {
-                        for p in paths {
+                        for (k, p) in paths.into_iter().enumerate() {
+                            let diagnosis = (k < rtemis_r8::validate::DIAGNOSED).then(|| {
+                                rtemis_r8::validate::diagnosis(
+                                    r,
+                                    rule.diagnose_access(RView::Whole(os), fields, lookup, &p),
+                                )
+                            });
                             errors.push(ValueError {
                                 code: "rule_violation",
-                                path: p,
-                                rule: Some(rule.id.clone()),
-                                message: rule.message.clone(),
+                                path: rtemis_r8::problem::pointer(&p),
+                                segments: p,
+                                rule: rule.id.clone(),
+                                rule_index: Some(ri),
+                                message: rule.message.clone().unwrap_or_default(),
+                                diagnosis,
+                                ..Default::default()
                             });
                         }
                     }
                     Err(e) => errors.push(ValueError {
                         code: "rule_error",
                         path: String::new(),
-                        rule: Some(rule.id.clone()),
+                        rule: rule.id.clone(),
+                        rule_index: Some(ri),
                         message: e,
+                        diagnosis: None,
+                        ..Default::default()
                     }),
                 }
             }

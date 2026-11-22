@@ -43,12 +43,16 @@ test_that("Kernel and Svm declared in R produce the IR of the fixture", {
         )
       ),
       rules = list(
-        rule("RBF_GAMMA", kernel$gamma <= 10, "gamma is at most 10."),
         rule(
-          "RBF_COST",
+          kernel$gamma <= 10,
+          message = "gamma is at most 10.",
+          id = "RBF_GAMMA"
+        ),
+        rule(
           cost <= 100,
-          "cost is at most 100 with the Rbf kernel.",
-          when = is_variant(kernel, "Rbf")
+          when = is_variant(kernel, "Rbf"),
+          message = "cost is at most 100 with the Rbf kernel.",
+          id = "RBF_COST"
         )
       ),
       description = "Support vector machine settings.",
@@ -136,7 +140,7 @@ test_that("declaration errors name the problem and its location", {
       new_struct(
         "S",
         fields = list(k = K),
-        rules = list(rule("R", k == "B", "m"))
+        rules = list(rule(k == "B", message = "m", id = "R"))
       )
     }),
     class = "r8_declaration_error"
@@ -152,7 +156,7 @@ test_that("declaration errors name the problem and its location", {
           dose_mg = field(type_double(), unit = "mg"),
           max_g = field(type_double(), unit = "g")
         ),
-        rules = list(rule("DOSE", dose_mg <= max_g, "m"))
+        rules = list(rule(dose_mg <= max_g, message = "m", id = "DOSE"))
       )
     ),
     "rule_unit",
@@ -196,8 +200,16 @@ test_that("a numeric type takes one bound per side", {
     )
   })
   expect_identical(T(p = 1, n = 9L)$n, 9L)
-  expect_error(T(p = 0, n = 1L), "is not above 0", class = "r8_value_error")
-  expect_error(T(p = 0.5, n = 10L), "is not below 10", class = "r8_value_error")
+  expect_error(
+    T(p = 0, n = 1L),
+    "must be above 0; found 0",
+    class = "r8_value_error"
+  )
+  expect_error(
+    T(p = 0.5, n = 10L),
+    "must be below 10; found 10",
+    class = "r8_value_error"
+  )
 })
 
 test_that("a unit variant is an R8 value, and an unknown variant is an error", {
@@ -260,11 +272,23 @@ test_that("a type object outside a package carries its record, which registers i
 })
 
 test_that("a restored registry takes back the declarations made after its save", {
-  R8:::r8_registry_save()
+  token <- R8:::r8_registry_save()
   Q <- declare_in("restore", new_struct("Q", fields = list(x = type_double())))
   expect_true(R8:::r8_is_registered("restore::Q"))
-  R8:::r8_registry_restore()
+  R8:::r8_registry_restore(token)
   expect_false(R8:::r8_is_registered("restore::Q"))
+  # A token other than the most recent save's is an error.
+  outer <- R8:::r8_registry_save()
+  inner <- R8:::r8_registry_save()
+  expect_error(R8:::r8_registry_release(outer), "reverse order")
+  R8:::r8_registry_release(inner)
+  R8:::r8_registry_release(outer)
+  # The namespace claims made after a save are taken back too.
+  token <- R8:::r8_registry_save()
+  expect_identical(R8:::r8_claim_namespace("restoreclaim", "pkgA"), "")
+  R8:::r8_registry_restore(token)
+  expect_identical(R8:::r8_namespace_owner("restoreclaim"), "")
+  expect_identical(R8:::r8_claim_namespace("restoreclaim", "pkgB"), "")
   # The type object carries its record, which registers it again.
   expect_identical(Q(x = 1)$x, 1)
 })
@@ -466,7 +490,7 @@ test_that("the check of a whole namespace finds a type a replacement invalidates
     new_struct(
       "A",
       fields = list(b = B),
-      rules = list(rule("POSITIVE", b$x > 0, "b$x is positive."))
+      rules = list(rule(b$x > 0, message = "b$x is positive.", id = "POSITIVE"))
     )
   })
   expect_length(R8:::r8_check_namespaces("replaced")[["code"]], 0L)
@@ -484,7 +508,7 @@ test_that("declaring a type takes time independent of the namespace's size", {
       new_struct(
         paste0("T", i),
         fields = list(a = type_double(min = 0), b = vec(type_integer())),
-        rules = list(rule("ORDER", a >= 0, "a is not negative."))
+        rules = list(rule(a >= 0, message = "a is not negative.", id = "ORDER"))
       )
     )
   }
@@ -578,10 +602,10 @@ test_that("a field with a reserved name fails as a declaration, with its code an
 })
 
 test_that("an integer beyond 2^53 in a rule keeps its value through R", {
-  r <- rule("BIG", a < json_ir("9007199254740993"), "m")
+  r <- rule(a < json_ir("9007199254740993"), message = "m", id = "BIG")
   expect_s3_class(r$invariant[["<"]][[2L]], "r8_int64")
   expect_identical(unclass(r$invariant[["<"]][[2L]]), "9007199254740993")
-  r2 <- rule("BIG2", a < int64("9007199254740993"), "m")
+  r2 <- rule(a < int64("9007199254740993"), message = "m", id = "BIG2")
   expect_identical(r2$invariant, r$invariant)
   expect_error(int64("1.5"), class = "r8_declaration_error")
 })
@@ -630,10 +654,36 @@ test_that("a rule's number beyond 2^53 is a declaration error", {
       new_struct(
         "Big",
         fields = list(a = type_double()),
-        rules = list(rule("TOO_BIG", a < int64("9007199254740993"), "m"))
+        rules = list(rule(
+          a < int64("9007199254740993"),
+          message = "m",
+          id = "TOO_BIG"
+        ))
       )
     ),
     class = "r8_declaration_error"
   )
   expect_match(conditionMessage(e), "rule_number", fixed = TRUE)
+})
+
+test_that("variant() refuses parts it would drop", {
+  declare_in("variantparts", {
+    S <- new_struct("S", fields = list(x = type_double()))
+    expect_error(
+      variant(of = S, fields = list(y = type_double())),
+      "takes no fields of its own",
+      class = "r8_declaration_error"
+    )
+    expect_error(
+      variant(of = S, rules = rule(x > 0)),
+      "takes no rules of its own",
+      class = "r8_declaration_error"
+    )
+    expect_error(
+      variant(rules = rule(x > 0)),
+      "a variant without fields takes no rules",
+      class = "r8_declaration_error"
+    )
+    expect_s3_class(variant(of = S), "r8_variant")
+  })
 })

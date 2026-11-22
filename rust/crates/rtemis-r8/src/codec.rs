@@ -443,7 +443,10 @@ fn document_error(code: &'static str, path: &str, message: String) -> ValueError
         code,
         path: path.to_string(),
         rule: None,
+        rule_index: None,
         message,
+        diagnosis: None,
+        ..Default::default()
     }
 }
 

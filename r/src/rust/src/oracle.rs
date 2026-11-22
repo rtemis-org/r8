@@ -98,9 +98,7 @@ fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<Lis
 #[extendr]
 fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+    let docs = registry().snapshot();
     let docs: &DocumentSet = &docs;
     let result = read_document(text, &q, docs).and_then(|v| {
         let canonical = rtemis_r8::codec::canonical(&v, &q, docs)?;

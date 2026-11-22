@@ -10,34 +10,417 @@
 # %% problems_message ----
 #' The message of a list of problems
 #'
-#' @param errors List: `code`, `path`, `rule`, and `message` vectors.
+#' One entry per problem; the violations of one rule at several paths, such
+#' as the failing elements of an `all()`, form one entry. A rule violation
+#' adds a line with the rule's expression in R and, unless the option
+#' `r8.show_values` is `FALSE`, the values the rule read: its fields, its
+#' computed operands, and the failing elements `.x`, as the core collects
+#' them for the first violations of each rule.
 #'
-#' @return Character: One line per problem.
+#' @param errors List: `code`, `path`, `rule`, `message`, and optionally
+#'   `diagnosis` vectors.
+#'
+#' @return Character: The message lines, joined.
 #'
 #' @keywords internal
 #' @noRd
 problems_message <- function(errors) {
-  where <- ifelse(
-    nzchar(errors[["path"]]),
-    paste0(" at ", errors[["path"]]),
-    ""
+  n <- length(errors[["code"]])
+  diagnosis <- errors[["diagnosis"]]
+  if (is.null(diagnosis)) {
+    diagnosis <- vector("list", n)
+  }
+  rule <- errors[["rule"]] %||% rep(NA_character_, n)
+  index <- errors[["rule_index"]] %||% rep(NA_integer_, n)
+  show <- !isFALSE(getOption("r8.show_values"))
+  is_rule <- errors[["code"]] == "rule_violation"
+  key <- ifelse(
+    is_rule,
+    paste(rule, index, errors[["message"]], sep = "\r"),
+    paste0("\r", seq_len(n))
   )
-  rule <- ifelse(
-    nzchar(errors[["rule"]]),
-    paste0(" (rule ", errors[["rule"]], ")"),
-    ""
-  )
-  paste0(
-    "- ",
-    errors[["message"]],
-    rule,
-    " [",
-    errors[["code"]],
-    where,
-    "]",
-    collapse = "\n"
-  )
+  out <- character()
+  for (k in unique(key)) {
+    i <- which(key == k)
+    first <- i[[1L]]
+    paths <- errors[["path"]][i]
+    if (!is.null(errors[["where"]])) {
+      paths <- errors[["where"]][i]
+    }
+    where <- paths_text(paths[nzchar(paths)])
+    bracket <- paste0(
+      " [",
+      errors[["code"]][[first]],
+      if (nzchar(where)) paste0(" at ", where),
+      "]"
+    )
+    if (!is_rule[[first]]) {
+      id <- rule[[first]]
+      hint <- errors[["hint"]][[first]]
+      code_only <- !is.null(errors[["where"]])
+      out <- c(
+        out,
+        paste0(
+          "- ",
+          errors[["message"]][[first]],
+          if (!is.null(hint) && !is.na(hint)) paste0(" ", hint),
+          if (!is.na(id)) paste0(" (rule ", id, ")"),
+          if (code_only) {
+            paste0(" [", errors[["code"]][[first]], "]")
+          } else {
+            bracket
+          }
+        )
+      )
+      next
+    }
+    has <- !vapply(diagnosis[i], is.null, logical(1))
+    head <- paste0(
+      "- Rule",
+      if (!is.na(rule[[first]])) paste0(" ", rule[[first]]),
+      ":"
+    )
+    line <- if (any(has)) {
+      diagnosis_line(diagnosis[i][has], paths[has], show)
+    } else {
+      NULL
+    }
+    message <- errors[["message"]][[first]]
+    if (nzchar(message)) {
+      out <- c(
+        out,
+        paste0(head, " ", message, bracket),
+        if (!is.null(line)) paste0("  ", line)
+      )
+    } else {
+      out <- c(
+        out,
+        paste0(
+          head,
+          " ",
+          if (is.null(line)) "the rule does not hold" else line,
+          ".",
+          bracket
+        )
+      )
+    }
+  }
+  paste(out, collapse = "\n")
 } # /R8::problems_message
+
+
+# %% paths_text ----
+#' The paths of one entry of a problem message
+#'
+#' @param paths Character: JSON Pointers.
+#'
+#' @return Character: The first three, and the count of the others.
+#'
+#' @keywords internal
+#' @noRd
+paths_text <- function(paths) {
+  if (length(paths) <= 3L) {
+    return(paste(paths, collapse = ", "))
+  }
+  paste0(
+    paste(paths[1:3], collapse = ", "),
+    ", and ",
+    length(paths) - 3L,
+    " more"
+  )
+} # /R8::paths_text
+
+
+# %% diagnosis_line ----
+#' The line of a rule violation's diagnosis
+#'
+#' @param d List: The diagnoses of one entry, as `errors_list()` writes them.
+#' @param paths Character: The path of each diagnosis.
+#' @param show Logical: Show the values.
+#'
+#' @return Character: The rule's expression and, with `show`, the values
+#'   after "found".
+#'
+#' @keywords internal
+#' @noRd
+diagnosis_line <- function(d, paths, show) {
+  first <- d[[1L]]
+  expr <- logic_text(first[["invariant"]])
+  if (!is.null(first[["when"]])) {
+    expr <- paste0(expr, ", when ", logic_text(first[["when"]]))
+  }
+  if (!show) {
+    return(expr)
+  }
+  ops <- first[["operands"]]
+  values <- c(
+    first[["fields"]],
+    if (length(ops) > 0L) {
+      paste0(
+        vapply(
+          names(ops),
+          function(p) logic_text(logic_at(first[["invariant"]], p)),
+          character(1)
+        ),
+        " = ",
+        unname(ops)
+      )
+    }
+  )
+  elements <- unlist(lapply(seq_along(d), function(j) {
+    if (!is.null(d[[j]][["element"]])) {
+      paste0(d[[j]][["element"]], " at ", paths[[j]])
+    }
+  }))
+  if (length(elements) == 0L && length(d) > 1L && nzchar(paths[[1L]])) {
+    values <- c(values, paste0("at ", paths[[1L]]))
+  }
+  values <- c(values, elements)
+  paste0(
+    expr,
+    if (length(values) > 0L) paste0("; found ", paste(values, collapse = ", "))
+  )
+} # /R8::diagnosis_line
+
+
+# %% logic_text ----
+#' A rule expression as R text
+#'
+#' @param x A JSONLogic expression, as the lists `rule()` builds.
+#'
+#' @return Character: The R expression, or the JSON text of an expression
+#'   without an R form.
+#'
+#' @keywords internal
+#' @noRd
+logic_text <- function(x) {
+  e <- tryCatch(logic_to_r(x), error = function(e) NULL)
+  if (is.null(e)) {
+    return(r8_ir_json(x))
+  }
+  paste(deparse(e, width.cutoff = 500L), collapse = " ")
+} # /R8::logic_text
+
+
+# %% logic_at ----
+#' The subexpression at a JSON Pointer
+#'
+#' @param x A JSONLogic expression, as the lists `rule()` builds.
+#' @param pointer Character: A JSON Pointer into `x`, such as `"/<=/0"`.
+#'
+#' @return The subexpression.
+#'
+#' @keywords internal
+#' @noRd
+logic_at <- function(x, pointer) {
+  for (seg in strsplit(sub("^/", "", pointer), "/", fixed = TRUE)[[1L]]) {
+    seg <- gsub("~1", "/", gsub("~0", "~", seg, fixed = TRUE), fixed = TRUE)
+    x <- if (grepl("^[0-9]+$", seg) && is.null(names(x))) {
+      x[[as.integer(seg) + 1L]]
+    } else {
+      x[[seg]]
+    }
+  }
+  x
+} # /R8::logic_at
+
+
+# %% problems_data ----
+#' The problems of a value error, for its condition object
+#'
+#' @param errors List: As `problems_message()` takes it.
+#'
+#' @return A data frame: `code`, `path`, `rule`, `rule_index`, `message`,
+#'   `where` (the path in R), `suggestion`, and `hint`, and, unless
+#'   the option `r8.show_values` is `FALSE`, the list column `diagnosis`.
+#'
+#' @keywords internal
+#' @noRd
+problems_data <- function(errors) {
+  n <- length(errors[["code"]])
+  out <- data.frame(
+    code = errors[["code"]],
+    path = errors[["path"]],
+    rule = errors[["rule"]] %||% rep(NA_character_, n),
+    rule_index = errors[["rule_index"]] %||% rep(NA_integer_, n),
+    message = errors[["message"]],
+    where = errors[["where"]] %||% rep(NA_character_, n),
+    suggestion = errors[["suggestion"]] %||% rep(NA_character_, n),
+    hint = errors[["hint"]] %||% rep(NA_character_, n)
+  )
+  if (
+    !isFALSE(getOption("r8.show_values")) && !is.null(errors[["diagnosis"]])
+  ) {
+    out[["diagnosis"]] <- errors[["diagnosis"]]
+  }
+  out
+} # /R8::problems_data
+
+
+# %% problem_keys ----
+#' The entry of each problem in a message
+#'
+#' @param errors List: As `problems_message()` takes it.
+#'
+#' @return Character: One key per problem; the violations of one rule share
+#'   a key.
+#'
+#' @keywords internal
+#' @noRd
+problem_keys <- function(errors) {
+  n <- length(errors[["code"]])
+  ifelse(
+    errors[["code"]] == "rule_violation",
+    paste(
+      errors[["rule"]] %||% rep(NA_character_, n),
+      errors[["rule_index"]] %||% rep(NA_integer_, n),
+      errors[["message"]],
+      sep = "\r"
+    ),
+    paste0("\r", seq_len(n))
+  )
+} # /R8::problem_keys
+
+
+# %% coercion_hints ----
+#' Hints for the R objects behind a value's problems
+#'
+#' A hint states the lossless conversion of a common R mistake: a whole
+#' double for an integer field, a factor for a character field, more than
+#' one value for a scalar field, and `NA` for a field that is not an
+#' `option()`.
+#'
+#' @param errors List: As `problems_message()` takes it, with `where`.
+#' @param inputs Optional named list: The R objects given for the fields.
+#'
+#' @return Character: One hint per problem, `NA` where none applies.
+#'
+#' @keywords internal
+#' @noRd
+coercion_hints <- function(errors, inputs) {
+  n <- length(errors[["code"]])
+  out <- rep(NA_character_, n)
+  if (is.null(inputs) || is.null(errors[["where"]])) {
+    return(out)
+  }
+  for (i in seq_len(n)) {
+    where <- errors[["where"]][[i]]
+    code <- errors[["code"]][[i]]
+    msg <- errors[["message"]][[i]]
+    if (!nzchar(where) || !where %in% names(inputs)) {
+      next
+    }
+    obj <- inputs[[where]]
+    out[[i]] <- if (code %in% c("missing_value", "na_value")) {
+      "`option()` admits a missing value."
+    } else if (
+      code %in% c("type_mismatch", "r_type", "r_attributes") && is.factor(obj)
+    ) {
+      "`as.character()` gives its labels."
+    } else if (code == "r_attributes") {
+      "`r8_conform()` removes them."
+    } else if (
+      code %in%
+        c("type_mismatch", "r_type") &&
+        grepl("integer", msg, fixed = TRUE) &&
+        is.double(obj) &&
+        length(obj) == 1L &&
+        is.finite(obj) &&
+        obj == round(obj) &&
+        abs(obj) <= .Machine[["integer.max"]]
+    ) {
+      paste0("The integer is `", format(obj, scientific = FALSE), "L`.")
+    } else {
+      NA_character_
+    }
+  }
+  out
+} # /R8::coercion_hints
+
+
+# %% rules_skipped ----
+#' The number of invalid fields that kept a type's rules from running
+#'
+#' @param errors List: As `problems_message()` takes it.
+#' @param type_name Optional character: The qualified type.
+#' @param variant Character: The enum variant, or `""`.
+#'
+#' @return Integer: The number of invalid top-level fields when the type
+#'   has rules and none was evaluated, and 0 otherwise.
+#'
+#' @keywords internal
+#' @noRd
+rules_skipped <- function(errors, type_name, variant = "") {
+  if (is.null(type_name) || any(startsWith(errors[["code"]], "rule_"))) {
+    return(0L)
+  }
+  ir <- tryCatch(r8_type_ir(type_name), error = function(e) NULL)
+  rules <- if (nzchar(variant)) {
+    ir[["variants"]][[variant]][["rules"]]
+  } else {
+    ir[["rules"]]
+  }
+  if (length(rules) == 0L) {
+    return(0L)
+  }
+  where <- errors[["where"]] %||% sub("^/", "", errors[["path"]])
+  length(unique(sub("[$[].*$", "", where[nzchar(where)])))
+} # /R8::rules_skipped
+
+
+# %% value_abort ----
+#' Signal a value's problems
+#'
+#' @param what Character: The failed operation, such as `"Invalid"`.
+#' @param label Character: The type, or the type and variant.
+#' @param errors List: As `problems_message()` takes it.
+#' @param inputs Optional named list: The R objects given for the fields,
+#'   from which coercion hints are written.
+#' @param assignment Optional character: The assignment that caused the
+#'   problems, such as `x$n <- value`.
+#' @param type_name Optional character: The qualified type, whose rules a
+#'   closing line reports as not evaluated when fields are invalid.
+#' @param variant Character: The enum variant, or `""`.
+#'
+#' @return Does not return; signals `r8_value_error`, whose field
+#'   `problems` holds `problems_data(errors)`.
+#'
+#' @keywords internal
+#' @noRd
+value_abort <- function(
+  what,
+  label,
+  errors,
+  inputs = NULL,
+  assignment = NULL,
+  type_name = NULL,
+  variant = ""
+) {
+  errors[["hint"]] <- coercion_hints(errors, inputs)
+  n <- length(unique(problem_keys(errors)))
+  skipped <- rules_skipped(errors, type_name, variant)
+  r8_abort(
+    what,
+    " `",
+    label,
+    "`",
+    if (!is.null(assignment)) paste0(" from `", assignment, "`"),
+    ": ",
+    n,
+    if (n == 1L) " problem" else " problems",
+    "\n",
+    problems_message(errors),
+    if (skipped > 0L) {
+      paste0(
+        "\nRules were not evaluated: ",
+        skipped,
+        if (skipped == 1L) " field is invalid." else " fields are invalid."
+      )
+    },
+    class = "r8_value_error",
+    data = list(problems = problems_data(errors))
+  )
+} # /R8::value_abort
 
 
 # %% r8_construct ----
@@ -66,19 +449,30 @@ r8_construct <- function(type_name, fields, variant = "") {
 #' @param res The `r8_problems` list that `r8_new_value()` returned.
 #' @param type_name Character: The qualified type name.
 #' @param variant Character: The enum variant, or `""` for a struct.
+#' @param inputs Optional named list: The R objects given for the fields.
+#' @param assignment Optional character: The assignment that caused the
+#'   problems.
 #'
 #' @return Does not return; signals `r8_value_error`.
 #'
 #' @keywords internal
 #' @noRd
-construct_error <- function(res, type_name, variant) {
+construct_error <- function(
+  res,
+  type_name,
+  variant,
+  inputs = NULL,
+  assignment = NULL
+) {
   label <- if (nzchar(variant)) paste0(type_name, "@", variant) else type_name
-  r8_abort(
-    "Invalid `",
+  value_abort(
+    "Invalid",
     label,
-    "`:\n",
-    problems_message(res[["errors"]]),
-    class = c("r8_value_error")
+    res[["errors"]],
+    inputs = inputs,
+    assignment = assignment,
+    type_name = type_name,
+    variant = variant
   )
 } # /R8::construct_error
 
@@ -193,7 +587,13 @@ construct_failed <- function(res, env, fn, qname, variant) {
       return(res)
     }
   }
-  construct_error(res, qname, variant)
+  # The arguments given, for hints; a missing argument is skipped.
+  given <- names(formals(fn))
+  inputs <- tryCatch(
+    mget(given, envir = env, ifnotfound = list(NULL)),
+    error = function(e) NULL
+  )
+  construct_error(res, qname, variant, inputs = inputs)
 } # /R8::construct_failed
 
 
@@ -377,7 +777,9 @@ field_set <- function(x, name, value) {
     construct_error(
       res,
       attr(x, "r8_type"),
-      if (is.null(variant)) "" else variant
+      if (is.null(variant)) "" else variant,
+      inputs = structure(list(value), names = name),
+      assignment = paste0("x$", name, " <- value")
     )
   }
   res
@@ -476,13 +878,7 @@ to_json <- function(x) {
   }
   res <- r8_value_to_document(x)
   if (!is.null(res[["errors"]])) {
-    r8_abort(
-      "Cannot write `",
-      attr(x, "r8_type"),
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = "r8_value_error"
-    )
+    value_abort("Cannot write", attr(x, "r8_type"), res[["errors"]])
   }
   res[["json"]]
 } # /R8::to_json
@@ -519,13 +915,7 @@ r8_from_json <- function(type, json) {
     attr(type, "r8_name")
   )
   if (!is.null(res[["errors"]])) {
-    r8_abort(
-      "Cannot read `",
-      attr(type, "r8_name"),
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = "r8_value_error"
-    )
+    value_abort("Cannot read", attr(type, "r8_name"), res[["errors"]])
   }
   res[["value"]]
 } # /R8::r8_from_json

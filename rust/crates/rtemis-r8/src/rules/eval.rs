@@ -149,20 +149,28 @@ pub(crate) enum Val<'l, A> {
 /// a failure that compilation did not exclude, such as a division by zero.
 pub(crate) type Evaluated<'l, A> = Result<Result<Val<'l, A>, Absent>, String>;
 
-/// The JSON Pointer suffix of an element of a collection, relative to the
-/// collection; an array element's suffix is formatted only when shown.
-pub enum Suffix {
-    /// The element at an index of an array.
+/// An element's place in its collection, borrowed from the host form, so a
+/// passing element allocates nothing.
+pub enum Suffix<'s> {
+    /// The element at an index of a vector.
     Index(usize),
-    /// A suffix written out, such as a map entry's.
-    Text(String),
+    /// The value at a key of a `hashmap()`.
+    Key(std::borrow::Cow<'s, str>),
+    /// The value of the item at an index of an `ordered_map()`.
+    Item(usize),
 }
 
-impl std::fmt::Display for Suffix {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Suffix<'_> {
+    /// The element's path below its collection.
+    pub fn segments(&self) -> Vec<crate::problem::Segment> {
+        use crate::problem::Segment;
         match self {
-            Suffix::Index(i) => write!(f, "/{i}"),
-            Suffix::Text(s) => f.write_str(s),
+            Suffix::Index(i) => vec![Segment::Element(*i as u64)],
+            Suffix::Key(k) => vec![Segment::Key(k.to_string())],
+            Suffix::Item(i) => vec![
+                Segment::Element(*i as u64),
+                Segment::Form("/value".to_string()),
+            ],
         }
     }
 }
@@ -543,7 +551,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 return Ok(Err(Absent));
             }
             match s {
-                Step::Member(k) => {
+                Step::Field(k) | Step::Key(k) | Step::Column(k) => {
                     let next_ty = match ty.map(unwrap_option) {
                         Some(FieldType::Hashmap { value, .. }) => Some(value.as_ref()),
                         _ if at_root || ty.is_some() => self
@@ -821,6 +829,19 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 });
                 Some(Ok(Scalar::Bool(all)))
             }
+            (Op::Sum | Op::Min | Op::Max, [Val::R(a, Some(ft))]) => {
+                let FieldType::Vec { element, .. } = unwrap_option(ft) else {
+                    return None;
+                };
+                let n = a.vec(element).ok()?;
+                let name = match op {
+                    Op::Sum => "sum",
+                    Op::Min => "min",
+                    _ => "max",
+                };
+                let mut r = Reduce::new(op);
+                Some(each_number(*a, element, n, name, |x| r.push(x)).and_then(|()| r.finish()))
+            }
             (Op::NonIncreasing | Op::NonDecreasing, [Val::R(a, Some(ft))]) => {
                 let FieldType::Vec { element, .. } = unwrap_option(ft) else {
                     return None;
@@ -904,7 +925,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         &self,
         c: Val<'l, A>,
         kind: Collection,
-        f: &mut dyn FnMut(Suffix, (A, Option<&'l FieldType>)) -> Result<bool, String>,
+        f: &mut dyn FnMut(Suffix<'a>, (A, Option<&'l FieldType>)) -> Result<bool, String>,
     ) -> Result<(), String> {
         let (a, ty) = match c {
             Val::R(a, ty) => (a, ty.map(unwrap_option)),
@@ -947,11 +968,11 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         a.each_entry(|i, e| {
             if let Ok((k, x)) = e {
                 let suffix = if ordered {
-                    format!("/{i}/value")
+                    Suffix::Item(i)
                 } else {
-                    format!("/{}", k.replace('~', "~0").replace('/', "~1"))
+                    Suffix::Key(k)
                 };
-                entries.push((Suffix::Text(suffix), x));
+                entries.push((suffix, x));
             }
         });
         for (suffix, x) in entries {
@@ -1077,6 +1098,77 @@ fn monotone<'a, A: Access<'a>>(
     }
 }
 
+/// Items `0..n` of a vector of numbers, passed to `f` in order and read in
+/// place; a missing item is an error of `op`.
+fn each_number<'a, A: Access<'a>>(
+    a: A,
+    element: &FieldType,
+    n: usize,
+    op: &str,
+    mut f: impl FnMut(f64),
+) -> Result<(), String> {
+    let missing = || format!("`{op}` takes numbers, found a missing value");
+    let inner = unwrap_option(element);
+    if matches!(inner, FieldType::Double(_))
+        && let Some(s) = a.f64_slice()
+    {
+        for &x in &s[..n.min(s.len())] {
+            if crate::access::is_na_real(x) {
+                return Err(missing());
+            }
+            f(x);
+        }
+        return Ok(());
+    }
+    let mut absent = false;
+    match inner {
+        FieldType::Double(_) => a.each_double(n, |_, r| match r.ok().flatten() {
+            Some(x) => f(x),
+            None => absent = true,
+        }),
+        FieldType::Integer(_) => a.each_integer(n, |_, r| match r.ok().flatten() {
+            Some(x) => f(x as f64),
+            None => absent = true,
+        }),
+        _ => return Err(format!("`{op}` takes an array of numbers")),
+    }
+    if absent { Err(missing()) } else { Ok(()) }
+}
+
+/// `sum()`, `min()`, or `max()` of numbers in order: the sum adds left to
+/// right from 0, and `min()` and `max()` of no numbers are an error.
+struct Reduce {
+    op: Op,
+    acc: Option<f64>,
+}
+
+impl Reduce {
+    fn new(op: Op) -> Reduce {
+        Reduce {
+            op,
+            acc: (op == Op::Sum).then_some(0.0),
+        }
+    }
+    fn push(&mut self, x: f64) {
+        self.acc = Some(match (self.op, self.acc) {
+            (_, None) => x,
+            (Op::Sum, Some(s)) => s + x,
+            (Op::Min, Some(m)) => m.min(x),
+            (_, Some(m)) => m.max(x),
+        });
+    }
+    fn finish(self) -> Result<Scalar, String> {
+        let name = match self.op {
+            Op::Sum => "sum",
+            Op::Min => "min",
+            _ => "max",
+        };
+        self.acc
+            .map(Scalar::Num)
+            .ok_or_else(|| format!("`{name}` of an empty array has no value"))
+    }
+}
+
 fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
     let bool_ = |b: bool| Ok(Scalar::Bool(b));
     match op {
@@ -1094,6 +1186,25 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             })
         }
         Op::Not => bool_(!want_bool(&a[0], "the operand of `!`")?),
+        Op::Sum | Op::Min | Op::Max if a.len() == 1 && matches!(a[0], Scalar::Array(_)) => {
+            let Scalar::Array(xs) = &a[0] else {
+                unreachable!()
+            };
+            let mut r = Reduce::new(op);
+            for x in xs {
+                r.push(want_number(x, "an array's element")?);
+            }
+            r.finish()
+        }
+        Op::Sum => Err(format!(
+            "`sum` takes an array of numbers, found {}",
+            a[0].shown()
+        )),
+        Op::Abs => Ok(Scalar::Num(want_number(&a[0], "abs")?.abs())),
+        Op::Nchar => match &a[0] {
+            Scalar::Str(s) => Ok(Scalar::Num(s.chars().count() as f64)),
+            other => Err(format!("`nchar` takes a string, found {}", other.shown())),
+        },
         Op::Add | Op::Mul | Op::Min | Op::Max => {
             let mut xs = Vec::with_capacity(a.len());
             for v in a {
@@ -1152,9 +1263,12 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             Ok(Scalar::Str(out))
         }
         Op::Length => match &a[0] {
-            Scalar::Str(s) => Ok(Scalar::Num(s.chars().count() as f64)),
             Scalar::Array(i) => Ok(Scalar::Num(i.len() as f64)),
-            other => Err(format!("`length` takes an array, found {}", other.shown())),
+            Scalar::Str(_) => Err(
+                "`length` counts the elements of an array, found a string; `nchar` counts a string's characters"
+                    .to_string(),
+            ),
+            other => Err(format!("`length` counts the elements of an array, found {}", other.shown())),
         },
         Op::Subset => match (&a[0], &a[1]) {
             (Scalar::Array(x), Scalar::Array(y)) => {

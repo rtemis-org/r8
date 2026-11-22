@@ -11,7 +11,8 @@ variant(fields = list(), description = "", rules = list(), of = NULL)
 
 \item{description}{Character: What the variant is.}
 
-\item{rules}{List: \code{rule()} calls over the variant's fields.}
+\item{rules}{A \code{rule()}, or a list of \code{rule()} calls, over the variant's
+fields.}
 
 \item{of}{Optional R8 struct type: The struct a newtype variant holds.}
 }

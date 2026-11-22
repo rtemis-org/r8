@@ -254,7 +254,7 @@ test_that("matrices and tables construct identically", {
             o = option(type_integer()),
             d = type_date()
           ),
-          rules = list(rule("pos", x < 100, "x is below 100"))
+          rules = list(rule(x < 100, message = "x is below 100", id = "pos"))
         ),
         open = type_table(columns = list(id = type_integer()), open = TRUE)
       )
@@ -306,7 +306,7 @@ test_that("nested values, enums, and rules construct identically", {
         lo = type_double(),
         hi = type_double()
       ),
-      rules = list(rule("ordered", lo <= hi, "lo is at most hi"))
+      rules = list(rule(lo <= hi, message = "lo is at most hi", id = "ordered"))
     )
   )
   base <- list(
@@ -334,7 +334,7 @@ test_that("$<- validates the field and the rules that read it", {
         hi = type_double(),
         big = vec(type_double())
       ),
-      rules = list(rule("ordered", lo <= hi, "lo is at most hi"))
+      rules = list(rule(lo <= hi, message = "lo is at most hi", id = "ordered"))
     )
   )
   x <- runif(10)
@@ -394,9 +394,13 @@ test_that("== compares maps and matrices in place and keeps string literals", {
         s = type_character()
       ),
       rules = list(
-        rule("SAME_MAP", a == b, "a equals b."),
-        rule("SAME_MATRIX", m == n, "m equals n."),
-        rule("NOT_NAN_TEXT", s != "NaN", "s is not the text NaN.")
+        rule(a == b, message = "a equals b.", id = "SAME_MAP"),
+        rule(m == n, message = "m equals n.", id = "SAME_MATRIX"),
+        rule(
+          s != "NaN",
+          message = "s is not the text NaN.",
+          id = "NOT_NAN_TEXT"
+        )
       )
     )
   )

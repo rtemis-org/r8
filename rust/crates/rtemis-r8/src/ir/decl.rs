@@ -93,15 +93,19 @@ fn extensions_or_none<'de, D: serde::Deserializer<'de>>(
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct RuleDef {
-    /// The rule's ID, unique within its type.
-    pub id: Name,
+    /// The rule's ID, unique within its scope: the stable handle by which
+    /// code refers to the rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Name>,
     /// The condition that holds for a valid value.
     pub invariant: Logic,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The condition under which the rule applies.
     pub when: Option<Logic>,
-    /// The message of a violation.
-    pub message: String,
+    /// What holds, stated for the user; a violation of a rule without one
+    /// shows its invariant, rendered by the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// One step of a migration, from the fixed vocabulary that `rtemis-r8` defines.

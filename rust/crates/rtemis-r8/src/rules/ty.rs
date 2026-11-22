@@ -117,6 +117,10 @@ pub enum Ty {
     Number {
         /// The declared unit.
         unit: Option<String>,
+        /// The number is an integer: an integer field or literal, or a
+        /// result of integers that rounding leaves exact. A double field or
+        /// literal, and a quotient, are not.
+        exact: bool,
     },
     /// A string.
     String,
@@ -165,8 +169,13 @@ impl Ty {
     pub fn of(ft: &FieldType, unit: Option<&str>) -> Ty {
         match ft {
             FieldType::Logical => Ty::Bool,
-            FieldType::Integer(_) | FieldType::Double(_) => Ty::Number {
+            FieldType::Integer(_) => Ty::Number {
                 unit: unit.map(str::to_string),
+                exact: true,
+            },
+            FieldType::Double(_) => Ty::Number {
+                unit: unit.map(str::to_string),
+                exact: false,
             },
             FieldType::Character(_) => Ty::String,
             FieldType::Raw => Ty::Any,
@@ -210,8 +219,8 @@ impl Ty {
     pub fn describe(&self) -> String {
         match self {
             Ty::Bool => "a logical".into(),
-            Ty::Number { unit: Some(u) } => format!("a number in `{u}`"),
-            Ty::Number { unit: None } => "a number".into(),
+            Ty::Number { unit: Some(u), .. } => format!("a number in `{u}`"),
+            Ty::Number { unit: None, .. } => "a number".into(),
             Ty::String => "a string".into(),
             Ty::Date => "a date".into(),
             Ty::Posixct => "a date-time".into(),
@@ -322,6 +331,17 @@ impl FromIterator<crate::ir::IrDocument> for DocumentSet {
 }
 
 /// Where [`DocumentSet::put_type`] placed a declaration, and the one it
+/// Where `DocumentSet::put_trait()` put a trait, and the trait it replaced.
+#[derive(Debug)]
+pub struct PlacedTrait {
+    /// The position of the namespace's document.
+    pub document: usize,
+    /// The position of the trait in the document.
+    pub index: usize,
+    /// The trait of the same name that the put replaced.
+    pub previous: Option<crate::ir::TraitDef>,
+}
+
 /// replaced; [`DocumentSet::undo_put`] takes it back.
 #[derive(Debug)]
 pub struct Placed {
@@ -504,6 +524,54 @@ impl DocumentSet {
         &mut self.docs[d].impls
     }
 
+    /// Puts a trait into the namespace's document, replacing a trait of the
+    /// same name; `undo_put_trait()` with the result restores the set.
+    pub fn put_trait(&mut self, ns: &crate::name::Name, def: crate::ir::TraitDef) -> PlacedTrait {
+        let d = self.document_position(ns);
+        let traits = self.traits_mut(d);
+        match traits.iter().position(|t| t.name == def.name) {
+            Some(i) => PlacedTrait {
+                document: d,
+                index: i,
+                previous: Some(std::mem::replace(&mut traits[i], def)),
+            },
+            None => {
+                traits.push(def);
+                PlacedTrait {
+                    document: d,
+                    index: traits.len() - 1,
+                    previous: None,
+                }
+            }
+        }
+    }
+
+    /// Undoes a `put_trait()`.
+    pub fn undo_put_trait(&mut self, placed: PlacedTrait) {
+        let PlacedTrait {
+            document: d,
+            index,
+            previous,
+        } = placed;
+        let traits = self.traits_mut(d);
+        match previous {
+            Some(p) => traits[index] = p,
+            None => {
+                traits.pop();
+            }
+        }
+        self.remove_document_if_empty(d);
+    }
+
+    /// The qualified names of `q` and of every named type it reaches
+    /// through field types and newtype variants, each once, the reached
+    /// types before the types that reach them.
+    pub fn reached(&self, q: &crate::name::QualifiedName) -> Vec<crate::name::QualifiedName> {
+        let mut out = Vec::new();
+        reached_into(self, q, &mut out);
+        out
+    }
+
     /// Removes the document at `d` when it declares nothing.
     pub fn remove_document_if_empty(&mut self, d: usize) {
         let doc = &self.docs[d];
@@ -545,4 +613,62 @@ impl TypeLookup for DocumentSet {
             None => "$type".to_string(),
         }
     }
+}
+
+fn reached_into(
+    reg: &DocumentSet,
+    q: &crate::name::QualifiedName,
+    out: &mut Vec<crate::name::QualifiedName>,
+) {
+    use crate::ir::{FieldDef, FieldType, VariantShape};
+    fn of_type(reg: &DocumentSet, t: &FieldType, out: &mut Vec<crate::name::QualifiedName>) {
+        match t {
+            FieldType::Named { name }
+            | FieldType::MatrixOf { of: name }
+            | FieldType::TableOf { of: name } => reached_into(reg, name, out),
+            FieldType::Matrix { element, .. }
+            | FieldType::Array { element, .. }
+            | FieldType::SparseMatrix { element, .. }
+            | FieldType::Vec { element, .. } => of_type(reg, element, out),
+            FieldType::Option { inner, .. } => of_type(reg, inner, out),
+            FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+                of_type(reg, value, out)
+            }
+            FieldType::Table { columns, .. } => of_fields(reg, columns, out),
+            _ => {}
+        }
+    }
+    fn of_fields(
+        reg: &DocumentSet,
+        fields: &[FieldDef],
+        out: &mut Vec<crate::name::QualifiedName>,
+    ) {
+        for f in fields {
+            of_type(reg, &f.ty, out);
+        }
+    }
+    if out.contains(q) {
+        return;
+    }
+    let Some(def) = TypeLookup::find(reg, q) else {
+        return;
+    };
+    // Marked before its fields are walked, so a recursive type terminates.
+    out.push(q.clone());
+    let mark = out.len() - 1;
+    match def {
+        TypeDef::Struct(s) => of_fields(reg, &s.fields, out),
+        TypeDef::Enum(e) => {
+            for v in &e.variants {
+                match &v.shape {
+                    VariantShape::Struct { fields, .. } => of_fields(reg, fields, out),
+                    VariantShape::Newtype { of } => reached_into(reg, of, out),
+                    VariantShape::Unit => {}
+                }
+            }
+        }
+    }
+    // The type follows the types it reaches.
+    let me = out.remove(mark);
+    out.push(me);
 }

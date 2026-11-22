@@ -172,7 +172,9 @@ generic <- function(name, args = "x", description = "") {
   if (!is_name(name)) {
     r8_abort(
       "A generic's name follows the rule of trait names in new_trait(): ",
-      "a letter, then letters, digits, or underscores, such as \"describe\".",
+      "a letter, then letters, digits, or underscores, such as \"describe\"",
+      name_reason(name),
+      ".",
       class = "r8_declaration_error"
     )
   }

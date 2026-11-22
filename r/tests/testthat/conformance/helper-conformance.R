@@ -56,17 +56,17 @@ conformance_r_types <- function() {
       version = 1L,
       rules = list(
         rule(
-          "seed_below_count",
           seed < count,
-          "The seed is below the count.",
-          when = json_ir('{"!==":[{"var":"seed"},null]}')
+          when = json_ir('{"!==":[{"var":"seed"},null]}'),
+          message = "The seed is below the count.",
+          id = "seed_below_count"
         ),
         rule(
-          "weights_match_index",
           json_ir(
             '{"===":[{"length":{"var":"weights"}},{"length":{"var":"index"}}]}'
           ),
-          "There is one weight per index."
+          message = "There is one weight per index.",
+          id = "weights_match_index"
         )
       )
     )

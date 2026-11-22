@@ -866,11 +866,15 @@ render_rules <- function(rules, indent) {
         "R8::rule(",
         paste(
           c(
-            deparse_string(r[["id"]]),
             render_logic(r[["invariant"]]),
-            deparse_string(r[["message"]]),
             if (!is.null(r[["when"]])) {
               paste0("when = ", render_logic(r[["when"]]))
+            },
+            if (!is.null(r[["message"]])) {
+              paste0("message = ", deparse_string(r[["message"]]))
+            },
+            if (!is.null(r[["id"]])) {
+              paste0("id = ", deparse_string(r[["id"]]))
             }
           ),
           collapse = ", "
@@ -970,7 +974,13 @@ logic_to_r <- function(x) {
       ) {
         fail()
       }
-      parts <- strsplit(path[[1L]], ".", fixed = TRUE)[[1L]]
+      # `.x` is the element of an enclosing all() or any().
+      text <- path[[1L]]
+      element <- startsWith(text, ".x")
+      parts <- strsplit(sub("^\\.x\\.?", "", text), ".", fixed = TRUE)[[1L]]
+      if (element) {
+        parts <- c(".x", parts)
+      }
       out <- as.name(parts[[1L]])
       for (p in parts[-1L]) {
         out <- call("$", out, as.name(p))

@@ -21,9 +21,9 @@ and a number that a double does not hold exactly. \code{r8_document_native()}
 writes it where a Rust declaration has no R form.
 }
 \examples{
-rule("COST_RANGE", json_ir('{"and": [{">": [{"var": "cost"}, 0]},
+rule(json_ir('{"and": [{">": [{"var": "cost"}, 0]},
   {"<=": [{"var": "cost"}, 100]}, {"!==": [{"var": "name"}, ""]}]}'),
-  "cost is in (0, 100] and name is not empty.")
+  message = "cost is in (0, 100] and name is not empty.", id = "COST_RANGE")
 field(type_double(), default = json_ir("0.5"))
 
 }

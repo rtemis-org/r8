@@ -8,15 +8,16 @@
 #' @param ... Character: Message parts, pasted without a separator.
 #' @param class Character: Condition classes, before `r8_error`.
 #' @param call Optional call to report.
+#' @param data List: Further fields of the condition, such as `problems`.
 #'
 #' @return Does not return.
 #'
 #' @keywords internal
 #' @noRd
-r8_abort <- function(..., class = character(), call = NULL) {
+r8_abort <- function(..., class = character(), call = NULL, data = list()) {
   cond <- structure(
     class = c(class, "r8_error", "error", "condition"),
-    list(message = paste0(...), call = call)
+    c(list(message = paste0(...), call = call), data)
   )
   stop(cond)
 } # /R8::r8_abort
@@ -27,16 +28,30 @@ r8_abort <- function(..., class = character(), call = NULL) {
 #'
 #' @param x Object.
 #'
-#' @return Logical: `x` is one string matching `[A-Za-z][A-Za-z0-9_]*`.
+#' @return Logical: `x` is one string that the core's name grammar accepts:
+#'   a letter, then letters, digits, and underscores, and not a reserved word
+#'   of R or Rust (`rtemis_r8::name::Name::new()`).
 #'
 #' @keywords internal
 #' @noRd
 is_name <- function(x) {
-  is.character(x) &&
-    length(x) == 1L &&
-    !is.na(x) &&
-    grepl("^[A-Za-z][A-Za-z0-9_]*$", x)
+  !nzchar(r8_name_problem(x))
 } # /R8::is_name
+
+
+# %% name_reason ----
+#' Why an object is not an R8 name, for a message
+#'
+#' @param x Object.
+#'
+#' @return Character: `" (<reason>)"`, or `""` for a name.
+#'
+#' @keywords internal
+#' @noRd
+name_reason <- function(x) {
+  r <- r8_name_problem(x)
+  if (nzchar(r)) paste0(" (", r, ")") else ""
+} # /R8::name_reason
 
 
 # %% declaring_namespace ----
@@ -70,7 +85,9 @@ declaring_namespace <- function(env) {
         pkg,
         "' declares R8 types; its namespace `",
         ns,
-        "` is not an R8 name. Set `Config/R8/namespace` in its DESCRIPTION.",
+        "` is not an R8 name",
+        name_reason(ns),
+        ". Set `Config/R8/namespace` in its DESCRIPTION.",
         class = "r8_declaration_error"
       )
     }
@@ -89,7 +106,9 @@ declaring_namespace <- function(env) {
     r8_abort(
       "The option `r8.namespace` is not an R8 name: `",
       ns,
-      "`.",
+      "`",
+      name_reason(ns),
+      ".",
       class = "r8_declaration_error"
     )
   }

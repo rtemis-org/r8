@@ -51,9 +51,11 @@ test_that("construction reports every problem with its path and rule", {
     conform_value(p, ratio = 2, count = 0L, label = "ABC"),
     class = "r8_value_error"
   )
-  expect_match(conditionMessage(e), "above_max at /ratio")
-  expect_match(conditionMessage(e), "below_min at /count")
-  expect_match(conditionMessage(e), "pattern_mismatch at /label")
+  got <- paste(e$problems$code, e$problems$path)
+  expect_true("above_max /ratio" %in% got)
+  expect_true("below_min /count" %in% got)
+  expect_true("pattern_mismatch /label" %in% got)
+  expect_match(conditionMessage(e), "`ratio` must be", fixed = TRUE)
   expect_error(
     conform_value(p, seed = 5L),
     "seed_below_count",

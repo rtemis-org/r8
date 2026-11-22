@@ -18,7 +18,11 @@ test_that("a rule over a compact sequence leaves it compact", {
     new_struct(
       "S",
       fields = list(x = vec(type_integer())),
-      rules = list(rule("pos", all(x, .x > 0), "every element is positive"))
+      rules = list(rule(
+        all(x, .x > 0),
+        message = "every element is positive",
+        id = "pos"
+      ))
     )
   )
   x <- 1:100000
@@ -104,8 +108,12 @@ test_that("%in% and subset() over a compact sequence leave it compact", {
       "W",
       fields = list(x = vec(type_integer()), k = type_integer()),
       rules = list(
-        rule("has_k", k %in% x, "x holds k"),
-        rule("small", subset(x, c(1L, 2L, 3L)), "x holds 1, 2, and 3 only")
+        rule(k %in% x, message = "x holds k", id = "has_k"),
+        rule(
+          subset(x, c(1L, 2L, 3L)),
+          message = "x holds 1, 2, and 3 only",
+          id = "small"
+        )
       )
     )
   )
@@ -127,9 +135,15 @@ test_that("a compact sequence validates from its ends, and a violation names its
   expect_identical(length(Idx(i = 1:1000000)$i), 1000000L)
   expect_identical(Idx(i = 1000000:1)$i[[1L]], 1000000L)
   e <- expect_error(Idx(i = 0:9), class = "r8_value_error")
-  expect_match(conditionMessage(e), "/i/0")
+  expect_identical(e$problems$path, "/i/0")
+  expect_match(
+    conditionMessage(e),
+    "`i[[1]]` must be at least 1; found 0.",
+    fixed = TRUE
+  )
   e <- expect_error(Idx(i = 2:1000001), class = "r8_value_error")
-  expect_match(conditionMessage(e), "/i/999999")
+  expect_identical(e$problems$path, "/i/999999")
+  expect_identical(e$problems$where, "i[[1000000]]")
   # A closed set of values needs every item.
   Few <- declare_in("altrep_bounds", {
     new_struct(
@@ -138,5 +152,9 @@ test_that("a compact sequence validates from its ends, and a violation names its
     )
   })
   e <- expect_error(Few(i = 1:4), class = "r8_value_error")
-  expect_match(conditionMessage(e), "/i/2")
+  expect_match(
+    conditionMessage(e),
+    "`i[[3]]` must be one of 1, 2, or 4; found 3.",
+    fixed = TRUE
+  )
 })

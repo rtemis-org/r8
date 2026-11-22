@@ -33,7 +33,8 @@ fn suites(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// `(path, code, rule)` triples, sorted, for comparison as multisets.
+/// `(path, code, rule)` triples, sorted, for comparison as multisets; the
+/// rule is its ID, or `#<index>` for a rule without one.
 fn sorted_errors(
     errors: impl Iterator<Item = (String, String, Option<String>)>,
 ) -> Vec<(String, String, Option<String>)> {
@@ -47,7 +48,14 @@ fn expected_errors(expect: &Value) -> Vec<(String, String, Option<String>)> {
         (
             e["path"].as_str().unwrap().to_string(),
             e["code"].as_str().unwrap().to_string(),
-            e.get("rule").and_then(Value::as_str).map(str::to_string),
+            e.get("rule")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    e.get("rule_index")
+                        .and_then(Value::as_u64)
+                        .map(|i| format!("#{i}"))
+                }),
         )
     }))
 }
@@ -106,11 +114,14 @@ fn run_decode(
         return Some("a decode case needs the suite's `ir`".to_string());
     };
     let ty = QualifiedName::parse(ty.as_str().unwrap()).unwrap();
-    let got = sorted_errors(
-        validate(input, &ty, doc)
-            .into_iter()
-            .map(|e| (e.path, e.code.to_string(), e.rule.map(|r| r.to_string()))),
-    );
+    let got = sorted_errors(validate(input, &ty, doc).into_iter().map(|e| {
+        let rule = match (&e.rule, e.rule_index) {
+            (Some(r), _) => Some(r.to_string()),
+            (None, Some(i)) => Some(format!("#{i}")),
+            (None, None) => None,
+        };
+        (e.path, e.code.to_string(), rule)
+    }));
     let want = if expect.get("valid").is_some() {
         Vec::new()
     } else {

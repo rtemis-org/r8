@@ -34,6 +34,6 @@ A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compa
 | `canonical` | a value's JSON document | the qualified type | `{"json": "<exact text>"}`: the RFC 8785 canonical form, compared byte for byte |
 | `hash` | a value's JSON document | the qualified type | `{"hash": "sha256:<hex>"}`; `options.hash_key` selects HMAC |
 
-An error is `{"code": "...", "path": "...", "rule": "..."}`: the stable code, a JSON Pointer into `input`, and, for a rule violation, the rule ID. Messages are not compared. A host reports every error, and a runner compares the reported and expected lists as multisets, after sorting both by path, then code, then rule; an empty list means the input passes.
+An error is `{"code": "...", "path": "...", "rule": "..."}`: the stable code, a JSON Pointer into `input`, and, for a rule violation, the rule ID, or `"rule_index"`, the rule's 0-based position among its scope's rules, for a rule without an ID. Messages are not compared. A host reports every error, and a runner compares the reported and expected lists as multisets, after sorting both by path, then code, then rule; an empty list means the input passes.
 
 A host that does not implement an operation yet skips its cases and reports the number skipped. Operations are added to the table only; a new `op` does not change the meaning of an existing case.

@@ -93,8 +93,8 @@ GBM <- R8::new_struct(
   ),
   version = 1L,
   rules = list(
-    R8::rule("early_stop_below_trees", early_stopping_rounds < n_trees, "early_stopping_rounds is below n_trees.", when = !is.null(early_stopping_rounds)),
-    R8::rule("num_class_iff_multiclass", (objective == "multiclass") == !is.null(num_class), "num_class is present exactly when the objective is multiclass.")
+    R8::rule(early_stopping_rounds < n_trees, when = !is.null(early_stopping_rounds), message = "early_stopping_rounds is below n_trees.", id = "early_stop_below_trees"),
+    R8::rule((objective == "multiclass") == !is.null(num_class), message = "num_class is present exactly when the objective is multiclass.", id = "num_class_iff_multiclass")
   ),
   native = TRUE
 )

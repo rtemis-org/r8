@@ -76,13 +76,7 @@ r8_resolve <- function(x, context = list()) {
   }
   res <- r8_resolve_value(fields, attr(x, "r8_type"))
   if (!is.null(res[["errors"]])) {
-    r8_abort(
-      "Cannot resolve `",
-      attr(x, "r8_type"),
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = "r8_value_error"
-    )
+    value_abort("Cannot resolve", attr(x, "r8_type"), res[["errors"]])
   }
   res[["value"]]
 } # /R8::r8_resolve
@@ -118,13 +112,7 @@ r8_validate <- function(x, complete = FALSE) {
   }
   res <- r8_value_check(x)
   if (!is.null(res)) {
-    r8_abort(
-      "Invalid `",
-      attr(x, "r8_type"),
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = "r8_value_error"
-    )
+    value_abort("Invalid", attr(x, "r8_type"), res[["errors"]])
   }
   if (isTRUE(complete)) {
     pending <- pending_fields(x)
