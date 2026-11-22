@@ -855,40 +855,151 @@ fn esc(s: &str) -> String {
 
 // --------------------------------------------------------------------- JSON
 
-/// A handle into a value's JSON form.
+/// A JSON node that [`JsonOf`] reads: a `serde_json::Value`, or a node of
+/// the compact tree of a document read (`crate::tree`). One implementation
+/// of the value-access trait serves both.
+pub trait Node<'a>: Copy + 'a {
+    /// `null`.
+    fn is_null(self) -> bool;
+    /// A boolean.
+    fn as_bool(self) -> Option<bool>;
+    /// A JSON number, as a double.
+    fn number(self) -> Option<f64>;
+    /// A JSON number that is a non-negative integer.
+    fn as_u64(self) -> Option<u64>;
+    /// A string.
+    fn as_str(self) -> Option<&'a str>;
+    /// An array's length; `None` for any other node.
+    fn array_len(self) -> Option<usize>;
+    /// An array's item `i`.
+    fn item(self, i: usize) -> Option<Self>;
+    /// An object's member `key`.
+    fn get(self, key: &str) -> Option<Self>;
+    /// An object's members, in order; `None` for any other node.
+    fn entries(self) -> Option<Vec<(&'a str, Self)>>;
+    /// An object's number of members; `None` for any other node.
+    fn object_len(self) -> Option<usize>;
+    /// The node's kind, for a message: "null", "a number", and so on.
+    fn kind(self) -> &'static str;
+    /// The doubles of an array that the node holds as one run.
+    fn f64_slice(self) -> Option<&'a [f64]> {
+        None
+    }
+    /// The two handles name the same node.
+    fn same(self, other: Self) -> bool;
+    /// Runs `f` on the node as a `serde_json::Value`, for the operations
+    /// whose interfaces take one: a `dyn()` value's implementor and an open
+    /// table's column type.
+    fn with_value<R>(self, f: impl FnOnce(&Value) -> R) -> R;
+    /// The node as an owned `serde_json::Value`.
+    fn to_value(self) -> Value;
+
+    /// A JSON number.
+    fn is_number(self) -> bool {
+        self.number().is_some()
+    }
+    /// A string.
+    fn is_string(self) -> bool {
+        self.as_str().is_some()
+    }
+    /// An array.
+    fn is_array(self) -> bool {
+        self.array_len().is_some()
+    }
+}
+
+impl<'a> Node<'a> for &'a Value {
+    fn is_null(self) -> bool {
+        Value::is_null(self)
+    }
+    fn as_bool(self) -> Option<bool> {
+        Value::as_bool(self)
+    }
+    fn number(self) -> Option<f64> {
+        match self {
+            Value::Number(n) => n.as_f64(),
+            _ => None,
+        }
+    }
+    fn as_u64(self) -> Option<u64> {
+        Value::as_u64(self)
+    }
+    fn as_str(self) -> Option<&'a str> {
+        Value::as_str(self)
+    }
+    fn array_len(self) -> Option<usize> {
+        Value::as_array(self).map(Vec::len)
+    }
+    fn item(self, i: usize) -> Option<Self> {
+        Value::as_array(self).and_then(|a| a.get(i))
+    }
+    fn get(self, key: &str) -> Option<Self> {
+        Value::as_object(self).and_then(|m| m.get(key))
+    }
+    fn entries(self) -> Option<Vec<(&'a str, Self)>> {
+        Value::as_object(self).map(|m| m.iter().map(|(k, v)| (k.as_str(), v)).collect())
+    }
+    fn object_len(self) -> Option<usize> {
+        Value::as_object(self).map(Map::len)
+    }
+    fn kind(self) -> &'static str {
+        json_kind(self)
+    }
+    fn same(self, other: Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+    fn with_value<R>(self, f: impl FnOnce(&Value) -> R) -> R {
+        f(self)
+    }
+    fn to_value(self) -> Value {
+        self.clone()
+    }
+}
+
+/// A handle into a value's JSON form, over the nodes `N`.
 #[derive(Debug, Clone, Copy)]
-pub enum Json<'a> {
+pub enum JsonOf<N> {
     /// A JSON value.
-    V(&'a Value),
+    V(N),
     /// An omitted member.
     Missing,
     /// Row `i` of a table object.
-    Row(&'a Map<String, Value>, usize),
+    Row(N, usize),
     /// Cell `i` of a table column: an array, or a factor's
     /// `{"levels", "codes"}`.
-    Cell(&'a Value, usize),
+    Cell(N, usize),
 }
+
+/// A handle into a `serde_json::Value`.
+pub type Json<'a> = JsonOf<&'a Value>;
 
 impl<'a> Json<'a> {
     /// A handle to a JSON value.
     pub fn new(v: &'a Value) -> Self {
-        Json::V(v)
+        JsonOf::V(v)
+    }
+}
+
+impl<'a, N: Node<'a>> JsonOf<N> {
+    /// A handle to a node.
+    pub fn of(n: N) -> Self {
+        JsonOf::V(n)
     }
 
-    /// The JSON value the handle names, if it names one.
-    fn val(self) -> Option<&'a Value> {
+    /// The node the handle names, if it names one.
+    fn val(self) -> Option<N> {
         match self {
-            Json::V(v) => Some(v),
-            Json::Cell(Value::Array(a), i) => a.get(i),
+            JsonOf::V(v) => Some(v),
+            JsonOf::Cell(c, i) if c.is_array() => c.item(i),
             _ => None,
         }
     }
 
     fn kind(self) -> &'static str {
         match self {
-            Json::Row(..) => "a table row",
-            Json::Cell(Value::Object(_), _) => "a factor code",
-            _ => self.val().map_or("null", json_kind),
+            JsonOf::Row(..) => "a table row",
+            JsonOf::Cell(c, _) if c.object_len().is_some() => "a factor code",
+            _ => self.val().map_or("null", Node::kind),
         }
     }
 
@@ -898,41 +1009,34 @@ impl<'a> Json<'a> {
 
     fn string(self, want: &str) -> Read<&'a str> {
         self.val()
-            .and_then(Value::as_str)
+            .and_then(Node::as_str)
             .ok_or_else(|| self.mismatch(want))
     }
 }
 
-/// A number: a JSON number, or a non-finite double in its string form.
-fn json_number(v: &Value) -> Option<f64> {
-    crate::rules::number_value(v)
-}
-
-impl<'a> Access<'a> for Json<'a> {
+impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
     fn is_absent(self) -> bool {
         match self {
-            Json::Missing => true,
-            Json::Row(..) => false,
-            Json::Cell(Value::Object(m), i) => m
+            JsonOf::Missing => true,
+            JsonOf::Row(..) => false,
+            JsonOf::Cell(c, i) if c.object_len().is_some() => c
                 .get("codes")
-                .and_then(Value::as_array)
-                .and_then(|c| c.get(i))
-                .is_none_or(Value::is_null),
-            _ => self.val().is_none_or(Value::is_null),
+                .and_then(|codes| codes.item(i))
+                .is_none_or(Node::is_null),
+            _ => self.val().is_none_or(Node::is_null),
         }
     }
 
     fn logical(self) -> Read<bool> {
         self.val()
-            .and_then(Value::as_bool)
+            .and_then(Node::as_bool)
             .ok_or_else(|| self.mismatch("a logical"))
     }
 
     fn integer(self) -> Read<i64> {
         let x = self
             .val()
-            .filter(|v| v.is_number())
-            .and_then(Value::as_f64)
+            .and_then(Node::number)
             .ok_or_else(|| self.mismatch("an integer"))?;
         if x.fract() != 0.0 {
             return Err(Form::new(
@@ -944,11 +1048,14 @@ impl<'a> Access<'a> for Json<'a> {
     }
 
     fn double(self) -> Read<f64> {
-        match self.val() {
-            Some(v @ Value::Number(_)) => Ok(json_number(v).unwrap_or(f64::NAN)),
-            Some(Value::String(s)) if matches!(s.as_str(), "Infinity" | "-Infinity" | "NaN") => {
-                Ok(json_number(self.val().unwrap()).unwrap_or(f64::NAN))
-            }
+        let v = self.val();
+        if let Some(x) = v.and_then(Node::number) {
+            return Ok(x);
+        }
+        match v.and_then(Node::as_str) {
+            Some("Infinity") => Ok(f64::INFINITY),
+            Some("-Infinity") => Ok(f64::NEG_INFINITY),
+            Some("NaN") => Ok(f64::NAN),
             _ => Err(self.mismatch("a number")),
         }
     }
@@ -1014,54 +1121,53 @@ impl<'a> Access<'a> for Json<'a> {
 
     fn vec(self, _element: &FieldType) -> Read<usize> {
         self.val()
-            .and_then(Value::as_array)
-            .map(Vec::len)
+            .and_then(Node::array_len)
             .ok_or_else(|| self.mismatch("an array"))
     }
 
     fn item(self, i: usize) -> Self {
-        match self.val() {
-            Some(Value::Array(a)) => a.get(i).map_or(Json::Missing, Json::V),
-            _ => Json::Missing,
+        match self.val().and_then(|v| v.item(i)) {
+            Some(x) => JsonOf::V(x),
+            None => JsonOf::Missing,
         }
     }
 
+    fn f64_slice(self) -> Option<&'a [f64]> {
+        self.val().and_then(Node::f64_slice)
+    }
+
     fn map(self, _value: &FieldType, ordered: bool) -> Read<usize> {
-        match (ordered, self.val()) {
-            (false, Some(Value::Object(m))) => Ok(m.len()),
-            (true, Some(Value::Array(a))) => Ok(a.len()),
-            (false, _) => Err(self.mismatch("an object")),
-            (true, _) => Err(self.mismatch("an array of {\"name\", \"value\"} pairs")),
+        let v = self.val();
+        match (ordered, v.and_then(Node::object_len), v.and_then(Node::array_len)) {
+            (false, Some(n), _) => Ok(n),
+            (true, _, Some(n)) => Ok(n),
+            (false, ..) => Err(self.mismatch("an object")),
+            (true, ..) => Err(self.mismatch("an array of {\"name\", \"value\"} pairs")),
         }
     }
 
     fn each_entry(self, mut f: impl FnMut(usize, Read<(Cow<'a, str>, Self)>)) {
-        match self.val() {
-            Some(Value::Object(m)) => {
-                for (i, (k, v)) in m.iter().enumerate() {
-                    f(i, Ok((Cow::Borrowed(k.as_str()), Json::V(v))));
-                }
+        let Some(v) = self.val() else { return };
+        if let Some(members) = v.entries() {
+            for (i, (k, x)) in members.into_iter().enumerate() {
+                f(i, Ok((Cow::Borrowed(k), JsonOf::V(x))));
             }
-            Some(Value::Array(pairs)) => {
-                for (i, pair) in pairs.iter().enumerate() {
-                    let entry =
-                        match pair.as_object().filter(|m| {
-                            m.len() == 2 && m.contains_key("name") && m.contains_key("value")
-                        }) {
-                            None => Err(Form::new(
-                                "type_mismatch",
-                                "an ordered map entry is an object with exactly `name` and `value`",
-                            )),
-                            Some(m) => match m["name"].as_str() {
-                                Some(k) => Ok((Cow::Borrowed(k), Json::V(&m["value"]))),
-                                None => Err(Form::mismatch("a string key", json_kind(&m["name"]))
-                                    .at("/name")),
-                            },
-                        };
-                    f(i, entry);
-                }
-            }
-            _ => {}
+            return;
+        }
+        let Some(n) = v.array_len() else { return };
+        for i in 0..n {
+            let pair = v.item(i).expect("an item below the array's length");
+            let entry = match (pair.object_len(), pair.get("name"), pair.get("value")) {
+                (Some(2), Some(name), Some(value)) => match name.as_str() {
+                    Some(k) => Ok((Cow::Borrowed(k), JsonOf::V(value))),
+                    None => Err(Form::mismatch("a string key", name.kind()).at("/name")),
+                },
+                _ => Err(Form::new(
+                    "type_mismatch",
+                    "an ordered map entry is an object with exactly `name` and `value`",
+                )),
+            };
+            f(i, entry);
         }
     }
 
@@ -1072,29 +1178,28 @@ impl<'a> Access<'a> for Json<'a> {
                 "a factor whose levels come from the data is {\"levels\": [...], \"codes\": [...]}",
             )
         };
-        match (declared, self.val()) {
-            (Some(_), Some(Value::Array(items))) => {
+        let v = self.val();
+        match (declared, v.and_then(Node::array_len), v.and_then(Node::object_len)) {
+            (Some(_), Some(n), _) => {
+                let v = v.expect("an array");
                 let mut levels: Vec<Cow<'a, str>> = Vec::new();
                 let mut index: std::collections::HashMap<&'a str, i32> =
                     std::collections::HashMap::new();
-                let mut codes = Vec::with_capacity(items.len());
+                let mut codes = Vec::with_capacity(n);
                 let mut problems = Vec::new();
-                for (i, x) in items.iter().enumerate() {
-                    match x {
-                        Value::Null => codes.push(MISSING_CODE),
-                        Value::String(s) => {
-                            let code = *index.entry(s.as_str()).or_insert_with(|| {
-                                levels.push(Cow::Borrowed(s.as_str()));
-                                levels.len() as i32
-                            });
-                            codes.push(code);
-                        }
-                        other => {
-                            problems.push(
-                                Form::mismatch("a level", json_kind(other)).at(format!("/{i}")),
-                            );
-                            codes.push(0);
-                        }
+                for i in 0..n {
+                    let x = v.item(i).expect("an item below the array's length");
+                    if x.is_null() {
+                        codes.push(MISSING_CODE);
+                    } else if let Some(s) = x.as_str() {
+                        let code = *index.entry(s).or_insert_with(|| {
+                            levels.push(Cow::Borrowed(s));
+                            levels.len() as i32
+                        });
+                        codes.push(code);
+                    } else {
+                        problems.push(Form::mismatch("a level", x.kind()).at(format!("/{i}")));
+                        codes.push(0);
                     }
                 }
                 Ok(Factor {
@@ -1103,40 +1208,45 @@ impl<'a> Access<'a> for Json<'a> {
                     problems,
                 })
             }
-            (None, Some(Value::Object(m))) => {
+            (None, _, Some(len)) => {
+                let m = v.expect("an object");
                 let (Some(lv), Some(codes)) = (
-                    m.get("levels").and_then(Value::as_array),
-                    m.get("codes").and_then(Value::as_array),
+                    m.get("levels").filter(|l| l.is_array()),
+                    m.get("codes").filter(|c| c.is_array()),
                 ) else {
                     return Err(form());
                 };
                 let mut problems = Vec::new();
-                if m.len() != 2 {
+                if len != 2 {
                     problems.push(Form::new(
                         "factor_form",
                         "a factor holds `levels` and `codes` only",
                     ));
                 }
-                if lv.iter().any(|l| !l.is_string()) {
+                let n_levels = lv.array_len().unwrap_or(0);
+                let level_nodes: Vec<N> = (0..n_levels).filter_map(|i| lv.item(i)).collect();
+                if level_nodes.iter().any(|l| !l.is_string()) {
                     problems.push(Form::new("factor_form", "levels are strings").at("/levels"));
                 }
-                let levels = lv
+                let levels = level_nodes
                     .iter()
                     .map(|l| match l.as_str() {
                         Some(s) => Cow::Borrowed(s),
-                        None => Cow::Owned(l.to_string()),
+                        None => Cow::Owned(l.to_value().to_string()),
                     })
                     .collect();
-                let mut out = Vec::with_capacity(codes.len());
-                for (i, c) in codes.iter().enumerate() {
+                let n_codes = codes.array_len().unwrap_or(0);
+                let mut out = Vec::with_capacity(n_codes);
+                for i in 0..n_codes {
+                    let c = codes.item(i).expect("an item below the array's length");
                     match c.as_u64() {
-                        Some(k) if k >= 1 && (k as usize) <= lv.len() => out.push(k as i32),
+                        Some(k) if k >= 1 && (k as usize) <= n_levels => out.push(k as i32),
                         _ if c.is_null() => out.push(MISSING_CODE),
                         _ => {
                             problems.push(
                                 Form::new(
                                     "invalid_code",
-                                    format!("a code is an integer from 1 to {}", lv.len()),
+                                    format!("a code is an integer from 1 to {n_levels}"),
                                 )
                                 .at(format!("/codes/{i}")),
                             );
@@ -1150,23 +1260,26 @@ impl<'a> Access<'a> for Json<'a> {
                     problems,
                 })
             }
-            (Some(_), _) => Err(Form::new(
+            (Some(_), ..) => Err(Form::new(
                 "factor_form",
                 "a factor with declared levels is a string array",
             )),
-            (None, _) => Err(form()),
+            (None, ..) => Err(form()),
         }
     }
 
     fn dense(self, _element: &FieldType) -> Read<Dense<Self>> {
         let m = self
             .val()
-            .and_then(Value::as_object)
+            .filter(|v| v.object_len().is_some())
             .ok_or_else(|| self.mismatch("an object with `shape`"))?;
         let shape = m
             .get("shape")
-            .and_then(Value::as_array)
-            .and_then(|s| s.iter().map(Value::as_u64).collect::<Option<Vec<u64>>>())
+            .and_then(|s| {
+                (0..s.array_len()?)
+                    .map(|i| s.item(i).and_then(Node::as_u64))
+                    .collect::<Option<Vec<u64>>>()
+            })
             .ok_or_else(|| {
                 Form::new(
                     "matrix_form",
@@ -1174,8 +1287,10 @@ impl<'a> Access<'a> for Json<'a> {
                 )
             })?;
         let mut problems = Vec::new();
-        if m.keys()
-            .any(|k| !matches!(k.as_str(), "shape" | "data" | "dimnames"))
+        if m.entries()
+            .unwrap_or_default()
+            .iter()
+            .any(|(k, _)| !matches!(*k, "shape" | "data" | "dimnames"))
         {
             problems.push(Form::new(
                 "matrix_form",
@@ -1186,13 +1301,16 @@ impl<'a> Access<'a> for Json<'a> {
             .get("data")
             .filter(|d| d.is_array())
             .ok_or_else(|| Form::new("matrix_form", "`data` is an array"))?;
-        if let Some(dn) = m.get("dimnames") {
-            let ok = dn.as_array().is_some_and(|d| {
-                d.len() == shape.len()
-                    && d.iter().zip(&shape).all(|(names, &len)| {
+        let dn = m.get("dimnames");
+        if let Some(dn) = dn {
+            let ok = dn.array_len().is_some_and(|n| {
+                n == shape.len()
+                    && shape.iter().enumerate().all(|(i, &len)| {
+                        let names = dn.item(i).expect("an item below the array's length");
                         names.is_null()
-                            || names.as_array().is_some_and(|a| {
-                                a.len() as u64 == len && a.iter().all(Value::is_string)
+                            || names.array_len().is_some_and(|a| {
+                                a as u64 == len
+                                    && (0..a).all(|j| names.item(j).is_some_and(Node::is_string))
                             })
                     })
             });
@@ -1206,20 +1324,21 @@ impl<'a> Access<'a> for Json<'a> {
                 );
             }
         }
-        let dimnames = m.get("dimnames").and_then(Value::as_array).map(|d| {
-            d.iter()
-                .map(|names| {
-                    names.as_array().map(|a| Names {
-                        seq: Json::V(names),
-                        len: a.len(),
+        let dimnames = dn.filter(|d| d.is_array()).map(|d| {
+            (0..d.array_len().unwrap_or(0))
+                .map(|i| {
+                    let names = d.item(i).expect("an item below the array's length");
+                    names.array_len().map(|len| Names {
+                        seq: JsonOf::V(names),
+                        len,
                     })
                 })
                 .collect()
         });
         Ok(Dense {
             shape,
-            len: data.as_array().map_or(0, Vec::len),
-            data: Json::V(data),
+            len: data.array_len().unwrap_or(0),
+            data: JsonOf::V(data),
             dimnames,
             problems,
         })
@@ -1228,12 +1347,14 @@ impl<'a> Access<'a> for Json<'a> {
     fn sparse(self, _element: &FieldType) -> Read<Sparse<Self>> {
         let m = self
             .val()
-            .and_then(Value::as_object)
+            .filter(|v| v.object_len().is_some())
             .ok_or_else(|| self.mismatch("an object with `shape`"))?;
         let ints = |k: &str| {
-            m.get(k)
-                .and_then(Value::as_array)
-                .and_then(|a| a.iter().map(Value::as_u64).collect::<Option<Vec<u64>>>())
+            m.get(k).and_then(|a| {
+                (0..a.array_len()?)
+                    .map(|i| a.item(i).and_then(Node::as_u64))
+                    .collect::<Option<Vec<u64>>>()
+            })
         };
         let shape = ints("shape").ok_or_else(|| {
             Form::new(
@@ -1256,17 +1377,17 @@ impl<'a> Access<'a> for Json<'a> {
                 "a sparse matrix holds `shape`, `indptr`, `indices`, and `data`",
             ));
         };
-        let len = |v: &Value| v.as_array().map_or(0, Vec::len);
+        let len = |v: N| v.array_len().unwrap_or(0);
         Ok(Sparse {
             shape,
-            data: Json::V(data),
+            data: JsonOf::V(data),
             len: len(data),
             indptr: Indices {
-                seq: Json::V(indptr),
+                seq: JsonOf::V(indptr),
                 len: len(indptr),
             },
             indices: Indices {
-                seq: Json::V(indices),
+                seq: JsonOf::V(indices),
                 len: len(indices),
             },
         })
@@ -1275,15 +1396,14 @@ impl<'a> Access<'a> for Json<'a> {
     fn table(self, columns: &[FieldDef], open: bool) -> Read<Table<'a, Self>> {
         let m = self
             .val()
-            .and_then(Value::as_object)
+            .filter(|v| v.object_len().is_some())
             .ok_or_else(|| self.mismatch("a table object"))?;
-        let rows = m.get("$length").and_then(Value::as_u64).ok_or_else(|| {
+        let rows = m.get("$length").and_then(Node::as_u64).ok_or_else(|| {
             Form::new("table_form", "a table holds `$length`, its number of rows")
         })?;
         let mut problems = Vec::new();
-        let extra = m.get("$columns");
-        if let Some(t) = extra {
-            match t.as_object().filter(|_| open) {
+        if let Some(t) = m.get("$columns") {
+            match t.entries().filter(|_| open) {
                 None => problems.push(
                     Form::new(
                         "table_form",
@@ -1291,11 +1411,11 @@ impl<'a> Access<'a> for Json<'a> {
                     )
                     .at("/$columns"),
                 ),
-                Some(t) => {
+                Some(listed) => {
                     let declared = |k: &str| columns.iter().any(|c| c.name.as_str() == k);
-                    for k in t
-                        .keys()
-                        .filter(|k| !m.contains_key(k.as_str()) || declared(k))
+                    for (k, _) in listed
+                        .into_iter()
+                        .filter(|(k, _)| m.get(k).is_none() || declared(k))
                     {
                         problems.push(
                             Form::new(
@@ -1309,9 +1429,11 @@ impl<'a> Access<'a> for Json<'a> {
             }
         }
         let columns = m
-            .iter()
+            .entries()
+            .unwrap_or_default()
+            .into_iter()
             .filter(|(k, _)| !k.starts_with('$'))
-            .map(|(k, v)| (Cow::Borrowed(k.as_str()), Json::V(v)))
+            .map(|(k, v)| (Cow::Borrowed(k), JsonOf::V(v)))
             .collect();
         Ok(Table {
             rows,
@@ -1332,7 +1454,7 @@ impl<'a> Access<'a> for Json<'a> {
             )
             .at(format!("/$columns/{}", esc(name)))
         };
-        match listed.map(|t| serde_json::from_value::<FieldType>(t.clone())) {
+        match listed.map(|t| t.with_value(|v| <FieldType as serde::Deserialize>::deserialize(v))) {
             Some(Ok(ft)) => Ok(ft),
             _ => Err(fail()),
         }
@@ -1340,33 +1462,33 @@ impl<'a> Access<'a> for Json<'a> {
 
     fn row(self, i: usize) -> Self {
         match self.val() {
-            Some(Value::Object(m)) => Json::Row(m, i),
-            _ => Json::Missing,
+            Some(v) if v.object_len().is_some() => JsonOf::Row(v, i),
+            _ => JsonOf::Missing,
         }
     }
 
     fn record(self, _name: &QualifiedName) -> Read<()> {
         match self.val() {
-            Some(Value::Object(_)) => Ok(()),
+            Some(v) if v.object_len().is_some() => Ok(()),
             _ => Err(self.mismatch("an object")),
         }
     }
 
     fn member(self, name: &str) -> Self {
         match self {
-            Json::Row(m, i) => m.get(name).map_or(Json::Missing, |c| Json::Cell(c, i)),
-            _ => match self.val() {
-                Some(Value::Object(m)) => m.get(name).map_or(Json::Missing, Json::V),
-                _ => Json::Missing,
+            JsonOf::Row(m, i) => m.get(name).map_or(JsonOf::Missing, |c| JsonOf::Cell(c, i)),
+            _ => match self.val().and_then(|v| v.get(name)) {
+                Some(x) => JsonOf::V(x),
+                None => JsonOf::Missing,
             },
         }
     }
 
     fn members(self) -> Vec<Cow<'a, str>> {
-        match self.val() {
-            Some(Value::Object(m)) => m.keys().map(|k| Cow::Borrowed(k.as_str())).collect(),
-            _ => Vec::new(),
-        }
+        self.val()
+            .and_then(Node::entries)
+            .map(|m| m.into_iter().map(|(k, _)| Cow::Borrowed(k)).collect())
+            .unwrap_or_default()
     }
 
     fn variant(self, name: &QualifiedName, def: &EnumDef) -> Read<Cow<'a, str>> {
@@ -1381,7 +1503,7 @@ impl<'a> Access<'a> for Json<'a> {
         }
         let tag = def.tag.as_str();
         match self.val() {
-            Some(Value::Object(m)) => match m.get(tag).and_then(Value::as_str) {
+            Some(v) if v.object_len().is_some() => match v.get(tag).and_then(Node::as_str) {
                 Some(s) => Ok(Cow::Borrowed(s)),
                 None => Err(Form::new(
                     "missing_tag",
@@ -1397,43 +1519,39 @@ impl<'a> Access<'a> for Json<'a> {
         r#trait: &QualifiedName,
         lookup: &dyn TypeLookup,
     ) -> Result<(QualifiedName, Option<String>), String> {
-        let v = self.val().unwrap_or(&Value::Null);
-        lookup
-            .implementor(r#trait, v)
-            .map(|(ty, member)| (ty, Some(member)))
+        let found = match self.val() {
+            Some(v) => v.with_value(|v| lookup.implementor(r#trait, v)),
+            None => lookup.implementor(r#trait, &Value::Null),
+        };
+        found.map(|(ty, member)| (ty, Some(member)))
     }
 
     fn same(self, other: Self) -> bool {
         match (self, other) {
-            (Json::V(a), Json::V(b)) => std::ptr::eq(a, b),
+            (JsonOf::V(a), JsonOf::V(b)) => a.same(b),
             _ => false,
         }
     }
 
     fn to_value(self, _ft: &FieldType, _lookup: &dyn TypeLookup) -> Value {
         match self {
-            Json::Missing => Value::Null,
-            Json::Row(m, i) => Value::Object(
-                m.iter()
+            JsonOf::Missing => Value::Null,
+            JsonOf::Row(m, i) => Value::Object(
+                m.entries()
+                    .unwrap_or_default()
+                    .into_iter()
                     .filter(|(k, _)| !k.starts_with('$'))
-                    .map(|(k, c)| (k.clone(), Json::Cell(c, i).to_value(_ft, _lookup)))
+                    .map(|(k, c)| (k.to_string(), JsonOf::Cell(c, i).to_value(_ft, _lookup)))
                     .collect(),
             ),
-            Json::Cell(Value::Object(m), i) => {
-                let levels = m.get("levels").and_then(Value::as_array);
-                let code = m
-                    .get("codes")
-                    .and_then(Value::as_array)
-                    .and_then(|c| c.get(i))
-                    .and_then(Value::as_u64);
-                match (levels, code) {
-                    (Some(l), Some(c)) if c >= 1 => {
-                        l.get(c as usize - 1).cloned().unwrap_or(Value::Null)
-                    }
-                    _ => Value::Null,
-                }
+            JsonOf::Cell(c, i) if c.object_len().is_some() => {
+                let level = c.get("levels").and_then(|levels| {
+                    let code = c.get("codes")?.item(i)?.as_u64()?;
+                    (code >= 1).then(|| levels.item(code as usize - 1))?
+                });
+                level.map_or(Value::Null, Node::to_value)
             }
-            _ => self.val().cloned().unwrap_or(Value::Null),
+            _ => self.val().map_or(Value::Null, Node::to_value),
         }
     }
 }

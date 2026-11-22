@@ -2,10 +2,10 @@
 //! own derives write a declaration as the R lists the declaration functions
 //! build. A map or a struct is a named list, a sequence an unnamed list, a
 //! scalar a length-one vector, `null` and an absent value `NULL`. An integer
-//! within R's integer range is an integer, and any other integer is a
-//! `json_ir()` of its text, as `r8_json_parse()` writes it, which `irde` reads
-//! back exactly: a double does not hold every integer beyond 2^53. A number
-//! with a fraction is a double.
+//! within R's integer range is an integer, another integer of magnitude at
+//! most 2^53 a whole double, which R holds exactly, and any other integer a
+//! string of its decimal digits of class `r8_int64`, which `irde` reads back
+//! exactly. A number with a fraction is a double.
 //!
 //! The writer allocates through R's C API. Each open list holds one slot of
 //! R's protection stack, released in the order the lists were opened, and
@@ -101,21 +101,25 @@ fn logical(b: bool) -> SEXP {
     }
 }
 
-/// A `json_ir()` object of JSON text.
-fn json_ir(text: &str) -> SEXP {
+/// An `int64()` object: the decimal digits of an integer beyond 2^53.
+fn int64(text: &str) -> SEXP {
     unsafe {
         let out = Rf_protect(string(text));
-        let class = Rf_protect(string("r8_json_ir"));
+        let class = Rf_protect(string("r8_int64"));
         Rf_setAttrib(out, sym_class(), class);
         Rf_unprotect(2);
         out
     }
 }
 
+/// The largest magnitude of an integer that every double holds exactly.
+const EXACT_DOUBLE: u64 = 1 << 53;
+
 fn integer(n: i64) -> SEXP {
     match i32::try_from(n) {
         Ok(i) if i != i32::MIN => int(i),
-        _ => json_ir(&n.to_string()),
+        _ if n.unsigned_abs() <= EXACT_DOUBLE => real(n as f64),
+        _ => int64(&n.to_string()),
     }
 }
 
@@ -273,7 +277,7 @@ impl ser::Serializer for Ser {
         Ok(integer(v.into()))
     }
     fn serialize_u64(self, v: u64) -> Out {
-        Ok(i64::try_from(v).map_or_else(|_| json_ir(&v.to_string()), integer))
+        Ok(i64::try_from(v).map_or_else(|_| int64(&v.to_string()), integer))
     }
     fn serialize_f32(self, v: f32) -> Out {
         Ok(real(f64::from(v)))

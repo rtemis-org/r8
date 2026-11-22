@@ -676,6 +676,17 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
     let name = symbol_name(f);
     let a = args(x);
     match name.as_str() {
+        "int64" => match a.as_slice() {
+            [t] if sexptype(*t) == SEXPTYPE::STRSXP && xlen(*t) == 1 => {
+                let text = string_elt(*t, 0).ok_or(BuildError::Int64)?;
+                text.parse::<i64>()
+                    .map(serde_json::Number::from)
+                    .or_else(|_| text.parse::<u64>().map(serde_json::Number::from))
+                    .map(Logic::Number)
+                    .map_err(|_| BuildError::Int64)
+            }
+            _ => Err(BuildError::Int64),
+        },
         "json_ir" => match a.as_slice() {
             [t] if sexptype(*t) == SEXPTYPE::STRSXP && xlen(*t) == 1 => {
                 let text = string_elt(*t, 0).ok_or(BuildError::JsonIr { detail: None })?;

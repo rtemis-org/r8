@@ -262,10 +262,11 @@ r8_clear_external_ptrs <- function(ptrs) .Call(wrap__r8_clear_external_ptrs, ptr
 #' @noRd
 r8_exports_info <- function(ptr) .Call(wrap__r8_exports_info, ptr)
 
-#' The IR document of an exports table, as JSON text.
+#' The IR document of an exports table, as the R lists the declaration
+#' functions build.
 #'
 #' @param ptr The external pointer that `r8_exports` returned.
-#' @return Character: The IR document.
+#' @return List: The IR document.
 #' @keywords internal
 #' @noRd
 r8_exports_document <- function(ptr) .Call(wrap__r8_exports_document, ptr)

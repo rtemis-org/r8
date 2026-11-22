@@ -28,8 +28,13 @@ fn fail(message: impl Into<String>) -> Error {
     Error::Other(message.into())
 }
 
-/// The size of `R8Exports` in ABI version 1, the fields every table holds.
-const EXPORTS_SIZE: u32 = std::mem::size_of::<Exports>() as u32;
+/// The fields every `R8Exports` of ABI version 1 holds, through `n_impls`.
+const EXPORTS_SIZE: u32 =
+    (std::mem::offset_of!(Exports, n_impls) + std::mem::size_of::<usize>()) as u32;
+
+/// The end of `ir_record_len`, which tables written for R8 0.4.0 have.
+const RECORD_END: usize =
+    std::mem::offset_of!(Exports, ir_record_len) + std::mem::size_of::<usize>();
 
 /// A registered impl function.
 #[derive(Clone, Copy)]
@@ -196,6 +201,10 @@ fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
 }
 
 fn ir_document(e: &Exports) -> Result<IrDocument> {
+    if e.size as usize >= RECORD_END && !e.ir_record.is_null() {
+        let bytes = unsafe { std::slice::from_raw_parts(e.ir_record, e.ir_record_len) };
+        return record_document(bytes);
+    }
     if e.ir_json.is_null() {
         return Err(fail("the exports table has no IR document"));
     }
@@ -207,6 +216,39 @@ fn ir_document(e: &Exports) -> Result<IrDocument> {
             "the exports table's IR document does not read: {e}"
         ))
     })
+}
+
+/// The IR document of an exports table's declaration record, whose entries
+/// belong to one namespace.
+fn record_document(bytes: &[u8]) -> Result<IrDocument> {
+    use rtemis_r8::record::{self, Declaration};
+    let entries = record::decode(bytes)
+        .map_err(|e| fail(format!("the exports table's record does not read: {e}")))?;
+    let namespace = match entries.first() {
+        Some(e) => e.namespace.clone(),
+        None => return Err(fail("the exports table's record holds no declaration")),
+    };
+    let mut doc = IrDocument {
+        ir_version: rtemis_r8::ir::IR_VERSION,
+        namespace,
+        types: Vec::new(),
+        traits: Vec::new(),
+        impls: Vec::new(),
+    };
+    for e in entries {
+        if e.namespace != doc.namespace {
+            return Err(fail(format!(
+                "the exports table's record holds declarations of `{}` and of `{}`; a package's exports belong to one namespace",
+                doc.namespace, e.namespace
+            )));
+        }
+        match e.declaration {
+            Declaration::Type(t) => doc.types.push(t),
+            Declaration::Trait(t) => doc.traits.push(t),
+            Declaration::Impl(i) => doc.impls.push(i),
+        }
+    }
+    Ok(doc)
 }
 
 /// The package and namespace of an exports table, checked.
@@ -226,17 +268,18 @@ fn r8_exports_info(ptr: Robj) -> Result<List> {
     ))
 }
 
-/// The IR document of an exports table, as JSON text.
+/// The IR document of an exports table, as the R lists the declaration
+/// functions build.
 ///
 /// @param ptr The external pointer that `r8_exports` returned.
-/// @return Character: The IR document.
+/// @return List: The IR document.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_exports_document(ptr: Robj) -> Result<String> {
+fn r8_exports_document(ptr: Robj) -> Result<Robj> {
     let e = exports_of(&ptr)?;
     let doc = ir_document(e)?;
-    serde_json::to_string(&doc).map_err(|e| fail(e.to_string()))
+    crate::irser::to_r(&doc).map_err(|e| fail(e.to_string()))
 }
 
 /// Compares each type of an exports table with the registered declaration of

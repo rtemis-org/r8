@@ -92,7 +92,7 @@ r8_document_native <- function(path = ".", check = FALSE) {
       class = "r8_declaration_error"
     )
   }
-  doc <- r8_json_parse(r8_exports_document(ptr))
+  doc <- r8_exports_document(ptr)
   .r8_render_refs[["map"]] <- foreign_refs(doc, path)
   on.exit(.r8_render_refs[["map"]] <- NULL, add = TRUE)
   codecs <- r8_exports_compare(ptr)
@@ -950,7 +950,7 @@ render_rules <- function(rules, indent) {
 #' expression renders as `R8::json_ir()` of its JSON text, whose numbers keep
 #' the spelling of the IR (canonical JSON writes every number as a double).
 #'
-#' @param x The JSONLogic expression, as `r8_json_parse()` returns it.
+#' @param x The JSONLogic expression, as `r8_exports_document()` returns it.
 #'
 #' @return Character.
 #'
@@ -982,6 +982,12 @@ render_logic <- function(x) {
 logic_to_r <- function(x) {
   fail <- function() stop("no R form", call. = FALSE)
   to_r <- function(x) {
+    if (inherits(x, "r8_int64")) {
+      return(as.call(list(
+        call("::", as.name("R8"), as.name("int64")),
+        unclass(x)
+      )))
+    }
     if (inherits(x, "r8_json_ir")) {
       fail()
     }
@@ -1070,7 +1076,7 @@ r_spelling <- function() {
 #' of a scalar or a vector is kept when its JSON form as a default is the same
 #' canonical JSON. Every other default renders as `R8::json_ir()`.
 #'
-#' @param x The default, as `r8_json_parse()` returns it.
+#' @param x The default, as `r8_exports_document()` returns it.
 #' @param type List: The field's IR type.
 #' @param ns Character: The namespace.
 #'
@@ -1120,7 +1126,7 @@ render_default <- function(x, type, ns) {
 # %% canonical_ir ----
 #' The canonical JSON text of an IR value
 #'
-#' @param x An IR value, as `r8_json_parse()` returns it or an R declaration
+#' @param x An IR value, as `r8_exports_document()` returns it or an R declaration
 #'   builds it.
 #'
 #' @return Character.

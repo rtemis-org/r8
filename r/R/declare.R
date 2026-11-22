@@ -107,6 +107,53 @@ json_ir <- function(text) {
 } # /R8::json_ir
 
 
+# %% int64 ----
+#' An integer beyond R's range
+#'
+#' An integer of more than 2^53 in magnitude, which neither an R integer nor a
+#' double holds exactly, given as its decimal digits: for a rule's constant or
+#' a default. R8 writes such an integer of a declaration in this form.
+#'
+#' @param text Character: The decimal digits of one integer, with an optional
+#'   leading `-`.
+#'
+#' @return An `r8_int64`: the text, of that class.
+#'
+#' @examples
+#' int64("9007199254740993")
+#'
+#' @export
+int64 <- function(text) {
+  if (
+    !is.character(text) ||
+      length(text) != 1L ||
+      is.na(text) ||
+      !grepl("^-?[0-9]+$", text)
+  ) {
+    r8_abort(
+      "`text` is the decimal digits of one integer.",
+      class = "r8_declaration_error"
+    )
+  }
+  structure(text, class = "r8_int64")
+} # /R8::int64
+
+
+# %% print.r8_int64 ----
+#' Print an integer beyond R's range
+#'
+#' @param x An `r8_int64`.
+#' @param ... Not used.
+#'
+#' @return `x`, invisibly.
+#'
+#' @export
+print.r8_int64 <- function(x, ...) {
+  cat("<r8_int64>", unclass(x), "\n")
+  invisible(x)
+} # /R8::print.r8_int64
+
+
 # %% print.r8_json_ir ----
 #' Print IR as JSON text
 #'

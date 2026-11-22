@@ -58,16 +58,24 @@ struct Kept(Robj);
 // SAFETY: R8's native functions run on R's main thread only.
 unsafe impl Send for Kept {}
 
-/// The R form of the declared default `d` of a field of `ft`, decoded from
-/// the IR document once per registry and shared by every value that takes
-/// it. A value that modifies the field copies it first, since the cache
-/// holds a reference.
+/// The declared defaults decoded to R, by type, variant (`""` for a
+/// struct), and field index.
+type Defaults = HashMap<QualifiedName, HashMap<Box<str>, Vec<Option<Kept>>>>;
+
+/// The R form of the declared default `d` of the field `k` of the type `q`,
+/// of its variant `variant` for an enum (`""` for a struct), whose type is
+/// `ft`: decoded from the registry once per registry generation and shared
+/// by every value that takes it. A value that modifies the field copies it
+/// first, since the cache holds a reference. The key names the field, not
+/// the address of its declaration, which a replaced declaration can reuse.
 pub(crate) fn default_r(
     d: &serde_json::Value,
     ft: &FieldType,
     lookup: &dyn TypeLookup,
+    field: (&QualifiedName, &str, usize),
 ) -> Result<SEXP> {
-    static CACHE: OnceLock<Mutex<(u64, HashMap<usize, Kept>)>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<(u64, Defaults)>> = OnceLock::new();
+    let (q, variant, k) = field;
     let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
     let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
     let g = GENERATION.load(Ordering::Relaxed);
@@ -75,13 +83,26 @@ pub(crate) fn default_r(
         guard.1.clear();
         guard.0 = g;
     }
-    let key = d as *const serde_json::Value as usize;
-    if let Some(r) = guard.1.get(&key) {
+    if let Some(Some(r)) = guard
+        .1
+        .get(q)
+        .and_then(|v| v.get(variant))
+        .and_then(|fields| fields.get(k))
+    {
         return Ok(unsafe { r.0.get() });
     }
     let r = crate::values::decode_field(d, ft, lookup)?;
     let s = unsafe { r.get() };
-    guard.1.insert(key, Kept(r));
+    let slots = guard
+        .1
+        .entry(q.clone())
+        .or_default()
+        .entry(variant.into())
+        .or_default();
+    if slots.len() <= k {
+        slots.resize_with(k + 1, || None);
+    }
+    slots[k] = Some(Kept(r));
     Ok(s)
 }
 
@@ -842,7 +863,7 @@ pub(crate) fn assemble(
             let x = list_member_at(fields, k, f.name.as_str()).unwrap_or(nil());
             let value = if is_null(x) {
                 match &f.default {
-                    Some(d) => default_r(d, &f.ty, lookup)?,
+                    Some(d) => default_r(d, &f.ty, lookup, (q, variant.unwrap_or(""), k))?,
                     None => nil(),
                 }
             } else {
@@ -983,7 +1004,7 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
     let mut created: Option<Robj> = None;
     let stored = if is_null(vs) {
         match &f.default {
-            Some(d) => default_r(d, &f.ty, lookup)?,
+            Some(d) => default_r(d, &f.ty, lookup, (&q, variant.as_deref().unwrap_or(""), k))?,
             None if matches!(f.ty, FieldType::Option { .. }) => nil(),
             None => {
                 return problems(&[ValueError {

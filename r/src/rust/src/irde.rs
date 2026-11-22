@@ -4,9 +4,12 @@
 //! A named list is a map; an unnamed list is a sequence; an atomic vector is
 //! a sequence where the IR type expects one, and otherwise a scalar when its
 //! length is one and a sequence when it is not; `NULL` is `null`. An object of
-//! class `r8_json_ir`, from `json_ir(text)`, reads as its JSON text. A
-//! declaration holds no `NA` and no number that is not finite; an error names
-//! the path of the value.
+//! class `r8_json_ir`, from `json_ir(text)`, reads as its JSON text, read
+//! straight from the text. Where the IR expects an integer, a whole double of
+//! magnitude at most 2^53 reads as that integer, and a string of class
+//! `r8_int64`, from `int64(text)`, as the integer of its decimal digits; an
+//! `r8_int64` reads as a number anywhere. A declaration holds no `NA` and no
+//! number that is not finite; an error names the path of the value.
 //! spec: R8/class-system#declaring-types
 
 use std::borrow::Cow;
@@ -93,6 +96,44 @@ impl De<'_> {
         )
     }
 
+    /// The integer of an `int64()` object.
+    fn int64(&self) -> Option<Result<Int64, Error>> {
+        if self.elt.is_some() || !inherits(self.x, "r8_int64") {
+            return None;
+        }
+        Some(
+            (sexptype(self.x) == SEXPTYPE::STRSXP && xlen(self.x) == 1)
+                .then(|| string_elt(self.x, 0))
+                .flatten()
+                .and_then(|t| int64_of(&t))
+                .ok_or_else(|| self.fail("int64() holds the decimal digits of one integer")),
+        )
+    }
+
+    /// A whole double of magnitude at most 2^53, where the IR expects an
+    /// integer.
+    fn whole(&self) -> Option<i64> {
+        if sexptype(self.x) != SEXPTYPE::REALSXP || (self.elt.is_none() && xlen(self.x) != 1) {
+            return None;
+        }
+        let d = unsafe { *REAL(self.x).add(self.elt.unwrap_or(0)) };
+        (d.fract() == 0.0 && d.abs() <= 9007199254740992.0).then_some(d as i64)
+    }
+
+    /// An integer member: `int64()`, a whole double, or any other value.
+    fn integer<'de, V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        if let Some(n) = self.int64() {
+            return match n? {
+                Int64::Signed(i) => v.visit_i64(i),
+                Int64::Unsigned(u) => v.visit_u64(u),
+            };
+        }
+        match self.whole() {
+            Some(i) => v.visit_i64(i),
+            None => de::Deserializer::deserialize_any(self, v),
+        }
+    }
+
     /// The `i`th element of an atomic vector, visited as a scalar.
     fn scalar<'de, V: Visitor<'de>>(&self, i: usize, v: V) -> Result<V::Value, Error> {
         let x = self.x;
@@ -144,16 +185,36 @@ impl De<'_> {
     }
 }
 
-/// The JSON value of a `json_ir()` object's text, owned, so that it
-/// deserializes into a visitor of any lifetime.
-fn json_value(path: &Path<'_>, text: &str) -> Result<serde_json::Value, Error> {
-    serde_json::from_str(text)
-        .map_err(|e| Error(format!("{path}: the text of json_ir() does not read: {e}")))
+/// Deserializes `json_ir()` text through `f`, from a reader over the text, so
+/// that its strings are owned and it serves a visitor of any lifetime.
+fn from_text<'de, V: Visitor<'de>>(
+    path: &Path<'_>,
+    text: &str,
+    v: V,
+    f: impl FnOnce(
+        &mut serde_json::Deserializer<serde_json::de::IoRead<&[u8]>>,
+        V,
+    ) -> Result<V::Value, serde_json::Error>,
+) -> Result<V::Value, Error> {
+    let fail =
+        |e: serde_json::Error| Error(format!("{path}: the text of json_ir() does not read: {e}"));
+    let mut de = serde_json::Deserializer::from_reader(text.as_bytes());
+    let out = f(&mut de, v).map_err(fail)?;
+    de.end().map_err(fail)?;
+    Ok(out)
 }
 
-/// An error of a `json_ir()` value, at `path`.
-fn at<'a>(path: &'a Path<'a>) -> impl FnOnce(serde_json::Error) -> Error + 'a {
-    move |e| Error(format!("{path}: {e}"))
+/// An integer of `int64()`'s decimal digits.
+enum Int64 {
+    Signed(i64),
+    Unsigned(u64),
+}
+
+fn int64_of(text: &str) -> Option<Int64> {
+    text.parse::<i64>()
+        .map(Int64::Signed)
+        .ok()
+        .or_else(|| text.parse::<u64>().map(Int64::Unsigned).ok())
 }
 
 impl<'de> de::Deserializer<'de> for De<'_> {
@@ -161,9 +222,15 @@ impl<'de> de::Deserializer<'de> for De<'_> {
 
     fn deserialize_any<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
         if let Some(text) = self.json_ir() {
-            return json_value(self.path, &text?)?
-                .deserialize_any(v)
-                .map_err(at(self.path));
+            return from_text(self.path, &text?, v, |de, v| {
+                de::Deserializer::deserialize_any(de, v)
+            });
+        }
+        if let Some(n) = self.int64() {
+            return match n? {
+                Int64::Signed(i) => v.visit_i64(i),
+                Int64::Unsigned(u) => v.visit_u64(u),
+            };
         }
         if let Some(i) = self.elt {
             return self.scalar(i, v);
@@ -187,9 +254,9 @@ impl<'de> de::Deserializer<'de> for De<'_> {
 
     fn deserialize_option<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
         if let Some(text) = self.json_ir() {
-            return json_value(self.path, &text?)?
-                .deserialize_option(v)
-                .map_err(at(self.path));
+            return from_text(self.path, &text?, v, |de, v| {
+                de::Deserializer::deserialize_option(de, v)
+            });
         }
         if self.elt.is_none() && sexptype(self.x) == SEXPTYPE::NILSXP {
             v.visit_none()
@@ -200,9 +267,9 @@ impl<'de> de::Deserializer<'de> for De<'_> {
 
     fn deserialize_seq<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
         if let Some(text) = self.json_ir() {
-            return json_value(self.path, &text?)?
-                .deserialize_seq(v)
-                .map_err(at(self.path));
+            return from_text(self.path, &text?, v, |de, v| {
+                de::Deserializer::deserialize_seq(de, v)
+            });
         }
         if self.elt.is_some() || self.names().is_some() {
             return self.deserialize_any(v);
@@ -224,9 +291,9 @@ impl<'de> de::Deserializer<'de> for De<'_> {
         v: V,
     ) -> Result<V::Value, Error> {
         if let Some(text) = self.json_ir() {
-            return json_value(self.path, &text?)?
-                .deserialize_enum(name, variants, v)
-                .map_err(at(self.path));
+            return from_text(self.path, &text?, v, |de, v| {
+                de::Deserializer::deserialize_enum(de, name, variants, v)
+            });
         }
         let i = self.elt.unwrap_or(0);
         if sexptype(self.x) == SEXPTYPE::STRSXP && (self.elt.is_some() || xlen(self.x) == 1) {
@@ -247,8 +314,33 @@ impl<'de> de::Deserializer<'de> for De<'_> {
         v.visit_newtype_struct(self)
     }
 
+    fn deserialize_i8<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+    fn deserialize_i16<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+    fn deserialize_i32<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+    fn deserialize_i64<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+    fn deserialize_u8<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+    fn deserialize_u16<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+    fn deserialize_u32<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+    fn deserialize_u64<V: Visitor<'de>>(self, v: V) -> Result<V::Value, Error> {
+        self.integer(v)
+    }
+
     forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+        bool i128 u128 f32 f64 char str string bytes
         byte_buf unit unit_struct tuple tuple_struct map struct identifier ignored_any
     }
 }

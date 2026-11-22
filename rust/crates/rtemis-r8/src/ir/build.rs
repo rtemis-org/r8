@@ -121,6 +121,9 @@ pub enum BuildError {
         /// The variant's name.
         name: String,
     },
+    /// `int64()` in a rule that does not hold the decimal digits of one
+    /// integer.
+    Int64,
     /// `json_ir()` in a rule that does not hold one string of JSONLogic.
     JsonIr {
         /// Why the text does not read, or `None` when it is not one string.
@@ -185,6 +188,9 @@ impl fmt::Display for BuildError {
                 f.write_str("Struct values as defaults are constructed with the type.")
             }
             BuildError::NotVariant { name } => write!(f, "Variant `{name}` is a variant() call."),
+            BuildError::Int64 => {
+                f.write_str("int64() in a rule holds the decimal digits of one integer.")
+            }
             BuildError::JsonIr { detail: None } => {
                 f.write_str("json_ir() in a rule holds one string of JSONLogic.")
             }

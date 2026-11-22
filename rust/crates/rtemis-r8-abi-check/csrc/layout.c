@@ -26,6 +26,7 @@ static const size_t layout[] = {
   SIZE(R8Exports), OFFSET(R8Exports, size), OFFSET(R8Exports, package),
   OFFSET(R8Exports, ir_json), OFFSET(R8Exports, ir_json_len), OFFSET(R8Exports, types),
   OFFSET(R8Exports, n_types), OFFSET(R8Exports, impls), OFFSET(R8Exports, n_impls),
+  OFFSET(R8Exports, ir_record), OFFSET(R8Exports, ir_record_len),
   SIZE(R8Api), OFFSET(R8Api, size), OFFSET(R8Api, new_value), OFFSET(R8Api, value_state),
   OFFSET(R8Api, view_doubles), OFFSET(R8Api, view_integers), OFFSET(R8Api, view_logicals),
   OFFSET(R8Api, view_bytes), OFFSET(R8Api, protect),

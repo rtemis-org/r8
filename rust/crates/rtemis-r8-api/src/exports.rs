@@ -79,11 +79,18 @@ pub fn table(
                 })
                 .collect(),
         };
-        let ir: &'static str = Box::leak(
-            serde_json::to_string(&doc)
-                .expect("an IR document serializes")
-                .into_boxed_str(),
+        // The declarations as a binary record, which R8 decodes into the
+        // typed IR; the table carries no JSON text.
+        use rtemis_r8::record::{self, DeclarationRef};
+        let ns = &doc.namespace;
+        let bytes = record::encode(
+            doc.types
+                .iter()
+                .map(|t| (ns, DeclarationRef::Type(t)))
+                .chain(doc.traits.iter().map(|t| (ns, DeclarationRef::Trait(t))))
+                .chain(doc.impls.iter().map(|i| (ns, DeclarationRef::Impl(i)))),
         );
+        let ir: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let entries: Vec<abi::ImplEntry> = impls
             .iter()
             .flat_map(|s| {
@@ -101,12 +108,14 @@ pub fn table(
             abi_version: ABI_VERSION,
             size: std::mem::size_of::<abi::Exports>() as u32,
             package: package.as_ptr(),
-            ir_json: ir.as_ptr().cast(),
-            ir_json_len: ir.len(),
+            ir_json: std::ptr::null(),
+            ir_json_len: 0,
             types: codecs.as_ptr(),
             n_types: codecs.len(),
             impls: entries.as_ptr(),
             n_impls: entries.len(),
+            ir_record: ir.as_ptr(),
+            ir_record_len: ir.len(),
         }));
         std::ptr::from_ref(e) as usize
     }) as *const abi::Exports

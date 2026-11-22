@@ -229,12 +229,19 @@ typedef struct R8Exports {
   uint32_t size;
   /* The R package's name. */
   const char *package;
+  /* The package's IR document as JSON text, read when `ir_record` is absent:
+   * tables written before `ir_record` carry it, and tables that rtemis-r8-api
+   * generates set it to NULL. */
   const char *ir_json;
   size_t ir_json_len;
   const R8TypeVTable *types;
   size_t n_types;
   const R8ImplEntry *impls;
   size_t n_impls;
+  /* The package's declarations as a declaration record, which R8 reads when
+   * `size` covers it and it is set. */
+  const uint8_t *ir_record;
+  size_t ir_record_len;
 } R8Exports;
 
 /* The function a package registers as "r8_exports". */

@@ -579,6 +579,9 @@ test_that("a field with a reserved name fails as a declaration, with its code an
 
 test_that("an integer beyond 2^53 in a rule keeps its value through R", {
   r <- rule("BIG", a < json_ir("9007199254740993"), "m")
-  expect_s3_class(r$invariant[["<"]][[2L]], "r8_json_ir")
+  expect_s3_class(r$invariant[["<"]][[2L]], "r8_int64")
   expect_identical(unclass(r$invariant[["<"]][[2L]]), "9007199254740993")
+  r2 <- rule("BIG2", a < int64("9007199254740993"), "m")
+  expect_identical(r2$invariant, r$invariant)
+  expect_error(int64("1.5"), class = "r8_declaration_error")
 })

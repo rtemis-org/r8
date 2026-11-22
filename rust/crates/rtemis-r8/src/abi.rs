@@ -236,7 +236,9 @@ pub struct Exports {
     pub size: u32,
     /// The package name, NUL-terminated.
     pub package: *const c_char,
-    /// The package's IR document as JSON text.
+    /// The package's IR document as JSON text, read when `ir_record` is
+    /// absent: tables generated before `ir_record` carry it, and tables
+    /// that `rtemis-r8-api` generates set it to NULL.
     pub ir_json: *const c_char,
     /// The length of `ir_json` in bytes.
     pub ir_json_len: usize,
@@ -248,6 +250,12 @@ pub struct Exports {
     pub impls: *const ImplEntry,
     /// The number of entries of `impls`.
     pub n_impls: usize,
+    /// The package's declarations as a declaration record
+    /// ([`crate::record`]), which R8 reads when `size` covers it and it is
+    /// set.
+    pub ir_record: *const u8,
+    /// The length of `ir_record` in bytes.
+    pub ir_record_len: usize,
 }
 
 /// `R8Api`: R8's services to compiled code of other packages.
@@ -362,6 +370,8 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("R8Exports.n_types", offset_of!(Exports, n_types)),
         ("R8Exports.impls", offset_of!(Exports, impls)),
         ("R8Exports.n_impls", offset_of!(Exports, n_impls)),
+        ("R8Exports.ir_record", offset_of!(Exports, ir_record)),
+        ("R8Exports.ir_record_len", offset_of!(Exports, ir_record_len)),
         ("R8Api", size_of::<Api>()),
         ("R8Api.size", offset_of!(Api, size)),
         ("R8Api.new_value", offset_of!(Api, new_value)),

@@ -49,6 +49,17 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
         }
     };
     // `json_ir()`: JSON text spliced into the IR as written.
+    // `int64()`: an integer beyond 2^53, as its decimal digits.
+    if x.inherits("r8_int64") {
+        let text = x
+            .as_str()
+            .ok_or_else(|| fail(format!("{path}: int64() holds one string")))?;
+        return text
+            .parse::<i64>()
+            .map(Value::from)
+            .or_else(|_| text.parse::<u64>().map(Value::from))
+            .map_err(|_| fail(format!("{path}: int64() holds the digits of one integer")));
+    }
     if x.inherits("r8_json_ir") {
         let text = x
             .as_str()
