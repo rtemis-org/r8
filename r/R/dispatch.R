@@ -577,62 +577,84 @@ dispatch_key <- function(x) {
 #' @param above Optional Character: The tuple key of the running impl, for
 #'   `r8_next_impl()`.
 #'
-#' @return The impl function, with the tuple key of its provider as the
-#'   attribute `r8_tuple`, or `NULL` when neither an impl nor a default
+#' @return The impl function, or `NULL` when neither an impl nor a default
 #'   applies. An ambiguous call or a stale argument raises
 #'   `r8_dispatch_error`.
 #'
 #' @keywords internal
 #' @noRd
 resolve_tuple <- function(trait_name, method, args, above = NULL) {
-  r8 <- vapply(args, inherits, logical(1), "r8_value")
-  types <- ifelse(
-    r8,
-    vapply(args, function(a) attr(a, "r8_type") %||% NA_character_, ""),
-    NA_character_
-  )
-  chains <- lapply(seq_along(args), function(i) {
-    if (!r8[[i]]) .class2(args[[i]])
-  })
+  if (length(args) == 1L) {
+    x <- args[[1L]]
+    if (inherits(x, "r8_value")) {
+      r8 <- TRUE
+      types <- attr(x, "r8_type") %||% NA_character_
+      if (!is.character(types) || length(types) != 1L) {
+        r8_abort(
+          "A value of class `r8_value` carries its type's qualified name as ",
+          "the attribute `r8_type`, one string.",
+          class = "r8_dispatch_error"
+        )
+      }
+      chains <- list(NULL)
+    } else {
+      r8 <- FALSE
+      types <- NA_character_
+      chains <- list(.class2(x))
+    }
+  } else {
+    r8 <- vapply(args, inherits, logical(1), "r8_value")
+    types <- ifelse(
+      r8,
+      vapply(args, function(a) attr(a, "r8_type") %||% NA_character_, ""),
+      NA_character_
+    )
+    chains <- lapply(seq_along(args), function(i) {
+      if (!r8[[i]]) .class2(args[[i]])
+    })
+  }
   above_positions <- if (!is.null(above)) {
     strsplit(above, ",", fixed = TRUE)[[1L]]
   }
   r <- r8_dispatch_resolve(trait_name, types, chains, above_positions)
-  default <- .r8_impls[[paste(trait_name, method, "", sep = "|")]]
+  if (is.character(r)) {
+    key <- if (length(r) == 1L) r else tuple_key(r)
+    fn <- .r8_impls[[paste(trait_name, method, key, sep = "|")]] %||%
+      .r8_impls[[paste(trait_name, method, "", sep = "|")]]
+    if (
+      length(args) == 1L &&
+        r8[[1L]] &&
+        !identical(key, types[[1L]]) &&
+        is_compiled_impl(fn)
+    ) {
+      r8_abort(
+        "The compiled impl of `",
+        trait_name,
+        "` for `",
+        key,
+        "` takes a value of `",
+        key,
+        "`, not of its descendant `",
+        types[[1L]],
+        "`; implement `",
+        trait_name,
+        "` for `",
+        types[[1L]],
+        "`.",
+        class = "r8_dispatch_error"
+      )
+    }
+    return(fn)
+  }
+  if (is.null(r)) {
+    return(
+      if (is.null(above) || nzchar(above)) {
+        .r8_impls[[paste(trait_name, method, "", sep = "|")]]
+      }
+    )
+  }
   switch(
     r[["kind"]],
-    impl = {
-      key <- tuple_key(r[["tuple"]])
-      fn <- .r8_impls[[paste(trait_name, method, key, sep = "|")]] %||% default
-      if (
-        length(args) == 1L &&
-          r8[[1L]] &&
-          !identical(key, types[[1L]]) &&
-          is_compiled_impl(fn)
-      ) {
-        r8_abort(
-          "The compiled impl of `",
-          trait_name,
-          "` for `",
-          key,
-          "` takes a value of `",
-          key,
-          "`, not of its descendant `",
-          types[[1L]],
-          "`; implement `",
-          trait_name,
-          "` for `",
-          types[[1L]],
-          "`.",
-          class = "r8_dispatch_error"
-        )
-      }
-      if (!is.null(fn)) {
-        attr(fn, "r8_tuple") <- key
-      }
-      fn
-    },
-    default = if (is.null(above) || nzchar(above)) default,
     ambiguous = r8_abort(
       "The call of `",
       trait_name,

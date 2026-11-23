@@ -481,20 +481,28 @@ fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
 ///   as `.class2()` gives it; `NULL` for a value of an R8 type.
 /// @param above Optional Character: The positions of the running impl, for
 ///   the next impl.
-/// @return List: `kind` (`"impl"`, `"default"`, `"ambiguous"`, or
-///   `"stale"`), `tuple` (the providing impl's positions, or the first of
-///   an ambiguous pair), `other` (the second of an ambiguous pair), `meet`
-///   (the positionwise more specific tuple of the pair), and `stale` (a
-///   stale type).
+/// @return Character: the providing impl's positions; `NULL` when no impl
+///   applies and the trait's default serves the call; otherwise a list:
+///   `kind` (`"ambiguous"` or `"stale"`), `tuple` and `other` (the two impls
+///   of an ambiguous pair), `meet` (their positionwise more specific tuple),
+///   and `stale` (a stale type).
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj) -> Result<List> {
+fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj) -> Result<Robj> {
     use rtemis_r8::ir::dispatch::{Arg, Resolution, resolve};
+    use rtemis_r8::rules::TypeLookup;
     let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
     let docs = snapshot()?;
-    let (arity, found) = trait_impls(&docs, &tr)?;
-    let impls: Vec<&rtemis_r8::ir::ImplDef> = found.iter().map(|(_, i)| i).collect();
+    let arity = docs
+        .trait_of(&tr)
+        .map(|t| t.dispatch_arity())
+        .ok_or_else(|| fail(format!("`{tr}` is not a registered trait")))?;
+    let impls: Vec<&rtemis_r8::ir::ImplDef> =
+        rtemis_r8::ir::dispatch::impls_by_namespace(&docs, &tr)
+            .into_iter()
+            .map(|(_, i)| i)
+            .collect();
     let strings = types
         .as_str_iter()
         .ok_or_else(|| fail("`types` is character"))?;
@@ -518,14 +526,8 @@ fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj)
     };
     let none: Vec<String> = Vec::new();
     let (kind, tuple, other, meet, stale) = match resolve(&*docs, &impls, arity, &args, above) {
-        Resolution::Impl(k) => (
-            "impl",
-            tuple_strings(impls[k], arity),
-            none.clone(),
-            none,
-            None,
-        ),
-        Resolution::Default => ("default", none.clone(), none.clone(), none, None),
+        Resolution::Impl(k) => return Ok(Robj::from(tuple_strings(impls[k], arity))),
+        Resolution::Default => return Ok(Robj::from(())),
         Resolution::Ambiguous(a, b) => {
             let (ta, tb) = (
                 tuple_strings(impls[a], arity),
@@ -567,7 +569,8 @@ fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj)
         other = other,
         meet = meet,
         stale = stale
-    ))
+    )
+    .into())
 }
 
 /// The ambiguous pairs among a trait's registered impls.

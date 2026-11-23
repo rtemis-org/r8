@@ -542,8 +542,9 @@ static SEXP dispatch_key(SEXP x) {
 // values `args[0..n]` of its dispatched arguments: from the method's index in
 // `dispatch` (`.r8_dispatch`), one environment per position keyed by
 // `dispatch_key()`, the impl at the last; on a miss, R8's
-// `dispatch_resolve()` finds the impl, stores it in the index, and returns
-// it, or raises the dispatch error. The routine keeps no SEXP beyond
+// `dispatch_resolve(key, trait_name, method, ...)`, called in the namespace
+// that is `dispatch`'s parent, finds the impl, stores it in the index, and
+// returns it, or raises the dispatch error. The routine keeps no SEXP beyond
 // installed symbols.
 // spec: R8/class-system#traits-equality-and-conformance-in-r
 static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
@@ -559,17 +560,30 @@ static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
   if (TYPEOF(node) == CLOSXP) {
     return node;
   }
-  SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
-  SEXP call = PROTECT(Rf_allocVector(LANGSXP, n + 2));
+  // `.r8_dispatch`'s parent is R8's namespace, which a reload replaces.
+#if R_VERSION >= R_Version(4, 5, 0)
+  SEXP ns = R_ParentEnv(dispatch);
+#else
+  SEXP ns = ENCLOS(dispatch);
+#endif
+  // "Trait|method": a qualified trait name holds no '|'.
+  const char *text = CHAR(PRINTNAME(key));
+  const char *bar = strchr(text, '|');
+  SEXP call = PROTECT(Rf_allocVector(LANGSXP, n + 4));
   SETCAR(call, resolve_sym);
   SEXP cell = CDR(call);
-  SETCAR(cell, PROTECT(Rf_ScalarString(PRINTNAME(key))));
+  SETCAR(cell, Rf_ScalarString(PRINTNAME(key)));
+  cell = CDR(cell);
+  SEXP trait_name = PROTECT(Rf_mkCharLenCE(text, (int) (bar - text), CE_UTF8));
+  SETCAR(cell, Rf_ScalarString(trait_name));
+  cell = CDR(cell);
+  SETCAR(cell, Rf_mkString(bar + 1));
   for (int i = 0; i < n; i++) {
     cell = CDR(cell);
     SETCAR(cell, args[i]);
   }
   SEXP impl = Rf_eval(call, ns);
-  UNPROTECT(4);
+  UNPROTECT(2);
   return impl;
 }
 

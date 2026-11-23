@@ -237,11 +237,11 @@ r8_check_namespaces <- function(namespaces, imports = character()) .Call(wrap__r
 #'   as `.class2()` gives it; `NULL` for a value of an R8 type.
 #' @param above Optional Character: The positions of the running impl, for
 #'   the next impl.
-#' @return List: `kind` (`"impl"`, `"default"`, `"ambiguous"`, or
-#'   `"stale"`), `tuple` (the providing impl's positions, or the first of
-#'   an ambiguous pair), `other` (the second of an ambiguous pair), `meet`
-#'   (the positionwise more specific tuple of the pair), and `stale` (a
-#'   stale type).
+#' @return Character: the providing impl's positions; `NULL` when no impl
+#'   applies and the trait's default serves the call; otherwise a list:
+#'   `kind` (`"ambiguous"` or `"stale"`), `tuple` and `other` (the two impls
+#'   of an ambiguous pair), `meet` (their positionwise more specific tuple),
+#'   and `stale` (a stale type).
 #' @keywords internal
 #' @noRd
 r8_dispatch_resolve <- function(trait_name, types, chains, above) .Call(wrap__r8_dispatch_resolve, trait_name, types, chains, above)

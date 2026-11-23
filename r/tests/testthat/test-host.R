@@ -369,3 +369,12 @@ test_that("an impl on a host class continues to an internal generic's default", 
     expect_identical(length(lt), 1L)
   })
 })
+
+test_that("a value of class r8_value carries one type name", {
+  declare_in("hc14", {
+    kind <- generic("kind", "x")
+    implement(kind, "list") <- function(x) "list"
+    bad <- structure(list(), class = "r8_value", r8_type = c("a::B", "a::C"))
+    expect_error(kind(bad), "one string", class = "r8_dispatch_error")
+  })
+})

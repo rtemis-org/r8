@@ -13,7 +13,9 @@
 # generic sent to a worker resolves the worker's impls. `put_impl()` drops a
 # method's index when one of its impls changes; unloading a package and
 # declaring a type clear the cache.
-.r8_dispatch <- new.env(parent = emptyenv())
+# Its parent is R8's namespace, in which the C routine `find_n()` calls
+# `dispatch_resolve()`; every lookup in it reads its own frame only.
+.r8_dispatch <- new.env(parent = environment())
 
 # The types with an impl of a trait, by `"Trait|type"`: the unit of
 # precedence through `extends`, so that the nearest type with an impl
@@ -369,19 +371,17 @@ replacement_abort <- function(key, x, out) {
 #' `r8_find_impl()` finds the impl and stores it.
 #'
 #' @param key Character: `"Trait|method"`.
+#' @param trait_name Character: The trait's qualified name, the part of
+#'   `key` before `|`.
+#' @param method Character: The method name, the part after it.
 #' @param ... The values of the dispatched arguments, in order.
 #'
 #' @return The impl function.
 #'
 #' @keywords internal
 #' @noRd
-dispatch_resolve <- function(key, ...) {
-  at <- regexpr("|", key, fixed = TRUE)
-  r8_find_impl(
-    substr(key, 1L, at - 1L),
-    substr(key, at + 1L, nchar(key)),
-    list(...)
-  )
+dispatch_resolve <- function(key, trait_name, method, ...) {
+  r8_find_impl(trait_name, method, list(...), key)
 } # /R8::dispatch_resolve
 
 
@@ -401,6 +401,18 @@ dispatch_resolve <- function(key, ...) {
 #' @keywords internal
 #' @noRd
 cache_impl <- function(key, args, impl) {
+  if (length(args) == 1L) {
+    k <- dispatch_key(args[[1L]])
+    if (!is.null(k)) {
+      node <- .r8_dispatch[[key]]
+      if (is.null(node)) {
+        node <- new.env(parent = emptyenv())
+        assign(key, node, envir = .r8_dispatch)
+      }
+      assign(k, impl, envir = node)
+    }
+    return(invisible(NULL))
+  }
   keys <- lapply(args, dispatch_key)
   if (any(vapply(keys, is.null, logical(1)))) {
     return(invisible(NULL))
@@ -673,13 +685,19 @@ is_compiled_impl <- function(fn) {
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
 #' @param args List: The values of the dispatched arguments.
+#' @param key Character: `"Trait|method"`, the method's key in the dispatch
+#'   cache.
 #'
 #' @return The impl function.
 #'
 #' @keywords internal
 #' @noRd
-r8_find_impl <- function(trait_name, method, args) {
-  key <- paste(trait_name, method, sep = "|")
+r8_find_impl <- function(
+  trait_name,
+  method,
+  args,
+  key = paste(trait_name, method, sep = "|")
+) {
   impl <- resolve_tuple(trait_name, method, args)
   if (!is.null(impl)) {
     cache_impl(key, args, impl)

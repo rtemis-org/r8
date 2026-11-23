@@ -313,7 +313,7 @@ pub enum Resolution {
 /// R8 chain only and a host-class position a host chain only, so an object
 /// whose class vector names an R8 type is not a value of that type.
 enum Chain {
-    Type(Vec<String>),
+    Type(Vec<QualifiedName>),
     Host(Vec<String>),
     None,
 }
@@ -324,10 +324,7 @@ enum Chain {
 fn rank(p: &ImplTarget, chain: &Chain) -> Option<usize> {
     match (p, chain) {
         (ImplTarget::Any, _) => Some(usize::MAX),
-        (ImplTarget::Type { name }, Chain::Type(c)) => {
-            let n = name.to_string();
-            c.iter().position(|x| *x == n)
-        }
+        (ImplTarget::Type { name }, Chain::Type(c)) => c.iter().position(|x| x == name),
         (ImplTarget::HostClass { class, .. }, Chain::Host(c)) => c.iter().position(|x| x == class),
         _ => None,
     }
@@ -353,8 +350,8 @@ pub fn resolve(
                     return Resolution::Stale(t.clone());
                 }
                 Chain::Type(
-                    std::iter::once(t.to_string())
-                        .chain(lookup.ancestors(t).iter().map(ToString::to_string))
+                    std::iter::once(t.clone())
+                        .chain(lookup.ancestors(t))
                         .collect(),
                 )
             }
