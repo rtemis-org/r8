@@ -44,8 +44,8 @@ test_that("an impl is the unit of precedence through extends", {
   B <- ty[["B"]]
   C <- ty[["C"]]
   declare_in("dx2", {
-    Shape <- new_trait(
-      "Shape",
+    Profile <- new_trait(
+      "Profile",
       methods = list(
         name = trait_method(function(x) NULL),
         size = trait_method(function(x) NULL, default_impl = function(x) {
@@ -54,15 +54,15 @@ test_that("an impl is the unit of precedence through extends", {
       )
     )
     impl(
-      Shape,
+      Profile,
       A,
       methods = list(name = function(x) "A", size = function(x) "A size")
     )
-    impl(Shape, B, methods = list(name = function(x) "B"))
+    impl(Profile, B, methods = list(name = function(x) "B"))
     x <- C(a = 1, b = 2, c = 3)
-    expect_identical(Shape@name(x), "B")
-    # B's impl omits size: the trait's default, not A's.
-    expect_identical(Shape@size(x), "default size")
+    expect_identical(Profile@name(x), "B")
+    # B's impl omits size: the trait's default implementation, not A's.
+    expect_identical(Profile@size(x), "default size")
   })
 })
 

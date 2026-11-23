@@ -18,17 +18,16 @@ running impl or one of its descendants, raises \code{r8_dispatch_error}.
 }
 \description{
 Called from the body of an impl, \code{r8_next_impl()} calls the impl that the
-running one takes precedence over: that of the nearest ancestor, after
-the type that provides the running impl, with an impl of the trait, or
-else the trait's default. For a method that dispatches on several
-arguments, the next impl is the most specific applicable impl less
-specific than the running one; when two are, each more specific in one
-position, \code{r8_next_impl(Type, ...)} names the one to continue to. It
-passes the current values of the running impl's formals, so an impl may
-change its arguments first, as with \code{NextMethod()}; generics in the next
-impl dispatch on the values passed. Every impl that R8 registers
-continues this way, an S3 method declared with \code{implement()} or \code{impl()}
-included.
+running one takes precedence over: that of the nearest ancestor, after the
+type that provides the running impl, with an impl of the trait, or else the
+trait's default implementation. For a method that dispatches on several
+arguments, the next impl is the most specific applicable impl less specific
+than the running one; when two are, each more specific in one position,
+\code{r8_next_impl(Type, ...)} names the one to continue to. It passes the current
+values of the running impl's formals, so an impl may change its arguments
+first, as with \code{NextMethod()}; generics in the next impl dispatch on the
+values passed. Every impl that R8 registers continues this way, an S3 method
+declared with \code{implement()} or \code{impl()} included.
 }
 \examples{
 op <- options(r8.namespace = "demo")

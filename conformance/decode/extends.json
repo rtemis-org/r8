@@ -1,6 +1,6 @@
 {
   "$corpus": 1,
-  "description": "`dyn(Parent)` for a struct: the struct and its descendants, with the rules a child inherits.",
+  "description": "`subtype(Parent)`: the struct and every struct that extends it, with the rules a child inherits.",
   "ir": {
     "$ir": 1,
     "namespace": "ns",
@@ -186,8 +186,8 @@
   },
   "cases": [
     {
-      "id": "descendant",
-      "description": "A field `dyn(A)` holds a C, two levels below A.",
+      "id": "subtype-grandchild",
+      "description": "A field `subtype(A)` holds a C, two levels below A.",
       "op": "decode",
       "type": "ns::H",
       "input": {
@@ -204,7 +204,7 @@
     },
     {
       "id": "the-struct-itself",
-      "description": "A field `dyn(A)` holds an A.",
+      "description": "A field `subtype(A)` holds an A.",
       "op": "decode",
       "type": "ns::H",
       "input": {
@@ -218,7 +218,7 @@
       }
     },
     {
-      "id": "not-descendant",
+      "id": "not-subtype",
       "description": "A struct with A's fields that does not extend A.",
       "op": "decode",
       "type": "ns::H",
@@ -250,7 +250,7 @@
       "expect": {
         "errors": [
           {
-            "code": "unresolved_type",
+            "code": "unknown_type",
             "path": "/x"
           }
         ]

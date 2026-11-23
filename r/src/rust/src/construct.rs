@@ -24,7 +24,7 @@ use extendr_ffi::{
     Rf_unprotect, SET_STRING_ELT, SET_VECTOR_ELT, SEXPTYPE, STRING_ELT, VECTOR_ELT, cetype_t,
 };
 use rtemis_r8::access::Access;
-use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 use rtemis_r8::validate::{RuleCache, ValueError, validate_access};
@@ -107,7 +107,7 @@ pub(crate) fn default_r(
 }
 
 /// The declaration hash of the registered type `q`
-/// (`codec::declaration_hash()`), computed once per registry change. The
+/// (`canonical::declaration_hash()`), computed once per registry change. The
 /// cache is valid only for `lookup` the registry: a caller with another
 /// lookup computes the hash directly.
 pub(crate) fn registry_declaration_hash(
@@ -126,7 +126,7 @@ pub(crate) fn registry_declaration_hash(
     guard
         .1
         .entry(q.clone())
-        .or_insert_with(|| rtemis_r8::codec::declaration_hash(q, lookup).into())
+        .or_insert_with(|| rtemis_r8::canonical::declaration_hash(q, lookup).into())
         .clone()
 }
 
@@ -376,7 +376,7 @@ pub(crate) fn normalize(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> Res
         | FieldType::Date
         | FieldType::Posixct => atomic(x, ft),
         FieldType::Raw
-        | FieldType::R { .. }
+        | FieldType::HostClass { .. }
         | FieldType::Named { .. }
         | FieldType::Dyn { .. }
         | FieldType::Subtype { .. } => None,
@@ -845,14 +845,14 @@ pub(crate) fn assemble(
     let (defs, version, variant): (&[FieldDef], u32, Option<&str>) = match def {
         TypeDef::Struct(s) => (&s.fields, s.version, None),
         TypeDef::Enum(e) => {
-            let shape = e
+            let kind = e
                 .variants
                 .iter()
                 .find(|v| v.name.as_str() == variant)
-                .map(|v| &v.shape);
-            let defs: &[FieldDef] = match shape {
-                Some(VariantShape::Struct { fields, .. }) => fields,
-                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                .map(|v| &v.kind);
+            let defs: &[FieldDef] = match kind {
+                Some(VariantKind::Struct { fields, .. }) => fields,
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => &s.fields,
                     _ => &[],
                 },
@@ -892,16 +892,16 @@ pub(crate) fn assemble(
             shared_attributes(&qname, version, variant, &field_names),
         );
         // A Rust-stored type's value is the codec's state behind an ALTLIST
-        // with the same attributes (`native.rs`).
+        // with the same attributes (`rust_stored.rs`).
         let r = match (def, crate::exports::codec(&q.to_string())) {
             (TypeDef::Struct(_), Some(vt)) => {
-                let state = crate::native::from_fields(vt, out).map_err(fail)?;
-                own(crate::native::wrap(vt, state, out))
+                let state = crate::rust_stored::from_fields(vt, out).map_err(fail)?;
+                own(crate::rust_stored::wrap(vt, state, out))
             }
             (TypeDef::Enum(_), Some(vt)) => {
                 let name = variant.unwrap_or_default();
-                let state = crate::native::from_variant(vt, name, out).map_err(fail)?;
-                own(crate::native::wrap(vt, state, out))
+                let state = crate::rust_stored::from_variant(vt, name, out).map_err(fail)?;
+                own(crate::rust_stored::wrap(vt, state, out))
             }
             _ => own(out),
         };
@@ -989,10 +989,10 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
                 .variants
                 .iter()
                 .find(|x| x.name.as_str() == v)
-                .map(|x| &x.shape)
+                .map(|x| &x.kind)
             {
-                Some(VariantShape::Struct { fields, rules }) => (fields, rules),
-                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                Some(VariantKind::Struct { fields, rules }) => (fields, rules),
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => (&s.fields, &s.rules),
                     _ => (&[], &[]),
                 },
@@ -1059,9 +1059,9 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
     // reads its fields from it on demand, keeping the fields the old value
     // has read, except the replaced one; the rules then read the fields they
     // name. The old value's fields are not read.
-    if let Some((state, vt)) = crate::native::state_of(xs) {
-        let new_state = crate::native::with_field(vt, state, name, stored).map_err(fail)?;
-        let value = own(crate::native::wrap_from(
+    if let Some((state, vt)) = crate::rust_stored::state_of(xs) {
+        let new_state = crate::rust_stored::with_field(vt, state, name, stored).map_err(fail)?;
+        let value = own(crate::rust_stored::wrap_from(
             vt,
             new_state,
             xs,

@@ -15,7 +15,7 @@
 //!   encoding, and hashing read a value in any host form; [`access::Json`]
 //!   reads the JSON form, and a host binding implements the trait for its own
 //!   values;
-//! - [`codec`]: the canonical form (RFC 8785), documents, and content hashes,
+//! - [`canonical`]: the canonical form (RFC 8785), documents, and content hashes,
 //!   with the canonical binary forms of matrices, tables, and vectors;
 //! - [`equal`]: equality of two values by their normalized forms;
 //! - [`value_schema`]: the JSON Schema of a type's values;
@@ -35,7 +35,7 @@
 
 pub mod abi;
 pub mod access;
-pub mod codec;
+pub mod canonical;
 pub mod derive;
 mod emit;
 pub mod equal;
@@ -57,7 +57,7 @@ pub mod value_schema;
 #[cfg(feature = "macros")]
 pub use rtemis_r8_macros::R8;
 
-/// Version of this crate, as recorded in provenance.
+/// Version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]

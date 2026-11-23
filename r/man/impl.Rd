@@ -25,10 +25,10 @@ for this type; defaults to the type's name.}
 \description{
 Defines a trait's methods for a type, or for a tuple of types when its
 methods dispatch on several arguments; a method the impl omits takes the
-trait's default. Rust's orphan rule applies: an impl outside the trait's
-namespace names a type of its own namespace, with only types before it.
-Implementing the same trait for the same types again replaces the impl;
-an impl that another namespace declares is refused.
+trait's default implementation. Rust's orphan rule applies: an impl outside
+the trait's namespace names a type of its own namespace, with only types
+before it. Implementing the same trait for the same types again replaces the
+impl; an impl that another namespace declares is refused.
 }
 \examples{
 op <- options(r8.namespace = "demo")

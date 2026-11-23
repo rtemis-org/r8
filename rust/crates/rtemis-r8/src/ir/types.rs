@@ -163,7 +163,7 @@ struct IntegerTypeJson {
     /// Values are below this.
     exclusive_max: Option<i32>,
     /// The admitted values, when the domain is a closed set.
-    #[serde(default, rename = "enum", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     values: Option<Box<[i32]>>,
 }
 
@@ -291,7 +291,7 @@ struct DoubleTypeJson {
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     /// Values are finite: no `Inf`, `-Inf`, or `NaN`.
     finite: bool,
-    #[serde(default, rename = "enum", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The admitted values.
     values: Option<Box<[f64]>>,
 }
@@ -356,7 +356,7 @@ pub struct CharacterType {
     /// A regular expression in Rust `regex` syntax, compiled at declaration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<Box<str>>,
-    #[serde(default, rename = "enum", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The admitted values.
     pub values: Option<Box<[Box<str>]>>,
 }
@@ -436,7 +436,7 @@ pub enum FieldType {
         /// The number of columns, when declared.
         ncol: Option<u32>,
     },
-    /// `type_matrix(S)`: a matrix whose columns are the fields of the struct
+    /// `type_matrix(of = S)`: a matrix whose columns are the fields of the struct
     /// `of`, all of one scalar type.
     MatrixOf {
         /// The struct whose fields are the columns.
@@ -457,7 +457,7 @@ pub enum FieldType {
         /// The rules every row satisfies.
         rules: Box<[RuleDef]>,
     },
-    /// `type_table(S)`: a data.frame whose columns are the fields of the
+    /// `type_table(of = S)`: a data.frame whose columns are the fields of the
     /// struct `of`.
     TableOf {
         /// The struct whose fields are the columns.
@@ -465,10 +465,21 @@ pub enum FieldType {
     },
     /// `type_json()`: any JSON value.
     Json,
-    /// `type_r(class)`: an R value of a class, runtime-only.
-    R {
-        /// The R class.
+    /// `option(host_class(class))`: a value of a class of another class
+    /// system of the host language, such as R's `lm`, held by the host and
+    /// absent from documents (host-only); the members of
+    /// [`super::decl::TypeRef::HostClass`].
+    HostClass {
+        /// The host language, such as `"r"`.
+        host: Box<str>,
+        /// The package that defines the class, when the declaration names
+        /// one.
+        #[serde(default, skip_serializing_if = "str::is_empty")]
+        package: Box<str>,
+        /// The class name.
         class: Box<str>,
+        /// The class system.
+        system: super::decl::ClassSystem,
     },
     /// `vec(T, min_length, max_length, unique)`.
     Vec {

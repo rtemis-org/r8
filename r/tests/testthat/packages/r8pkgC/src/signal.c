@@ -167,13 +167,13 @@ bad:
   return R8_ERROR;
 }
 
-static size_t signal_bytes(const void *state) {
+static size_t signal_owned_bytes(const void *state) {
   const Signal *s = state;
   return sizeof(Signal) + strlen(s->name) + 1 + s->n * sizeof(double);
 }
 
-const R8TypeVTable pkgc_signal_codec = {
-    .size = sizeof(R8TypeVTable),
+const R8Codec pkgc_signal_codec = {
+    .size = sizeof(R8Codec),
     .type_name = "pkgc::Signal",
     .from_fields = signal_from_fields,
     .write_state = signal_write_state,
@@ -181,7 +181,7 @@ const R8TypeVTable pkgc_signal_codec = {
     .get_field = signal_get_field,
     .with_field = signal_with_field,
     .drop = signal_drop,
-    .bytes = signal_bytes,
+    .owned_bytes = signal_owned_bytes,
     // The hash of the R declaration of pkgc::Signal (R/types.R), whose
     // fields from_fields reads by position.
     .declaration_hash = "sha256:2f398c9789d687098a98bf034139fb1a55f7461062fb2a51a844de4cc9eef34a",

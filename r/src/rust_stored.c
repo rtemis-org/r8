@@ -1,9 +1,9 @@
-// native.c
+// rust_stored.c
 // ::R8::
 // 2026- EDG rtemis.org
 
 // Rust-stored values: an ALTLIST over a state that a registered codec
-// (R8TypeVTable) owns.
+// (R8Codec) owns.
 //
 // data1 is an external pointer whose address is the state, whose tag is the
 // field names (a character vector in declaration order), and whose
@@ -21,23 +21,23 @@
 #include <R_ext/Altrep.h>
 #include <R_ext/Rdynload.h>
 
-static R_altrep_class_t native_class;
+static R_altrep_class_t rust_stored_class;
 
 // The marker of a field not yet read, distinct from a NULL field.
 static SEXP unfilled = NULL;
 
-static const R8TypeVTable *native_codec(SEXP data1) {
-  return (const R8TypeVTable *) R_ExternalPtrAddr(R_ExternalPtrProtected(data1));
+static const R8Codec *rust_stored_codec(SEXP data1) {
+  return (const R8Codec *) R_ExternalPtrAddr(R_ExternalPtrProtected(data1));
 }
 
 // The bytes of the states that values reachable from R hold, and the
 // level at which R8 requests a collection: twice the bytes live after the
-// last collection R8 requested, and at least NATIVE_MIN_THRESHOLD. R does
+// last collection R8 requested, and at least RUST_STORED_MIN_THRESHOLD. R does
 // not see memory a codec allocates, so without the request it would collect
 // as rarely as the small ALTLIST objects alone warrant.
-#define NATIVE_MIN_THRESHOLD (64.0 * 1024 * 1024)
-static double native_live = 0;
-static double native_threshold = NATIVE_MIN_THRESHOLD;
+#define RUST_STORED_MIN_THRESHOLD (64.0 * 1024 * 1024)
+static double rust_stored_live = 0;
+static double rust_stored_threshold = RUST_STORED_MIN_THRESHOLD;
 
 // The bytes counted for a value, kept as the protected value of its codec
 // pointer.
@@ -46,40 +46,40 @@ static double counted(SEXP data1) {
   return b == R_NilValue ? 0 : REAL(b)[0];
 }
 
-static void count(SEXP data1, const R8TypeVTable *vt, const void *state) {
-  double bytes = vt->bytes != NULL ? (double) vt->bytes(state) : 0;
+static void count(SEXP data1, const R8Codec *vt, const void *state) {
+  double bytes = vt->owned_bytes != NULL ? (double) vt->owned_bytes(state) : 0;
   R_SetExternalPtrProtected(R_ExternalPtrProtected(data1), Rf_ScalarReal(bytes));
-  native_live += bytes;
+  rust_stored_live += bytes;
 }
 
 // Requests a collection before `bytes` more would pass the threshold.
 static void reserve(double bytes) {
-  if (native_live + bytes > native_threshold) {
+  if (rust_stored_live + bytes > rust_stored_threshold) {
     R_gc();
-    double next = 2 * (native_live + bytes);
-    native_threshold = next > NATIVE_MIN_THRESHOLD ? next : NATIVE_MIN_THRESHOLD;
+    double next = 2 * (rust_stored_live + bytes);
+    rust_stored_threshold = next > RUST_STORED_MIN_THRESHOLD ? next : RUST_STORED_MIN_THRESHOLD;
   }
 }
 
-static void native_finalize(SEXP data1) {
+static void rust_stored_finalize(SEXP data1) {
   void *state = R_ExternalPtrAddr(data1);
-  const R8TypeVTable *vt = native_codec(data1);
+  const R8Codec *vt = rust_stored_codec(data1);
   if (state != NULL && vt != NULL && vt->drop != NULL) {
-    native_live -= counted(data1);
+    rust_stored_live -= counted(data1);
     vt->drop(state);
   }
   R_ClearExternalPtr(data1);
 }
 
-// The Rust code's records of a codec (native.rs).
-SEXP r8_native_meta(const char *type_name);
-const R8TypeVTable *r8_native_resolve(const char *type_name, int version, const char *hash,
+// The Rust code's records of a codec (rust_stored.rs).
+SEXP r8_rust_stored_meta(const char *type_name);
+const R8Codec *r8_rust_stored_codec(const char *type_name, int version, const char *hash,
                                       R8Error *err);
 
 // The variant of a state of an enum's codec; NULL for a struct's codec and
 // for a table whose `size` ends before the enum members (R8 0.3.0's).
-static const char *state_variant(const R8TypeVTable *vt, const void *state) {
-  if (vt->size < offsetof(R8TypeVTable, from_variant) + sizeof(vt->from_variant) ||
+static const char *state_variant(const R8Codec *vt, const void *state) {
+  if (vt->size < offsetof(R8Codec, from_variant) + sizeof(vt->from_variant) ||
       vt->variant == NULL) {
     return NULL;
   }
@@ -100,7 +100,7 @@ static const char *kept_text(SEXP kept, int i) {
 
 // Builds the state of a value read before its codec was registered;
 // returns 0, with `err` filled, when it cannot.
-static int resolve(SEXP data1, R8Error *err) {
+static int build_state(SEXP data1, R8Error *err) {
   if (R_ExternalPtrAddr(data1) != NULL) {
     return 1;
   }
@@ -111,8 +111,8 @@ static int resolve(SEXP data1, R8Error *err) {
     snprintf(err->message, sizeof(err->message), "%s", "the value holds no state");
     return 0;
   }
-  const R8TypeVTable *vt =
-      r8_native_resolve(kept_text(kept, 0), Rf_asInteger(VECTOR_ELT(kept, 1)), kept_text(kept, 2), err);
+  const R8Codec *vt =
+      r8_rust_stored_codec(kept_text(kept, 0), Rf_asInteger(VECTOR_ELT(kept, 1)), kept_text(kept, 2), err);
   if (vt == NULL) {
     return 0;
   }
@@ -152,7 +152,7 @@ static int resolve(SEXP data1, R8Error *err) {
 
 // The state of `x`, built first for a value read before its codec was
 // registered; an error names the type and the package that registers it.
-static const void *native_state(SEXP x) {
+static const void *rust_stored_state(SEXP x) {
   SEXP data1 = R_altrep_data1(x);
   const void *state = R_ExternalPtrAddr(data1);
   if (state != NULL) {
@@ -160,7 +160,7 @@ static const void *native_state(SEXP x) {
   }
   SEXP kept = kept_state(data1);
   R8Error err = {{0}, {0}};
-  if (resolve(data1, &err)) {
+  if (build_state(data1, &err)) {
     return R_ExternalPtrAddr(data1);
   }
   if (kept != R_NilValue) {
@@ -173,19 +173,19 @@ static const void *native_state(SEXP x) {
   return NULL;
 }
 
-static R_xlen_t native_Length(SEXP x) {
+static R_xlen_t rust_stored_Length(SEXP x) {
   return XLENGTH(R_altrep_data2(x));
 }
 
-static SEXP native_Elt(SEXP x, R_xlen_t i) {
+static SEXP rust_stored_Elt(SEXP x, R_xlen_t i) {
   SEXP cache = R_altrep_data2(x);
   SEXP v = VECTOR_ELT(cache, i);
   if (v != unfilled) {
     return v;
   }
   SEXP data1 = R_altrep_data1(x);
-  const void *state = native_state(x);
-  const R8TypeVTable *vt = native_codec(data1);
+  const void *state = rust_stored_state(x);
+  const R8Codec *vt = rust_stored_codec(data1);
   SEXP names = R_ExternalPtrTag(data1);
   R8Error err = {{0}, {0}};
   SEXP value = R_NilValue;
@@ -199,14 +199,14 @@ static SEXP native_Elt(SEXP x, R_xlen_t i) {
   return value;
 }
 
-static void native_Set_elt(SEXP x, R_xlen_t i, SEXP v) {
+static void rust_stored_Set_elt(SEXP x, R_xlen_t i, SEXP v) {
   Rf_error("an R8 value is immutable; `$<-` returns a new value");
 }
 
 // A copy shares the state and copies the cache; R copies the attributes.
-static SEXP native_Duplicate(SEXP x, Rboolean deep) {
+static SEXP rust_stored_Duplicate(SEXP x, Rboolean deep) {
   SEXP cache = PROTECT(Rf_shallow_duplicate(R_altrep_data2(x)));
-  SEXP ans = R_new_altrep(native_class, R_altrep_data1(x), cache);
+  SEXP ans = R_new_altrep(rust_stored_class, R_altrep_data1(x), cache);
   UNPROTECT(1);
   return ans;
 }
@@ -241,17 +241,17 @@ static R8Status fill_write(void *context, const uint8_t *bytes, size_t len) {
 // `write_state`, with the records that `Unserialize` checks.
 // NULL, which serializes the fields as a plain list, for a codec without
 // `write_state` or a type absent from the registry.
-static SEXP native_Serialized_state(SEXP x) {
+static SEXP rust_stored_Serialized_state(SEXP x) {
   SEXP data1 = R_altrep_data1(x);
   if (R_ExternalPtrAddr(data1) == NULL && kept_state(data1) != R_NilValue) {
     return kept_state(data1);
   }
-  const void *state = native_state(x);
-  const R8TypeVTable *vt = native_codec(data1);
+  const void *state = rust_stored_state(x);
+  const R8Codec *vt = rust_stored_codec(data1);
   if (vt->write_state == NULL) {
     return NULL;
   }
-  SEXP meta = PROTECT(r8_native_meta(vt->type_name));
+  SEXP meta = PROTECT(r8_rust_stored_meta(vt->type_name));
   if (meta == R_NilValue) {
     UNPROTECT(1);
     return NULL;
@@ -294,27 +294,27 @@ static SEXP native_Serialized_state(SEXP x) {
 
 // A value over the serialized state, whose state is built at once when its
 // codec is registered and on first entry otherwise. R sets the attributes.
-static SEXP native_Unserialize(SEXP cls, SEXP kept) {
+static SEXP rust_stored_Unserialize(SEXP cls, SEXP kept) {
   SEXP names = VECTOR_ELT(kept, 4);
   SEXP codec = PROTECT(R_MakeExternalPtr(NULL, kept, R_NilValue));
   SEXP data1 = PROTECT(R_MakeExternalPtr(NULL, names, codec));
-  R_RegisterCFinalizerEx(data1, native_finalize, TRUE);
+  R_RegisterCFinalizerEx(data1, rust_stored_finalize, TRUE);
   R_xlen_t n = XLENGTH(names);
   SEXP cache = PROTECT(Rf_allocVector(VECSXP, n));
   for (R_xlen_t i = 0; i < n; i++) {
     SET_VECTOR_ELT(cache, i, unfilled);
   }
-  SEXP ans = R_new_altrep(native_class, data1, cache);
+  SEXP ans = R_new_altrep(rust_stored_class, data1, cache);
   R8Error err = {{0}, {0}};
-  resolve(data1, &err);
+  build_state(data1, &err);
   UNPROTECT(3);
   return ans;
 }
 
-static Rboolean native_Inspect(SEXP x, int pre, int deep, int pvec,
+static Rboolean rust_stored_Inspect(SEXP x, int pre, int deep, int pvec,
                                void (*inspect_subtree)(SEXP, int, int, int)) {
   SEXP data1 = R_altrep_data1(x);
-  const R8TypeVTable *vt = native_codec(data1);
+  const R8Codec *vt = rust_stored_codec(data1);
   SEXP kept = kept_state(data1);
   Rprintf(" r8 rust-stored %s (fields=%lld, state %s)\n",
           vt != NULL ? vt->type_name : (kept != R_NilValue ? kept_text(kept, 0) : "?"),
@@ -323,17 +323,17 @@ static Rboolean native_Inspect(SEXP x, int pre, int deep, int pvec,
   return TRUE;
 }
 
-void r8_init_native(DllInfo *dll) {
+void r8_init_rust_stored(DllInfo *dll) {
   unfilled = R_MakeExternalPtr(NULL, Rf_install("r8_unfilled"), R_NilValue);
   R_PreserveObject(unfilled);
-  native_class = R_make_altlist_class("r8_rust", "R8", dll);
-  R_set_altrep_Length_method(native_class, native_Length);
-  R_set_altrep_Inspect_method(native_class, native_Inspect);
-  R_set_altrep_Duplicate_method(native_class, native_Duplicate);
-  R_set_altrep_Serialized_state_method(native_class, native_Serialized_state);
-  R_set_altrep_Unserialize_method(native_class, native_Unserialize);
-  R_set_altlist_Elt_method(native_class, native_Elt);
-  R_set_altlist_Set_elt_method(native_class, native_Set_elt);
+  rust_stored_class = R_make_altlist_class("r8_rust", "R8", dll);
+  R_set_altrep_Length_method(rust_stored_class, rust_stored_Length);
+  R_set_altrep_Inspect_method(rust_stored_class, rust_stored_Inspect);
+  R_set_altrep_Duplicate_method(rust_stored_class, rust_stored_Duplicate);
+  R_set_altrep_Serialized_state_method(rust_stored_class, rust_stored_Serialized_state);
+  R_set_altrep_Unserialize_method(rust_stored_class, rust_stored_Unserialize);
+  R_set_altlist_Elt_method(rust_stored_class, rust_stored_Elt);
+  R_set_altlist_Set_elt_method(rust_stored_class, rust_stored_Set_elt);
 }
 
 // A value over `state` with the attributes of `like`, the assembled list of
@@ -341,9 +341,9 @@ void r8_init_native(DllInfo *dll) {
 // state once this returns, and the caller owns it when R jumps out. When
 // `from` is a Rust-stored value, the new value's cache takes the fields
 // `from` has read, except field `skip`.
-SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
+SEXP r8_rust_stored_wrap(const R8Codec *vt, void *state, SEXP like, SEXP from,
                     R_xlen_t skip) {
-  double bytes = vt->bytes != NULL ? (double) vt->bytes(state) : 0;
+  double bytes = vt->owned_bytes != NULL ? (double) vt->owned_bytes(state) : 0;
   reserve(bytes);
   SEXP names = Rf_getAttrib(like, R_NamesSymbol);
   SEXP size = PROTECT(Rf_ScalarReal(bytes));
@@ -351,33 +351,33 @@ SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
   SEXP data1 = PROTECT(R_MakeExternalPtr(state, names, codec));
   R_xlen_t n = XLENGTH(names);
   SEXP cache = PROTECT(Rf_allocVector(VECSXP, n));
-  int carry = from != R_NilValue && ALTREP(from) && R_altrep_inherits(from, native_class) &&
+  int carry = from != R_NilValue && ALTREP(from) && R_altrep_inherits(from, rust_stored_class) &&
               XLENGTH(R_altrep_data2(from)) == n;
   for (R_xlen_t i = 0; i < n; i++) {
     SET_VECTOR_ELT(cache, i,
                    carry && i != skip ? VECTOR_ELT(R_altrep_data2(from), i) : unfilled);
   }
-  SEXP ans = PROTECT(R_new_altrep(native_class, data1, cache));
+  SEXP ans = PROTECT(R_new_altrep(rust_stored_class, data1, cache));
   // The attribute vectors are shared, as every value of the type shares
   // them (`construct::shared_attributes()`); a deep copy would allocate them
   // per value.
   SHALLOW_DUPLICATE_ATTRIB(ans, like);
   // The finalizer is registered after every other allocation: when R jumps
   // before it, the state stays the caller's to drop.
-  R_RegisterCFinalizerEx(data1, native_finalize, TRUE);
-  native_live += bytes;
+  R_RegisterCFinalizerEx(data1, rust_stored_finalize, TRUE);
+  rust_stored_live += bytes;
   UNPROTECT(5);
   return ans;
 }
 
 // The state and codec of a Rust-stored value, or NULL for any other object.
-const void *r8_native_state(SEXP x, const R8TypeVTable **vt) {
-  if (!ALTREP(x) || !R_altrep_inherits(x, native_class)) {
+const void *r8_rust_stored_state(SEXP x, const R8Codec **vt) {
+  if (!ALTREP(x) || !R_altrep_inherits(x, rust_stored_class)) {
     return NULL;
   }
   SEXP data1 = R_altrep_data1(x);
   if (vt != NULL) {
-    *vt = native_codec(data1);
+    *vt = rust_stored_codec(data1);
   }
   return R_ExternalPtrAddr(data1);
 }
@@ -387,11 +387,11 @@ int r8_is_view(SEXP x);
 // The state's bytes and the cached fields that are not views, which
 // r8_size() adds up: list(state = <bytes>, fields = <list>); NULL for an
 // object that is not a Rust-stored value.
-SEXP r8_native_parts(SEXP x) {
-  if (!ALTREP(x) || !R_altrep_inherits(x, native_class)) {
+SEXP r8_rust_stored_parts(SEXP x) {
+  if (!ALTREP(x) || !R_altrep_inherits(x, rust_stored_class)) {
     return R_NilValue;
   }
-  native_state(x);
+  rust_stored_state(x);
   SEXP data1 = R_altrep_data1(x);
   SEXP cache = R_altrep_data2(x);
   R_xlen_t n = XLENGTH(cache), k = 0;
@@ -419,9 +419,9 @@ SEXP r8_native_parts(SEXP x) {
 
 // The bytes of live states and the collection threshold:
 // c(live, threshold).
-SEXP r8_native_memory(void) {
+SEXP r8_rust_stored_memory(void) {
   SEXP out = Rf_allocVector(REALSXP, 2);
-  REAL(out)[0] = native_live;
-  REAL(out)[1] = native_threshold;
+  REAL(out)[0] = rust_stored_live;
+  REAL(out)[1] = rust_stored_threshold;
   return out;
 }

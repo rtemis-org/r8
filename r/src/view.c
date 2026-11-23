@@ -339,7 +339,7 @@ void r8_register_api(void) {
   R_RegisterCCallable("R8", "r8_api", (DL_FUNC) r8_api);
 }
 
-// R8Api.protect for R8's own Rust code (native.rs), whose callers convert
+// R8Api.protect for R8's own Rust code (rust_stored.rs), whose callers convert
 // R8_UNWIND into R8_ERROR, since R8's API functions never jump.
 R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err) {
   return api_protect(fn, data, value, err);
@@ -360,10 +360,10 @@ static SEXP r8_invoke(SEXP fn, SEXP args) {
   for (R_xlen_t i = 0; i < n; i++) {
     ((SEXP *) argv)[i] = VECTOR_ELT(args, i);
   }
-  R8CallContext ctx = {sizeof(R8CallContext), 0, 0};
+  R8CallInputs inputs = {sizeof(R8CallInputs), 0, 0};
   SEXP result = R_NilValue;
   R8Error err = {{0}, {0}};
-  R8Status status = call(&ctx, argv, (size_t) n, &result, &err);
+  R8Status status = call(&inputs, argv, (size_t) n, &result, &err);
   if (status == R8_OK) {
     return result;
   }
@@ -542,15 +542,15 @@ static SEXP dispatch_key(SEXP x) {
 // values `args[0..n]` of its dispatched arguments: from the method's index in
 // `dispatch` (`.r8_dispatch`), one environment per position keyed by
 // `dispatch_key()`, the impl at the last; on a miss, R8's
-// `dispatch_resolve(key, trait_name, method, ...)`, called in the namespace
+// `dispatch_select(key, trait_name, method, ...)`, called in the namespace
 // that is `dispatch`'s parent, finds the impl, stores it in the index, and
 // returns it, or raises the dispatch error. The routine keeps no SEXP beyond
 // installed symbols.
 // spec: R8/class-system#traits-equality-and-conformance-in-r
 static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
-  static SEXP resolve_sym = NULL;
-  if (resolve_sym == NULL) {
-    resolve_sym = Rf_install("dispatch_resolve");
+  static SEXP select_sym = NULL;
+  if (select_sym == NULL) {
+    select_sym = Rf_install("dispatch_select");
   }
   SEXP node = r8_get_var(key, dispatch, R_NilValue);
   for (int i = 0; i < n && TYPEOF(node) == ENVSXP; i++) {
@@ -570,7 +570,7 @@ static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
   const char *text = CHAR(PRINTNAME(key));
   const char *bar = strchr(text, '|');
   SEXP call = PROTECT(Rf_allocVector(LANGSXP, n + 4));
-  SETCAR(call, resolve_sym);
+  SETCAR(call, select_sym);
   SEXP cell = CDR(call);
   SETCAR(cell, Rf_ScalarString(PRINTNAME(key)));
   cell = CDR(cell);

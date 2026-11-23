@@ -21,7 +21,7 @@ use std::sync::{Mutex, OnceLock};
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use extendr_ffi::{R_ExternalPtrAddr, R_ExternalPtrTag, Rf_install};
-use rtemis_r8::abi::{ABI_VERSION, Exports, ImplEntry, MethodFn, TypeVTable};
+use rtemis_r8::abi::{ABI_VERSION, Codec, Exports, ImplEntry, MethodFn};
 use rtemis_r8::ir::{IrDocument, TypeDef};
 use rtemis_r8::name::{Name, QualifiedName};
 
@@ -40,11 +40,11 @@ struct ImplFn {
 
 /// A registered codec of a Rust-stored type.
 #[derive(Clone, Copy)]
-struct VTable(*const TypeVTable);
+struct CodecPtr(*const Codec);
 
 // The tables are static data of loaded shared objects, read on R's main
 // thread only.
-unsafe impl Send for VTable {}
+unsafe impl Send for CodecPtr {}
 
 /// An impl function's trait, type, and method.
 type ImplKey = (String, String, String);
@@ -61,7 +61,7 @@ struct Compiled {
     /// Impl functions by trait, type, and method.
     impls: HashMap<ImplKey, ImplFn>,
     /// Codecs of Rust-stored types by qualified name.
-    types: HashMap<String, VTable>,
+    types: HashMap<String, CodecPtr>,
     /// The entries each package registered, for their replacement.
     owned: HashMap<String, Owned>,
 }
@@ -72,7 +72,7 @@ fn compiled() -> &'static Mutex<Compiled> {
 }
 
 /// The codec of the Rust-stored type `name`, when a package registered one.
-pub(crate) fn codec(name: &str) -> Option<*const TypeVTable> {
+pub(crate) fn codec(name: &str) -> Option<*const Codec> {
     compiled().lock().ok()?.types.get(name).map(|v| v.0)
 }
 
@@ -109,33 +109,33 @@ fn r8_compiled_types() -> Result<List> {
                 && v.get_field.is_some()
                 && v.with_field.is_some()
                 && v.drop.is_some()
-                && v.bytes.is_some()
+                && v.owned_bytes.is_some()
         })
         .collect();
     let type_name: Vec<String> = names.into_iter().cloned().collect();
     Ok(list!(type_name = type_name, complete = complete))
 }
 
-/// The size of `R8TypeVTable`, which every codec table holds.
-const TYPE_VTABLE_SIZE: u32 = std::mem::size_of::<TypeVTable>() as u32;
+/// The size of `R8Codec`, which every codec table holds.
+const CODEC_SIZE: u32 = std::mem::size_of::<Codec>() as u32;
 
 /// The codec tables of an exports table. The array's stride is the `size` of
 /// its entries, so a package built against a later header, whose entries
 /// carry appended fields, is read at the offsets it wrote.
-fn type_tables(e: &Exports) -> Result<Vec<*const TypeVTable>> {
+fn type_tables(e: &Exports) -> Result<Vec<*const Codec>> {
     if e.types.is_null() || e.n_types == 0 {
         return Ok(Vec::new());
     }
     let base = e.types.cast::<u8>();
     let stride = unsafe { (*e.types).size };
-    if stride < TYPE_VTABLE_SIZE {
+    if stride < CODEC_SIZE {
         return Err(fail(format!(
-            "the codec tables have size {stride}; ABI version 1 requires at least {TYPE_VTABLE_SIZE}"
+            "the codec tables have size {stride}; ABI version 1 requires at least {CODEC_SIZE}"
         )));
     }
     let mut out = Vec::with_capacity(e.n_types);
     for i in 0..e.n_types {
-        let v = unsafe { base.add(i * stride as usize) }.cast::<TypeVTable>();
+        let v = unsafe { base.add(i * stride as usize) }.cast::<Codec>();
         let size = unsafe { (*v).size };
         if size != stride {
             return Err(fail(format!(
@@ -297,7 +297,7 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
     let hash_r = |q: &QualifiedName| {
         lookup_r
             .find(q)
-            .map(|_| rtemis_r8::codec::declaration_hash(q, lookup_r))
+            .map(|_| rtemis_r8::canonical::declaration_hash(q, lookup_r))
     };
     let mut names = Vec::new();
     let mut status = Vec::new();
@@ -309,7 +309,7 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
         let h = hash_r(&q);
         let s = match &h {
             None => "missing",
-            Some(h) if *h == rtemis_r8::codec::declaration_hash(&q, lookup_rust) => "same",
+            Some(h) if *h == rtemis_r8::canonical::declaration_hash(&q, lookup_rust) => "same",
             Some(_) => "differs",
         };
         codec.push(codecs.iter().any(|(n, _)| *n == name));
@@ -384,7 +384,7 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
             )));
         }
         rtemis_r8::exports::check_codec(&q, unsafe { &*v }, lookup, package).map_err(fail)?;
-        types.push((name, VTable(v)));
+        types.push((name, CodecPtr(v)));
     }
     // Impl functions, whose rows make the impl declarations.
     let entries: &[ImplEntry] = if e.impls.is_null() || e.n_impls == 0 {

@@ -16,7 +16,7 @@
 //! In digest mode, a matrix, an array, a sparse matrix, a table, and a
 //! `vec()` of logical, integer, double, date, or date-time values are written
 //! as `{"$digest": "sha256:<hex>"}`, the SHA-256 of their canonical binary
-//! form (`crate::codec`), which is the form the content hash takes.
+//! form (`crate::canonical`), which is the form the content hash takes.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -25,8 +25,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::access::{Access, Indices, MISSING_CODE, base64_encode};
-use crate::codec::{date_text, datetime_text};
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::canonical::{date_text, datetime_text};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -875,7 +875,7 @@ impl<'l, S: Sink> Emitter<'l, S> {
                 let x = v.to_value(&FieldType::Json, lookup);
                 self.w.value(&x);
             }
-            FieldType::R { .. } => self.w.null(),
+            FieldType::HostClass { .. } => self.w.null(),
             FieldType::Matrix { element, .. } | FieldType::Array { element, .. } => {
                 self.dense(element, v)
             }
@@ -1200,7 +1200,7 @@ impl<'l, S: Sink> Emitter<'l, S> {
                     .unwrap_or_default();
                 if e.variants
                     .iter()
-                    .all(|x| matches!(x.shape, VariantShape::Unit))
+                    .all(|x| matches!(x.kind, VariantKind::Unit))
                 {
                     // Inside `dyn()`, the type member and the tag.
                     return match extra {
@@ -1223,10 +1223,10 @@ impl<'l, S: Sink> Emitter<'l, S> {
                     .variants
                     .iter()
                     .find(|x| x.name.as_str() == variant)
-                    .map(|x| &x.shape)
+                    .map(|x| &x.kind)
                 {
-                    Some(VariantShape::Struct { fields, .. }) => fields,
-                    Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                    Some(VariantKind::Struct { fields, .. }) => fields,
+                    Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                         Some(TypeDef::Struct(s)) => {
                             self.contained.insert(of.to_string(), s.version);
                             &s.fields
@@ -1285,10 +1285,10 @@ impl<'l, S: Sink> Emitter<'l, S> {
     }
 }
 
-/// The JSON Pointers of the runtime-only fields of a value that hold a
+/// The JSON Pointers of the host-only fields of a value that hold a
 /// value, found by a walk of its records and collections that reads no
 /// scalar data.
-pub fn runtime_paths<'a, A: Access<'a>>(
+pub fn host_only_paths<'a, A: Access<'a>>(
     ty: &QualifiedName,
     value: A,
     lookup: &dyn TypeLookup,
@@ -1316,10 +1316,10 @@ fn walk_named<'a, A: Access<'a>>(
                 .variants
                 .iter()
                 .find(|x| x.name.as_str() == variant)
-                .map(|x| &x.shape)
+                .map(|x| &x.kind)
             {
-                Some(VariantShape::Struct { fields, .. }) => fields,
-                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                Some(VariantKind::Struct { fields, .. }) => fields,
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => &s.fields,
                     _ => return,
                 },
@@ -1350,7 +1350,7 @@ fn walk<'a, A: Access<'a>>(
     out: &mut Vec<String>,
 ) {
     match unwrap_option(ft) {
-        FieldType::R { .. } => out.push(path.to_string()),
+        FieldType::HostClass { .. } => out.push(path.to_string()),
         FieldType::Named { name } => walk_named(name, v, lookup, path, out),
         t @ (FieldType::Dyn { .. } | FieldType::Subtype { .. }) => {
             if let Some(Ok((ty, _))) = crate::access::concrete(v, t, lookup) {

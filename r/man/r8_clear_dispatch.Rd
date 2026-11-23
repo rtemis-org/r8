@@ -10,7 +10,7 @@ r8_clear_dispatch()
 \code{NULL}, invisibly.
 }
 \description{
-R8 caches the method each generic resolved for the chain of its
+R8 caches the method each generic selected for the chain of its
 arguments' types, keyed by each argument's type or class vector, and
 clears the cache when an impl is declared. An S4 class's superclasses
 belong to its class definition, so \code{methods::setIs()} or

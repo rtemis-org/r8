@@ -12,12 +12,12 @@
         {
           "name": "Linear",
           "description": "",
-          "shape": "unit"
+          "kind": "unit"
         },
         {
           "name": "Rbf",
           "description": "",
-          "shape": "struct",
+          "kind": "struct",
           "fields": [
             {
               "name": "gamma",

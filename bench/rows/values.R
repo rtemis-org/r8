@@ -52,7 +52,7 @@ emit("GBM", "memory_value", marginal_size(function(i) do.call(GBM, gbm_args(10L)
 emit("Wide20", "memory_value", marginal_size(function(i) {
   do.call(Wide20, as.list(stats::setNames(stats::runif(20L), WIDE_FIELDS)))
 }), "B")
-# The memory a Rust-native value holds in Rust, its state's bytes, which
+# The memory a Rust-stored value holds in Rust, its state's bytes, which
 # obj_size() does not see: r8_size() of a value whose fields are unread.
 if (SYSTEM == "R8 Rust") {
   emit("GBM", "memory_value_rust", R8::r8_size(do.call(GBM, gbm_args(10L))), "B")

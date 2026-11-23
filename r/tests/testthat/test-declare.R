@@ -215,10 +215,10 @@ test_that("a numeric type takes one bound per side", {
 test_that("a unit variant is an R8 value, and an unknown variant is an error", {
   K <- declare_in(
     "demo",
-    new_enum("Shape", variants = list(Circle = variant(), Square = variant()))
+    new_enum("Figure", variants = list(Circle = variant(), Square = variant()))
   )
   v <- K@Circle
-  expect_s3_class(v, c("demo::Shape", "r8_value"))
+  expect_s3_class(v, c("demo::Figure", "r8_value"))
   expect_identical(attr(v, "r8_variant"), "Circle")
   expect_error(K@Hexagon, class = "r8_value_error")
 })
@@ -477,11 +477,11 @@ test_that("a type and a trait of one name are refused in either order", {
     "duplicate_type",
     class = "r8_declaration_error"
   )
-  declare_in("collide", new_struct("Shape", fields = list(a = type_double())))
+  declare_in("collide", new_struct("Figure", fields = list(a = type_double())))
   expect_error(
     declare_in(
       "collide",
-      new_trait("Shape", methods = list(area = trait_method(function(x) NULL)))
+      new_trait("Figure", methods = list(area = trait_method(function(x) NULL)))
     ),
     "duplicate_type"
   )

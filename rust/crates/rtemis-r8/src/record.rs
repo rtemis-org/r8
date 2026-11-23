@@ -7,16 +7,16 @@
 //! sequence of entries, each a declaration (a type, a trait, or an impl) with
 //! the namespace it belongs to.
 //!
-//! The codec is written by hand over the IR types, so the code is the
-//! format. Every struct is destructured without `..`, every enum tag is an
-//! explicit literal, and the writer's methods are typed, so a change to an
-//! IR type fails to compile here until the format accounts for it. The
-//! encoder writes [`FORMAT`], the one format the decoder reads, into the
-//! current IR types. Optional members and booleans pack into one flag byte
-//! per node, whose unused bits are rejected; varints are canonical; every
-//! length is checked against the bytes that remain; trees have a depth
-//! limit; trailing bytes are rejected. One declaration has one encoding.
-//! spec: R8/class-system#declaration-record
+//! The writer and the reader are written by hand over the IR types, so the code
+//! is the format. Every struct is destructured without `..`, every enum tag is
+//! an explicit literal, and the writer's methods are typed, so a change to an
+//! IR type fails to compile here until the format accounts for it. The encoder
+//! writes [`FORMAT`], the one format the decoder reads, into the current IR
+//! types. Optional members and booleans pack into one flag byte per node, whose
+//! unused bits are rejected; varints are canonical; every length is checked
+//! against the bytes that remain; trees have a depth limit; trailing bytes are
+//! rejected. One declaration has one encoding. spec:
+//! R8/class-system#declaration-record
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,9 +25,9 @@ use serde_json::{Map, Number, Value};
 
 use crate::ir::{
     Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, EnumDef, FieldDef, FieldType,
-    ImplDef, IntegerType, Logic, MethodDef, Migration, MigrationStep, Operator, Param, ParamDef,
-    RequiredField, Resolve, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef,
-    TypeDef, TypeRef, VariantDef, VariantShape,
+    HostDefault, ImplDef, ImplMethod, IntegerType, Logic, MethodDef, Migration, MigrationStep,
+    Operator, Param, ParamDef, RequiredField, Resolve, ReturnType, RuleDef, SelfMarker,
+    SplitTarget, StructDef, TraitDef, TypeDef, TypeRef, TypedImplMethod, VariantDef, VariantKind,
 };
 use crate::name::{MethodName, Name, QualifiedName};
 
@@ -35,7 +35,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 5;
+pub const FORMAT: u32 = 7;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -526,9 +526,17 @@ fn w_type(w: &mut W, t: &FieldType) {
             w.qn(of);
         }
         FieldType::Json => w.u8(14),
-        FieldType::R { class } => {
+        FieldType::HostClass {
+            host,
+            package,
+            class,
+            system,
+        } => {
             w.u8(15);
+            w.str(host);
+            w.str(package);
             w.str(class);
+            w_class_system(w, *system);
         }
         FieldType::Vec {
             element,
@@ -786,18 +794,18 @@ fn w_enum(w: &mut W, e: &EnumDef) {
         let VariantDef {
             name,
             description,
-            shape,
+            kind,
         } = v;
         w.name(name);
         w.str(description);
-        match shape {
-            VariantShape::Unit => w.u8(0),
-            VariantShape::Struct { fields, rules } => {
+        match kind {
+            VariantKind::Unit => w.u8(0),
+            VariantKind::Struct { fields, rules } => {
                 w.u8(1);
                 w.seq(fields, w_field);
                 w.seq(rules, w_rule);
             }
-            VariantShape::Newtype { of } => {
+            VariantKind::Newtype { of } => {
                 w.u8(2);
                 w.qn(of);
             }
@@ -823,7 +831,7 @@ fn w_type_def(w: &mut W, t: &TypeDef) {
 
 fn w_target(w: &mut W, t: &TypeRef) {
     match t {
-        TypeRef::Type { name } => {
+        TypeRef::Named { name } => {
             w.u8(0);
             w.qn(name);
         }
@@ -837,11 +845,7 @@ fn w_target(w: &mut W, t: &TypeRef) {
             w.str(host);
             w.str(package);
             w.str(class);
-            w.u8(match system {
-                ClassSystem::S3 => 0,
-                ClassSystem::S4 => 1,
-                ClassSystem::Implicit => 2,
-            });
+            w_class_system(w, *system);
         }
         TypeRef::Any => w.u8(2),
     }
@@ -858,18 +862,24 @@ fn w_param(w: &mut W, p: &ParamDef) {
             dispatch,
             ty,
             default,
+            host_default,
             description,
         }) => {
             w.u8(1);
             w.str(name);
             w.u8(u8::from(*dispatch)
                 | u8::from(ty.is_some()) << 1
-                | u8::from(default.is_some()) << 2);
+                | u8::from(default.is_some()) << 2
+                | u8::from(host_default.is_some()) << 3);
             if let Some(t) = ty {
                 w_type(w, t);
             }
             if let Some(d) = default {
                 w_tree(w, d);
+            }
+            if let Some(HostDefault { host, text }) = host_default {
+                w.str(host);
+                w.str(text);
             }
             w.str(description);
         }
@@ -885,7 +895,7 @@ fn w_trait(w: &mut W, t: &TraitDef) {
         supertraits,
         tag,
         generic,
-        type_params,
+        extra_type_params,
     } = t;
     w.name(name);
     w.str(description);
@@ -893,7 +903,7 @@ fn w_trait(w: &mut W, t: &TraitDef) {
     if let Some(t) = tag {
         w.name(t);
     }
-    w.u8(*type_params);
+    w.u8(*extra_type_params);
     w.seq(methods, |w, m| {
         let MethodDef {
             name,
@@ -910,7 +920,7 @@ fn w_trait(w: &mut W, t: &TraitDef) {
             | u8::from(*has_default_impl) << 1
             | u8::from(return_type.is_some()) << 2);
         match return_type {
-            Some(ReturnType::Receiver(_)) => w.u8(0),
+            Some(ReturnType::SelfType(_)) => w.u8(0),
             Some(ReturnType::Type(t)) => {
                 w.u8(1);
                 w_type(w, t);
@@ -933,16 +943,25 @@ fn w_impl(w: &mut W, i: &ImplDef) {
         target,
         tag_value,
         methods,
-        codec,
     } = i;
     w.qn(r#trait);
     w.seq(type_args, w_target);
     w_target(w, target);
-    w.u8(u8::from(tag_value.is_some()) | u8::from(*codec) << 1);
+    w.u8(u8::from(tag_value.is_some()));
     if let Some(t) = tag_value {
         w.str(t);
     }
-    w.seq(methods, |w, m| w.str(m.as_str()));
+    w.seq(methods, |w, m| match m {
+        ImplMethod::Name(n) => {
+            w.u8(0);
+            w.str(n.as_str());
+        }
+        ImplMethod::Typed(TypedImplMethod { name, return_type }) => {
+            w.u8(1);
+            w.str(name.as_str());
+            w_type(w, return_type);
+        }
+    });
 }
 
 /// Encodes declarations as a record of the current format.
@@ -1352,8 +1371,11 @@ fn r_type(r: &mut R) -> Res<FieldType> {
             }
             13 => FieldType::TableOf { of: r.qn()? },
             14 => FieldType::Json,
-            15 => FieldType::R {
+            15 => FieldType::HostClass {
+                host: r.str()?.into(),
+                package: r.str()?.into(),
                 class: r.str()?.into(),
+                system: r_class_system(r)?,
             },
             16 => {
                 let element = Box::new(r_type(r)?);
@@ -1554,19 +1576,19 @@ fn r_enum(r: &mut R) -> Res<EnumDef> {
     let variants = r.seq(3, |r| {
         let name = r.name()?;
         let description = r.str()?.to_owned();
-        let shape = match r.u8()? {
-            0 => VariantShape::Unit,
-            1 => VariantShape::Struct {
+        let kind = match r.u8()? {
+            0 => VariantKind::Unit,
+            1 => VariantKind::Struct {
                 fields: r.seq(4, r_field)?,
                 rules: r.seq(5, r_rule)?,
             },
-            2 => VariantShape::Newtype { of: r.qn()? },
-            t => return Err(RecordError::Tag("variant shape", t)),
+            2 => VariantKind::Newtype { of: r.qn()? },
+            t => return Err(RecordError::Tag("variant kind", t)),
         };
         Ok(VariantDef {
             name,
             description,
-            shape,
+            kind,
         })
     })?;
     Ok(EnumDef {
@@ -1594,19 +1616,31 @@ fn r_method_name(r: &mut R) -> Res<MethodName> {
     MethodName::new(s).map_err(|_| RecordError::Name(s.to_string()))
 }
 
+fn w_class_system(w: &mut W, system: ClassSystem) {
+    w.u8(match system {
+        ClassSystem::S3 => 0,
+        ClassSystem::S4 => 1,
+        ClassSystem::Implicit => 2,
+    });
+}
+
+fn r_class_system(r: &mut R) -> Res<ClassSystem> {
+    Ok(match r.u8()? {
+        0 => ClassSystem::S3,
+        1 => ClassSystem::S4,
+        2 => ClassSystem::Implicit,
+        t => return Err(RecordError::Tag("class system", t)),
+    })
+}
+
 fn r_target(r: &mut R) -> Res<TypeRef> {
     Ok(match r.u8()? {
-        0 => TypeRef::Type { name: r.qn()? },
+        0 => TypeRef::Named { name: r.qn()? },
         1 => TypeRef::HostClass {
             host: r.str()?.to_owned(),
             package: r.str()?.to_owned(),
             class: r.str()?.to_owned(),
-            system: match r.u8()? {
-                0 => ClassSystem::S3,
-                1 => ClassSystem::S4,
-                2 => ClassSystem::Implicit,
-                t => return Err(RecordError::Tag("class system", t)),
-            },
+            system: r_class_system(r)?,
         },
         2 => TypeRef::Any,
         t => return Err(RecordError::Tag("impl target", t)),
@@ -1618,10 +1652,18 @@ fn r_param(r: &mut R) -> Res<ParamDef> {
         0 => ParamDef::Name(r.str()?.to_owned()),
         1 => {
             let name = r.str()?.to_owned();
-            let f = r.flags(0b111, "parameter")?;
+            let f = r.flags(0b1111, "parameter")?;
             let ty = if f & 2 != 0 { Some(r_type(r)?) } else { None };
             let default = if f & 4 != 0 {
                 Some(Box::new(r_tree(r)?))
+            } else {
+                None
+            };
+            let host_default = if f & 8 != 0 {
+                Some(HostDefault {
+                    host: r.str()?.into(),
+                    text: r.str()?.into(),
+                })
             } else {
                 None
             };
@@ -1630,6 +1672,7 @@ fn r_param(r: &mut R) -> Res<ParamDef> {
                 dispatch: f & 1 != 0,
                 ty,
                 default,
+                host_default,
                 description: r.str()?.into(),
             })
         }
@@ -1642,7 +1685,7 @@ fn r_trait(r: &mut R) -> Res<TraitDef> {
     let description = r.str()?.to_owned();
     let f = r.flags(0b11, "trait")?;
     let tag = if f & 1 != 0 { Some(r.name()?) } else { None };
-    let type_params = r.u8()?;
+    let extra_type_params = r.u8()?;
     Ok(TraitDef {
         name,
         description,
@@ -1653,7 +1696,7 @@ fn r_trait(r: &mut R) -> Res<TraitDef> {
             let f = r.flags(0b111, "method")?;
             let return_type = if f & 4 != 0 {
                 Some(match r.u8()? {
-                    0 => ReturnType::Receiver(SelfType::SelfType),
+                    0 => ReturnType::SelfType(SelfMarker::SelfType),
                     1 => ReturnType::Type(Box::new(r_type(r)?)),
                     t => return Err(RecordError::Tag("return type", t)),
                 })
@@ -1679,7 +1722,7 @@ fn r_trait(r: &mut R) -> Res<TraitDef> {
         supertraits: r.seq(2, R::qn)?,
         tag,
         generic: f & 2 != 0,
-        type_params,
+        extra_type_params,
     })
 }
 
@@ -1687,7 +1730,7 @@ fn r_impl(r: &mut R) -> Res<ImplDef> {
     let r#trait = r.qn()?;
     let type_args = r.seq(1, r_target)?;
     let target = r_target(r)?;
-    let f = r.flags(0b11, "impl")?;
+    let f = r.flags(1, "impl")?;
     let tag_value = if f & 1 != 0 {
         Some(r.str()?.to_owned())
     } else {
@@ -1698,12 +1741,20 @@ fn r_impl(r: &mut R) -> Res<ImplDef> {
         type_args,
         target,
         tag_value,
-        methods: r.seq(1, r_method_name)?,
-        codec: f & 2 != 0,
+        methods: r.seq(2, |r| {
+            Ok(match r.u8()? {
+                0 => ImplMethod::Name(r_method_name(r)?),
+                1 => ImplMethod::Typed(TypedImplMethod {
+                    name: r_method_name(r)?,
+                    return_type: r_type(r)?,
+                }),
+                t => return Err(RecordError::Tag("impl method", t)),
+            })
+        })?,
     })
 }
 
-/// Reads the payload of format 4.
+/// Reads the payload of the current format.
 fn r_payload(r: &mut R) -> Res<Vec<Entry>> {
     r.seq(2, |r| {
         let namespace = r.name()?;

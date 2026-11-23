@@ -2,7 +2,7 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Documents and serialization of a `Conform` value, for R-stored and
+# Documents and serialization of a `Probe` value, for R-stored and
 # Rust-stored values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 
@@ -12,10 +12,10 @@ test_that("a document round trips to an equal value", {
   json <- r8_to_json(x)
   expect_match(
     json,
-    sprintf('"$type":"%s::Conform"', p[["namespace"]]),
+    sprintf('"$type":"%s::Probe"', p[["namespace"]]),
     fixed = TRUE
   )
-  y <- r8_from_json(p[["Conform"]], json)
+  y <- r8_from_json(p[["Probe"]], json)
   expect_true(r8_equal(x, y))
   expect_identical(r8_to_json(y), json)
   expect_identical(r8_hash(y), r8_hash(x))
@@ -25,11 +25,11 @@ test_that("a document outside the type reports its problems", {
   p <- conformance_provider()
   json <- r8_to_json(conform_value(p))
   bad <- sub('"ratio":0.5', '"ratio":2', json, fixed = TRUE)
-  e <- expect_error(r8_from_json(p[["Conform"]], bad), class = "r8_value_error")
+  e <- expect_error(r8_from_json(p[["Probe"]], bad), class = "r8_value_error")
   expect_identical(paste(e$problems$code, e$problems$path), "above_max /ratio")
   ruled <- sub('"seed":1', '"seed":7', json, fixed = TRUE)
   expect_error(
-    r8_from_json(p[["Conform"]], ruled),
+    r8_from_json(p[["Probe"]], ruled),
     "seed_below_count",
     class = "r8_value_error"
   )

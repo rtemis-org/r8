@@ -5,8 +5,8 @@
 # Declarations at the top level run when the package is installed; .onLoad()
 # registers them in the session.
 
-Shape <- R8::new_enum(
-  "Shape",
+Orientation <- R8::new_enum(
+  "Orientation",
   variants = list(Wide = R8::variant(), Tall = R8::variant())
 )
 
@@ -15,11 +15,11 @@ Rect <- R8::new_struct(
   fields = list(
     w = R8::type_double(min = 0),
     h = R8::type_double(min = 0),
-    shape = R8::field(Shape, default = Shape@Wide)
+    orientation = R8::field(Orientation, default = Orientation@Wide)
   ),
   rules = list(R8::rule(
     w >= h,
-    when = is_variant(shape, "Wide"),
+    when = is_variant(orientation, "Wide"),
     message = "A wide rectangle is at least as wide as it is tall.",
     id = "WIDE"
   ))

@@ -1,4 +1,4 @@
-export(Shape)
+export(Orientation)
 export(Rect)
 export(Area)
 export(area)

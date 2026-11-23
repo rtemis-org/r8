@@ -10,7 +10,7 @@
 #' only in member order or in defaults written out hash the same. A matrix,
 #' an array, a sparse matrix, a table, and a `vec()` of logical, integer,
 #' double, date, or date-time values enter through the digest of their
-#' canonical binary form. A runtime-only field's value stays out of the hash;
+#' canonical binary form. A host-only field's value stays out of the hash;
 #' its presence enters it. The hash is computed from the R objects in place.
 #'
 #' @param x An R8 value.
@@ -40,9 +40,8 @@ r8_hash <- function(x) {
 #' Equality of two R8 values
 #'
 #' `TRUE` when both values have the same type and equal fields: their
-#' normalized forms are the same canonical JSON, and their runtime-only
-#' fields are `identical()`. A provenance record does not enter the
-#' comparison.
+#' normalized forms are the same canonical JSON, and their host-only
+#' fields are `identical()`.
 #'
 #' @param x,y R8 values.
 #'
@@ -167,7 +166,7 @@ r8_size <- function(x) {
   if (!inherits(x, "r8_value")) {
     r8_abort("`x` is an R8 value.", class = "r8_type_error")
   }
-  parts <- r8_native_parts(x)
+  parts <- r8_rust_stored_parts(x)
   if (is.null(parts)) {
     return(as.numeric(utils::object.size(x)))
   }

@@ -31,9 +31,9 @@ an implementor's type.}
 
 \item{storage}{Character \{"r", "rust"\}: Where values hold their fields.
 \code{"rust"}: a Rust-stored type, whose values, unit variants included, the
-codec in the package's compiled exports builds and holds
-(\code{R8.h}). Its variant constructors and unit variants signal
-\code{r8_codec_missing} until the codec is registered.}
+codec in the package's compiled exports builds and holds (\code{R8.h}). Its
+variant constructors and unit variants signal \code{r8_codec_missing_error}
+until the codec is registered.}
 
 \item{object}{An enum type object.}
 }

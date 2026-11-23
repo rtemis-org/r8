@@ -101,7 +101,7 @@ test_that("packages declaring R8 types register, dispatch, and persist", {
     )
   )
   expect_true(
-    "fields w,h,shape " %in% out2,
+    "fields w,h,orientation " %in% out2,
     info = paste(out2, collapse = "\n")
   )
   # Read again with the packages loaded, it is the same value.
@@ -285,7 +285,7 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
       "suppressPackageStartupMessages(library(r8pkgC))",
       "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
       "s <- Signal(name = 'a', values = c(1.5, 2, 3))",
-      "cat('native', grepl('r8 rust-stored pkgc::Signal', inspect(s)), '\\n')",
+      "cat('rust_stored', grepl('r8 rust-stored pkgc::Signal', inspect(s)), '\\n')",
       "v <- s$values",
       "cat('view', grepl('r8 view', inspect(v)), grepl('in place', inspect(v)), v, '\\n')",
       "w <- v; w[1] <- 99",
@@ -319,7 +319,7 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
     )
   )
   info <- paste(out, collapse = "\n")
-  expect_true("native TRUE " %in% out, info = info)
+  expect_true("rust_stored TRUE " %in% out, info = info)
   expect_true("view TRUE TRUE 1.5 2 3 " %in% out, info = info)
   expect_true("copy 99 1.5 " %in% out, info = info)
   expect_true("equal TRUE " %in% out, info = info)
@@ -345,7 +345,7 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
       "e <- tryCatch(s$values, error = function(e) conditionMessage(e))",
       "cat('lazy', grepl('library(r8pkgC)', e, fixed = TRUE), '\\n')",
       "suppressPackageStartupMessages(library(r8pkgC))",
-      "cat('resolved', s$name, s$values, '\\n')",
+      "cat('loaded', s$name, s$values, '\\n')",
       "mirai::daemons(1)",
       "m <- mirai::mirai({ library(r8pkgC); list(sum(s$values), Signal(name = 'w', values = s$values * 2)) }, s = s)[]",
       "cat('mirai', m[[1]], m[[2]]$name, m[[2]]$values, '\\n')",
@@ -358,7 +358,7 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
   )
   info <- paste(out, collapse = "\n")
   expect_true("lazy TRUE " %in% out, info = info)
-  expect_true("resolved a 1.5 2 3 " %in% out, info = info)
+  expect_true("loaded a 1.5 2 3 " %in% out, info = info)
   expect_true("mirai 6.5 w 3 4 6 " %in% out, info = info)
   expect_true("future f 2.5 3 4 " %in% out, info = info)
 })
@@ -378,7 +378,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
       "x <- c(3, 4)",
       "s <- Signal(name = 'a', values = x)",
-      "cat('native', grepl('r8 rust-stored pkgr::Signal', inspect(s)), identical(attr(Signal, 'r8_storage'), 'rust'), '\\n')",
+      "cat('rust_stored', grepl('r8 rust-stored pkgr::Signal', inspect(s)), identical(attr(Signal, 'r8_storage'), 'rust'), '\\n')",
       "cat('fields', s$name, s$values, '\\n')",
       "cat('magnitude', magnitude(s), '\\n')",
       "cat('ratio', ratio(s, 2), '\\n')",
@@ -404,7 +404,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
     )
   )
   info <- paste(out, collapse = "\n")
-  expect_true("native TRUE TRUE " %in% out, info = info)
+  expect_true("rust_stored TRUE TRUE " %in% out, info = info)
   expect_true("fields a 3 4 " %in% out, info = info)
   expect_true("magnitude 5 " %in% out, info = info)
   expect_true("ratio 1.5 " %in% out, info = info)
@@ -516,7 +516,7 @@ test_that("Rust-stored enums construct, read, change, persist, and cross workers
     c(
       sprintf("x <- readRDS(%s)", deparse(rds)),
       "suppressPackageStartupMessages(library(r8pkgR))",
-      "cat('resolved', format(x[[1]]), format(x[[2]]), x[[3]]$train, '\\n')",
+      "cat('loaded', format(x[[1]]), format(x[[2]]), x[[3]]$train, '\\n')",
       "mirai::daemons(1)",
       "m <- mirai::mirai({ library(r8pkgR); list(format(f), Resampler@Bootstrap(n = 3L)) }, f = x[[1]])[]",
       "cat('mirai', m[[1]], format(m[[2]]), '\\n')",
@@ -529,7 +529,7 @@ test_that("Rust-stored enums construct, read, change, persist, and cross workers
   )
   info <- paste(out, collapse = "\n")
   expect_true(
-    "resolved Fixed (3 training cases) LOOCV 1 2 " %in% out,
+    "loaded Fixed (3 training cases) LOOCV 1 2 " %in% out,
     info = info
   )
   expect_true(
@@ -601,18 +601,18 @@ test_that("the generator names a type of another namespace by its package's expo
     c(
       "p <- tempfile(); dir.create(p)",
       "desc <- function(imports) writeLines(c('Package: x', paste0('Imports: ', imports)), file.path(p, 'DESCRIPTION'))",
-      "field_t <- list(name = 'shape', type = list(kind = 'named', name = 'pkga::Shape'), description = '')",
+      "field_t <- list(name = 'orientation', type = list(kind = 'named', name = 'pkga::Orientation'), description = '')",
       "doc <- list(namespace = 'model', types = list(list(kind = 'struct', name = 'Fit', description = '', version = 1L, fields = list(field_t))))",
       "desc('R8, r8pkgA (>= 0.0.1)')",
       "refs <- R8:::foreign_refs(doc, p)",
       "assign('map', refs, envir = R8:::.r8_render_refs)",
-      "cat('ref', refs[['pkga::Shape']], R8:::render_type(field_t$type, 'model'), '\\n')",
+      "cat('ref', refs[['pkga::Orientation']], R8:::render_type(field_t$type, 'model'), '\\n')",
       "op <- options(r8.namespace = 'model')",
-      "Fit <- R8::new_struct('Fit', fields = list(shape = r8pkgA::Shape))",
+      "Fit <- R8::new_struct('Fit', fields = list(orientation = r8pkgA::Orientation))",
       "options(op)",
       "ir <- R8:::type_ir(Fit)",
       "lines <- R8:::render_struct(ir, 'model', rust_stored = FALSE)",
-      "cat('rendered', any(grepl('shape = r8pkgA::Shape', lines, fixed = TRUE)), '\\n')",
+      "cat('rendered', any(grepl('orientation = r8pkgA::Orientation', lines, fixed = TRUE)), '\\n')",
       "desc('R8')",
       "e <- tryCatch(R8:::foreign_refs(doc, p), error = function(e) conditionMessage(e))",
       "cat('unimported', grepl('listed in Imports', e), '\\n')",
@@ -623,7 +623,10 @@ test_that("the generator names a type of another namespace by its package's expo
     )
   )
   info <- paste(out, collapse = "\n")
-  expect_true("ref r8pkgA::Shape r8pkgA::Shape " %in% out, info = info)
+  expect_true(
+    "ref r8pkgA::Orientation r8pkgA::Orientation " %in% out,
+    info = info
+  )
   expect_true("rendered TRUE " %in% out, info = info)
   expect_true("unimported TRUE " %in% out, info = info)
   expect_true("unexported TRUE " %in% out, info = info)
@@ -882,7 +885,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
 })
 
 
-test_that("the conformance tests pass against the Rust-stored pkgr::Conform", {
+test_that("the conformance tests pass against the Rust-stored pkgr::Probe", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
     "set R8_PACKAGE_TESTS to install the test packages"
@@ -894,7 +897,7 @@ test_that("the conformance tests pass against the Rust-stored pkgr::Conform", {
     lib,
     c(
       "suppressPackageStartupMessages({ library(R8); library(r8pkgR); library(testthat) })",
-      "options(r8.conformance = 'native')",
+      "options(r8.conformance = 'rust')",
       sprintf(
         "res <- testthat::test_dir(%s, reporter = 'silent', stop_on_failure = FALSE, stop_on_warning = FALSE)",
         deparse(dir)
@@ -925,9 +928,9 @@ test_that("the conformance tests pass against the Rust-stored pkgr::Conform", {
     c(
       "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
       sprintf("source(%s)", deparse(file.path(dir, "helper-conformance.R"))),
-      "mirror <- conformance_r_types()[['Conform']]",
-      "native <- gsub('pkgr', 'conf', r8_declaration(r8pkgR::Conform), fixed = TRUE)",
-      "cat('mirror', identical(native, r8_declaration(mirror)), '\\n')"
+      "mirror <- conformance_r_types()[['Probe']]",
+      "rust <- gsub('pkgr', 'conf', r8_declaration(r8pkgR::Probe), fixed = TRUE)",
+      "cat('mirror', identical(rust, r8_declaration(mirror)), '\\n')"
     )
   )
   expect_true("mirror TRUE " %in% out, info = paste(out, collapse = "\n"))

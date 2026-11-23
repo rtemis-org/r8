@@ -643,11 +643,10 @@ type_ir <- function(type) {
 #'   field name. `NULL` removes the default of an `option()` field.
 #' @param storage Character \{"r", "rust"\}: Where values hold their fields.
 #'   `"rust"`: a Rust-stored type, whose values the codec in the package's
-#'   compiled exports builds and holds (`R8.h`). Its constructor
-#'   signals `r8_codec_missing` until the codec is registered, and
-#'   `r8_register()` checks that the exports carry the codec. A package whose
-#'   types are declared in Rust generates these declarations with
-#'   `r8_document_rust()`.
+#'   compiled exports builds and holds (`R8.h`). Its constructor signals
+#'   `r8_codec_missing_error` until the codec is registered, and `r8_register()`
+#'   checks that the exports carry the codec. A package whose types are declared
+#'   in Rust generates these declarations with `r8_document_rust()`.
 #'
 #' @return The type object, of class `r8_struct_type`.
 #'
@@ -825,9 +824,9 @@ variant <- function(
 #' @param version Integer: The type's version, from 1.
 #' @param storage Character \{"r", "rust"\}: Where values hold their fields.
 #'   `"rust"`: a Rust-stored type, whose values, unit variants included, the
-#'   codec in the package's compiled exports builds and holds
-#'   (`R8.h`). Its variant constructors and unit variants signal
-#'   `r8_codec_missing` until the codec is registered.
+#'   codec in the package's compiled exports builds and holds (`R8.h`). Its
+#'   variant constructors and unit variants signal `r8_codec_missing_error`
+#'   until the codec is registered.
 #'
 #' @return `new_enum()`: the type object, of class `r8_enum_type`.
 #'   `Kernel@Linear`: the unit variant's value, an R8 value.
@@ -962,7 +961,7 @@ enum_variants <- function(qname, object) {
 #' @noRd
 build_variant <- function(v, qname, name, rust_stored, package = "") {
   v <- unclass(v)
-  if (v[["shape"]] == "unit") {
+  if (v[["kind"]] == "unit") {
     if (rust_stored) {
       check_codec(qname, package)
     }
@@ -970,7 +969,7 @@ build_variant <- function(v, qname, name, rust_stored, package = "") {
   }
   # A struct or newtype variant: its constructor, with the fields as formals;
   # a field with a default receives NULL, which construction fills.
-  formals <- if (v[["shape"]] == "struct") {
+  formals <- if (v[["kind"]] == "struct") {
     ctor_formals(v[["fields"]])
   } else {
     ctor_formals(r8_type_ir(v[["of"]])[["fields"]])
@@ -1046,7 +1045,7 @@ print.r8_type <- function(x, ...) {
     detail <- if (ir[["kind"]] == "struct") {
       it[["type"]][["kind"]]
     } else {
-      it[["shape"]]
+      it[["kind"]]
     }
     cat("  ", it[["name"]], ": ", detail, "\n", sep = "")
   }

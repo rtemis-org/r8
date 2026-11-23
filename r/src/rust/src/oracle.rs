@@ -1,6 +1,6 @@
 //! The differential oracle: construction and identity through the JSON form,
-//! which `tests/testthat/test-native.R` compares with native construction
-//! and identity. Built with the Cargo feature `oracle` only, which
+//! which `tests/testthat/test-construct.R` compares with in-place
+//! construction and identity. Built with the Cargo feature `oracle` only, which
 //! `tools/config.R` enables when the environment variable `R8_ORACLE` is
 //! set. `R/extendr-wrappers.R` holds no wrapper for these functions: the
 //! `document` binary builds without the feature, and the tests call the
@@ -8,7 +8,7 @@
 
 use extendr_api::Result;
 use extendr_api::prelude::*;
-use rtemis_r8::codec::read_document;
+use rtemis_r8::canonical::read_document;
 use rtemis_r8::ir::FieldType;
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::DocumentSet;
@@ -27,7 +27,7 @@ fn encode_and_validate(
     encode_with_runtime(x, name, docs).map(|(v, _)| v)
 }
 
-/// Encodes and validates, also returning the paths of runtime-only fields
+/// Encodes and validates, also returning the paths of host-only fields
 /// that hold a value.
 fn encode_with_runtime(
     x: &Robj,
@@ -37,7 +37,7 @@ fn encode_with_runtime(
     let mut enc = Encoder {
         lookup: docs,
         errors: Vec::new(),
-        runtime: Vec::new(),
+        host_only: Vec::new(),
     };
     let ft = FieldType::Named { name: name.clone() };
     let v = enc.value(x, &ft, "");
@@ -46,7 +46,7 @@ fn encode_with_runtime(
     }
     let errors = validate(&v, name, docs);
     if errors.is_empty() {
-        Ok((v, enc.runtime))
+        Ok((v, enc.host_only))
     } else {
         Err(errors)
     }
@@ -77,7 +77,7 @@ fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<Lis
         input.set_attrib("r8_variant", variant)?;
     }
     match encode_and_validate(&input, &q, docs)
-        .and_then(|v| rtemis_r8::codec::normalize(&v, &q, docs))
+        .and_then(|v| rtemis_r8::canonical::normalize(&v, &q, docs))
     {
         Ok(v) => {
             let value = Decoder { lookup: docs }.named(&v, &q, Some(&input))?;
@@ -101,8 +101,8 @@ fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
     let docs = registry().snapshot();
     let docs: &DocumentSet = &docs;
     let result = read_document(text, &q, docs).and_then(|v| {
-        let canonical = rtemis_r8::codec::canonical(&v, &q, docs)?;
-        let hash = rtemis_r8::codec::content_hash(&v, &q, docs)?;
+        let canonical = rtemis_r8::canonical::canonical(&v, &q, docs)?;
+        let hash = rtemis_r8::canonical::content_hash(&v, &q, docs)?;
         Ok((canonical, hash))
     });
     match result {

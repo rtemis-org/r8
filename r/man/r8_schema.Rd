@@ -4,14 +4,17 @@
 \alias{r8_schema}
 \title{The JSON Schema of a type's values}
 \usage{
-r8_schema(type, implementors = FALSE)
+r8_schema(type, closed = FALSE)
 }
 \arguments{
 \item{type}{An R8 type object.}
 
-\item{implementors}{Logical: Write each \code{dyn()} field as the closed list
-of the implementors registered in the session, each with its tag value
-as a constant, in place of an object that names its type.}
+\item{closed}{Logical: Write each \code{dyn()} field as the closed list of the
+implementors registered in the session, each with its tag value as a
+constant, and each \code{subtype()} field as the struct and its registered
+descendants, each with \code{"$type"} as a constant, in place of an object
+that names its type. The annotation \code{x-r8.closed} is then
+\code{"registered"}.}
 }
 \value{
 Character: The schema as JSON text.

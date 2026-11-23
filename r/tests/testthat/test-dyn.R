@@ -150,7 +150,7 @@ test_that("a document naming an unregistered type names its namespace", {
     "\"plain\":{\"$type\":\"nopkg::Thing\",\"a\":1}}"
   )
   err <- tryCatch(r8_from_json(e$Model, json), error = function(e) e)
-  expect_s3_class(err, "r8_unresolved_type")
+  expect_s3_class(err, "r8_unknown_type_error")
   expect_match(
     conditionMessage(err),
     "no installed package declares namespace `nopkg`",
@@ -168,7 +168,7 @@ test_that("r8_schema() writes a dyn() field open or as its registered implemento
   open <- R8:::r8_json_parse(r8_schema(e$Model))
   algo <- open[["properties"]][["algo"]][["anyOf"]][[1L]]
   expect_identical(algo[["x-r8"]][["dyn"]], "dyn6::Algorithm")
-  closed <- R8:::r8_json_parse(r8_schema(e$Model, implementors = TRUE))
+  closed <- R8:::r8_json_parse(r8_schema(e$Model, closed = TRUE))
   alts <- closed[["properties"]][["algo"]][["anyOf"]][[1L]][["anyOf"]]
   tags <- vapply(
     alts,

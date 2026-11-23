@@ -413,12 +413,12 @@
           {
             "kind": "enum",
             "name": "AssayData",
-            "description": "The values of one assay, features by samples; on-disk DelayedArray assays are runtime-only through a host-class impl.",
+            "description": "The values of one assay, features by samples; on-disk DelayedArray assays are host-only through a host-class impl.",
             "version": 1,
             "variants": [
               {
                 "name": "Integer",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "values",
@@ -436,7 +436,7 @@
               },
               {
                 "name": "Double",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "values",
@@ -455,7 +455,7 @@
               },
               {
                 "name": "Sparse",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "values",
@@ -479,12 +479,12 @@
             "variants": [
               {
                 "name": "GRanges",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "GenomicRanges::GRanges"
               },
               {
                 "name": "GRangesList",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "GenomicRanges::GRangesList"
               }
             ]

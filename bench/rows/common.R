@@ -16,7 +16,7 @@ ROW <- sub("\\.R$", "", basename(sub("^--file=", "", grep("^--file=", commandArg
 source(file.path(BENCH_DIR, "types.R"))
 
 # The package that holds a system's types (syspkg.R), and the packages it
-# loads; R8 with Rust-native values takes its types from r8benchR.
+# loads; R8 with Rust-stored values takes its types from r8benchR.
 system_packages <- function(system) {
   switch(
     system,

@@ -3,7 +3,7 @@
 //! resolution of the next impl.
 //! spec: R8/class-system#multiple-dispatch
 
-use rtemis_r8::ir::dispatch::{Arg, Resolution, impls_by_namespace, positions, resolve};
+use rtemis_r8::ir::dispatch::{Arg, Selection, impls_by_namespace, positions, select};
 use rtemis_r8::ir::{ImplDef, TraitDef, TypeDef};
 use rtemis_r8::name::{Name, QualifiedName};
 use rtemis_r8::registry::Registry;
@@ -49,7 +49,7 @@ fn imp(target: &str, other: &str) -> ImplDef {
             json!({"kind": "host_class", "host": "r", "package": package,
                 "class": class, "system": "s3"})
         } else {
-            json!({"kind": "type", "name": s})
+            json!({"kind": "named", "name": s})
         }
     };
     serde_json::from_value(json!({"trait": "core::Combine", "target": pos(target),
@@ -184,7 +184,7 @@ fn the_namespace_check_reports_ambiguity_with_imports_only() {
     assert!(ambiguous("pa", &[]).is_empty());
     // `pa` and `pb` are unrelated: their pair waits for the call.
     assert!(ambiguous("pb", &[]).is_empty());
-    // The meet, declared by `pa`, resolves the pair with `core`.
+    // The meet, declared by `pa`, disambiguates the pair with `core`.
     r.declare_impl(&name("pa"), imp("pa::A3", "core::B1"))
         .unwrap();
     assert!(ambiguous("pa", &["core"]).is_empty());
@@ -214,12 +214,12 @@ fn the_next_impl_is_the_unique_less_specific_one() {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
     };
-    let Resolution::Impl(top) = resolve(&*docs, &impls, arity, &args, None) else {
-        panic!("the meet resolves the call");
+    let Selection::Impl(top) = select(&*docs, &impls, arity, &args, None) else {
+        panic!("dispatch selects the meet for the call");
     };
     assert_eq!(tuple(top), ["core::A1", "core::B1"]);
     // From the meet, both (A1, B) and (A, B1) are next.
-    let Resolution::Ambiguous(a, b) = resolve(&*docs, &impls, arity, &args, Some(top)) else {
+    let Selection::Ambiguous(a, b) = select(&*docs, &impls, arity, &args, Some(top)) else {
         panic!("two impls are next");
     };
     let mut next = [tuple(a), tuple(b)];
@@ -235,12 +235,12 @@ fn the_next_impl_is_the_unique_less_specific_one() {
     let a1b = (0..impls.len())
         .find(|&k| tuple(k) == ["core::A1", "core::B"])
         .unwrap();
-    let Resolution::Impl(k) = resolve(&*docs, &impls, arity, &args, Some(a1b)) else {
+    let Selection::Impl(k) = select(&*docs, &impls, arity, &args, Some(a1b)) else {
         panic!("one impl is next");
     };
     assert_eq!(tuple(k), ["core::A", "core::B"]);
     assert_eq!(
-        resolve(&*docs, &impls, arity, &args, Some(k)),
-        Resolution::Default
+        select(&*docs, &impls, arity, &args, Some(k)),
+        Selection::Default
     );
 }

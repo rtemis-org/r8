@@ -130,7 +130,10 @@ test_that("the classes mode marks spans by class, styled by r8_css()", {
     fixed = TRUE
   )
   expect_match(css, "@media (prefers-color-scheme: dark) {", fixed = TRUE)
-  custom <- r8_css(r8_theme(bracket = list(color = "#FF0000")), tag = TRUE)
+  custom <- r8_css(
+    r8_theme(bracket = list(color = "#FF0000")),
+    style_element = TRUE
+  )
   expect_match(custom, "^<style>\n")
   expect_match(
     custom,

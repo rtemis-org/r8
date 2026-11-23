@@ -287,7 +287,7 @@ pub fn check_extends(
             return out;
         }
     };
-    if parent_name == name || lookup.is_subtype(parent_name, name) {
+    if lookup.is_subtype(parent_name, name) {
         report(
             "extends_cycle",
             at,
@@ -356,7 +356,7 @@ pub fn check_extends(
 
 /// The problems of the struct `s`, named `name` and declared at `path`,
 /// whose fields all have defaults or are `option()`: the value of its
-/// defaults, filled by `codec::fill_defaults()`, satisfies its rules, so that
+/// defaults, filled by `canonical::fill_defaults()`, satisfies its rules, so that
 /// `T()` constructs a value. A struct without rules or with a required field
 /// has none. A rule whose fields hold no value in the defaults, such as a
 /// computed field before resolution, holds.
@@ -371,7 +371,7 @@ pub fn check_defaults(
     }
     let mut defaults = Tree::from_value(&serde_json::json!({}));
     let ty = super::types::FieldType::Named { name: name.clone() };
-    crate::codec::fill_defaults(&mut defaults, &ty, lookup);
+    crate::canonical::fill_defaults(&mut defaults, &ty, lookup);
     crate::validate::validate(&defaults.to_value(), name, lookup)
         .into_iter()
         // The struct's own rules report at its root.

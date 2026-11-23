@@ -1,7 +1,7 @@
 # R8 0.4.0.9000
 
 - The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "subtype", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
-- The declaration record has format 5; a package installed with an earlier R8 is reinstalled.
+- The declaration record has format 6; a package installed with an earlier R8 is reinstalled.
 - `new_struct(extends = Parent)` declares a child that holds the parent's fields and rules, then its own; `defaults =` changes the defaults of inherited fields. A child's values carry the parent's class after their own, and a field typed as a struct admits that struct only.
 - A struct whose fields all have defaults that violate its rules is a declaration error (`default_violates_rule`).
 - Declaring a parent again leaves the children that extend its earlier declaration stale: they construct and read no values until they are declared again, and the declaration warns (`r8_stale_warning`). A package built against an earlier declaration of another package's parent is refused at load.
@@ -9,13 +9,13 @@
 - `to_json()` is `r8_to_json()`: a function a declaration is written with takes no prefix, and an operation on values, types, or packages takes `r8_` (`?R8`, section "Names").
 - `generic(name, args)` takes `args` as given. A method of a generic without `...` has exactly the generic's arguments; a method of a generic with `...` takes them first and may add named arguments. `impl()` checks its methods' arguments as `implement()` does, and `trait_method(default_impl =)` checks its default's.
 - Print headers name R8 and the object's kind: `<r8 generic ns::f>`, `<r8 struct ns::P v1>`, `<r8 enum ns::E v1>`, `<r8 trait ns::T>`, `<r8 int64>`, `<r8 field type>`.
-- `?R8` lists R8's condition classes, `r8_codec_missing` among them.
+- `?R8` lists R8's condition classes, `r8_codec_missing_error` among them.
 - A generic or trait method called on a child runs the impl of the nearest type in its chain of parents that implements the trait, on the child's value. `r8_next_impl()` calls the impl the running one takes precedence over.
 - `r8_upcast(x, Parent)` returns the value of an ancestor that a child's value holds, and `r8_convert(x, Parent)` calls it; `r8_ancestors()` lists a struct's ancestors. An impl of `From()` from a child to its ancestor is a declaration error.
 - `dyn(Trait)` declares a field of any implementor of a trait, or of a type that extends one, and `subtype(Struct)` a field of a struct or any struct that extends it; `dyn()` takes traits only. A value of another type is refused (`not_implementor`, `not_subtype`), and its JSON names its type by the trait's tag member, or by `"$type"`.
 - A tag value is a name, unique among a trait's implementors (`duplicate_tag`); a descendant without its own impl writes its type name. Inside `dyn()`, a unit-only enum is written as an object of the type member and its tag.
-- `r8_from_json(load =)` loads packages before the read; a document that names unregistered types raises `r8_unresolved_type`, which names the installed packages that declare each namespace.
-- `r8_schema(type, implementors = FALSE)` writes the JSON Schema of a type's values; with `implementors = TRUE`, a `dyn()` field lists the registered implementors.
+- `r8_from_json(load =)` loads packages before the read; a document that names unregistered types raises `r8_unknown_type_error`, which names the installed packages that declare each namespace.
+- `r8_schema(type, closed = FALSE)` writes the JSON Schema of a type's values; with `closed = TRUE`, a `dyn()` field lists the registered implementors and a `subtype()` field the struct and its registered descendants, annotated `"x-r8": {"closed": "registered"}`.
 - A replacement method (`f<-`) returns a value of its argument's type, the child for a child's value; another result raises `r8_type_error`. A `From` impl's result of another type also raises `r8_type_error`.
 - `generic("labels<-", c("x", "value"))` declares a replacement generic, called as `labels(x) <- value`; its trait is `ns::with_labels`. A method `f<-` is named `with_f` in the other bindings, and two methods of one namespace that share that name are a declaration error.
 - `r8_next_impl()` continues every impl R8 registers, S3 methods declared with `implement()` or `impl()` and `Print` impls included; it passes the current values of the impl's arguments.
@@ -27,7 +27,7 @@
 - An impl of a trait and type tuple that another namespace declares is refused (`duplicate_impl`), and an impl outside its trait's namespace names a type of its own namespace (`impl_orphan`).
 - `generic(dispatch = c("x", "y"))` and `trait_method(dispatch =)` dispatch on several arguments: `implement(f, A, B) <- fn`, `implement(f, y = B) <- fn`, and `impl(Trait, list(A, B), ...)` declare methods for tuples of types, and a position a method does not name matches any value. The most specific method in every position runs; a call that two methods make ambiguous raises `r8_dispatch_error` naming the method to declare, and `r8_ambiguities()` lists such pairs. A package whose methods make a call ambiguous with those of a package it imports is refused at load.
 - `r8_method(f, A, B)` returns the method of a tuple, and `r8_next_impl(A, B)` continues to the method it names.
-- A value without a class attribute, such as a number or a matrix, keeps its resolved method in the dispatch cache.
+- A value without a class attribute, such as a number or a matrix, keeps its selected method in the dispatch cache.
 - R8 generics and traits take methods for classes of other class systems in every dispatched position: a string names an S3 or implicit class (`implement(f, "data.frame") <- fn`, `"matrix"`, `"NULL"`), and `host_class(class, package, system = "s4")` or an S4 class object names an S4 class; `host_class(system =)` is `"s3"`, `"s4"`, or `"implicit"`. The class nearer the front of an object's `.class2()` vector is more specific.
 - An impl on a class that already has a method of a mapped S3 generic takes that method; supplying one is refused (`host_method_exists`). `r8_next_impl()` from an impl on a class continues to the next S3 method.
 - `dyn(generic)` declares a field of any R8 type with a method of a generic of one dispatched argument; a `dyn()` field holds R8 values only.
@@ -40,9 +40,14 @@
 - The standard trait `PartialOrd`'s method is `partial_cmp`, called by `r8_partial_cmp()`, which returns `-1L`, `0L`, `1L`, or `NA` for values that are not ordered; `<`, `<=`, `>`, and `>=` return `FALSE` for those, and any other result raises `r8_result_error`.
 - The standard trait `Dim` is `Shape`.
 - `r8_is_variant()` tests an enum value's variant; `is_variant()` is a word of the rule dialect only.
-- `trait_method(default_impl =)` gives a method's default implementation.
+- `trait_method(default_impl =)` gives the trait's default implementation of a method.
 - `impl(trait, target, ...)`, `type_table(of = Struct)`, `type_matrix(of = Struct)`, and `r8_runtime_version()` replace `impl(trait, type, ...)`, `type_table(Struct)`, `type_matrix(Struct)`, and `r8_core_version()`.
-- `new_trait(requires = list(...))` declares the fields every implementor has; an impl for a struct without a required field, or with one of a type that does not fit, is refused (`required_field_missing`, `required_field_type`).
+- `new_trait(required_fields = list(...))` declares the fields every implementor has; an impl for a struct without a required field, or with one of a type that does not fit, is refused (`required_field_missing`, `required_field_type`).
+- `type_r()` is removed: `option(host_class("lm"))` declares a field that holds an R object of another class system, host-only: R holds it, a document writes `null`, and the content hash leaves it out (codes `host_only`, `host_outside_option`, and `host_resolve`).
+- `dyn(trait)`, `subtype(struct)`, and `r8_css(style_element =)` name their arguments; `r8_css(tag =)` is `style_element`.
+- The condition classes `r8_codec_missing_error` and `r8_unknown_type_error` end in `_error`; the validation code of a type that no registered type has is `unknown_type`.
+- The IR: the member of `values =` is `values`; a variant's form is its `kind`; an R8 type in a field or an impl is `{"kind": "named", "name": ...}`, and a host class `{"kind": "host_class", "host", "package", "class", "system"}`; a trait's type parameters beyond `Self` are `extra_type_params`; an impl has no `codec`. A document's envelope is `"$type"` and `"$types"`.
+- `R8.h`: the codec of a Rust-stored type is `R8Codec`, whose member `owned_bytes` reports the bytes a state owns; the reader's member function is `R8Reader.member`; an impl function receives `R8CallInputs`, with `R8_CALL_HAS_SEED`. In the crate `rtemis-r8-api`, `RustStoredStruct` and `RustStoredEnum` are the two kinds of Rust-stored type and `RustStored` either.
 - `field(external =)` is removed; the error codes of `values =` and `type_posixct()` are `not_in_values` and `invalid_posixct`.
 
 # R8 0.4.0
@@ -60,7 +65,7 @@
 - `r8_layout()` returns the layout of a value, a list, or a data frame; `r8_span()`, `r8_text()`, and `c()` build styled text, which a `Display` or `Print` impl may return; `r8_theme()` restyles the roles of text, and `r8_css()` returns the stylesheet of the html `classes` mode (`html_style`).
 - R Markdown and Quarto documents, Jupyter notebooks, and tibble columns show R8 values through methods for knitr, repr, and pillar, registered when those packages load.
 - A declaration takes time proportional to itself, whatever the size of its namespace: a package of 200 types loads in 0.03 s.
-- A trait method's generic finds its impl through a compiled lookup and a cache of resolved impls: dispatch on a value takes about 0.33 µs, against 0.41 µs for R6 and S3 in the same measurement.
+- A trait method's generic finds its impl through a compiled lookup and a cache of selected impls: dispatch on a value takes about 0.33 µs, against 0.41 µs for R6 and S3 in the same measurement.
 - R8 builds on R 4.3 and 4.4: the constructor's frame routine reads its fields through R's API of the running version.
 - Declaring a type runs in Rust: the field types, `field()`, and `rule()` build and check their arguments in compiled code, and `new_struct()` and `new_enum()` read the fields and declare in one call. 200 types declare in 0.028 s, against 0.096 s.
 - The field-type constructors check their arguments at their call: an integer bound or value is a whole number (`type_integer(min = 1.5)` is an error), and `type_character(pattern = )` reports a pattern that does not compile. A reserved field name is an `r8_declaration_error` with the code `name_reserved`.

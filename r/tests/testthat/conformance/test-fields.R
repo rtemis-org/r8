@@ -2,7 +2,7 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Fields of a `Conform` value: construction, reading, defaults, problems,
+# Fields of a `Probe` value: construction, reading, defaults, problems,
 # replacement, equality, and r8_conform(), for R-stored and Rust-stored
 # values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
@@ -10,7 +10,7 @@
 test_that("a value constructs and reads each field", {
   p <- conformance_provider()
   x <- conform_value(p)
-  expect_s3_class(x, c(paste0(p[["namespace"]], "::Conform"), "r8_value"))
+  expect_s3_class(x, c(paste0(p[["namespace"]], "::Probe"), "r8_value"))
   expect_identical(x$ratio, 0.5)
   expect_identical(x$count, 3L)
   expect_identical(x$flag, TRUE)
@@ -120,13 +120,13 @@ test_that("equality and the hash follow the contents", {
 
 test_that("r8_conform() converts what it can and constructs strictly", {
   p <- conformance_provider()
-  input <- conform_args(count = 3, index = c(1, 2), colour = "red")
-  expect_message(x <- r8_conform(input, p[["Conform"]]), "change")
+  input <- probe_args(count = 3, index = c(1, 2), colour = "red")
+  expect_message(x <- r8_conform(input, p[["Probe"]]), "change")
   expect_identical(x$count, 3L)
   expect_identical(x$index, c(1L, 2L))
   expect_true(r8_equal(x, conform_value(p)))
   expect_error(
-    suppressMessages(r8_conform(conform_args(ratio = 2), p[["Conform"]])),
+    suppressMessages(r8_conform(probe_args(ratio = 2), p[["Probe"]])),
     class = "r8_value_error"
   )
 })

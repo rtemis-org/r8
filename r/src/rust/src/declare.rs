@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
-use rtemis_r8::codec::canonical_text;
+use rtemis_r8::canonical::canonical_text;
 use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef};
 use rtemis_r8::name::{Name, QualifiedName};
 use rtemis_r8::registry::{Registry, SaveToken};
@@ -239,19 +239,20 @@ pub(crate) fn declare_type(def: TypeDef, namespace: &str) -> Result<(List, Vec<S
 /// `name` (`value_schema::json_schema_with()`).
 ///
 /// @param name Character: The qualified type name.
-/// @param implementors Logical: Write each `dyn()` field as the closed list
-///   of the registered implementors.
+/// @param closed Logical: Write each `dyn()` field as the closed list of the
+///   registered implementors, and each `subtype()` field as the struct and
+///   its registered descendants.
 /// @return Character: The schema as indented JSON text.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_type_schema(name: &str, implementors: bool) -> Result<String> {
+fn r8_type_schema(name: &str, closed: bool) -> Result<String> {
     let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
     let docs = registry().snapshot();
     if rtemis_r8::rules::TypeLookup::find(&*docs, &q).is_none() {
         return Err(fail(format!("`{name}` is not registered")));
     }
-    let schema = rtemis_r8::value_schema::json_schema_with(&q, &*docs, implementors);
+    let schema = rtemis_r8::value_schema::json_schema_with(&q, &*docs, closed);
     serde_json::to_string_pretty(&schema).map_err(|e| fail(e.to_string()))
 }
 
@@ -471,7 +472,7 @@ fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
         .collect()
 }
 
-/// Resolves a call of a trait among its registered impls, with the core's
+/// Selects the impl for a call of a trait among its registered impls, with the core's
 /// rule of multiple dispatch.
 ///
 /// @param trait_name Character: The trait's qualified name.
@@ -482,15 +483,15 @@ fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
 /// @param above Optional Character: The positions of the running impl, for
 ///   the next impl.
 /// @return Character: the providing impl's positions; `NULL` when no impl
-///   applies and the trait's default serves the call; otherwise a list:
-///   `kind` (`"ambiguous"` or `"stale"`), `tuple` and `other` (the two impls
-///   of an ambiguous pair), `meet` (their positionwise more specific tuple),
-///   and `stale` (a stale type).
+///   applies and the trait's default implementation serves the call; otherwise
+///   a list: `kind` (`"ambiguous"` or `"stale"`), `tuple` and `other` (the two
+///   impls of an ambiguous pair), `meet` (their positionwise more specific
+///   tuple), and `stale` (a stale type).
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj) -> Result<Robj> {
-    use rtemis_r8::ir::dispatch::{Arg, Resolution, resolve};
+fn r8_dispatch_select(trait_name: &str, types: Robj, chains: List, above: Robj) -> Result<Robj> {
+    use rtemis_r8::ir::dispatch::{Arg, Selection, select};
     use rtemis_r8::rules::TypeLookup;
     let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
     let docs = snapshot()?;
@@ -525,10 +526,10 @@ fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj)
         None => None,
     };
     let none: Vec<String> = Vec::new();
-    let (kind, tuple, other, meet, stale) = match resolve(&*docs, &impls, arity, &args, above) {
-        Resolution::Impl(k) => return Ok(Robj::from(tuple_strings(impls[k], arity))),
-        Resolution::Default => return Ok(Robj::from(())),
-        Resolution::Ambiguous(a, b) => {
+    let (kind, tuple, other, meet, stale) = match select(&*docs, &impls, arity, &args, above) {
+        Selection::Impl(k) => return Ok(Robj::from(tuple_strings(impls[k], arity))),
+        Selection::Default => return Ok(Robj::from(())),
+        Selection::Ambiguous(a, b) => {
             let (ta, tb) = (
                 tuple_strings(impls[a], arity),
                 tuple_strings(impls[b], arity),
@@ -544,8 +545,8 @@ fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj)
                             (rtemis_r8::ir::TypeRef::Any, _) => false,
                             (_, rtemis_r8::ir::TypeRef::Any) => true,
                             (
-                                rtemis_r8::ir::TypeRef::Type { name: n },
-                                rtemis_r8::ir::TypeRef::Type { name: m },
+                                rtemis_r8::ir::TypeRef::Named { name: n },
+                                rtemis_r8::ir::TypeRef::Named { name: m },
                             ) => rtemis_r8::rules::TypeLookup::is_subtype(&*docs, n, m),
                             _ => false,
                         };
@@ -554,7 +555,7 @@ fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj)
                 .collect();
             ("ambiguous", ta, tb, meet, None)
         }
-        Resolution::Stale(q) => (
+        Selection::Stale(q) => (
             "stale",
             none.clone(),
             none.clone(),
@@ -918,7 +919,7 @@ extendr_module! {
     fn r8_namespace_owner;
     fn r8_package_namespaces;
     fn r8_check_namespaces;
-    fn r8_dispatch_resolve;
+    fn r8_dispatch_select;
     fn r8_dispatch_ambiguities;
     fn r8_declare_trait;
     fn r8_declare_impl;

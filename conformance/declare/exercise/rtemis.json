@@ -20,7 +20,7 @@
               {
                 "name": "KFold",
                 "description": "K-fold cross-validation.",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "n_resamples",
@@ -76,7 +76,7 @@
               {
                 "name": "LOOCV",
                 "description": "Leave-one-out cross-validation.",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "n_resamples",
@@ -121,7 +121,7 @@
                   "kind": "option",
                   "inner": {
                     "kind": "character",
-                    "enum": [
+                    "values": [
                       "gaussian",
                       "binomial",
                       "poisson",
@@ -140,7 +140,7 @@
                 "name": "which_lambda_cv",
                 "type": {
                   "kind": "character",
-                  "enum": [
+                  "values": [
                     "lambda.1se",
                     "lambda.min"
                   ]
@@ -255,7 +255,7 @@
                 "name": "sample",
                 "type": {
                   "kind": "character",
-                  "enum": [
+                  "values": [
                     "Training",
                     "Validation",
                     "Test"
@@ -540,7 +540,7 @@
           {
             "trait": "rtemis::Hyperparameters",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "rtemis::GLMNET"
             },
             "methods": []

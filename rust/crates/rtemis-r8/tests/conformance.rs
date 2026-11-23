@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rtemis_r8::codec::{canonical, canonical_text, content_hash};
+use rtemis_r8::canonical::{canonical, canonical_text, content_hash};
 use rtemis_r8::ir::{IrDocument, check_document, check_trait, check_type};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::DocumentSet;
@@ -116,7 +116,7 @@ fn run_declare(input: &Value, expect: &Value) -> Option<String> {
     }
 }
 
-/// Runs one `dispatch` case: resolves a call of the trait `type`, whose
+/// Runs one `dispatch` case: selects the impl for a call of the trait `type`, whose
 /// arguments' types are `input`, among the impls of the suite's IR.
 fn run_dispatch(
     ir: Option<&DocumentSet>,
@@ -124,7 +124,7 @@ fn run_dispatch(
     input: &Value,
     expect: &Value,
 ) -> Option<String> {
-    use rtemis_r8::ir::dispatch::{Arg, Resolution, impls_by_namespace, positions, resolve};
+    use rtemis_r8::ir::dispatch::{Arg, Selection, impls_by_namespace, positions, select};
     use rtemis_r8::rules::TypeLookup;
     let Some(docs) = ir else {
         return Some("a `dispatch` case needs the suite's `ir`".into());
@@ -158,21 +158,21 @@ fn run_dispatch(
             .map(|p| Value::String(p.to_string()))
             .collect()
     };
-    let got = match resolve(docs, &impls, arity, &args, None) {
-        Resolution::Impl(k) => serde_json::json!({ "impl": tuple(k) }),
-        Resolution::Default => serde_json::json!({ "default": true }),
-        Resolution::Ambiguous(a, b) => {
+    let got = match select(docs, &impls, arity, &args, None) {
+        Selection::Impl(k) => serde_json::json!({ "impl": tuple(k) }),
+        Selection::Default => serde_json::json!({ "default": true }),
+        Selection::Ambiguous(a, b) => {
             let mut pair = vec![tuple(a), tuple(b)];
             pair.sort_by_key(ToString::to_string);
             serde_json::json!({ "ambiguous": pair })
         }
-        Resolution::Stale(q) => serde_json::json!({ "stale": q.to_string() }),
+        Selection::Stale(q) => serde_json::json!({ "stale": q.to_string() }),
     };
     let mut want = expect.clone();
     if let Some(Value::Array(pair)) = want.get_mut("ambiguous") {
         pair.sort_by_key(ToString::to_string);
     }
-    (got != want).then(|| format!("resolved {got}, expected {want}"))
+    (got != want).then(|| format!("selected {got}, expected {want}"))
 }
 
 /// Runs one `decode` case against the suite's IR document.
@@ -203,7 +203,7 @@ fn run_decode(
 }
 
 /// Runs one `canonical` or `hash` case.
-fn run_codec(
+fn run_canonical(
     op: &str,
     ir: Option<&DocumentSet>,
     ty: &Value,
@@ -318,7 +318,7 @@ fn conformance_corpus() {
                 "dispatch" => {
                     run_dispatch(ir.as_ref(), &case["type"], &case["input"], &case["expect"])
                 }
-                op @ ("canonical" | "hash") => run_codec(
+                op @ ("canonical" | "hash") => run_canonical(
                     op,
                     ir.as_ref(),
                     &case["type"],
@@ -382,7 +382,7 @@ fn document_value(mut doc: Value) -> Value {
 #[test]
 fn documents_read_to_the_normalized_form() {
     use rtemis_r8::access::Json;
-    use rtemis_r8::codec::{document_access, read_document};
+    use rtemis_r8::canonical::{document_access, read_document};
     let mut checked = 0;
     for path in suites(&corpus_dir()) {
         let suite: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -430,7 +430,7 @@ fn documents_read_to_the_normalized_form() {
 #[test]
 fn tree_reads_match_the_reference_read() {
     use rtemis_r8::access::Json;
-    use rtemis_r8::codec::{document_access, read_document, read_tree_cached};
+    use rtemis_r8::canonical::{document_access, read_document, read_tree_cached};
     use rtemis_r8::equal::equal_access;
     use rtemis_r8::validate::RuleCache;
     let mut checked = 0;

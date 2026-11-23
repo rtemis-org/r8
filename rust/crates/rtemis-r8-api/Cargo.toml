@@ -1,6 +1,6 @@
 [package]
 name = "rtemis-r8-api"
-description = "R8's C services for an R package's Rust code: Rust-native types, their codecs, and trait impls registered with R8"
+description = "R8's C services for an R package's Rust code: Rust-stored types, their codecs, and trait impls registered with R8"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

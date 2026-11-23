@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 
-use crate::codec::{read_document, to_document};
+use crate::canonical::{read_document, to_document};
 use crate::ir::{FieldType, TypeDef};
 use crate::name::{Name, QualifiedName};
 use crate::rules::DocumentSet;

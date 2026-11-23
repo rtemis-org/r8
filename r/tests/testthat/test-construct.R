@@ -1,4 +1,4 @@
-# test-native.R
+# test-construct.R
 # ::R8::
 # 2026- EDG rtemis.org
 
@@ -17,16 +17,16 @@
 same_construction <- function(type, fields, variant = "") {
   skip_without_oracle()
   qname <- attr(type, "r8_name")
-  native <- R8:::r8_new_value(fields, qname, variant)
+  in_place <- R8:::r8_new_value(fields, qname, variant)
   ref <- oracle_new_value(fields, qname, variant)
   if (is.null(ref[["errors"]])) {
-    expect_false(inherits(native, "r8_problems"), info = qname)
-    expect_identical(native, ref[["value"]], info = qname)
-    same_identity(native)
-    return(invisible(native))
+    expect_false(inherits(in_place, "r8_problems"), info = qname)
+    expect_identical(in_place, ref[["value"]], info = qname)
+    same_identity(in_place)
+    return(invisible(in_place))
   }
-  expect_s3_class(native, "r8_problems")
-  ne <- native[["errors"]]
+  expect_s3_class(in_place, "r8_problems")
+  ne <- in_place[["errors"]]
   re <- ref[["errors"]]
   r_form <- function(code) grepl("^r_", code) | code == "na_value"
   key <- function(e, keep) {
@@ -43,21 +43,21 @@ same_construction <- function(type, fields, variant = "") {
     sort(field_of(re[["path"]][r_form(re[["code"]])])),
     info = qname
   )
-  invisible(native)
+  invisible(in_place)
 }
 
 # The canonical text and content hash written from the R objects equal
 # those of the value's document read through the JSON form.
 same_identity <- function(x) {
   skip_without_oracle()
-  native <- R8:::r8_value_identity(x)
+  in_place <- R8:::r8_value_identity(x)
   ref <- oracle_document_identity(r8_to_json(x), attr(x, "r8_type"))
   expect_identical(
-    native[["canonical"]],
+    in_place[["canonical"]],
     ref[["canonical"]],
     info = attr(x, "r8_type")
   )
-  expect_identical(native[["hash"]], ref[["hash"]], info = attr(x, "r8_type"))
+  expect_identical(in_place[["hash"]], ref[["hash"]], info = attr(x, "r8_type"))
   expect_true(r8_equal(x, r8_from_json(get_type(x), r8_to_json(x))))
 }
 
@@ -65,7 +65,7 @@ get_type <- function(x) R8:::.r8_types[[attr(x, "r8_type")]]
 
 test_that("scalars construct identically on both paths", {
   S <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Scalars",
       fields = list(
@@ -118,7 +118,7 @@ test_that("scalars construct identically on both paths", {
 
 test_that("vectors construct identically and keep the input", {
   V <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Vectors",
       fields = list(
@@ -156,7 +156,7 @@ test_that("vectors construct identically and keep the input", {
 
 test_that("factors, maps, and JSON construct identically", {
   F <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Collections",
       fields = list(
@@ -187,7 +187,7 @@ test_that("factors, maps, and JSON construct identically", {
 
 test_that("a factor code outside the levels is reported where it occurs", {
   F <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Codes",
       fields = list(
@@ -199,19 +199,19 @@ test_that("a factor code outside the levels is reported where it occurs", {
   # structure() sets the codes and levels without checking them.
   bad <- structure(c(1L, 3L, 0L), levels = c("lo", "hi"), class = "factor")
   base <- list(f = factor("lo", levels = c("lo", "hi")), fd = factor("a"))
-  native <- same_construction(F, modifyList(base, list(f = bad)))
-  expect_identical(native[["errors"]][["code"]], rep("invalid_code", 2L))
-  expect_identical(native[["errors"]][["path"]], c("/f/1", "/f/2"))
-  native <- same_construction(F, modifyList(base, list(fd = bad)))
+  in_place <- same_construction(F, modifyList(base, list(f = bad)))
+  expect_identical(in_place[["errors"]][["code"]], rep("invalid_code", 2L))
+  expect_identical(in_place[["errors"]][["path"]], c("/f/1", "/f/2"))
+  in_place <- same_construction(F, modifyList(base, list(fd = bad)))
   expect_identical(
-    native[["errors"]][["path"]],
+    in_place[["errors"]][["path"]],
     c("/fd/codes/1", "/fd/codes/2")
   )
 })
 
 test_that("matrices and tables construct identically", {
   M <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Arrays",
       fields = list(
@@ -243,7 +243,7 @@ test_that("matrices and tables construct identically", {
     modifyList(base, list(m = matrix(as.numeric(1:6), ncol = 3)))
   )
   T <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Tables",
       fields = list(
@@ -282,11 +282,11 @@ test_that("matrices and tables construct identically", {
 
 test_that("nested values, enums, and rules construct identically", {
   Inner <- declare_in(
-    "native",
+    "construct",
     new_struct("Inner", fields = list(v = type_double()))
   )
   Kind <- declare_in(
-    "native",
+    "construct",
     new_enum(
       "Kind",
       variants = list(
@@ -296,7 +296,7 @@ test_that("nested values, enums, and rules construct identically", {
     )
   )
   Outer <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Outer",
       fields = list(
@@ -326,7 +326,7 @@ test_that("nested values, enums, and rules construct identically", {
 
 test_that("$<- validates the field and the rules that read it", {
   R <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Ranged",
       fields = list(
@@ -355,7 +355,7 @@ test_that("$<- validates the field and the rules that read it", {
 
 test_that("r8_equal() compares normalized forms in place", {
   E <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Eq",
       fields = list(
@@ -383,7 +383,7 @@ test_that("r8_equal() compares normalized forms in place", {
 
 test_that("== compares maps and matrices in place and keeps string literals", {
   P <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Pairs",
       fields = list(
@@ -427,7 +427,7 @@ test_that("== compares maps and matrices in place and keeps string literals", {
 
 test_that("a computed field of a matrix type is the matrix it names", {
   C <- declare_in(
-    "native",
+    "construct",
     new_struct(
       "Computed",
       fields = list(
@@ -444,7 +444,7 @@ test_that("a computed field of a matrix type is the matrix it names", {
 test_that("a dgCMatrix out of compressed sparse column form is reported", {
   skip_if_not_installed("Matrix")
   S <- declare_in(
-    "native",
+    "construct",
     new_struct("Sparse", fields = list(x = type_sparse_matrix()))
   )
   m <- Matrix::sparseMatrix(
@@ -462,8 +462,8 @@ test_that("a dgCMatrix out of compressed sparse column form is reported", {
   offsets <- m
   offsets@p <- c(0L, 2L, 2L)
   for (bad in list(unsorted, beyond, offsets)) {
-    native <- same_construction(S, list(x = bad))
-    expect_identical(native[["errors"]][["code"]], "sparse_form")
-    expect_identical(native[["errors"]][["path"]], "/x")
+    in_place <- same_construction(S, list(x = bad))
+    expect_identical(in_place[["errors"]][["code"]], "sparse_form")
+    expect_identical(in_place[["errors"]][["path"]], "/x")
   }
 })

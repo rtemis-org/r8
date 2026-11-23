@@ -1,6 +1,6 @@
 {
   "$corpus": 1,
-  "description": "The impl a call of a multiple-dispatch trait resolves to.",
+  "description": "The impl that dispatch selects for a call of a multiple-dispatch trait.",
   "ir": [
     {
       "$ir": 1,
@@ -192,77 +192,77 @@
       "impls": [
         {
           "trait": "core::Combine",
-          "target": {
-            "kind": "type",
-            "name": "core::A"
-          },
-          "methods": [],
           "type_args": [
             {
-              "kind": "type",
+              "kind": "named",
               "name": "core::B"
             }
-          ]
-        },
-        {
-          "trait": "core::Combine",
+          ],
           "target": {
-            "kind": "type",
-            "name": "core::A1"
-          },
-          "methods": [],
-          "type_args": [
-            {
-              "kind": "type",
-              "name": "core::B"
-            }
-          ]
-        },
-        {
-          "trait": "core::Combine",
-          "target": {
-            "kind": "type",
+            "kind": "named",
             "name": "core::A"
           },
-          "methods": [],
-          "type_args": [
-            {
-              "kind": "type",
-              "name": "core::B1"
-            }
-          ]
+          "methods": []
         },
         {
           "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B"
+            }
+          ],
           "target": {
-            "kind": "type",
+            "kind": "named",
             "name": "core::A1"
           },
-          "methods": [],
-          "type_args": [
-            {
-              "kind": "type",
-              "name": "core::B1"
-            }
-          ]
+          "methods": []
         },
         {
           "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B1"
+            }
+          ],
           "target": {
-            "kind": "type",
-            "name": "core::C"
+            "kind": "named",
+            "name": "core::A"
           },
-          "methods": [],
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B1"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A1"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
           "type_args": [
             {
               "kind": "any"
             }
-          ]
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::C"
+          },
+          "methods": []
         },
         {
           "trait": "core::Describe",
           "target": {
-            "kind": "type",
+            "kind": "named",
             "name": "core::A"
           },
           "methods": []
@@ -270,7 +270,7 @@
         {
           "trait": "core::Describe",
           "target": {
-            "kind": "type",
+            "kind": "named",
             "name": "core::A2"
           },
           "methods": []
@@ -287,25 +287,20 @@
         },
         {
           "trait": "core::Place",
-          "target": {
-            "kind": "type",
-            "name": "core::A"
-          },
-          "methods": [],
           "type_args": [
             {
-              "kind": "type",
+              "kind": "named",
               "name": "core::C"
             }
-          ]
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A"
+          },
+          "methods": []
         },
         {
           "trait": "core::Combine",
-          "target": {
-            "kind": "type",
-            "name": "core::C"
-          },
-          "methods": [],
           "type_args": [
             {
               "kind": "host_class",
@@ -313,23 +308,28 @@
               "class": "data.frame",
               "system": "s3"
             }
-          ]
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::C"
+          },
+          "methods": []
         },
         {
           "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B"
+            }
+          ],
           "target": {
             "kind": "host_class",
             "host": "r",
             "class": "data.frame",
             "system": "s3"
           },
-          "methods": [],
-          "type_args": [
-            {
-              "kind": "type",
-              "name": "core::B"
-            }
-          ]
+          "methods": []
         }
       ]
     },
@@ -365,17 +365,17 @@
       "impls": [
         {
           "trait": "core::Combine",
-          "target": {
-            "kind": "type",
-            "name": "pa::A3"
-          },
-          "methods": [],
           "type_args": [
             {
-              "kind": "type",
+              "kind": "named",
               "name": "core::B"
             }
-          ]
+          ],
+          "target": {
+            "kind": "named",
+            "name": "pa::A3"
+          },
+          "methods": []
         }
       ]
     },
@@ -411,17 +411,17 @@
       "impls": [
         {
           "trait": "core::Combine",
-          "target": {
-            "kind": "type",
-            "name": "core::A"
-          },
-          "methods": [],
           "type_args": [
             {
-              "kind": "type",
+              "kind": "named",
               "name": "pb::B3"
             }
-          ]
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A"
+          },
+          "methods": []
         }
       ]
     }
@@ -525,7 +525,7 @@
     },
     {
       "id": "no-impl",
-      "description": "No impl applies: the trait's default.",
+      "description": "No impl applies: the trait's default implementation.",
       "op": "dispatch",
       "type": "core::Combine",
       "input": [

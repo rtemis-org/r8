@@ -370,7 +370,7 @@ named_refs <- function(x) {
   if (is.character(kind) && kind %in% c("named", "matrix_of", "table_of")) {
     own <- if (kind == "named") x[["name"]] else x[["of"]]
   }
-  if (identical(x[["shape"]], "newtype")) {
+  if (identical(x[["kind"]], "newtype")) {
     own <- x[["of"]]
   }
   c(own, unlist(lapply(unname(x), named_refs)))
@@ -425,7 +425,7 @@ render_struct <- function(t, ns, rust_stored) {
   qname <- paste0(ns, "::", t[["name"]])
   check_renderable(
     t,
-    c("extends", "migrations", "aliases", "provenance", "extensions"),
+    c("extends", "migrations", "aliases", "extensions"),
     paste0("`", qname, "`")
   )
   fields <- t[["fields"]]
@@ -492,7 +492,7 @@ render_enum <- function(t, ns, rust_stored = FALSE) {
     t[["variants"]],
     function(v) {
       args <- switch(
-        v[["shape"]],
+        v[["kind"]],
         unit = character(),
         struct = c(
           paste0("fields = ", render_fields(v[["fields"]], ns, "      ")),
@@ -501,7 +501,7 @@ render_enum <- function(t, ns, rust_stored = FALSE) {
           }
         ),
         newtype = {
-          # The core's declaration check resolves a newtype's struct within
+          # The runtime's declaration check finds a newtype's struct within
           # the document's namespace only.
           if (!startsWith(v[["of"]], paste0(ns, "::"))) {
             r8_abort(
@@ -720,7 +720,7 @@ render_type <- function(t, ns) {
     integer = call(
       "type_integer",
       bounds(int),
-      arg("values", ints(t[["enum"]]))
+      arg("values", ints(t[["values"]]))
     ),
     double = call(
       "type_double",
@@ -728,7 +728,9 @@ render_type <- function(t, ns) {
       if (isFALSE(t[["finite"]])) "finite = FALSE",
       arg(
         "values",
-        if (!is.null(t[["enum"]])) r_vector(vapply(t[["enum"]], r_number, ""))
+        if (!is.null(t[["values"]])) {
+          r_vector(vapply(t[["values"]], r_number, ""))
+        }
       )
     ),
     character = call(
@@ -737,14 +739,21 @@ render_type <- function(t, ns) {
         "pattern",
         if (!is.null(t[["pattern"]])) deparse_string(t[["pattern"]])
       ),
-      arg("values", strings(t[["enum"]]))
+      arg("values", strings(t[["values"]]))
     ),
     factor = call(
       "type_factor",
       arg("levels", strings(t[["levels"]])),
       if (isTRUE(t[["ordered"]])) "ordered = TRUE"
     ),
-    r = call("type_r", deparse_string(t[["class"]])),
+    host_class = call(
+      "host_class",
+      deparse_string(t[["class"]]),
+      if (nzchar(t[["package"]] %||% "")) {
+        arg("package", deparse_string(t[["package"]]))
+      },
+      if (identical(t[["system"]], "s4")) "system = \"s4\""
+    ),
     vec = call(
       "vec",
       render_type(t[["element"]], ns),

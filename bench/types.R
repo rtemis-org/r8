@@ -3,8 +3,8 @@
 # 2026- EDG rtemis.org
 
 # The benchmark types, Wide20, GBM, Resampler, and GBMRun, in each system:
-# S3, S4, Reference Classes (RC), R6, S7, R8 with R-native values, and R8
-# with Rust-native values (the package r8benchR, for Wide20 and GBM).
+# S3, S4, Reference Classes (RC), R6, S7, R8 with R-stored values, and R8
+# with Rust-stored values (the package r8benchR, for Wide20 and GBM).
 # `declare_system(system, where)` declares a system's types in `where`, the
 # namespace of the system's package (syspkg.R) or the global environment,
 # and returns the expressions the rows time, each reading `x` and `xw`, GBM

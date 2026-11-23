@@ -225,7 +225,8 @@ type_json <- function() {
 #' trait; [r8_convert()] through a `From` impl turns it into an R8 value. A
 #' struct and the structs that extend it are [subtype()].
 #'
-#' @param x A trait object from [new_trait()], or a generic from [generic()].
+#' @param trait A trait object from [new_trait()], or a generic from
+#'   [generic()] that dispatches on one argument.
 #'
 #' @return An `r8_field_type`.
 #'
@@ -239,48 +240,48 @@ type_json <- function() {
 #' options(op)
 #'
 #' @export
-dyn <- function(x) {
-  if (inherits(x, "r8_generic")) {
-    if (length(attr(x, "r8_dispatch")) > 1L) {
+dyn <- function(trait) {
+  if (inherits(trait, "r8_generic")) {
+    if (length(attr(trait, "r8_dispatch")) > 1L) {
       r8_abort(
         "dyn() of a generic holds a value with a method of it; `",
-        attr(x, "r8_method"),
+        attr(trait, "r8_method"),
         "` dispatches on ",
-        length(attr(x, "r8_dispatch")),
+        length(attr(trait, "r8_dispatch")),
         " arguments, so no single value has one.",
         class = "r8_declaration_error"
       )
     }
     return(structure(
-      list(kind = "dyn", `trait` = attr(x, "r8_trait")),
+      list(kind = "dyn", `trait` = attr(trait, "r8_trait")),
       class = "r8_field_type"
     ))
   }
-  if (inherits(x, "r8_trait")) {
+  if (inherits(trait, "r8_trait")) {
     return(structure(
-      list(kind = "dyn", `trait` = unclass(x)[["name"]]),
+      list(kind = "dyn", `trait` = unclass(trait)[["name"]]),
       class = "r8_field_type"
     ))
   }
-  if (inherits(x, "r8_struct_type")) {
+  if (inherits(trait, "r8_struct_type")) {
     r8_abort(
       "dyn() takes a trait, as Rust's `dyn` does; a struct and the structs ",
       "that extend it are subtype(",
-      sub("^.*::", "", attr(x, "r8_name")),
+      sub("^.*::", "", attr(trait, "r8_name")),
       ").",
       class = "r8_declaration_error"
     )
   }
-  if (inherits(x, "r8_enum_type")) {
+  if (inherits(trait, "r8_enum_type")) {
     r8_abort(
       "dyn() takes a trait object; `",
-      attr(x, "r8_name"),
+      attr(trait, "r8_name"),
       "` is an enum, a closed set of variants: use it as the field type.",
       class = "r8_declaration_error"
     )
   }
   r8_abort(
-    "dyn() takes a trait object, such as dyn(Shape), or a generic of one ",
+    "dyn() takes a trait object, such as dyn(Planar), or a generic of one ",
     "dispatched argument.",
     class = "r8_declaration_error"
   )
@@ -298,7 +299,7 @@ dyn <- function(x) {
 #' `"$type"`. Any implementor of a trait, related by `extends` or not, is
 #' [dyn()].
 #'
-#' @param x An R8 struct type object.
+#' @param struct An R8 struct type object.
 #'
 #' @return An `r8_field_type`.
 #'
@@ -311,47 +312,28 @@ dyn <- function(x) {
 #' options(op)
 #'
 #' @export
-subtype <- function(x) {
-  if (inherits(x, "r8_trait") || inherits(x, "r8_generic")) {
+subtype <- function(struct) {
+  if (inherits(struct, "r8_trait") || inherits(struct, "r8_generic")) {
     r8_abort(
       "subtype() takes a struct type object; any implementor of a trait is ",
       "dyn() of the trait.",
       class = "r8_declaration_error"
     )
   }
-  if (!inherits(x, "r8_struct_type")) {
+  if (!inherits(struct, "r8_struct_type")) {
     r8_abort(
       "subtype() takes a struct type object, such as subtype(Interval).",
       class = "r8_declaration_error"
     )
   }
-  ensure_registered(x)
-  name <- attr(x, "r8_name")
+  ensure_registered(struct)
+  name <- attr(struct, "r8_name")
   a <- ancestry(name)
   if (isTRUE(a[["stale"]])) {
     stale_abort(name, a[["parent"]], "r8_declaration_error")
   }
   structure(list(kind = "subtype", of = name), class = "r8_field_type")
 } # /R8::subtype
-
-
-# %% type_r ----
-#' Runtime-only R field type
-#'
-#' An R value of a class, held in R only: absent from JSON and from the hash.
-#' A field of this type is declared inside `option()`.
-#'
-#' @param class Character: The R class.
-#'
-#' @return An `r8_field_type`.
-#'
-#' @examples
-#' field(option(type_r("lm")), context = TRUE)
-#'
-#' @export
-type_r <- function(class) {
-  declared(r8_ft_r(class))
-} # /R8::type_r
 
 
 # %% vec ----

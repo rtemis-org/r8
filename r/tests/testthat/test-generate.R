@@ -67,7 +67,7 @@ test_that("every field type renders as R that declares the same IR", {
         time = type_posixct(),
         f = type_factor(levels = c("lo", "hi"), ordered = TRUE),
         js = type_json(),
-        r = option(type_r("lm")),
+        r = option(host_class("lm")),
         v = vec(
           type_double(min = 0),
           min_length = 1L,
@@ -75,7 +75,7 @@ test_that("every field type renders as R that declares the same IR", {
           unique = TRUE
         ),
         o = option(type_integer()),
-        o_runtime = field(option(type_double()), context = TRUE),
+        o_context = field(option(type_double()), context = TRUE),
         o_computed = field(option(type_double()), compute = d * 2),
         h = btree_map(type_double(), keys = type_character(pattern = "^k")),
         om = index_map(type_character()),
@@ -263,12 +263,12 @@ test_that("json_ir() carries JSON into the IR as written", {
 })
 
 test_that("a Rust-stored type constructs values once its codec is registered", {
-  S <- declare_in("gen_native", {
+  S <- declare_in("gen_rust", {
     new_struct("S", fields = list(x = type_double()), storage = "rust")
   })
   expect_identical(attr(S, "r8_storage"), "rust")
-  expect_error(S(x = 1), class = "r8_codec_missing")
-  expect_error(r8_from_json(S, '{"x": 1}'), class = "r8_codec_missing")
+  expect_error(S(x = 1), class = "r8_codec_missing_error")
+  expect_error(r8_from_json(S, '{"x": 1}'), class = "r8_codec_missing_error")
 })
 
 test_that("registration lists every difference between R declarations and the exports", {
@@ -311,7 +311,7 @@ test_that("registration lists every difference between R declarations and the ex
 })
 
 test_that("a Rust-stored enum's variants and unit values wait for its codec", {
-  E <- declare_in("gen_native_enum", {
+  E <- declare_in("gen_rust_enum", {
     new_enum(
       "E",
       variants = list(
@@ -322,11 +322,11 @@ test_that("a Rust-stored enum's variants and unit values wait for its codec", {
     )
   })
   expect_identical(attr(E, "r8_storage"), "rust")
-  expect_error(E@A(x = 1), class = "r8_codec_missing")
-  expect_error(E@B, class = "r8_codec_missing")
+  expect_error(E@A(x = 1), class = "r8_codec_missing_error")
+  expect_error(E@B, class = "r8_codec_missing_error")
   lines <- R8:::render_enum(
     R8:::type_ir(E),
-    "gen_native_enum",
+    "gen_rust_enum",
     rust_stored = TRUE
   )
   expect_true("  storage = \"rust\"" %in% lines)

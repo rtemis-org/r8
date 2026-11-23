@@ -3,7 +3,7 @@
 # 2026- EDG rtemis.org
 
 # The installed packages that declare each R8 namespace, by the library
-# paths read, for the message of an unresolved type.
+# paths read, for the message of an unknown type.
 .r8_providers <- new.env(parent = emptyenv())
 
 # An R8 value in R is a named list of its fields, of classes
@@ -606,8 +606,8 @@ construct_failed <- function(res, env, fn, qname, variant) {
 #'
 #' @param qname Character: The qualified type name.
 #'
-#' @return `NULL`, invisibly; signals `r8_codec_missing` when the codec is not
-#'   registered.
+#' @return `NULL`, invisibly; signals `r8_codec_missing_error` when the codec is
+#'   not registered.
 #'
 #' @keywords internal
 #' @noRd
@@ -625,7 +625,7 @@ check_codec <- function(qname, package = "") {
           "' registers it (its .onLoad() calls r8_register())."
         )
       },
-      class = c("r8_codec_missing", "r8_value_error")
+      class = c("r8_codec_missing_error", "r8_value_error")
     )
   }
   invisible(NULL)
@@ -893,7 +893,7 @@ r8_to_json <- function(x) {
 #'
 #' Reads a document of `type`: checks `"$type"` and the versions in
 #' `"$types"`, validates the value, and returns it. A type the document names
-#' resolves among the registered types only; the document never selects code
+#' is looked up among the registered types only; the document never selects code
 #' to load.
 #'
 #' @param type An R8 type object.
@@ -902,8 +902,8 @@ r8_to_json <- function(x) {
 #'   before the read, such as the package that declares an implementor of a
 #'   `dyn()` field.
 #'
-#' @return An R8 value. A document that names types no loaded package
-#'   declares raises `r8_unresolved_type`, which names each namespace and the
+#' @return An R8 value. A document that names types no loaded package declares
+#'   raises `r8_unknown_type_error`, which names each namespace and the
 #'   installed packages that declare it.
 #'
 #' @examples
@@ -927,8 +927,8 @@ r8_from_json <- function(type, json, load = NULL) {
     attr(type, "r8_name")
   )
   if (!is.null(res[["errors"]])) {
-    if ("unresolved_type" %in% res[["errors"]][["code"]]) {
-      unresolved_abort(json)
+    if ("unknown_type" %in% res[["errors"]][["code"]]) {
+      unknown_type_abort(json)
     }
     value_abort("Cannot read", attr(type, "r8_name"), res[["errors"]])
   }
@@ -969,7 +969,7 @@ load_packages <- function(load) {
 } # /R8::load_packages
 
 
-# %% unresolved_abort ----
+# %% unknown_type_abort ----
 #' Signal the unregistered types a document names
 #'
 #' Reads the document's `"$type"` and `"$types"`, and names, for each
@@ -979,11 +979,11 @@ load_packages <- function(load) {
 #'
 #' @param json Character: The JSON document.
 #'
-#' @return Does not return; signals `r8_unresolved_type`.
+#' @return Does not return; signals `r8_unknown_type_error`.
 #'
 #' @keywords internal
 #' @noRd
-unresolved_abort <- function(json) {
+unknown_type_abort <- function(json) {
   doc <- r8_json_parse(paste(json, collapse = "\n"))
   named <- unique(c(
     if (is.character(doc[["$type"]])) doc[["$type"]],
@@ -1031,7 +1031,7 @@ unresolved_abort <- function(json) {
   )
   cond <- structure(
     class = c(
-      "r8_unresolved_type",
+      "r8_unknown_type_error",
       "r8_value_error",
       "r8_error",
       "error",
@@ -1048,7 +1048,7 @@ unresolved_abort <- function(json) {
     )
   )
   stop(cond)
-} # /R8::unresolved_abort
+} # /R8::unknown_type_abort
 
 
 # %% r8_namespace_providers ----
@@ -1110,9 +1110,12 @@ r8_namespace_providers <- function() {
 #' cannot state, such as rules and units, are annotations under `x-r8`.
 #'
 #' @param type An R8 type object.
-#' @param implementors Logical: Write each `dyn()` field as the closed list
-#'   of the implementors registered in the session, each with its tag value
-#'   as a constant, in place of an object that names its type.
+#' @param closed Logical: Write each `dyn()` field as the closed list of the
+#'   implementors registered in the session, each with its tag value as a
+#'   constant, and each `subtype()` field as the struct and its registered
+#'   descendants, each with `"$type"` as a constant, in place of an object
+#'   that names its type. The annotation `x-r8.closed` is then
+#'   `"registered"`.
 #'
 #' @return Character: The schema as JSON text.
 #'
@@ -1123,10 +1126,10 @@ r8_namespace_providers <- function() {
 #' options(op)
 #'
 #' @export
-r8_schema <- function(type, implementors = FALSE) {
+r8_schema <- function(type, closed = FALSE) {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
   ensure_registered(type)
-  r8_type_schema(attr(type, "r8_name"), isTRUE(implementors))
+  r8_type_schema(attr(type, "r8_name"), isTRUE(closed))
 } # /R8::r8_schema

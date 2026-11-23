@@ -140,7 +140,7 @@ fn default_value(
                 .and_then(|q| QualifiedName::parse(&q).ok())
                 .ok_or_else(|| built(path, BuildError::DefaultNotValue))?;
             let lookup: &dyn TypeLookup = lookup;
-            Ok(rtemis_r8::codec::normalized_tree(
+            Ok(rtemis_r8::canonical::normalized_tree(
                 crate::rview::RView::Whole(x),
                 &q,
                 lookup,
@@ -296,7 +296,7 @@ fn variants(x: SEXP, lookup: &impl TypeLookup) -> Read<Vec<VariantDef>> {
                         .ok_or_else(|| built(&format!("{path}/of"), BuildError::VariantOf))?,
                 )
             };
-            let shape = rtemis_r8::ir::build::variant_shape(
+            let kind = rtemis_r8::ir::build::variant_kind(
                 fields(member(v, "fields"), lookup, &format!("{path}/fields"))?,
                 rules(member(v, "rules"), &format!("{path}/rules"))?,
                 of,
@@ -305,7 +305,7 @@ fn variants(x: SEXP, lookup: &impl TypeLookup) -> Read<Vec<VariantDef>> {
             Ok(VariantDef {
                 name: name(&n, &format!("{path}/name"))?,
                 description: one_string(member(v, "description")).unwrap_or_default(),
-                shape,
+                kind,
             })
         })
         .collect::<Read<Vec<_>>>()?;
@@ -618,20 +618,24 @@ fn r8_default_canonical(x: Robj, r#type: Robj) -> extendr_api::Result<String> {
         return Ok(String::new());
     };
     Ok(default_value(unsafe { x.get() }, &ty, &*snapshot, "")
-        .map(|v| rtemis_r8::codec::canonical_text(&v.to_value()))
+        .map(|v| rtemis_r8::canonical::canonical_text(&v.to_value()))
         .unwrap_or_default())
 }
 
-/// The required fields of `new_trait(requires = )`: each a field type, an R8
-/// type object, or `field(type, description = )`; a default, a fill policy,
-/// `sensitive`, a unit, and extensions belong to a struct's field.
+/// The required fields of `new_trait(required_fields = )`: each a field type,
+/// an R8 type object, or `field(type, description = )`; a default, a fill
+/// policy, `sensitive`, a unit, and extensions belong to a struct's field.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_required_fields(requires: Robj) -> extendr_api::Result<Robj> {
+fn r8_required_fields(required_fields: Robj) -> extendr_api::Result<Robj> {
     let snapshot = crate::declare::snapshot()?;
     let built = (|| -> Read<Vec<rtemis_r8::ir::RequiredField>> {
-        let fs = fields(unsafe { requires.get() }, &*snapshot, "/required_fields")?;
+        let fs = fields(
+            unsafe { required_fields.get() },
+            &*snapshot,
+            "/required_fields",
+        )?;
         fs.into_iter()
             .enumerate()
             .map(|(i, f)| {

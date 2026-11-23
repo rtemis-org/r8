@@ -1,9 +1,9 @@
 //! `extends`: the lowering of a child onto its parent, the checks of a
 //! lowered child, the declaration hash of a flattened declaration, and
-//! `dyn(Parent)` values.
+//! `subtype(Parent)` values.
 //! spec: R8/class-system#inheritance
 
-use rtemis_r8::codec::declaration_hash;
+use rtemis_r8::canonical::declaration_hash;
 use rtemis_r8::ir::{InheritedChange, IrDocument, StructDef, TypeDef, check_document, extend};
 use rtemis_r8::name::{Name, QualifiedName};
 use rtemis_r8::registry::Registry;
@@ -96,7 +96,7 @@ fn a_child_holds_the_parents_fields_and_rules_first() {
 }
 
 #[test]
-fn a_registered_chain_descends_and_lists_its_ancestors() {
+fn a_registered_chain_is_a_subtype_chain_and_lists_its_ancestors() {
     let (a, b, c) = chain();
     let r = registry_of(vec![a, b, c]);
     let docs = r.snapshot();
@@ -194,7 +194,7 @@ fn the_registry_checks_a_child_against_its_parent() {
     let r3 = Registry::new();
     let e = IrDocument::from_json(
         &json!({"$ir": 1, "namespace": "ns", "types": [
-            {"kind": "enum", "name": "A", "version": 1, "variants": [{"name": "X", "shape": "unit"}]}
+            {"kind": "enum", "name": "A", "version": 1, "variants": [{"name": "X", "kind": "unit"}]}
         ]})
         .to_string(),
     )
@@ -368,7 +368,7 @@ fn every_struct_with_rules_and_defaults_checks_its_defaults() {
 }
 
 #[test]
-fn a_descendant_field_admits_the_struct_and_its_descendants() {
+fn a_subtype_field_admits_the_struct_and_its_descendants() {
     let (a, b, c) = chain();
     let holder = st(json!({"kind": "struct", "name": "H", "version": 1,
         "fields": [{"name": "x", "type": {"kind": "subtype", "of": "ns::A"}}]}));
@@ -392,9 +392,9 @@ fn a_descendant_field_admits_the_struct_and_its_descendants() {
     );
     assert_eq!(
         codes(json!({"x": {"$type": "ns::Z", "a": 1}})),
-        ["unresolved_type"]
+        ["unknown_type"]
     );
-    assert_eq!(codes(json!({"x": {"a": 1}})), ["unresolved_type"]);
+    assert_eq!(codes(json!({"x": {"a": 1}})), ["unknown_type"]);
     // The child's rules apply through the field.
     assert_eq!(
         codes(json!({"x": {"$type": "ns::C", "a": 1, "b": 2, "c": -3}})),

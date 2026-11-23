@@ -2,9 +2,9 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Runs the conformance tests (tests/testthat/conformance) against `Conform`
+# Runs the conformance tests (tests/testthat/conformance) against `Probe`
 # declared in R. test-packages.R runs them against the Rust-stored
-# `pkgr::Conform` of r8pkgR.
+# `pkgr::Probe` of r8pkgR.
 # spec: R8/class-system#conformance-tests
 
 test_that("the conformance tests pass against an R-stored type", {

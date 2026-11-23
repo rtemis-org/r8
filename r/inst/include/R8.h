@@ -107,7 +107,7 @@ typedef struct R8Reader {
   /* The node's kind, an R8_NODE_* constant. */
   uint32_t (*kind)(void *context, R8Node node);
   /* An object's member by name, or NULL when the object has none. */
-  R8Node (*field)(void *context, R8Node node, const char *name);
+  R8Node (*member)(void *context, R8Node node, const char *name);
   /* An array's item, or NULL past its end. */
   R8Node (*item)(void *context, R8Node node, size_t i);
   /* An array's or an object's length; 0 for any other node. */
@@ -133,23 +133,23 @@ typedef struct R8Reader {
                        R8Error *err);
 } R8Reader;
 
-/* Set in `R8CallContext.flags` when `seed` holds a seed. */
-#define R8_CONTEXT_HAS_SEED 1u
+/* Set in `R8CallInputs.flags` when `seed` holds a seed. */
+#define R8_CALL_HAS_SEED 1u
 
 /* Per-call inputs of an impl function. A stochastic method receives its
  * 64-bit seed here, given by the caller or derived by R8 from R's RNG
- * stream. Later minor versions append the event and provenance context. */
-typedef struct R8CallContext {
+ * stream. */
+typedef struct R8CallInputs {
   uint32_t size;
   uint32_t flags;
   uint64_t seed;
-} R8CallContext;
+} R8CallInputs;
 
 /* The codec of a Rust-stored type. `state` is the type's Rust value, owned
  * by R8 between `from_fields`, `from_reader`, or `with_field` and `drop`. A
  * package's `types` array holds codecs of one size, `size`, which is the
  * array's stride; fields are appended within a major version. */
-typedef struct R8TypeVTable {
+typedef struct R8Codec {
   /* The size of this struct in bytes. */
   uint32_t size;
   /* Qualified name, "namespace::Type". */
@@ -178,8 +178,8 @@ typedef struct R8TypeVTable {
   R8Status (*with_field)(const void *state, const char *field, SEXP value, void **new_state, R8Error *err);
   /* Frees a state. */
   void (*drop)(void *state);
-  /* The state's size in bytes, including memory it owns. */
-  size_t (*bytes)(const void *state);
+  /* The bytes the state owns: its inline size and the memory it owns. */
+  size_t (*owned_bytes)(const void *state);
   /* Enum codecs. An enum's codec sets `variant` and `from_variant` and
    * leaves `from_fields` NULL; a struct's codec sets `from_fields` and
    * leaves both NULL. R8 reads them when `size` covers them. */
@@ -204,11 +204,11 @@ typedef struct R8TypeVTable {
    * `from_fields` and `from_variant` read fields by position; a mismatch
    * reports the declaration's current hash. */
   const char *declaration_hash;
-} R8TypeVTable;
+} R8Codec;
 
 /* An impl function: a trait method implemented in compiled code. `args`
  * holds the call's arguments in the method's declared order. */
-typedef R8Status (*R8MethodFn)(const R8CallContext *ctx, const SEXP *args, size_t nargs,
+typedef R8Status (*R8MethodFn)(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
                                SEXP *result, R8Error *err);
 
 /* One method of one impl. */
@@ -237,7 +237,7 @@ typedef struct R8Exports {
    * types are the package's R declarations. */
   const uint8_t *ir_record;
   size_t ir_record_len;
-  const R8TypeVTable *types;
+  const R8Codec *types;
   size_t n_types;
   const R8ImplEntry *impls;
   size_t n_impls;

@@ -819,7 +819,7 @@
       "type": "SummarizedExperiment::RangedSummarizedExperiment"
     }
   ],
-  "description": "Values of the Bioconductor exercise types, resolved across the Seqinfo, GenomicRanges, and SummarizedExperiment namespaces.",
+  "description": "Values of the Bioconductor exercise types, read across the Seqinfo, GenomicRanges, and SummarizedExperiment namespaces.",
   "ir": [
     {
       "$ir": 1,
@@ -1212,14 +1212,14 @@
         {
           "kind": "enum",
           "name": "AssayData",
-          "description": "The values of one assay, features by samples; on-disk DelayedArray assays are runtime-only through a host-class impl.",
+          "description": "The values of one assay, features by samples; on-disk DelayedArray assays are host-only through a host-class impl.",
           "tag": "type",
           "version": 1,
           "variants": [
             {
               "name": "Integer",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "values",
@@ -1239,7 +1239,7 @@
             {
               "name": "Double",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "values",
@@ -1260,7 +1260,7 @@
             {
               "name": "Sparse",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "values",
@@ -1287,13 +1287,13 @@
             {
               "name": "GRanges",
               "description": "",
-              "shape": "newtype",
+              "kind": "newtype",
               "of": "GenomicRanges::GRanges"
             },
             {
               "name": "GRangesList",
               "description": "",
-              "shape": "newtype",
+              "kind": "newtype",
               "of": "GenomicRanges::GRangesList"
             }
           ]

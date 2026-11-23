@@ -131,7 +131,7 @@ impl State {
                 if p.is_empty() {
                     p = required_problems(
                         &*docs,
-                        |i| matches!(&i.target, crate::ir::TypeRef::Type { name } if name == &q),
+                        |i| matches!(&i.target, crate::ir::TypeRef::Named { name } if name == &q),
                     );
                 }
             }
@@ -331,7 +331,7 @@ fn inherited_tag_problems(docs: &DocumentSet, q: &QualifiedName) -> Vec<DeclErro
     let mut traits: Vec<&QualifiedName> = Vec::new();
     for doc in docs.documents() {
         for i in &doc.impls {
-            if let crate::ir::TypeRef::Type { name } = &i.target
+            if let crate::ir::TypeRef::Named { name } = &i.target
                 && ancestors.contains(name)
                 && !traits.contains(&&i.r#trait)
             {

@@ -417,11 +417,11 @@ pub struct StructDef {
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// The shape of an enum variant.
+/// The kind of an enum variant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "shape", rename_all = "snake_case", deny_unknown_fields)]
-pub enum VariantShape {
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VariantKind {
     /// A unit variant, written as its name.
     Unit,
     /// A struct variant, written as an object with the enum's tag member.
@@ -451,8 +451,8 @@ pub struct VariantDef {
     /// The variant's description.
     pub description: String,
     #[serde(flatten)]
-    /// The variant's shape.
-    pub shape: VariantShape,
+    /// The variant's kind and its members.
+    pub kind: VariantKind,
 }
 
 /// `new_enum()`: a sum type.
@@ -502,15 +502,15 @@ pub enum ParamDef {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Param {
-    /// The parameter's name, a syntactic R argument name or `...`.
+    /// The parameter's name, a syntactic R name or `...`.
     pub name: String,
-    /// The method dispatches on the argument's type.
+    /// The method dispatches on the type of the parameter's argument.
     #[serde(default, skip_serializing_if = "is_false")]
     pub dispatch: bool,
-    /// The argument's type, which every call satisfies.
+    /// The parameter's type, which every argument satisfies.
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub ty: Option<FieldType>,
-    /// The argument's default in its JSON form, for a typed parameter.
+    /// The parameter's default in its JSON form, for a typed parameter.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -518,9 +518,26 @@ pub struct Param {
     )]
     #[cfg_attr(feature = "schema", schemars(with = "Option<Value>"))]
     pub default: Option<Box<crate::tree::Tree>>,
+    /// The parameter's default as an expression of one host's language,
+    /// evaluated at each call that omits the argument. A call from that
+    /// host may omit the argument; a call from any other host supplies it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_default: Option<HostDefault>,
     /// The parameter's description.
     #[serde(default, skip_serializing_if = "str::is_empty")]
     pub description: Box<str>,
+}
+
+/// A parameter's default written in a host's language, such as R's
+/// `length(x)`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct HostDefault {
+    /// The host language, such as `"r"`.
+    pub host: Box<str>,
+    /// The expression's source text.
+    pub text: Box<str>,
 }
 
 impl ParamDef {
@@ -559,15 +576,15 @@ impl From<&str> for ParamDef {
 #[serde(untagged)]
 pub enum ReturnType {
     /// `"Self"`.
-    Receiver(SelfType),
+    SelfType(SelfMarker),
     /// A field type.
     Type(Box<FieldType>),
 }
 
-/// The marker of [`ReturnType::Receiver`], written `"Self"`.
+/// The marker of [`ReturnType::SelfType`], written `"Self"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub enum SelfType {
+pub enum SelfMarker {
     /// The type of the method's first dispatched argument.
     #[serde(rename = "Self")]
     SelfType,
@@ -583,8 +600,8 @@ pub struct MethodDef {
     #[serde(default)]
     /// The method's description.
     pub description: String,
-    /// The formal arguments, in order; `...` is allowed. Without a
-    /// dispatch mark on any parameter, the method dispatches on its first.
+    /// The parameters, in order; `...` is allowed. Without a dispatch mark
+    /// on any parameter, the method dispatches on its first.
     pub params: Vec<ParamDef>,
     /// The type of the value the method returns, which every call
     /// satisfies.
@@ -650,7 +667,7 @@ pub struct TraitDef {
     /// dispatched positions, which an impl gives after the dispatched types
     /// in `type_args`: 1 for the standard trait `From(source)`.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub type_params: u8,
+    pub extra_type_params: u8,
 }
 
 impl TraitDef {
@@ -682,8 +699,8 @@ pub enum ClassSystem {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TypeRef {
-    /// An R8 type.
-    Type {
+    /// An R8 type, by its qualified name.
+    Named {
         /// The type's qualified name.
         name: QualifiedName,
     },
@@ -710,7 +727,7 @@ impl std::fmt::Display for TypeRef {
     /// `any`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeRef::Type { name } => write!(f, "{name}"),
+            TypeRef::Named { name } => write!(f, "{name}"),
             TypeRef::HostClass { class, .. } => f.write_str(class),
             TypeRef::Any => f.write_str("any"),
         }
@@ -735,9 +752,55 @@ pub struct ImplDef {
     /// The value of the trait's tag member; defaults to the type's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag_value: Option<String>,
-    /// The methods this impl defines; the others take the trait's defaults.
-    pub methods: Vec<MethodName>,
-    /// The impl supplies a JSON codec for a host class.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub codec: bool,
+    /// The methods this impl defines; the others take the trait's default
+    /// implementations.
+    pub methods: Vec<ImplMethod>,
+}
+
+/// A method an impl defines: its name, or an object that also gives the
+/// type of the value this impl's method returns, which fits the trait
+/// method's return type.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum ImplMethod {
+    /// A method that returns the trait method's return type.
+    Name(MethodName),
+    /// A method with its own return type.
+    Typed(TypedImplMethod),
+}
+
+/// The object form of an [`ImplMethod`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TypedImplMethod {
+    /// The method's name.
+    pub name: MethodName,
+    /// The type of the value the method returns.
+    pub return_type: FieldType,
+}
+
+impl ImplMethod {
+    /// The method's name.
+    pub fn name(&self) -> &MethodName {
+        match self {
+            ImplMethod::Name(n) => n,
+            ImplMethod::Typed(t) => &t.name,
+        }
+    }
+
+    /// The method's own return type, when it declares one.
+    pub fn return_type(&self) -> Option<&FieldType> {
+        match self {
+            ImplMethod::Name(_) => None,
+            ImplMethod::Typed(t) => Some(&t.return_type),
+        }
+    }
+}
+
+impl From<MethodName> for ImplMethod {
+    fn from(name: MethodName) -> Self {
+        ImplMethod::Name(name)
+    }
 }

@@ -163,13 +163,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B"
               }
             ]
@@ -177,7 +177,7 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::C"
             },
             "methods": [],
@@ -644,7 +644,7 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": []
@@ -662,7 +662,7 @@
     },
     {
       "id": "impl-all-any",
-      "description": "An impl with any in every position, which the trait's default serves.",
+      "description": "An impl with any in every position, which the trait's default implementation serves.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -1007,7 +1007,7 @@
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B"
               }
             ]
@@ -1051,7 +1051,7 @@
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "other::X"
               }
             ]
@@ -1095,13 +1095,13 @@
           {
             "trait": "core::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "core::A"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "other::X"
               }
             ]
@@ -1123,13 +1123,13 @@
           {
             "trait": "core::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "core::A"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "core::B"
               }
             ]
@@ -1306,13 +1306,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A1"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B"
               }
             ]
@@ -1320,13 +1320,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B1"
               }
             ]
@@ -1343,7 +1343,7 @@
       }
     },
     {
-      "id": "dispatch-ambiguity-resolved",
+      "id": "dispatch-ambiguity-disambiguated",
       "description": "Impls for (A1, B) and (A, B1) with one for (A1, B1), declared last.",
       "op": "declare",
       "input": {
@@ -1503,13 +1503,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A1"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B"
               }
             ]
@@ -1517,13 +1517,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B1"
               }
             ]
@@ -1531,13 +1531,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A1"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B1"
               }
             ]
@@ -1709,7 +1709,7 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
@@ -1727,7 +1727,7 @@
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B"
               }
             ]
@@ -1904,13 +1904,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B"
               }
             ]
@@ -1918,13 +1918,13 @@
           {
             "trait": "ns::Combine",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::C"
             },
             "methods": [],
             "type_args": [
               {
-                "kind": "type",
+                "kind": "named",
                 "name": "ns::B1"
               }
             ]

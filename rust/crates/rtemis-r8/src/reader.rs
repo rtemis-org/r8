@@ -51,7 +51,7 @@ fn reader_table(context: *mut c_void) -> Reader {
         size: std::mem::size_of::<Reader>() as u32,
         context,
         kind: Some(kind),
-        field: Some(field),
+        member: Some(member),
         item: Some(item),
         length: Some(length),
         logical: Some(logical),
@@ -111,7 +111,7 @@ unsafe extern "C" fn kind(_: *mut c_void, n: Node) -> u32 {
     }
 }
 
-unsafe extern "C" fn field(_: *mut c_void, n: Node, name: *const c_char) -> Node {
+unsafe extern "C" fn member(_: *mut c_void, n: Node, name: *const c_char) -> Node {
     let (Some(t), false) = (unsafe { value(n) }, name.is_null()) else {
         return std::ptr::null();
     };
@@ -362,7 +362,7 @@ mod tests {
         unsafe {
             let ctx = r.context;
             assert_eq!(r.kind.unwrap()(ctx, root), abi::NODE_OBJECT);
-            let a = r.field.unwrap()(ctx, root, c"a".as_ptr());
+            let a = r.member.unwrap()(ctx, root, c"a".as_ptr());
             assert_eq!(r.length.unwrap()(ctx, a), 3);
             let mut out = [0.0; 3];
             assert_eq!(
@@ -372,7 +372,7 @@ mod tests {
             assert_eq!(out[0], 1.5);
             assert_eq!(out[1].to_bits(), abi::NA_DOUBLE_BITS);
             assert_eq!(out[2], f64::INFINITY);
-            let run = r.field.unwrap()(ctx, root, c"r".as_ptr());
+            let run = r.member.unwrap()(ctx, root, c"r".as_ptr());
             assert_eq!(r.kind.unwrap()(ctx, run), abi::NODE_ARRAY);
             assert_eq!(
                 r.doubles.unwrap()(ctx, run, 0, 3, out.as_mut_ptr(), std::ptr::null_mut()),
@@ -391,7 +391,7 @@ mod tests {
                 r.kind.unwrap()(ctx, r.item.unwrap()(ctx, run, 1)),
                 abi::NODE_NULL
             );
-            let n = r.field.unwrap()(ctx, root, c"n".as_ptr());
+            let n = r.member.unwrap()(ctx, root, c"n".as_ptr());
             let mut ints = [0; 3];
             assert_eq!(
                 r.integers.unwrap()(ctx, n, 0, 3, ints.as_mut_ptr(), std::ptr::null_mut()),
@@ -402,8 +402,8 @@ mod tests {
                 r.doubles.unwrap()(ctx, run, 2, 2, out.as_mut_ptr(), std::ptr::null_mut()),
                 abi::ERROR
             );
-            assert!(r.field.unwrap()(ctx, root, c"missing".as_ptr()).is_null());
-            let s = r.field.unwrap()(ctx, root, c"s".as_ptr());
+            assert!(r.member.unwrap()(ctx, root, c"missing".as_ptr()).is_null());
+            let s = r.member.unwrap()(ctx, root, c"s".as_ptr());
             let (mut p, mut len) = (std::ptr::null(), 0);
             assert_eq!(
                 r.string.unwrap()(ctx, s, &mut p, &mut len, std::ptr::null_mut()),

@@ -4,7 +4,7 @@
     {
       "description": "The Svm defaults.",
       "expect": {
-        "hash": "sha256:46ffb691ce5a87320f5dd7cc0abaaa70ae91a7ef1339aca2af9a62ac8176d3b7"
+        "hash": "sha256:4fc4f82ab100305a9987767b1cda11a6296e3a589e1282ae1814a389c5dc0e10"
       },
       "id": "svm-defaults",
       "input": {},
@@ -14,7 +14,7 @@
     {
       "description": "The same value with defaults written out and members in another order hashes the same.",
       "expect": {
-        "hash": "sha256:46ffb691ce5a87320f5dd7cc0abaaa70ae91a7ef1339aca2af9a62ac8176d3b7"
+        "hash": "sha256:4fc4f82ab100305a9987767b1cda11a6296e3a589e1282ae1814a389c5dc0e10"
       },
       "id": "svm-defaults-explicit",
       "input": {
@@ -30,7 +30,7 @@
     {
       "description": "A struct variant.",
       "expect": {
-        "hash": "sha256:bfc14e15982c4844186120575799389ba6b342d688b91c4aa6ad4ff755b48f33"
+        "hash": "sha256:19ae193b21096023f06c62c1ef9795b367b4a2127c8da84d114f7f4558900643"
       },
       "id": "svm-rbf",
       "input": {
@@ -197,7 +197,7 @@
         ]
       },
       "expect": {
-        "hash": "sha256:17be3d9b48cb45790a8fd9a4f6bb69adc2a3090de7f965f3a1b9464764570d28"
+        "hash": "sha256:38725dfc0b7ced642c949c68577fb1051ed8324023f3de0eada4e01b0bf025d6"
       }
     }
   ],
@@ -217,12 +217,12 @@
             {
               "name": "Linear",
               "description": "",
-              "shape": "unit"
+              "kind": "unit"
             },
             {
               "name": "Rbf",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "gamma",
@@ -348,7 +348,7 @@
         {
           "trait": "rtemis::Fit",
           "target": {
-            "kind": "type",
+            "kind": "named",
             "name": "rtemis::Svm"
           },
           "methods": [

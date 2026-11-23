@@ -3,7 +3,7 @@
 //! `tests/fixtures/ecmascript-jcs.json` is written by
 //! `tests/fixtures/gen-ecmascript-jcs.mjs`.
 
-use rtemis_r8::codec::canonical_text;
+use rtemis_r8::canonical::canonical_text;
 use serde_json::Value;
 
 const FIXTURE: &str = include_str!("fixtures/ecmascript-jcs.json");
@@ -36,7 +36,7 @@ fn documents_match_ecmascript() {
 }
 
 mod documents {
-    use rtemis_r8::codec::{normalize, read_document, to_document};
+    use rtemis_r8::canonical::{normalize, read_document, to_document};
     use rtemis_r8::ir::{IrDocument, TypeDef};
     use rtemis_r8::name::QualifiedName;
     use serde_json::{Value, json};
@@ -133,7 +133,7 @@ mod documents {
 
 #[test]
 fn dates_and_date_times_convert_both_ways() {
-    use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text};
+    use rtemis_r8::canonical::{date_days, date_text, datetime_micros, datetime_text};
     for (days, text) in [
         (0, "1970-01-01"),
         (-1, "1969-12-31"),

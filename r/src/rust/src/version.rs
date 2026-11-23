@@ -5,7 +5,7 @@ use extendr_api::prelude::*;
 /// Version of the R8 runtime
 ///
 /// Returns the version of the runtime compiled into R8, the Rust crate
-/// `rtemis-r8`, which provenance records alongside the versions of R8 and R.
+/// `rtemis-r8`.
 ///
 /// @return Character: The version, for example `"0.1.0"`.
 ///

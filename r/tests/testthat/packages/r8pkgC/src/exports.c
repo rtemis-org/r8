@@ -20,9 +20,9 @@ static double field(SEXP point, int i) {
   return REAL(VECTOR_ELT(point, i))[0];
 }
 
-static R8Status magnitude_impl(const R8CallContext *ctx, const SEXP *args, size_t nargs,
+static R8Status magnitude_impl(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
                           SEXP *result, R8Error *err) {
-  (void) ctx;
+  (void) inputs;
   if (nargs != 1) {
     set_error(err, "arity", "magnitude() takes one argument");
     return R8_ERROR;
@@ -39,9 +39,9 @@ static SEXP raise_na(void *data) {
   return R_NilValue;
 }
 
-static R8Status ratio_impl(const R8CallContext *ctx, const SEXP *args, size_t nargs,
+static R8Status ratio_impl(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
                            SEXP *result, R8Error *err) {
-  (void) ctx;
+  (void) inputs;
   if (nargs != 2 || TYPEOF(args[1]) != REALSXP || XLENGTH(args[1]) != 1) {
     set_error(err, "arity", "ratio() takes a Point and one number");
     return R8_ERROR;
@@ -61,9 +61,9 @@ static R8Status ratio_impl(const R8CallContext *ctx, const SEXP *args, size_t na
 }
 
 // Display::format(x, ...): the ... arrive as one list.
-static R8Status format_impl(const R8CallContext *ctx, const SEXP *args, size_t nargs,
+static R8Status format_impl(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
                             SEXP *result, R8Error *err) {
-  (void) ctx;
+  (void) inputs;
   (void) nargs;
   (void) err;
   char buf[96];
@@ -83,9 +83,9 @@ static const R8ImplEntry impls[] = {
 // The codecs of pkgc::Signal (signal.c) and pkgc::Resampler (resampler.c),
 // copied into one array at initialization, since R8 reads the codec tables
 // as an array.
-extern const R8TypeVTable pkgc_signal_codec;
-extern const R8TypeVTable pkgc_resampler_codec;
-static R8TypeVTable codecs[2];
+extern const R8Codec pkgc_signal_codec;
+extern const R8Codec pkgc_resampler_codec;
+static R8Codec codecs[2];
 SEXP pkgc_bad_exports(SEXP kind);
 SEXP pkgc_live_signals(void);
 SEXP pkgc_signal_peek(SEXP x);

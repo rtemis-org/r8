@@ -6,12 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
-use rtemis_r8::codec::declaration_hash;
+use rtemis_r8::canonical::declaration_hash;
 use rtemis_r8::ir::{
-    Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, FieldDef, FieldType, ImplDef,
-    IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep, Param, ParamDef,
-    RequiredField, Resolve, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef,
-    TypeDef, TypeRef,
+    Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, FieldDef, FieldType, HostDefault,
+    ImplDef, ImplMethod, IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep,
+    Param, ParamDef, RequiredField, Resolve, ReturnType, RuleDef, SelfMarker, SplitTarget,
+    StructDef, TraitDef, TypeDef, TypeRef, TypedImplMethod,
 };
 use rtemis_r8::name::{MethodName, Name, QualifiedName};
 use rtemis_r8::record::{self, Declaration, DeclarationRef, Entry, RecordError};
@@ -242,7 +242,12 @@ fn sample_types() -> Vec<FieldType> {
         },
         FieldType::TableOf { of: q("ns::P") },
         FieldType::Json,
-        FieldType::R { class: "lm".into() },
+        FieldType::HostClass {
+            host: "r".into(),
+            package: "stats".into(),
+            class: "lm".into(),
+            system: ClassSystem::S3,
+        },
         FieldType::Vec {
             element: Box::new(FieldType::Double(DoubleType::default())),
             min_length: Some(1),
@@ -286,7 +291,7 @@ fn sample_types() -> Vec<FieldType> {
             | FieldType::Table { .. }
             | FieldType::TableOf { .. }
             | FieldType::Json
-            | FieldType::R { .. }
+            | FieldType::HostClass { .. }
             | FieldType::Vec { .. }
             | FieldType::Option { .. }
             | FieldType::BtreeMap { .. }
@@ -455,6 +460,7 @@ fn sample_trait() -> TraitDef {
                         dispatch: true,
                         ty: None,
                         default: None,
+                        host_default: None,
                         description: "".into(),
                     }),
                     ParamDef::Full(Param {
@@ -462,6 +468,10 @@ fn sample_trait() -> TraitDef {
                         dispatch: true,
                         ty: None,
                         default: None,
+                        host_default: Some(HostDefault {
+                            host: "r".into(),
+                            text: "length(x)".into(),
+                        }),
                         description: "The other.".into(),
                     }),
                     ParamDef::Full(Param {
@@ -471,6 +481,7 @@ fn sample_trait() -> TraitDef {
                         default: Some(Box::new(rtemis_r8::tree::Tree::from_value(
                             &serde_json::json!(1.5),
                         ))),
+                        host_default: None,
                         description: "".into(),
                     }),
                     "...".into(),
@@ -485,7 +496,7 @@ fn sample_trait() -> TraitDef {
                 name: MethodName::new("[").unwrap(),
                 description: String::new(),
                 params: vec![],
-                return_type: Some(ReturnType::Receiver(SelfType::SelfType)),
+                return_type: Some(ReturnType::SelfType(SelfMarker::SelfType)),
                 stochastic: false,
                 has_default_impl: false,
             },
@@ -498,7 +509,7 @@ fn sample_trait() -> TraitDef {
         supertraits: vec![q("R8::Display")],
         tag: Some(name("kind")),
         generic: true,
-        type_params: 2,
+        extra_type_params: 2,
     }
 }
 
@@ -507,17 +518,24 @@ fn sample_impls() -> Vec<ImplDef> {
         ImplDef {
             r#trait: q("ns::Kernel"),
             type_args: vec![],
-            target: TypeRef::Type {
+            target: TypeRef::Named {
                 name: q("ns::Sample"),
             },
             tag_value: Some("sample".into()),
-            methods: vec![MethodName::new("apply").unwrap()],
-            codec: false,
+            methods: vec![
+                ImplMethod::Name(MethodName::new("apply").unwrap()),
+                ImplMethod::Typed(TypedImplMethod {
+                    name: MethodName::new("[").unwrap(),
+                    return_type: FieldType::Named {
+                        name: q("ns::Sample"),
+                    },
+                }),
+            ],
         },
         ImplDef {
             r#trait: q("R8::From"),
             type_args: vec![
-                TypeRef::Type {
+                TypeRef::Named {
                     name: q("ns::Sample"),
                 },
                 TypeRef::HostClass {
@@ -536,7 +554,6 @@ fn sample_impls() -> Vec<ImplDef> {
             },
             tag_value: None,
             methods: vec![],
-            codec: true,
         },
     ]
 }

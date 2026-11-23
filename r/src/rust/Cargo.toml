@@ -17,7 +17,7 @@ name = 'r8_r'
 name = 'document'
 path = 'document.rs'
 
-# `oracle`: the differential oracle that the tests compare native
+# `oracle`: the differential oracle that the tests compare in-place
 # construction with (src/oracle.rs); tools/config.R enables it when R8_ORACLE is
 # set.
 [features]

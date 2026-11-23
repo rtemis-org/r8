@@ -1,10 +1,11 @@
 //! M1's exit test: the JSON Schema that `json_schema()` exports for a type
-//! accepts every valid value of the corpus and the normalized form the codec
-//! writes, and rejects every invalid value whose error JSON Schema expresses.
+//! accepts every valid value of the corpus and the normalized form that
+//! `canonical::normalize` writes, and rejects every invalid value whose error
+//! JSON Schema expresses.
 
 use std::path::{Path, PathBuf};
 
-use rtemis_r8::codec::{normalize, to_document};
+use rtemis_r8::canonical::{normalize, to_document};
 use rtemis_r8::ir::{FieldType, IrDocument, TypeDef};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
@@ -36,7 +37,7 @@ const STRUCTURAL: &[&str] = &[
     "unknown_variant",
     "missing_tag",
     "not_finite",
-    "runtime_only",
+    "host_only",
     "dimension_mismatch",
 ];
 
@@ -161,7 +162,7 @@ fn print_svm_schema() {
     );
 }
 
-/// The closed form (`implementors = true`): every valid value of the corpus
+/// The closed form (`closed = true`): every valid value of the corpus
 /// is accepted, and a value inside a `dyn()` field that names no registered
 /// implementor, or that fails a check JSON Schema expresses, is rejected.
 #[test]
@@ -196,7 +197,7 @@ fn closed_schemas_list_the_registered_implementors() {
                 .as_array()
                 .map(|a| a.iter().map(|e| e["code"].as_str().unwrap()).collect())
                 .unwrap_or_default();
-            let dyn_codes = ["not_implementor", "unresolved_type"];
+            let dyn_codes = ["not_implementor", "unknown_type"];
             if codes.is_empty() {
                 let document: Value =
                     serde_json::from_str(&to_document(input, &ty, &docs).unwrap()).unwrap();

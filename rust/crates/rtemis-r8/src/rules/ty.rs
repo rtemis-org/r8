@@ -1,6 +1,6 @@
 //! Static types of rule expressions, derived from field types.
 
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 
 /// Finds the declaration of a named type. A type that the lookup does not
@@ -46,7 +46,7 @@ pub trait TypeLookup {
     fn impl_for(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<&crate::ir::ImplDef> {
         self.impls_of(tr).into_iter().find(|i| {
             i.type_args.is_empty()
-                && matches!(&i.target, crate::ir::TypeRef::Type { name } if name == ty)
+                && matches!(&i.target, crate::ir::TypeRef::Named { name } if name == ty)
         })
     }
 
@@ -124,7 +124,7 @@ pub trait TypeLookup {
     }
 }
 
-/// The longest `extends` chain that [`TypeLookup::descends`] follows.
+/// The longest `extends` chain that [`TypeLookup::is_subtype`] follows.
 const MAX_DEPTH: usize = 1024;
 
 pub(crate) fn dollar_type(value: &serde_json::Value) -> Result<(QualifiedName, String), String> {
@@ -145,7 +145,7 @@ impl TypeLookup for crate::ir::IrDocument {
         self.types.iter().find(|t| t.name() == &name.name)
     }
 
-    /// Resolves through the trait's tag member when the document declares the
+    /// Finds the implementor through the trait's tag member when the document declares the
     /// trait with one: a bare tag value names an implementor in the trait's
     /// namespace, and `namespace::Value` one in another namespace. Each
     /// implementor's tag value is its impl's `tag_value`, or its type name.
@@ -218,7 +218,7 @@ fn implementor_of(
         .get(tag.as_str())
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format!("a `dyn({tr})` value names its type in `{tag}`"))?;
-    resolve_tag(lookup, tr, written)
+    implementor_of_tag(lookup, tr, written)
         .map(|q| (q, tag.clone()))
         .ok_or_else(|| {
             let known = tag_values(lookup, tr);
@@ -251,7 +251,7 @@ fn tag_values(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<String> {
 pub fn implementors(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<QualifiedName> {
     let mut out: Vec<QualifiedName> = Vec::new();
     for imp in lookup.impls_of(tr) {
-        let crate::ir::TypeRef::Type { name } = &imp.target else {
+        let crate::ir::TypeRef::Named { name } = &imp.target else {
             continue;
         };
         for t in std::iter::once(name.clone()).chain(
@@ -269,7 +269,7 @@ pub fn implementors(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<Qualifie
 }
 
 /// The implementor of `tr` whose written tag value is `written`.
-fn resolve_tag(
+fn implementor_of_tag(
     lookup: &dyn TypeLookup,
     tr: &QualifiedName,
     written: &str,
@@ -283,7 +283,7 @@ fn resolve_tag(
         return None;
     }
     for imp in lookup.impls_of(tr) {
-        if let crate::ir::TypeRef::Type { name } = &imp.target
+        if let crate::ir::TypeRef::Named { name } = &imp.target
             && name.namespace.as_str() == ns
             && imp.tag_value.as_deref() == Some(v)
         {
@@ -352,8 +352,8 @@ pub enum Ty {
     Named(QualifiedName),
     /// Any JSON value (`type_json()`).
     Json,
-    /// A runtime-only R value, which rules cannot read.
-    Runtime,
+    /// A host-only R value, which rules cannot read.
+    HostOnly,
     /// Unknown until run time: `dyn()`, `type_raw()`, and named types the
     /// lookup does not hold.
     Any,
@@ -394,7 +394,7 @@ impl Ty {
                 open: true,
             },
             FieldType::Json => Ty::Json,
-            FieldType::R { .. } => Ty::Runtime,
+            FieldType::HostClass { .. } => Ty::HostOnly,
             FieldType::Vec { element, .. } => Ty::Array(Box::new(Ty::of(element, unit))),
             FieldType::Option { inner, .. } => Ty::of(inner, unit),
             FieldType::BtreeMap { value, .. } => Ty::Map {
@@ -426,15 +426,15 @@ impl Ty {
             Ty::Map { .. } => "a map".into(),
             Ty::Named(q) => format!("a `{q}`"),
             Ty::Json => "a JSON value".into(),
-            Ty::Runtime => "a runtime-only R value".into(),
+            Ty::HostOnly => "a host-only R value".into(),
             Ty::Any => "a value of unknown type".into(),
         }
     }
 }
 
-/// What a named type contributes to path resolution: its fields, and for an
+/// The members of a named type that a path binds to: its fields, and for an
 /// enum, how a value names its variant.
-pub enum Shape<'a> {
+pub enum Members<'a> {
     Struct(&'a [FieldDef]),
     Enum {
         /// `None` for an enum of unit variants, whose values are strings.
@@ -452,23 +452,23 @@ pub enum VariantFields<'a> {
     Wrapped(Option<&'a [FieldDef]>),
 }
 
-/// The shape of a named type, when the lookup holds it.
-pub fn shape<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Shape<'a>> {
+/// The members of a named type, when the lookup holds it.
+pub fn members<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Members<'a>> {
     match lookup.find(name)? {
-        TypeDef::Struct(s) => Some(Shape::Struct(&s.fields)),
+        TypeDef::Struct(s) => Some(Members::Struct(&s.fields)),
         TypeDef::Enum(e) => {
             let unit_only = e
                 .variants
                 .iter()
-                .all(|v| matches!(v.shape, VariantShape::Unit));
+                .all(|v| matches!(v.kind, VariantKind::Unit));
             let variants = e
                 .variants
                 .iter()
                 .map(|v| {
-                    let fields = match &v.shape {
-                        VariantShape::Unit => VariantFields::None,
-                        VariantShape::Struct { fields, .. } => VariantFields::Fields(fields),
-                        VariantShape::Newtype { of } => {
+                    let fields = match &v.kind {
+                        VariantKind::Unit => VariantFields::None,
+                        VariantKind::Struct { fields, .. } => VariantFields::Fields(fields),
+                        VariantKind::Newtype { of } => {
                             VariantFields::Wrapped(match lookup.find(of) {
                                 Some(TypeDef::Struct(s)) => Some(&s.fields),
                                 _ => None,
@@ -478,7 +478,7 @@ pub fn shape<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Sha
                     (v.name.as_str(), fields)
                 })
                 .collect();
-            Some(Shape::Enum {
+            Some(Members::Enum {
                 tag: (!unit_only).then_some(e.tag.as_str()),
                 variants,
             })
@@ -486,7 +486,7 @@ pub fn shape<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Sha
     }
 }
 
-/// A set of IR documents, each a namespace, resolved together: the lookup a
+/// A set of IR documents, each a namespace, read together: the lookup a
 /// registry provides once every package's declarations are loaded.
 ///
 /// The set indexes its types by qualified name, so [`TypeLookup::find`] takes
@@ -890,7 +890,7 @@ impl TypeLookup for DocumentSet {
         !self.stale.is_empty() && self.stale.contains(ty)
     }
 
-    /// Resolves through the trait's declaring document, over the impls of
+    /// Finds the implementor through the trait's declaring document, over the impls of
     /// every document: the declaring document's first, then the others' in
     /// order.
     fn implementor(
@@ -934,7 +934,7 @@ fn reached_into(
     q: &crate::name::QualifiedName,
     out: &mut Vec<crate::name::QualifiedName>,
 ) {
-    use crate::ir::{FieldDef, FieldType, VariantShape};
+    use crate::ir::{FieldDef, FieldType, VariantKind};
     fn of_type(reg: &DocumentSet, t: &FieldType, out: &mut Vec<crate::name::QualifiedName>) {
         match t {
             FieldType::Named { name }
@@ -984,10 +984,10 @@ fn reached_into(
         }
         TypeDef::Enum(e) => {
             for v in &e.variants {
-                match &v.shape {
-                    VariantShape::Struct { fields, .. } => of_fields(reg, fields, out),
-                    VariantShape::Newtype { of } => reached_into(reg, of, out),
-                    VariantShape::Unit => {}
+                match &v.kind {
+                    VariantKind::Struct { fields, .. } => of_fields(reg, fields, out),
+                    VariantKind::Newtype { of } => reached_into(reg, of, out),
+                    VariantKind::Unit => {}
                 }
             }
         }

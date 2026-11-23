@@ -4,10 +4,11 @@
 \alias{dyn}
 \title{A field of any implementor of a trait}
 \usage{
-dyn(x)
+dyn(trait)
 }
 \arguments{
-\item{x}{A trait object from \code{\link[=new_trait]{new_trait()}}, or a generic from \code{\link[=generic]{generic()}}.}
+\item{trait}{A trait object from \code{\link[=new_trait]{new_trait()}}, or a generic from
+\code{\link[=generic]{generic()}} that dispatches on one argument.}
 }
 \value{
 An \code{r8_field_type}.

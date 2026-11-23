@@ -95,11 +95,11 @@ Resampler <- R8::new_enum(
   storage = "rust"
 )
 
-#' Conform
+#' Probe
 #'
 #' A field of every Rust field type, with constraints, a default, and rules.
 #'
-#' The struct `pkgr::Conform`, declared in Rust.
+#' The struct `pkgr::Probe`, declared in Rust.
 #'
 #' @param ratio A fraction.
 #' @param count A count.
@@ -110,10 +110,10 @@ Resampler <- R8::new_enum(
 #' @param index Case indices.
 #' @param bytes Bytes.
 #' @param mask A mask.
-#' @return A `pkgr::Conform` value.
+#' @return A `pkgr::Probe` value.
 #' @export
-Conform <- R8::new_struct(
-  "Conform",
+Probe <- R8::new_struct(
+  "Probe",
   fields = list(
     ratio = R8::field(
       R8::type_double(min = 0, max = 1),

@@ -4,7 +4,7 @@
 //! A value is constructed by encoding the R input to its JSON form, validating
 //! it with `rtemis-r8`, and decoding the JSON form back to R, so the stored R
 //! value is the normalized one and reading its document returns it exactly.
-//! A runtime-only field has no JSON form; construction carries its R value
+//! A host-only field has no JSON form; construction carries its R value
 //! over from the input.
 //!
 //! R forms: a scalar is a length-one atomic vector without attributes (an
@@ -21,8 +21,8 @@
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result, SEXP};
 use rtemis_r8::access::Node;
-use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text};
-use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use rtemis_r8::canonical::{date_days, date_text, datetime_micros, datetime_text};
+use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
 use rtemis_r8::validate::ValueError;
@@ -64,9 +64,9 @@ fn number(x: f64) -> Value {
 pub(crate) struct Encoder<'a> {
     pub(crate) lookup: &'a dyn TypeLookup,
     pub(crate) errors: Vec<ValueError>,
-    /// The paths of runtime-only fields that hold a value.
+    /// The paths of host-only fields that hold a value.
     #[cfg_attr(not(feature = "oracle"), allow(dead_code))]
-    pub(crate) runtime: Vec<String>,
+    pub(crate) host_only: Vec<String>,
 }
 
 impl Encoder<'_> {
@@ -431,8 +431,8 @@ impl Encoder<'_> {
                 }
             }
             FieldType::Json => self.json(x, path),
-            FieldType::R { .. } => {
-                self.runtime.push(path.to_string());
+            FieldType::HostClass { .. } => {
+                self.host_only.push(path.to_string());
                 Value::Null
             }
             FieldType::Matrix { element, .. } | FieldType::Array { element, .. } => {
@@ -504,7 +504,7 @@ impl Encoder<'_> {
         let codes = x.as_integer_slice().unwrap_or_default();
         let k = lv.len();
         // A code outside 1..=k has no JSON form; the encoder reports it at
-        // the path where the validator of the native form reports it.
+        // the path where the validator of the R form reports it.
         let cell_base = match levels {
             Some(_) => path.to_string(),
             None => format!("{path}/codes"),
@@ -746,11 +746,7 @@ impl Encoder<'_> {
             return self.err("r_type", path, message);
         }
         let Some(def) = self.lookup.find(name).cloned() else {
-            return self.err(
-                "unresolved_type",
-                path,
-                format!("`{qname}` is not registered"),
-            );
+            return self.err("unknown_type", path, format!("`{qname}` is not registered"));
         };
         let list = x.as_list();
         let get = |n: &str| -> Robj {
@@ -781,7 +777,7 @@ impl Encoder<'_> {
                 let unit_only = e
                     .variants
                     .iter()
-                    .all(|v| matches!(v.shape, VariantShape::Unit));
+                    .all(|v| matches!(v.kind, VariantKind::Unit));
                 if unit_only {
                     return Value::from(variant);
                 }
@@ -789,10 +785,10 @@ impl Encoder<'_> {
                     .variants
                     .iter()
                     .find(|v| v.name.as_str() == variant)
-                    .map(|v| &v.shape)
+                    .map(|v| &v.kind)
                 {
-                    Some(VariantShape::Struct { fields, .. }) => fields.clone(),
-                    Some(VariantShape::Newtype { of }) => self.struct_fields(of),
+                    Some(VariantKind::Struct { fields, .. }) => fields.clone(),
+                    Some(VariantKind::Newtype { of }) => self.struct_fields(of),
                     _ => Vec::new(),
                 };
                 for f in &fields {
@@ -1062,7 +1058,7 @@ impl Decoder<'_> {
                 Ok(r)
             }
             FieldType::Json => self.json(v),
-            FieldType::R { .. } => Ok(().into()),
+            FieldType::HostClass { .. } => Ok(().into()),
             FieldType::Matrix { element, .. } | FieldType::Array { element, .. } => {
                 self.dense(v, element)
             }
@@ -1282,7 +1278,7 @@ impl Decoder<'_> {
         Ok(List::from_values(items(v).map(|x| self.json(x)).collect::<Result<Vec<_>>>()?).into())
     }
 
-    /// An R8 value of a named type; `original` supplies runtime-only fields.
+    /// An R8 value of a named type; `original` supplies host-only fields.
     /// A member the value does not hold reads as `null`.
     pub(crate) fn named<'a, N: Node<'a>>(
         &self,
@@ -1296,7 +1292,7 @@ impl Decoder<'_> {
             .cloned()
             .ok_or_else(|| fail(format!("`{name}` is not registered")))?;
         let carry = |f: &FieldDef| -> Option<Robj> {
-            if !matches!(unwrap_option(&f.ty).0, FieldType::R { .. }) {
+            if !matches!(unwrap_option(&f.ty).0, FieldType::HostClass { .. }) {
                 return None;
             }
             original.and_then(|o| o.as_list()).and_then(|l| {
@@ -1329,7 +1325,7 @@ impl Decoder<'_> {
                 let unit_only = e
                     .variants
                     .iter()
-                    .all(|x| matches!(x.shape, VariantShape::Unit));
+                    .all(|x| matches!(x.kind, VariantKind::Unit));
                 // Inside `dyn()`, a unit-only enum is an object of the type
                 // member and its tag.
                 let variant = if unit_only && v.object_len().is_none() {
@@ -1344,10 +1340,10 @@ impl Decoder<'_> {
                     .variants
                     .iter()
                     .find(|x| x.name.as_str() == variant)
-                    .map(|x| &x.shape)
+                    .map(|x| &x.kind)
                 {
-                    Some(VariantShape::Struct { fields, .. }) => fields.clone(),
-                    Some(VariantShape::Newtype { of }) => match self.lookup.find(of) {
+                    Some(VariantKind::Struct { fields, .. }) => fields.clone(),
+                    Some(VariantKind::Newtype { of }) => match self.lookup.find(of) {
                         Some(TypeDef::Struct(s)) => s.fields.clone(),
                         _ => Vec::new(),
                     },
@@ -1379,7 +1375,7 @@ pub(crate) fn encode_field(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> 
     let mut enc = Encoder {
         lookup,
         errors: Vec::new(),
-        runtime: Vec::new(),
+        host_only: Vec::new(),
     };
     enc.value(&robj, ft, "")
 }
@@ -1618,11 +1614,11 @@ fn diagnosis_r(d: &rtemis_r8::rules::Diagnosis) -> Robj {
 }
 
 /// The identity of an R8 value: the canonical text of its normalized form,
-/// its content hash, and the paths of its runtime-only fields that hold a
+/// its content hash, and the paths of its host-only fields that hold a
 /// value, written from the R objects in place.
 ///
 /// @param x An R8 value.
-/// @return List: `canonical`, `hash`, and `runtime`, or `errors`.
+/// @return List: `canonical`, `hash`, and `host_only`, or `errors`.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -1637,10 +1633,14 @@ fn r8_value_identity(x: Robj) -> Result<List> {
     if !errors.is_empty() {
         return Ok(list!(errors = errors_list(&errors)));
     }
-    let canonical = rtemis_r8::codec::canonical_access(v, &q, lookup);
-    let hash = rtemis_r8::codec::content_hash_access(v, &q, lookup);
-    let runtime = rtemis_r8::codec::runtime_paths(&q, v, lookup);
-    Ok(list!(canonical = canonical, hash = hash, runtime = runtime))
+    let canonical = rtemis_r8::canonical::canonical_access(v, &q, lookup);
+    let hash = rtemis_r8::canonical::content_hash_access(v, &q, lookup);
+    let host_only = rtemis_r8::canonical::host_only_paths(&q, v, lookup);
+    Ok(list!(
+        canonical = canonical,
+        hash = hash,
+        host_only = host_only
+    ))
 }
 
 /// The content hash of an R8 value, streamed from the R objects in place.
@@ -1661,11 +1661,11 @@ fn r8_value_hash(x: Robj) -> Result<Robj> {
     if !errors.is_empty() {
         return Ok(list!(errors = errors_list(&errors)).into());
     }
-    Ok(rtemis_r8::codec::content_hash_access(v, &q, lookup).into())
+    Ok(rtemis_r8::canonical::content_hash_access(v, &q, lookup).into())
 }
 
 /// Whether two R8 values of one type are equal: the same normalized form,
-/// and identical runtime-only fields, compared in place.
+/// and identical host-only fields, compared in place.
 ///
 /// @param x,y R8 values.
 /// @return Logical: One value.
@@ -1717,7 +1717,7 @@ fn r8_value_to_document(x: Robj) -> Result<List> {
         return Ok(list!(errors = errors_list(&errors)));
     }
     Ok(list!(
-        json = rtemis_r8::codec::document_access(v, &q, lookup)
+        json = rtemis_r8::canonical::document_access(v, &q, lookup)
     ))
 }
 
@@ -1735,7 +1735,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     // The value as a compact tree, which holds a run of numbers in 8 B an
     // item; the conversion to R and a codec's reader read it in place.
     let tree = match crate::construct::with_cache(|cache| {
-        rtemis_r8::codec::read_tree_cached(text, &q, &*docs, cache)
+        rtemis_r8::canonical::read_tree_cached(text, &q, &*docs, cache)
     }) {
         Ok(t) => t,
         Err(errors) => return Ok(list!(errors = errors_list(&errors))),
@@ -1748,12 +1748,13 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     // or `from_variant` (an enum); the state's variant is checked against the
     // document's, and the codec receives no JSON text.
     if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name)) {
-        if crate::native::has_from_reader(vt) {
+        if crate::rust_stored::has_from_reader(vt) {
             let lent = rtemis_r8::reader::TreeReader::new();
             let reader = lent.table();
-            let state = crate::native::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
-                .map_err(fail)?;
-            let variant = crate::native::state_variant(vt, state);
+            let state =
+                crate::rust_stored::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
+                    .map_err(fail)?;
+            let variant = crate::rust_stored::state_variant(vt, state);
             let drop_state = || {
                 if let Some(d) = unsafe { (*vt).drop } {
                     unsafe { d(state) };
@@ -1777,7 +1778,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
                 }
             }
             let Some((names, version)) =
-                crate::native::value_fields(def, variant.as_deref(), lookup)
+                crate::rust_stored::value_fields(def, variant.as_deref(), lookup)
             else {
                 drop_state();
                 return Err(fail(format!(
@@ -1786,9 +1787,13 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
                 )));
             };
             let value = unsafe {
-                let like =
-                    crate::native::template(&q.to_string(), &names, version, variant.as_deref());
-                let r = Robj::from_sexp(crate::native::wrap(vt, state, like));
+                let like = crate::rust_stored::template(
+                    &q.to_string(),
+                    &names,
+                    version,
+                    variant.as_deref(),
+                );
+                let r = Robj::from_sexp(crate::rust_stored::wrap(vt, state, like));
                 extendr_ffi::Rf_unprotect(1);
                 r
             };
@@ -1796,7 +1801,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         }
         let builds = match def {
             TypeDef::Struct(_) => unsafe { (*vt).from_fields.is_some() },
-            TypeDef::Enum(_) => crate::native::is_enum_codec(vt),
+            TypeDef::Enum(_) => crate::rust_stored::is_enum_codec(vt),
         };
         if !builds {
             return Err(fail(format!(
@@ -1806,17 +1811,17 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
         let fields = Decoder { lookup: &*docs }.named(v, &q, None)?;
         let fs = unsafe { fields.get() };
         let state = match def {
-            TypeDef::Struct(_) => crate::native::from_fields(vt, fs),
+            TypeDef::Struct(_) => crate::rust_stored::from_fields(vt, fs),
             TypeDef::Enum(_) => {
                 let variant = fields
                     .get_attrib("r8_variant")
                     .and_then(|a| a.as_str().map(str::to_string))
                     .unwrap_or_default();
-                crate::native::from_variant(vt, &variant, fs)
+                crate::rust_stored::from_variant(vt, &variant, fs)
             }
         }
         .map_err(fail)?;
-        let value = unsafe { Robj::from_sexp(crate::native::wrap(vt, state, fs)) };
+        let value = unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, fs)) };
         return Ok(list!(value = value));
     }
     Ok(list!(
@@ -1824,9 +1829,9 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     ))
 }
 
-/// Resolves a struct value: given its fields, with runtime fields filled by
+/// Resolves a struct value: given its fields, with context fields filled by
 /// the caller, evaluates each absent computed field in dependency order over
-/// the R objects in place, then constructs the value natively.
+/// the R objects in place, then constructs the value in place.
 ///
 /// @param fields List: The fields, by name.
 /// @param type_name Character: The qualified struct name.

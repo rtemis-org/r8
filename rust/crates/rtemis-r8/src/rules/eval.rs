@@ -22,9 +22,9 @@ use serde_json::Value;
 use super::compile::{Collection, Expr, Op, Root, Step, VariantTag};
 use super::ty::TypeLookup;
 use crate::access::{Access, valid_date, valid_posixct};
-use crate::codec::{date_days, date_text, datetime_micros, datetime_text};
+use crate::canonical::{date_days, date_text, datetime_micros, datetime_text};
 use crate::emit::number_text;
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 
 /// An expression read an absent value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -518,18 +518,13 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 TypeDef::Struct(s) => Some(&s.fields),
                 TypeDef::Enum(e) => {
                     let variant = cur.variant(name, e).ok()?;
-                    match &e
-                        .variants
-                        .iter()
-                        .find(|v| v.name.as_str() == variant)?
-                        .shape
-                    {
-                        VariantShape::Struct { fields, .. } => Some(fields),
-                        VariantShape::Newtype { of } => match lookup.find(of)? {
+                    match &e.variants.iter().find(|v| v.name.as_str() == variant)?.kind {
+                        VariantKind::Struct { fields, .. } => Some(fields),
+                        VariantKind::Newtype { of } => match lookup.find(of)? {
                             TypeDef::Struct(s) => Some(&s.fields),
                             TypeDef::Enum(_) => None,
                         },
-                        VariantShape::Unit => None,
+                        VariantKind::Unit => None,
                     }
                 }
             },

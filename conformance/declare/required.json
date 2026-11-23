@@ -71,7 +71,7 @@
           {
             "trait": "ns::Measured",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::Range"
             },
             "methods": []
@@ -134,7 +134,7 @@
           {
             "trait": "ns::Measured",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::Point"
             },
             "methods": []
@@ -202,7 +202,7 @@
           {
             "trait": "ns::Measured",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::Range"
             },
             "methods": []
@@ -271,7 +271,7 @@
           {
             "trait": "ns::Measured",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::Range"
             },
             "methods": []
@@ -304,7 +304,7 @@
               {
                 "name": "A",
                 "description": "",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           }
@@ -337,7 +337,7 @@
           {
             "trait": "ns::Measured",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::Mode"
             },
             "methods": []
@@ -446,7 +446,7 @@
           {
             "trait": "ns::Measured",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::Holder"
             },
             "methods": []

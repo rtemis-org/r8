@@ -1,6 +1,6 @@
 //! The entry points of R's C API that the crate calls, all in the API index
 //! of Writing R Extensions. The package that links the crate links R: the
-//! symbols resolve when R loads the package's shared object, and against
+//! symbols are bound when R loads the package's shared object, and against
 //! `R.dll` on Windows.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]

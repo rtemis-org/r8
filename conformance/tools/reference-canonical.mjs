@@ -1,11 +1,11 @@
-// reference-codec.mjs
+// reference-canonical.mjs
 // An independent implementation of R8's canonical JSON form, canonical binary
 // form, declaration hash, and content hash, written from the specification in
-// rust/crates/rtemis-r8/src/codec.rs. It fills the `expect` of every `canonical` and
+// rust/crates/rtemis-r8/src/canonical.rs. It fills the `expect` of every `canonical` and
 // `hash` case of the suites given, which the Rust runner then compares with
 // its own results.
 //
-// Run: node conformance/tools/reference-codec.mjs conformance/canonical/*.json conformance/hash/*.json
+// Run: node conformance/tools/reference-canonical.mjs conformance/canonical/*.json conformance/hash/*.json
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -140,9 +140,9 @@ function normalizer(find, digest) {
   const named = (q, v) => {
     const t = find(q);
     if (t.kind === "struct") return fields(t.fields, v);
-    if (t.variants.every((x) => x.shape === "unit")) return v;
+    if (t.variants.every((x) => x.kind === "unit")) return v;
     const tag = t.tag ?? "type", variant = t.variants.find((x) => x.name === v[tag]);
-    const defs = variant.shape === "struct" ? variant.fields : variant.shape === "newtype" ? find(variant.of).fields : [];
+    const defs = variant.kind === "struct" ? variant.fields : variant.kind === "newtype" ? find(variant.of).fields : [];
     return { ...fields(defs, v), [tag]: v[tag] };
   };
   const val = (t, v) => {
@@ -156,8 +156,8 @@ function normalizer(find, digest) {
         return digest && DIGESTED_VEC.has(tagOf(t.element))
           ? { $digest: sha256(vecBinary(t.element, v)) }
           : v.map((x) => val(t.element, x));
-      case "hashmap": return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, val(t.value, x)]));
-      case "ordered_map": return v.map((p) => ({ name: p.name, value: val(t.value, p.value) }));
+      case "btree_map": return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, val(t.value, x)]));
+      case "index_map": return v.map((p) => ({ name: p.name, value: val(t.value, p.value) }));
       case "named": return named(t.name, v);
       default: return v;
     }
@@ -183,7 +183,7 @@ function declarationHash(q, find) {
     if ("description" in c) c.description = "";
     delete c.extensions;
     if (c.kind === "struct") strip(c.fields);
-    else c.variants.forEach((x) => { if ("description" in x) x.description = ""; if (x.shape === "struct") strip(x.fields); });
+    else c.variants.forEach((x) => { if ("description" in x) x.description = ""; if (x.kind === "struct") strip(x.fields); });
     seen[name] = c;
     const refs = [];
     const walk = (ty) => {
@@ -192,12 +192,12 @@ function declarationHash(q, find) {
         case "matrix_of": case "table_of": refs.push(ty.of); break;
         case "option": walk(ty.inner); break;
         case "vec": case "matrix": case "array": case "sparse_matrix": walk(ty.element); break;
-        case "hashmap": case "ordered_map": walk(ty.value); break;
+        case "btree_map": case "index_map": walk(ty.value); break;
         case "table": ty.columns.forEach((col) => walk(col.type)); break;
       }
     };
     if (t.kind === "struct") t.fields.forEach((f) => walk(f.type));
-    else t.variants.forEach((x) => { if (x.shape === "struct") x.fields.forEach((f) => walk(f.type)); if (x.shape === "newtype") refs.push(x.of); });
+    else t.variants.forEach((x) => { if (x.kind === "struct") x.fields.forEach((f) => walk(f.type)); if (x.kind === "newtype") refs.push(x.of); });
     refs.forEach(reach);
   };
   reach(q);

@@ -1,12 +1,12 @@
 //! Compilation of a JSONLogic expression against the fields in scope.
 //!
-//! Compiling resolves every `var` path to a field and its static type,
+//! Compiling binds every `var` path to a field and its static type,
 //! checks each operator's operands, checks units, and checks variant names,
 //! so a rule's mistakes are declaration errors. The result is a typed tree
 //! that `eval` runs.
 
 use super::eval::Scalar;
-use super::ty::{Shape, Ty, TypeLookup, VariantFields, shape};
+use super::ty::{Members, Ty, TypeLookup, VariantFields, members};
 use crate::ir::{FieldDef, Logic, Operator};
 
 /// A problem in a rule expression, located by a JSON Pointer into the
@@ -30,7 +30,7 @@ pub enum Root {
     Element,
 }
 
-/// One step of a resolved path.
+/// One step of a bound path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// A field of a struct or an enum value, or a member of a value of
@@ -474,7 +474,7 @@ impl Compiler<'_> {
         self.var_path(p, path)
     }
 
-    /// Resolves the path `p` of a `var` to a field and its static type.
+    /// Binds the path `p` of a `var` to a field and its static type.
     fn var_path(&mut self, p: &str, path: &str) -> (Expr, Ty) {
         let mut segments: Vec<&str> = p.split('.').collect();
         let mut steps = Vec::new();
@@ -519,11 +519,11 @@ impl Compiler<'_> {
                 None => return (Expr::Lit(Scalar::Null), Ty::Any),
             }
         }
-        if ty == Ty::Runtime {
+        if ty == Ty::HostOnly {
             return self.error(
                 "rule_type",
                 path,
-                format!("`{p}` is a runtime-only R value, which rules cannot read"),
+                format!("`{p}` is a host-only R value, which rules cannot read"),
             );
         }
         (Expr::Var { root, steps }, ty)
@@ -558,21 +558,22 @@ impl Compiler<'_> {
                 };
                 Some((s, (**value).clone()))
             }
-            Ty::Named(q) => match shape(self.lookup, q) {
+            Ty::Named(q) => match members(self.lookup, q) {
                 None => member(Ty::Any),
-                Some(Shape::Struct(fields)) => match fields.iter().find(|f| f.name.as_str() == seg)
-                {
-                    Some(f) => member(Ty::of(&f.ty, f.unit.as_deref())),
-                    None => {
-                        self.error(
-                            "rule_field",
-                            path,
-                            format!("`{seg}` is not a field of `{q}`"),
-                        );
-                        None
+                Some(Members::Struct(fields)) => {
+                    match fields.iter().find(|f| f.name.as_str() == seg) {
+                        Some(f) => member(Ty::of(&f.ty, f.unit.as_deref())),
+                        None => {
+                            self.error(
+                                "rule_field",
+                                path,
+                                format!("`{seg}` is not a field of `{q}`"),
+                            );
+                            None
+                        }
                     }
-                },
-                Some(Shape::Enum { variants, .. }) => {
+                }
+                Some(Members::Enum { variants, .. }) => {
                     let mut found: Option<Ty> = None;
                     let mut unknown = false;
                     for (_, vf) in &variants {
@@ -991,8 +992,8 @@ impl Compiler<'_> {
             );
         };
         let tag = match &t {
-            Ty::Named(q) => match shape(self.lookup, q) {
-                Some(Shape::Enum { tag, variants }) => {
+            Ty::Named(q) => match members(self.lookup, q) {
+                Some(Members::Enum { tag, variants }) => {
                     if !variants.iter().any(|(n, _)| *n == variant) {
                         return self.error(
                             "rule_variant",
@@ -1005,7 +1006,7 @@ impl Compiler<'_> {
                         None => VariantTag::UnitOnly,
                     }
                 }
-                Some(Shape::Struct(_)) => {
+                Some(Members::Struct(_)) => {
                     return self.error(
                         "rule_type",
                         &format!("{path}/0"),

@@ -4,10 +4,10 @@
 
 # Run roxygen2 and exit with an error if it reported any problem.
 #
-# roxygen2 reports unresolved links, mismatched @param tags and similar defects
-# as messages, so roxygenize() succeeds regardless and a problem scrolls past.
-# This counts every message roxygen2 marks as an error or warning, and every R
-# warning, while printing all output unchanged.
+# roxygen2 reports links to missing topics, mismatched @param tags and similar
+# defects as messages, so roxygenize() succeeds regardless and a problem scrolls
+# past. This counts every message roxygen2 marks as an error or warning, and
+# every R warning, while printing all output unchanged.
 
 problems <- 0L
 withCallingHandlers(

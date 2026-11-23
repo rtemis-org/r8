@@ -18,7 +18,7 @@ Zero rows when no call is ambiguous.
 \description{
 Lists the pairs of registered impls of a generic or trait that are each
 more specific in one dispatched position, with no impl at their meet, the
-tuple whose impl resolves them. A package's tests call it to check that
+tuple whose impl disambiguates them. A package's tests call it to check that
 its impls, with those of the packages it uses, leave no call ambiguous.
 }
 \examples{

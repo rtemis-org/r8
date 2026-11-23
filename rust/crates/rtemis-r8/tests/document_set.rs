@@ -1,5 +1,5 @@
 //! The registry's set of documents: its name index through every change, and
-//! the resolution of `dyn()` implementors across namespaces.
+//! the lookup of `dyn()` implementors across namespaces.
 
 use rtemis_r8::ir::{IrDocument, TypeDef};
 use rtemis_r8::name::{Name, QualifiedName};
@@ -88,13 +88,13 @@ fn a_set_built_from_documents_is_indexed() {
 }
 
 #[test]
-fn implementors_resolve_through_the_trait_tag_in_every_namespace() {
+fn implementors_are_found_through_the_trait_tag_in_every_namespace() {
     let home = IrDocument::from_json(
         &json!({
             "$ir": 1, "namespace": "k",
             "types": [{"kind": "struct", "name": "Linear", "version": 1, "fields": []}],
             "traits": [{"name": "Kernel", "methods": [], "tag": "kind"}],
-            "impls": [{"trait": "k::Kernel", "target": {"kind": "type", "name": "k::Linear"},
+            "impls": [{"trait": "k::Kernel", "target": {"kind": "named", "name": "k::Linear"},
                        "tag_value": "linear", "methods": []}]
         })
         .to_string(),
@@ -104,7 +104,7 @@ fn implementors_resolve_through_the_trait_tag_in_every_namespace() {
         &json!({
             "$ir": 1, "namespace": "ext",
             "types": [{"kind": "struct", "name": "Rbf", "version": 1, "fields": []}],
-            "impls": [{"trait": "k::Kernel", "target": {"kind": "type", "name": "ext::Rbf"},
+            "impls": [{"trait": "k::Kernel", "target": {"kind": "named", "name": "ext::Rbf"},
                        "methods": []}]
         })
         .to_string(),

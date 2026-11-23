@@ -3,9 +3,9 @@
 //! [`validate`] checks a value's JSON form against a named type: every field
 //! type, constraint, and rule, collecting every error with a stable code, a
 //! JSON Pointer path, and, for a rule, its ID. A value's JSON form is the form
-//! the codec writes: an absent field is `null` or an omitted member, and the
-//! document envelope (`"$type"`, `"$types"`, `"$provenance"`) is accepted on
-//! the outermost object.
+//! [`crate::canonical::to_document`] writes: an absent field is `null` or an
+//! omitted member, and the document envelope (`"$type"` and `"$types"`) is
+//! accepted on the outermost object.
 //!
 //! [`validate_access`] checks a value in any host form through
 //! [`Access`]; [`validate`] is its JSON instance. Paths are the JSON Pointers
@@ -23,7 +23,7 @@ use crate::access::{
     POSIXCT_MICROS, csc_well_formed,
 };
 use crate::ir::{
-    CharacterType, DoubleType, FieldDef, FieldType, IntegerType, RuleDef, TypeDef, VariantShape,
+    CharacterType, DoubleType, FieldDef, FieldType, IntegerType, RuleDef, TypeDef, VariantKind,
 };
 use crate::name::{Name, QualifiedName};
 use crate::problem::{Lit, Problem, Segment, listed};
@@ -73,7 +73,7 @@ pub fn diagnosis(r: &RuleDef, mut d: crate::rules::Diagnosis) -> Box<crate::rule
 const INT_MIN: i64 = -2_147_483_647;
 const INT_MAX: i64 = 2_147_483_647;
 
-const ENVELOPE: [&str; 3] = ["$type", "$types", "$provenance"];
+const ENVELOPE: [&str; 2] = ["$type", "$types"];
 
 /// Compiled rules and patterns, kept between validations.
 ///
@@ -505,7 +505,7 @@ impl<'l> Validator<'l, '_> {
                         let n = s.fields.len() as u32;
                         self.dense(element, v, path, Some([None, Some(n)]), None);
                     }
-                    _ => self.unresolved(of, path),
+                    _ => self.unknown_type(of, path),
                 }
             }
             FieldType::Table {
@@ -517,7 +517,7 @@ impl<'l> Validator<'l, '_> {
                 let lookup = self.lookup;
                 match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => self.table(&s.fields, false, &[], v, path),
-                    _ => self.unresolved(of, path),
+                    _ => self.unknown_type(of, path),
                 }
             }
             FieldType::Json => {
@@ -525,8 +525,8 @@ impl<'l> Validator<'l, '_> {
                     self.form(f, path);
                 }
             }
-            FieldType::R { .. } => {
-                if let Err(f) = v.runtime() {
+            FieldType::HostClass { .. } => {
+                if let Err(f) = v.host_only() {
                     self.form(f, path);
                 }
             }
@@ -648,7 +648,9 @@ impl<'l> Validator<'l, '_> {
                         self.date(d, &P::Idx(path, i));
                     }
                     if unique {
-                        dup(self, i, Key::N(d as u64), &|| crate::codec::date_text(d));
+                        dup(self, i, Key::N(d as u64), &|| {
+                            crate::canonical::date_text(d)
+                        });
                     }
                 }
                 Ok(None) if optional => {}
@@ -662,7 +664,7 @@ impl<'l> Validator<'l, '_> {
                     }
                     if unique {
                         dup(self, i, Key::N(m as u64), &|| {
-                            crate::codec::datetime_text(m)
+                            crate::canonical::datetime_text(m)
                         });
                     }
                 }
@@ -751,11 +753,11 @@ impl<'l> Validator<'l, '_> {
         });
     }
 
-    fn unresolved(&mut self, name: &QualifiedName, path: &P) {
+    fn unknown_type(&mut self, name: &QualifiedName, path: &P) {
         self.report(
-            "unresolved_type",
+            "unknown_type",
             path,
-            Problem::Unresolved(name.to_string()),
+            Problem::UnknownType(name.to_string()),
             None,
             None,
         );
@@ -1472,7 +1474,7 @@ impl<'l> Validator<'l, '_> {
     ) {
         let lookup = self.lookup;
         match lookup.find(name) {
-            None => self.unresolved(name, path),
+            None => self.unknown_type(name, path),
             Some(TypeDef::Struct(s)) if lookup.is_stale(name) => {
                 let parent = s
                     .extends
@@ -1494,7 +1496,7 @@ impl<'l> Validator<'l, '_> {
                 let unit_only = e
                     .variants
                     .iter()
-                    .all(|x| matches!(x.shape, VariantShape::Unit));
+                    .all(|x| matches!(x.kind, VariantKind::Unit));
                 let variant = match v.variant(name, e) {
                     Ok(s) => s,
                     Err(f) => return self.form(f, path),
@@ -1538,11 +1540,11 @@ impl<'l> Validator<'l, '_> {
                     }
                     return;
                 }
-                match &def.shape {
-                    VariantShape::Unit => {
+                match &def.kind {
+                    VariantKind::Unit => {
                         self.object(&format!("{name}@{variant}"), &[], &[], v, path, &allowed)
                     }
-                    VariantShape::Struct { fields, rules } => self.object(
+                    VariantKind::Struct { fields, rules } => self.object(
                         &format!("{name}@{variant}"),
                         fields,
                         rules,
@@ -1550,7 +1552,7 @@ impl<'l> Validator<'l, '_> {
                         path,
                         &allowed,
                     ),
-                    VariantShape::Newtype { of } => match lookup.find(of) {
+                    VariantKind::Newtype { of } => match lookup.find(of) {
                         Some(TypeDef::Struct(s)) => self.object(
                             &format!("{name}@{variant}"),
                             &s.fields,
@@ -1559,7 +1561,7 @@ impl<'l> Validator<'l, '_> {
                             path,
                             &allowed,
                         ),
-                        _ => self.unresolved(of, path),
+                        _ => self.unknown_type(of, path),
                     },
                 }
             }
@@ -1569,7 +1571,7 @@ impl<'l> Validator<'l, '_> {
     fn dynamic<'a, A: Access<'a>>(&mut self, tr: &QualifiedName, v: A, path: &P) {
         match v.implementor(tr, self.lookup) {
             Ok((ty, _)) if self.lookup.find(&ty).is_none() => self.error(
-                "unresolved_type",
+                "unknown_type",
                 path,
                 format!("`{ty}` is not a registered type"),
             ),
@@ -1583,12 +1585,12 @@ impl<'l> Validator<'l, '_> {
                 Some(m) => self.named(&ty, v, path, &[m.as_str()]),
                 None => self.named(&ty, v, path, &[]),
             },
-            Err(msg) => self.error("unresolved_type", path, msg),
+            Err(msg) => self.error("unknown_type", path, msg),
         }
     }
 
-    /// Checks a value of `dyn(of)` for the struct `of`: the type the value
-    /// names is `of` or descends from it, and the value is valid as that
+    /// Checks a value of `subtype(of)` for the struct `of`: the type the value
+    /// names is a subtype of `of`, and the value is valid as that
     /// type.
     fn subtype<'a, A: Access<'a>>(&mut self, of: &QualifiedName, v: A, path: &P) {
         match v.named_type() {
@@ -1597,7 +1599,7 @@ impl<'l> Validator<'l, '_> {
                 None => self.named(&ty, v, path, &[]),
             },
             Ok((ty, _)) if self.lookup.find(&ty).is_none() => self.error(
-                "unresolved_type",
+                "unknown_type",
                 path,
                 format!("`{ty}` is not a registered type"),
             ),
@@ -1606,7 +1608,7 @@ impl<'l> Validator<'l, '_> {
                 path,
                 format!("`{ty}` is not `{of}` and does not extend it"),
             ),
-            Err(msg) => self.error("unresolved_type", path, msg),
+            Err(msg) => self.error("unknown_type", path, msg),
         }
     }
 }

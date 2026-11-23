@@ -248,7 +248,7 @@
               {
                 "name": "X",
                 "description": "",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           },

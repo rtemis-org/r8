@@ -16,14 +16,14 @@ before the read, such as the package that declares an implementor of a
 \code{dyn()} field.}
 }
 \value{
-An R8 value. A document that names types no loaded package
-declares raises \code{r8_unresolved_type}, which names each namespace and the
+An R8 value. A document that names types no loaded package declares
+raises \code{r8_unknown_type_error}, which names each namespace and the
 installed packages that declare it.
 }
 \description{
 Reads a document of \code{type}: checks \code{"$type"} and the versions in
 \code{"$types"}, validates the value, and returns it. A type the document names
-resolves among the registered types only; the document never selects code
+is looked up among the registered types only; the document never selects code
 to load.
 }
 \examples{

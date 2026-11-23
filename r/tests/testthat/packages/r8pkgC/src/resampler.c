@@ -118,14 +118,14 @@ static void resampler_drop(void *state) {
   free(state);
 }
 
-static size_t resampler_bytes(const void *state) {
+static size_t resampler_owned_bytes(const void *state) {
   (void) state;
   return sizeof(Resampler);
 }
 
 // An enum's codec: `variant` and `from_variant`, and no `from_fields`.
-const R8TypeVTable pkgc_resampler_codec = {
-    .size = sizeof(R8TypeVTable),
+const R8Codec pkgc_resampler_codec = {
+    .size = sizeof(R8Codec),
     .type_name = "pkgc::Resampler",
     .from_fields = NULL,
     .encode = NULL,
@@ -134,18 +134,18 @@ const R8TypeVTable pkgc_resampler_codec = {
     .get_field = resampler_get_field,
     .with_field = resampler_with_field,
     .drop = resampler_drop,
-    .bytes = resampler_bytes,
+    .owned_bytes = resampler_owned_bytes,
     .variant = resampler_variant,
     .from_variant = resampler_from_variant,
     // The hash of the R declaration of pkgc::Resampler (R/types.R), whose
     // variants' fields from_variant reads by position.
-    .declaration_hash = "sha256:6524d382fefc9ec03ec1b5b397f1d96851d6f9b0b799e08bb6be30b2c146664f",
+    .declaration_hash = "sha256:87c77663033a8e37ed10ed3ec09caa6556113a10d8d7a044099f32f7dda85cef",
 };
 
 // Codecs of pkgc::Signal that registration refuses, by `kind`: 1 sets the
 // enum members, 2 pins another declaration hash, and 3 pins none.
-extern const R8TypeVTable pkgc_signal_codec;
-static R8TypeVTable misshaped;
+extern const R8Codec pkgc_signal_codec;
+static R8Codec misshaped;
 static R8Exports bad_exports;
 
 // An external pointer to an exports table whose one codec is the codec of

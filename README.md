@@ -8,9 +8,9 @@ The Cargo workspace is `rust/`.
 
 | Crate | Contents |
 |---|---|
-| `rtemis-r8` | The runtime: the declaration IR, validation, rules, the value-access trait, the JSON codec, equality, hashing, the declaration record, and the C ABI types |
+| `rtemis-r8` | The runtime: the declaration IR, validation, rules, the value-access trait, documents, the canonical form, equality, hashing, the declaration record, and the C ABI types |
 | `rtemis-r8-macros` | The procedural macros: `#[derive(R8)]`, `#[r8::methods]`, and `r8::exports!` |
-| `rtemis-r8-api` | R8's C services for a package's Rust code: Rust-native types, their codecs, and trait impls registered with R8 |
+| `rtemis-r8-api` | R8's C services for a package's Rust code: Rust-stored types, their codecs, and trait impls registered with R8 |
 | `rtemis-r8-abi-check` | Test-only: the ABI types of `rtemis-r8` match the C header |
 
 ## R API

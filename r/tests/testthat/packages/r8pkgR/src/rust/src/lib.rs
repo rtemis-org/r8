@@ -1,7 +1,7 @@
 //! The Rust code of r8pkgR: a Rust-stored struct, `pkgr::Signal`, with
 //! impls of `pkgr::Norm`, declared in R, and of `R8::Display`; and a
 //! Rust-stored enum, `pkgr::Resampler`, of every variant shape, with an impl
-//! of `R8::Display`; and `pkgr::Conform`, a field of every Rust field type,
+//! of `R8::Display`; and `pkgr::Probe`, a field of every Rust field type,
 //! against which the conformance tests of `tests/testthat/conformance` run.
 
 use rtemis_r8::R8;
@@ -76,7 +76,7 @@ impl r8::Display for Signal {
     invariant = r#"{"===": [{"length": {"var": "weights"}}, {"length": {"var": "index"}}]}"#,
     message = "There is one weight per index."
 ))]
-pub struct Conform {
+pub struct Probe {
     /// A fraction.
     #[r8(min = 0, max = 1)]
     pub ratio: f64,
@@ -101,22 +101,22 @@ pub struct Conform {
 }
 
 #[r8::methods(trait = "R8::Display")]
-impl r8::Display for Conform {
+impl r8::Display for Probe {
     fn format(&self, _dots: Dots) -> String {
-        format!("Conform {} ({})", self.label, self.count)
+        format!("Probe {} ({})", self.label, self.count)
     }
 }
 
 #[r8::methods(trait = "R8::PartialOrd")]
-impl r8::PartialOrd for Conform {
+impl r8::PartialOrd for Probe {
     fn partial_cmp(&self, other: r8::Sexp) -> Option<std::cmp::Ordering> {
-        let other = unsafe { r8::Receiver::<Conform>::from_named_arg(other.0, "y") }.ok()?;
+        let other = unsafe { r8::Receiver::<Probe>::from_named_arg(other.0, "y") }.ok()?;
         self.ratio.partial_cmp(&other.ratio)
     }
 }
 
 #[r8::methods(trait = "R8::Shape")]
-impl r8::Shape for Conform {
+impl r8::Shape for Probe {
     fn dim(&self) -> Vec<i32> {
         vec![self.index.len() as i32, 2]
     }
@@ -177,13 +177,13 @@ impl r8::Display for Resampler {
 r8::exports! {
     package = "r8pkgR",
     namespace = "pkgr",
-    types = [Signal, Resampler, Conform],
+    types = [Signal, Resampler, Probe],
     impls = [
         Signal: Norm,
         Signal: Display,
         Resampler: Display,
-        Conform: Display,
-        Conform: PartialOrd,
-        Conform: Shape,
+        Probe: Display,
+        Probe: PartialOrd,
+        Probe: Shape,
     ],
 }

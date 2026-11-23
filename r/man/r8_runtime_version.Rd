@@ -11,7 +11,7 @@ Character: The version, for example \code{"0.1.0"}.
 }
 \description{
 Returns the version of the runtime compiled into R8, the Rust crate
-\code{rtemis-r8}, which provenance records alongside the versions of R8 and R.
+\code{rtemis-r8}.
 }
 \examples{
 r8_runtime_version()

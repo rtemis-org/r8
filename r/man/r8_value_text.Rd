@@ -37,7 +37,7 @@
 \item{x, object}{An R8 value or an \code{r8_text} object.}
 
 \item{output_type}{Character: \code{"plain"}, \code{"ansi"}, \code{"html"}, or
-\code{"markdown"}; \code{NULL} in \code{print()} resolves it with \code{r8_output_type()}.}
+\code{"markdown"}; \code{NULL} in \code{print()} determines it with \code{r8_output_type()}.}
 
 \item{theme}{An \code{r8_theme} object, or \code{NULL} for \code{getOption("r8.theme")}
 or R8's theme.}
@@ -61,7 +61,7 @@ invisibly. \code{str()}: \code{NULL}, invisibly.
 \description{
 \code{format()} encodes text as plain text unless its caller names another
 output type, so that files, snapshots, and \code{paste()} receive no markup.
-\code{print()} writes the output type that \code{r8_output_type()} resolves. The
+\code{print()} writes the output type that \code{r8_output_type()} determines. The
 text of an R8 value is its type's \code{Display} impl's, or its default layout
 (\code{r8_layout()}); a \code{Print} impl replaces the output of \code{print()}, and a
 \code{Debug} impl the output of \code{str()}. The default \code{str()} adds to the size

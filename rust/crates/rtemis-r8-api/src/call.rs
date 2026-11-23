@@ -13,7 +13,7 @@ use crate::api::{self, Error, Jumped, Result};
 use crate::buffer::{Buffer, Element};
 use crate::field::Field;
 use crate::keep;
-use crate::native::{Codec, panic_text};
+use crate::rust_stored::{RustStored, panic_text};
 use crate::sys::{self, SEXP};
 
 /// An argument of an impl function, converted from its R value.
@@ -98,7 +98,7 @@ impl FromR for Dots {
 
 /// The receiver `x` of a method of a Rust-stored type: the state of a
 /// Rust-stored value, borrowed, or a value built from an R-stored value of
-/// the type ([`Codec::from_r_native`]), such as `serialize(version = 2)`
+/// the type ([`RustStored::from_r_stored`]), such as `serialize(version = 2)`
 /// reads back.
 pub enum Receiver<'a, T> {
     /// The state of a Rust-stored value.
@@ -117,7 +117,7 @@ impl<T> Deref for Receiver<'_, T> {
     }
 }
 
-impl<T: Codec> Receiver<'_, T> {
+impl<T: RustStored> Receiver<'_, T> {
     /// The receiver from `x`; an object of another type returns
     /// `type_mismatch`.
     ///
@@ -153,7 +153,7 @@ impl<T: Codec> Receiver<'_, T> {
             return Ok(Receiver::Borrowed(unsafe { &*state.cast::<T>() }));
         }
         let e = Error::from_abi(&err);
-        if e.code != "not_native" || !is_r_native::<T>(x) {
+        if e.code != "not_rust_stored" || !is_r_stored::<T>(x) {
             return Err(Error::new(
                 "type_mismatch",
                 format!("`{name}` is not a `{}`", T::NAME),
@@ -163,13 +163,13 @@ impl<T: Codec> Receiver<'_, T> {
         let fields: Vec<SEXP> = (0..n)
             .map(|i| unsafe { sys::VECTOR_ELT(x, i as isize) })
             .collect();
-        unsafe { T::from_r_native(x, &fields) }.map(Receiver::Built)
+        unsafe { T::from_r_stored(x, &fields) }.map(Receiver::Built)
     }
 }
 
 /// Whether `x` is an R-stored value of `T`: a list whose `r8_type` names
 /// `T`.
-fn is_r_native<T: Codec>(x: SEXP) -> bool {
+fn is_r_stored<T: RustStored>(x: SEXP) -> bool {
     unsafe {
         if sys::TYPEOF(x) != sys::VECSXP {
             return false;
@@ -350,9 +350,9 @@ impl<T: Element> IntoR for Buffer<T> {
 }
 
 /// A Rust-stored value returned by an impl function, wrapped by R8.
-pub struct Value<T: Codec>(pub T);
+pub struct Value<T: RustStored>(pub T);
 
-impl<T: Codec> IntoR for Value<T> {
+impl<T: RustStored> IntoR for Value<T> {
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         let a = api::api().map_err(Jumped::Error)?;
         let Some(f) = a.new_value else {

@@ -16,7 +16,8 @@ use extendr_api::SEXP;
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use extendr_ffi::{R_xlen_t, SEXPTYPE, VECTOR_ELT};
-use rtemis_r8::ir::{CharacterType, DoubleType, FieldType, IntegerType};
+use rtemis_r8::ir::build::host_class;
+use rtemis_r8::ir::{CharacterType, ClassSystem, DoubleType, FieldType, IntegerType};
 use rtemis_r8::layout::{
     Entry, EntryName, LayoutOptions, Record, count, layout_record, layout_with,
 };
@@ -24,7 +25,7 @@ use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 use rtemis_r8::text::{
     ALL_ROLES, Color, ColorDepth, Facts, HostKind, HtmlStyle, Line, OutputType, Role, Span, Style,
-    Text, Theme, css, encode_ansi, encode_html, encode_markdown, encode_plain, resolve,
+    Text, Theme, css, determine, encode_ansi, encode_html, encode_markdown, encode_plain,
 };
 
 use crate::rview::{
@@ -264,9 +265,7 @@ fn r8_layout_value(
 /// frame when `column`, inferred from its R type, class, length, and
 /// attributes in constant time.
 fn infer_type(x: SEXP, column: bool) -> FieldType {
-    let other = |class: &str| FieldType::R {
-        class: class.into(),
-    };
+    let other = |class: &str, system: ClassSystem| host_class(class, "", system);
     let vector = |element: FieldType| FieldType::Vec {
         element: Box::new(element),
         min_length: None,
@@ -282,7 +281,7 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
         return attr_string(x, sym_r8_type())
             .and_then(|t| QualifiedName::parse(&t).ok())
             .map(|name| FieldType::Named { name })
-            .unwrap_or_else(|| other("r8_value"));
+            .unwrap_or_else(|| other("r8_value", ClassSystem::S3));
     }
     if inherits(x, "factor") {
         return FieldType::Factor {
@@ -321,7 +320,10 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
                 .flatten()
                 .next()
                 .map(|c| c.into_owned());
-            return other(&class.unwrap_or_else(|| implicit_class(t).to_string()));
+            return match class {
+                Some(class) => other(&class, explicit_system(x)),
+                None => other(implicit_class(t), ClassSystem::Implicit),
+            };
         }
     };
     if attr(x, sym_class()) != nil() {
@@ -331,7 +333,7 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
             .next()
             .map(|c| c.into_owned())
             .unwrap_or_default();
-        return other(&class);
+        return other(&class, explicit_system(x));
     }
     let dim = attr(x, sym_dim());
     if !is_null(dim) {
@@ -368,6 +370,17 @@ fn implicit_class(t: SEXPTYPE) -> &'static str {
         SEXPTYPE::EXTPTRSXP => "externalptr",
         SEXPTYPE::OBJSXP => "S4",
         _ => "object",
+    }
+}
+
+/// The class system of an object with a class attribute: S4 for an S4
+/// object, S3 otherwise.
+fn explicit_system(x: SEXP) -> ClassSystem {
+    // SAFETY: `x` is a live, protected R object.
+    if bool::from(unsafe { extendr_ffi::Rf_isS4(x) }) {
+        ClassSystem::S4
+    } else {
+        ClassSystem::S3
     }
 }
 
@@ -419,9 +432,7 @@ impl<'a> Record<'a, RView<'a>> for ListRecord {
         }
         let mut ty = infer_type(elt, self.columns);
         if self.columns && is_plain_list(elt) {
-            ty = FieldType::R {
-                class: "list".into(),
-            };
+            ty = host_class("list", "", ClassSystem::Implicit);
         }
         Entry::Field {
             name,
@@ -740,7 +751,7 @@ fn fact_type(facts: &List, name: &str) -> Result<Option<OutputType>> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_resolve_output(facts: List) -> Result<Vec<String>> {
+fn r8_determine_output(facts: List) -> Result<Vec<String>> {
     let flag = |name: &str| {
         facts
             .dollar(name)
@@ -773,7 +784,7 @@ fn r8_resolve_output(facts: List) -> Result<Vec<String>> {
         terminal: flag("terminal"),
         truecolor: flag("truecolor"),
     };
-    let (ty, depth) = resolve(&f);
+    let (ty, depth) = determine(&f);
     Ok(vec![
         ty.name().to_string(),
         match depth {
@@ -792,5 +803,5 @@ extendr_module! {
     fn r8_roles;
     fn r8_text_encode;
     fn r8_css_text;
-    fn r8_resolve_output;
+    fn r8_determine_output;
 }

@@ -5,7 +5,7 @@
 //! no R errors or panics across the boundary, unprotected `SEXP` results,
 //! each side freeing only what it allocated, and fields only appended within
 //! a major version. The crate `rtemis-r8-abi-check` compiles the header and asserts
-//! that [`layout()`] matches it.
+//! that [`struct_offsets()`] matches it.
 //!
 //! `rtemis-r8` does not depend on R, so an R value appears here as [`Sexp`], an
 //! untyped pointer of the same size as `SEXP`.
@@ -27,8 +27,8 @@ pub const ERROR: Status = 1;
 /// `R8_UNWIND`: R jumped (an error or an interrupt) inside `R8Api.protect`.
 pub const UNWIND: Status = 2;
 
-/// `R8_CONTEXT_HAS_SEED`: [`CallContext::seed`] holds a seed.
-pub const CONTEXT_HAS_SEED: u32 = 1;
+/// `R8_CALL_HAS_SEED`: [`CallInputs::seed`] holds a seed.
+pub const CALL_HAS_SEED: u32 = 1;
 
 /// `R8Error`: an error report with a stable code and a message, each
 /// truncated to fit and NUL-terminated.
@@ -87,7 +87,7 @@ pub struct Reader {
     /// The node's kind, an `R8_NODE_*` constant; a NULL node is absent.
     pub kind: Option<unsafe extern "C" fn(*mut c_void, Node) -> u32>,
     /// An object's member by name, or NULL when the object has none.
-    pub field: Option<unsafe extern "C" fn(*mut c_void, Node, *const c_char) -> Node>,
+    pub member: Option<unsafe extern "C" fn(*mut c_void, Node, *const c_char) -> Node>,
     /// An array's item, or NULL past its end.
     pub item: Option<unsafe extern "C" fn(*mut c_void, Node, usize) -> Node>,
     /// An array's or an object's length; 0 for any other node.
@@ -124,21 +124,21 @@ pub struct Reader {
     >,
 }
 
-/// `R8CallContext`: the per-call inputs of an impl function.
+/// `R8CallInputs`: the per-call inputs of an impl function.
 #[repr(C)]
-pub struct CallContext {
+pub struct CallInputs {
     /// The size of this struct in bytes, for appended fields.
     pub size: u32,
-    /// Flags such as [`CONTEXT_HAS_SEED`].
+    /// Flags such as [`CALL_HAS_SEED`].
     pub flags: u32,
     /// The seed of a stochastic method, when the flags say so.
     pub seed: u64,
 }
 
-/// `R8TypeVTable`: the codec of a Rust-stored type. A package's codecs have
+/// `R8Codec`: the codec of a Rust-stored type. A package's codecs have
 /// one size, `size`, which is the stride of its `types` array.
 #[repr(C)]
-pub struct TypeVTable {
+pub struct Codec {
     /// The size of this struct in bytes.
     pub size: u32,
     /// The qualified type name, NUL-terminated.
@@ -176,8 +176,8 @@ pub struct TypeVTable {
     >,
     /// Frees a value.
     pub drop: Option<unsafe extern "C" fn(*mut c_void)>,
-    /// The bytes a state holds, including memory it owns.
-    pub bytes: Option<unsafe extern "C" fn(*const c_void) -> usize>,
+    /// The bytes a state owns: its inline size and the memory it owns.
+    pub owned_bytes: Option<unsafe extern "C" fn(*const c_void) -> usize>,
     /// The name of the state's variant, NUL-terminated, alive as long as
     /// the codec: set by an enum's codec, `None` in a struct's.
     pub variant: Option<unsafe extern "C" fn(*const c_void) -> *const c_char>,
@@ -210,7 +210,7 @@ pub struct TypeVTable {
 
 /// `R8MethodFn`: an impl function.
 pub type MethodFn =
-    unsafe extern "C" fn(*const CallContext, *const Sexp, usize, *mut Sexp, *mut Error) -> Status;
+    unsafe extern "C" fn(*const CallInputs, *const Sexp, usize, *mut Sexp, *mut Error) -> Status;
 
 /// `R8ImplEntry`: one method of one impl.
 #[repr(C)]
@@ -246,7 +246,7 @@ pub struct Exports {
     /// The length of `ir_record` in bytes.
     pub ir_record_len: usize,
     /// The codecs of the package's Rust-stored types.
-    pub types: *const TypeVTable,
+    pub types: *const Codec,
     /// The number of entries of `types`.
     pub n_types: usize,
     /// The package's impl functions.
@@ -297,57 +297,39 @@ pub type ExportsFn = unsafe extern "C" fn() -> *const Exports;
 pub type ViewFn<T> = unsafe extern "C" fn(Sexp, *const T, usize, *mut Sexp, *mut Error) -> Status;
 
 /// The size of every struct and the offset of every field, in the order of
-/// `layout.c` in `rtemis-r8-abi-check`, which computes the same list from the C
+/// `struct_offsets.c` in `rtemis-r8-abi-check`, which computes the same list from the C
 /// header.
-pub fn layout() -> Vec<(&'static str, usize)> {
+pub fn struct_offsets() -> Vec<(&'static str, usize)> {
     use std::mem::{offset_of, size_of};
     vec![
         ("R8Error", size_of::<Error>()),
         ("R8Error.message", offset_of!(Error, message)),
         ("R8Writer", size_of::<Writer>()),
         ("R8Writer.write", offset_of!(Writer, write)),
-        ("R8CallContext", size_of::<CallContext>()),
-        ("R8CallContext.flags", offset_of!(CallContext, flags)),
-        ("R8CallContext.seed", offset_of!(CallContext, seed)),
-        ("R8TypeVTable", size_of::<TypeVTable>()),
-        ("R8TypeVTable.type_name", offset_of!(TypeVTable, type_name)),
+        ("R8CallInputs", size_of::<CallInputs>()),
+        ("R8CallInputs.flags", offset_of!(CallInputs, flags)),
+        ("R8CallInputs.seed", offset_of!(CallInputs, seed)),
+        ("R8Codec", size_of::<Codec>()),
+        ("R8Codec.type_name", offset_of!(Codec, type_name)),
+        ("R8Codec.from_fields", offset_of!(Codec, from_fields)),
+        ("R8Codec.encode", offset_of!(Codec, encode)),
+        ("R8Codec.write_state", offset_of!(Codec, write_state)),
+        ("R8Codec.read_state", offset_of!(Codec, read_state)),
+        ("R8Codec.get_field", offset_of!(Codec, get_field)),
+        ("R8Codec.with_field", offset_of!(Codec, with_field)),
+        ("R8Codec.drop", offset_of!(Codec, drop)),
+        ("R8Codec.owned_bytes", offset_of!(Codec, owned_bytes)),
+        ("R8Codec.variant", offset_of!(Codec, variant)),
+        ("R8Codec.from_variant", offset_of!(Codec, from_variant)),
+        ("R8Codec.from_reader", offset_of!(Codec, from_reader)),
         (
-            "R8TypeVTable.from_fields",
-            offset_of!(TypeVTable, from_fields),
-        ),
-        ("R8TypeVTable.encode", offset_of!(TypeVTable, encode)),
-        (
-            "R8TypeVTable.write_state",
-            offset_of!(TypeVTable, write_state),
-        ),
-        (
-            "R8TypeVTable.read_state",
-            offset_of!(TypeVTable, read_state),
-        ),
-        ("R8TypeVTable.get_field", offset_of!(TypeVTable, get_field)),
-        (
-            "R8TypeVTable.with_field",
-            offset_of!(TypeVTable, with_field),
-        ),
-        ("R8TypeVTable.drop", offset_of!(TypeVTable, drop)),
-        ("R8TypeVTable.bytes", offset_of!(TypeVTable, bytes)),
-        ("R8TypeVTable.variant", offset_of!(TypeVTable, variant)),
-        (
-            "R8TypeVTable.from_variant",
-            offset_of!(TypeVTable, from_variant),
-        ),
-        (
-            "R8TypeVTable.from_reader",
-            offset_of!(TypeVTable, from_reader),
-        ),
-        (
-            "R8TypeVTable.declaration_hash",
-            offset_of!(TypeVTable, declaration_hash),
+            "R8Codec.declaration_hash",
+            offset_of!(Codec, declaration_hash),
         ),
         ("R8Reader", size_of::<Reader>()),
         ("R8Reader.context", offset_of!(Reader, context)),
         ("R8Reader.kind", offset_of!(Reader, kind)),
-        ("R8Reader.field", offset_of!(Reader, field)),
+        ("R8Reader.member", offset_of!(Reader, member)),
         ("R8Reader.item", offset_of!(Reader, item)),
         ("R8Reader.length", offset_of!(Reader, length)),
         ("R8Reader.logical", offset_of!(Reader, logical)),

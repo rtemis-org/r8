@@ -1,4 +1,4 @@
-//! The Rust-native types of the R8 benchmark (`bench/` of the r8
+//! The Rust-stored types of the R8 benchmark (`bench/` of the r8
 //! repository): `bench::Wide20` and `bench::GBM`, declared as `bench/types.R`
 //! declares them in R, and the impl of `bench::Complexity`, a trait declared
 //! in R, for `GBM`. The structs carry plain comments, not doc comments, so

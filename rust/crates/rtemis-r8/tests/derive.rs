@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use rtemis_r8::R8;
-use rtemis_r8::codec::{normalize, to_document as write_doc};
+use rtemis_r8::canonical::{normalize, to_document as write_doc};
 use rtemis_r8::derive::{Bytes, Encode, R8 as _};
 use rtemis_r8::ir::{IrDocument, TypeDef};
 use rtemis_r8::rules::TypeLookup;
@@ -85,7 +85,7 @@ fn values_encode_to_the_json_form_and_round_trip() {
         json!({"cost": 2.0, "kernel": {"gamma": 0.5, "type": "Rbf"}, "weights": [1.0, 2.5], "mtry": null})
     );
     let text = svm.to_document().unwrap();
-    // The document a derived value writes equals the one the codec writes
+    // The document a derived value writes equals the one `canonical::to_document` writes
     // from the same JSON against the fixture's declarations.
     assert_eq!(
         text,
@@ -150,7 +150,7 @@ fn values_outside_the_r8_domain_do_not_encode() {
 /// A unit-only enum and the remaining encodings.
 #[derive(R8, Debug, Clone, PartialEq)]
 #[r8(namespace = "demo", version = 1)]
-enum Shape {
+enum Figure {
     Circle,
     Square,
 }
@@ -167,7 +167,7 @@ struct Every {
     #[r8(min_length = 1, unique)]
     tags: Vec<String>,
     counts: BTreeMap<String, i32>,
-    shape: Shape,
+    shape: Figure,
     blob: Bytes,
     meta: serde_json::Value,
     inner: Option<Box<Every>>,
@@ -197,23 +197,23 @@ fn every_encoding_round_trips_including_a_recursive_type() {
         word: "leaf".into(),
         tags: vec!["a".into()],
         counts: BTreeMap::from([("x".to_string(), 1)]),
-        shape: Shape::Square,
+        shape: Figure::Square,
         blob: Bytes(vec![0, 1, 2, 250]),
         meta: json!({"any": [1, "two"]}),
         inner: None,
     };
     let root = Every {
         inner: Some(Box::new(leaf.clone())),
-        shape: Shape::Circle,
+        shape: Figure::Circle,
         ..leaf.clone()
     };
     let text = root.to_document().unwrap();
     assert!(
-        text.starts_with(r#"{"$type":"demo::Every","$types":{"demo::Every":2,"demo::Shape":1}"#),
+        text.starts_with(r#"{"$type":"demo::Every","$types":{"demo::Every":2,"demo::Figure":1}"#),
         "{text}"
     );
     assert_eq!(Every::from_document(&text).unwrap(), root);
-    let TypeDef::Enum(shape) = Shape::type_def() else {
+    let TypeDef::Enum(shape) = Figure::type_def() else {
         panic!()
     };
     assert_eq!(shape.variants.len(), 2);

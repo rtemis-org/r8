@@ -385,10 +385,13 @@ pub fn factor(levels: Option<Vec<String>>, ordered: bool) -> FieldType {
     }
 }
 
-/// `type_r(class)`.
-pub fn r_class(class: &str) -> FieldType {
-    FieldType::R {
+/// `host_class(class, package, system)` as a field type.
+pub fn host_class(class: &str, package: &str, system: super::decl::ClassSystem) -> FieldType {
+    FieldType::HostClass {
+        host: "r".into(),
+        package: package.into(),
         class: class.into(),
+        system,
     }
 }
 
@@ -560,16 +563,16 @@ pub fn variant_parts(has_of: bool, has_fields: bool, has_rules: bool) -> Built<(
 /// The shape of a variant: a newtype for `of`, a unit variant without
 /// fields, and a struct variant otherwise; the parts are checked by
 /// [`variant_parts`].
-pub fn variant_shape(
+pub fn variant_kind(
     fields: Vec<super::FieldDef>,
     rules: Vec<super::RuleDef>,
     of: Option<crate::name::QualifiedName>,
-) -> Built<super::VariantShape> {
+) -> Built<super::VariantKind> {
     variant_parts(of.is_some(), !fields.is_empty(), !rules.is_empty())?;
     Ok(match of {
-        Some(of) => super::VariantShape::Newtype { of },
-        None if fields.is_empty() => super::VariantShape::Unit,
-        None => super::VariantShape::Struct { fields, rules },
+        Some(of) => super::VariantKind::Newtype { of },
+        None if fields.is_empty() => super::VariantKind::Unit,
+        None => super::VariantKind::Struct { fields, rules },
     })
 }
 

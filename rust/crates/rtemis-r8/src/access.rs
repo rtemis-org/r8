@@ -22,8 +22,8 @@ use std::borrow::Cow;
 
 use serde_json::{Map, Value};
 
-use crate::codec::{date_days, datetime_micros};
-use crate::ir::{EnumDef, FieldType, VariantShape};
+use crate::canonical::{date_days, datetime_micros};
+use crate::ir::{EnumDef, FieldType, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -414,8 +414,8 @@ pub trait Access<'a>: Copy + 'a {
     fn bytes(self) -> Read<Cow<'a, [u8]>>;
     /// A value of `type_json()`.
     fn json(self) -> Read<()>;
-    /// A present value of a runtime-only field.
-    fn runtime(self) -> Read<()>;
+    /// A present value of a host-only field.
+    fn host_only(self) -> Read<()>;
 
     /// A `vec()` of `element`: the number of items.
     fn vec(self, element: &FieldType) -> Read<usize>;
@@ -640,7 +640,7 @@ pub trait Access<'a>: Copy + 'a {
         r#trait: &QualifiedName,
         lookup: &dyn TypeLookup,
     ) -> Result<(QualifiedName, Option<String>), String>;
-    /// The type a value of a `dyn(Parent)` field names, and the member of
+    /// The type a value of a `subtype(Parent)` field names, and the member of
     /// the value that names it, if the host form has one.
     fn named_type(self) -> Result<(QualifiedName, Option<String>), String>;
 
@@ -650,7 +650,7 @@ pub trait Access<'a>: Copy + 'a {
         false
     }
 
-    /// Whether two values of a runtime-only field are identical in the host.
+    /// Whether two values of a host-only field are identical in the host.
     fn identical(self, other: Self) -> bool {
         self.to_value(&FieldType::Json, &NoTypes) == other.to_value(&FieldType::Json, &NoTypes)
     }
@@ -661,7 +661,7 @@ pub trait Access<'a>: Copy + 'a {
 
 /// The concrete type of a value of the field type `ft`, and the member of
 /// the value that names it: a trait's implementor for `dyn(Trait)`, the named
-/// struct for `dyn(Parent)`, and `None` for any other field type.
+/// struct for `subtype(Parent)`, and `None` for any other field type.
 pub fn concrete<'a, A: Access<'a>>(
     v: A,
     ft: &FieldType,
@@ -1154,10 +1154,10 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         Ok(())
     }
 
-    fn runtime(self) -> Read<()> {
+    fn host_only(self) -> Read<()> {
         Err(Form::new(
-            "runtime_only",
-            "a runtime-only R value has no JSON form; the member is null or omitted",
+            "host_only",
+            "a host-only R value has no JSON form; the member is null or omitted",
         ))
     }
 
@@ -1545,7 +1545,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         let unit_only = def
             .variants
             .iter()
-            .all(|x| matches!(x.shape, VariantShape::Unit));
+            .all(|x| matches!(x.kind, VariantKind::Unit));
         let tag = def.tag.as_str();
         // Inside `dyn()`, a unit-only enum's value is an object holding the
         // type member and its tag.

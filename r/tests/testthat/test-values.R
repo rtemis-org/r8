@@ -208,8 +208,8 @@ test_that("a document round trips to an identical value", {
 
 test_that("every field type has an R form that round trips through JSON", {
   Every <- declare_in("demo", {
-    Shape <- new_enum(
-      "Shape3",
+    Figure <- new_enum(
+      "Figure3",
       variants = list(Circle = variant(), Square = variant())
     )
     new_struct(
@@ -225,7 +225,7 @@ test_that("every field type has an R form that round trips through JSON", {
         om = index_map(type_character()),
         j = type_json(),
         b = type_raw(),
-        s = field(Shape),
+        s = field(Figure),
         tb = type_table(
           list(
             id = column(type_character(), unique = TRUE),
@@ -233,11 +233,11 @@ test_that("every field type has an R form that round trips through JSON", {
           ),
           open = TRUE
         ),
-        model = field(option(type_r("lm")), context = TRUE)
+        model = field(option(host_class("lm")), context = TRUE)
       )
     )
   })
-  Shape <- get("demo::Shape3", envir = R8:::.r8_types)
+  Figure <- get("demo::Figure3", envir = R8:::.r8_types)
   fit <- stats::lm(dist ~ speed, data = datasets::cars)
   x <- Every(
     d = as.Date(19782L),
@@ -250,7 +250,7 @@ test_that("every field type has an R form that round trips through JSON", {
     om = list(z = "first", a = "second"),
     j = list(k = list(1, "two"), empty = stats::setNames(list(), character(0))),
     b = as.raw(c(0, 1, 250)),
-    s = Shape@Square,
+    s = Figure@Square,
     tb = data.frame(id = c("a", "b"), n = c(1L, NA), score = c(0.5, 0.9)),
     model = fit
   )
@@ -262,7 +262,7 @@ test_that("every field type has an R form that round trips through JSON", {
   expect_identical(names(x$om), c("z", "a"))
   expect_identical(x$model, fit)
   y <- r8_from_json(Every, r8_to_json(x))
-  # The runtime-only field has no JSON form.
+  # The host-only field has no JSON form.
   expect_null(y$model)
   x_without <- x
   x_without$model <- NULL
@@ -347,14 +347,14 @@ test_that("r8_equal() compares contents, and r8_hash() identifies them", {
   expect_error(a < b, class = "r8_dispatch_error")
 })
 
-test_that("a runtime-only field enters equality and the hash by presence", {
+test_that("a host-only field enters equality and the hash by presence", {
   M <- declare_in(
     "demo",
     new_struct(
       "WithModel",
       fields = list(
         count = type_integer(),
-        model = field(option(type_r("lm")), context = TRUE)
+        model = field(option(host_class("lm")), context = TRUE)
       )
     )
   )
@@ -446,9 +446,12 @@ test_that("a constructor forces its arguments in order and reports a missing one
   make <- function(a) T(a = a)
   expect_error(make(), "missing_field", class = "r8_value_error")
   # A field's declared default applies before the rules run.
-  Shape <- declare_in(
+  Orientation <- declare_in(
     "frame",
-    new_enum("Shape", variants = list(Wide = variant(), Tall = variant()))
+    new_enum(
+      "Orientation",
+      variants = list(Wide = variant(), Tall = variant())
+    )
   )
   Rect <- declare_in("frame", {
     new_struct(
@@ -456,11 +459,11 @@ test_that("a constructor forces its arguments in order and reports a missing one
       fields = list(
         w = type_double(),
         h = type_double(),
-        shape = field(Shape, default = Shape@Wide)
+        orientation = field(Orientation, default = Orientation@Wide)
       ),
       rules = list(rule(
         w >= h,
-        when = is_variant(shape, "Wide"),
+        when = is_variant(orientation, "Wide"),
         message = "wide",
         id = "WIDE"
       ))

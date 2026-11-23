@@ -8,7 +8,7 @@ use super::compile::{Expr, Op, Root, Step};
 use super::eval::{Env, Scalar, Val, unwrap_option};
 use super::{CompiledRule, TypeLookup};
 use crate::access::Access;
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 
 /// The number of characters of a string that a diagnosis shows.
 pub const SHOWN_CHARS: usize = 40;
@@ -161,8 +161,8 @@ fn sensitive(scope: &[FieldDef], lookup: &dyn TypeLookup, path: &[Step]) -> bool
                 Some(TypeDef::Enum(e)) => e
                     .variants
                     .iter()
-                    .flat_map(|v| match &v.shape {
-                        VariantShape::Struct { fields, .. } => fields.iter().collect::<Vec<_>>(),
+                    .flat_map(|v| match &v.kind {
+                        VariantKind::Struct { fields, .. } => fields.iter().collect::<Vec<_>>(),
                         _ => Vec::new(),
                     })
                     .collect(),
@@ -180,8 +180,8 @@ fn shown_scalar(s: Scalar) -> Shown {
         Scalar::Bool(b) => Shown::Bool(b),
         Scalar::Num(x) => Shown::number(x),
         Scalar::Str(t) => Shown::string(&t),
-        Scalar::Date(d) => Shown::Date(crate::codec::date_text(d)),
-        Scalar::DateTime(m) => Shown::DateTime(crate::codec::datetime_text(m)),
+        Scalar::Date(d) => Shown::Date(crate::canonical::date_text(d)),
+        Scalar::DateTime(m) => Shown::DateTime(crate::canonical::datetime_text(m)),
         Scalar::Array(xs) => Shown::Length(xs.len() as u64),
     }
 }

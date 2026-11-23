@@ -6,21 +6,21 @@
 # a trait looks up the impl for the qualified type of its first argument.
 .r8_impls <- new.env(parent = emptyenv())
 
-# The dispatch cache: by `"Trait|method"`, an environment of the resolved
+# The dispatch cache: by `"Trait|method"`, an environment of the selected
 # impl of the method by qualified type, or by `class:` and the class of an
 # object of another class; `r8_find_impl()` fills it from `.r8_impls` on a
 # miss of the C routine `find`. A generic reads it in R8's namespace, so a
-# generic sent to a worker resolves the worker's impls. `put_impl()` drops a
+# generic sent to a worker selects among the worker's impls. `put_impl()` drops a
 # method's index when one of its impls changes; unloading a package and
 # declaring a type clear the cache.
 # Its parent is R8's namespace, in which the C routine `find_n()` calls
-# `dispatch_resolve()`; every lookup in it reads its own frame only.
+# `dispatch_select()`; every lookup in it reads its own frame only.
 .r8_dispatch <- new.env(parent = environment())
 
-# The types with an impl of a trait, by `"Trait|type"`: the unit of
-# precedence through `extends`, so that the nearest type with an impl
-# provides every method, and a method its impl omits takes the trait's
-# default.
+# The types with an impl of a trait, by `"Trait|type"`: the unit of precedence
+# through `extends`, so that the nearest type with an impl provides every
+# method, and a method its impl omits takes the trait's default
+# implementation.
 .r8_impl_of <- new.env(parent = emptyenv())
 
 # The ancestors of each type through `extends`, by qualified type, as
@@ -85,7 +85,11 @@ trait_method <- function(
     )
   }
   if (!is.null(default_impl)) {
-    check_method_formals(default_impl, names(formals(fn)), "the default")
+    check_method_formals(
+      default_impl,
+      names(formals(fn)),
+      "the default implementation"
+    )
   }
   structure(
     list(
@@ -340,7 +344,7 @@ replacement_abort <- function(key, x, out) {
         "`,"
       )
     } else if (!is.null(provider) && !is.na(provider)) {
-      ", from the trait's default,"
+      ", from the trait's default implementation,"
     },
     " returned ",
     got,
@@ -363,7 +367,7 @@ replacement_abort <- function(key, x, out) {
 } # /R8::replacement_abort
 
 
-# %% dispatch_resolve ----
+# %% dispatch_select ----
 #' Resolve the impl of a trait method for a call on a miss of the cache
 #'
 #' Called by the C routines `find`, `find2`, and `find3` when the dispatch
@@ -380,13 +384,13 @@ replacement_abort <- function(key, x, out) {
 #'
 #' @keywords internal
 #' @noRd
-dispatch_resolve <- function(key, trait_name, method, ...) {
+dispatch_select <- function(key, trait_name, method, ...) {
   r8_find_impl(trait_name, method, list(...), key)
-} # /R8::dispatch_resolve
+} # /R8::dispatch_select
 
 
 # %% cache_impl ----
-#' Store a resolved impl in the dispatch cache
+#' Store a selected impl in the dispatch cache
 #'
 #' Under the dispatch key of each dispatched argument (`dispatch_key()`),
 #' one environment per position: the keys the C routines `find`, `find2`,
@@ -442,7 +446,7 @@ cache_impl <- function(key, args, impl) {
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
 #' @param type Character: The qualified type name, a class, or `""` for the
-#'   trait's default.
+#'   trait's default implementation.
 #' @param fn Function: The impl.
 #'
 #' @return `NULL`, invisibly.
@@ -481,7 +485,7 @@ clear_dispatch <- function() {
 # %% r8_clear_dispatch ----
 #' Clear R8's dispatch cache
 #'
-#' R8 caches the method each generic resolved for the chain of its
+#' R8 caches the method each generic selected for the chain of its
 #' arguments' types, keyed by each argument's type or class vector, and
 #' clears the cache when an impl is declared. An S4 class's superclasses
 #' belong to its class definition, so `methods::setIs()` or
@@ -583,10 +587,10 @@ stale_abort <- function(type, parent, class) {
 # %% impl_in_chain ----
 #' The impl of a trait method for a type, through `extends`
 #'
-#' The nearest of `type` and its ancestors with an impl of the trait
-#' provides the method, or the trait's default when that impl omits it;
-#' without such a type, the trait's default applies. With `after`, the search
-#' starts at the parent of `after`, for `r8_next_impl()`.
+#' The nearest of `type` and its ancestors with an impl of the trait provides
+#' the method, or the trait's default implementation when that impl omits it;
+#' without such a type, the trait's default implementation applies. With
+#' `after`, the search starts at the parent of `after`, for `r8_next_impl()`.
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
@@ -678,7 +682,7 @@ is_compiled_impl <- function(fn) {
 # %% r8_find_impl ----
 #' The impl of a trait method for the values of its dispatched arguments
 #'
-#' Resolves through the core's rule of dispatch (`resolve_tuple()`), over the
+#' Resolves through the core's rule of dispatch (`select_tuple()`), over the
 #' chain of each argument: an R8 value's type and its ancestors, or another
 #' object's class vector as `.class2()` gives it.
 #'
@@ -698,7 +702,7 @@ r8_find_impl <- function(
   args,
   key = paste(trait_name, method, sep = "|")
 ) {
-  impl <- resolve_tuple(trait_name, method, args)
+  impl <- select_tuple(trait_name, method, args)
   if (!is.null(impl)) {
     cache_impl(key, args, impl)
     return(impl)
@@ -760,14 +764,14 @@ value_type_text <- function(x) {
 #'   that holds the implementor's type, by its tag value; without it, the
 #'   member `"$type"` holds the qualified type name. An enum's `tag` is
 #'   another member, which holds a variant's name.
-#' @param requires Named list: The fields every implementor has, each a field
-#'   type, an R8 type object, or `field(type, description = )`. An
-#'   implementor is a struct whose field of each name has a type that fits
-#'   the required one: the same type; `T` or `option(T)` for `option(T)`; a
-#'   subtype of the struct for `subtype()`; an implementor of the trait for
-#'   `dyn()`. A constraint narrows nothing, so a field of
-#'   `type_double(min = 0)` fits `type_double(min = 0)` only. Code that
-#'   receives a `dyn()` value of the trait reads these fields.
+#' @param required_fields Named list: The fields every implementor has, each a
+#'   field type, an R8 type object, or `field(type, description = )`. An
+#'   implementor is a struct whose field of each name has a type that fits the
+#'   required one: the same type; `T` or `option(T)` for `option(T)`; a subtype
+#'   of the struct for `subtype()`; an implementor of the trait for `dyn()`. A
+#'   constraint narrows nothing, so a field of `type_double(min = 0)` fits
+#'   `type_double(min = 0)` only. Code that receives a `dyn()` value of the
+#'   trait reads these fields.
 #'
 #' @return The trait object, of class `r8_trait`.
 #'
@@ -783,7 +787,7 @@ new_trait <- function(
   methods = list(),
   description = "",
   tag = NULL,
-  requires = list()
+  required_fields = list()
 ) {
   if (!is_name(name)) {
     r8_abort(
@@ -825,7 +829,15 @@ new_trait <- function(
     }
   }
   trait <- with_record(
-    build_trait(name, methods, description, tag, namespace, env, requires),
+    build_trait(
+      name,
+      methods,
+      description,
+      tag,
+      namespace,
+      env,
+      required_fields
+    ),
     namespace
   )
   record_declaration(
@@ -846,8 +858,8 @@ new_trait <- function(
 #' @param namespace Character: The trait's namespace.
 #' @param env Environment: Where the trait is declared, for existing
 #'   generics.
-#' @param requires Named list: The required fields, as `new_trait()` takes
-#'   them.
+#' @param required_fields Named list: The required fields, as `new_trait()`
+#'   takes them.
 #'
 #' @return The trait object.
 #'
@@ -860,7 +872,7 @@ build_trait <- function(
   tag,
   namespace,
   env,
-  requires = list()
+  required_fields = list()
 ) {
   qname <- paste0(namespace, "::", name)
   check_members(methods, "methods", paste0("`", qname, "`"))
@@ -958,9 +970,9 @@ build_trait <- function(
     methods_ir[[length(methods_ir) + 1L]] <- method_ir
   }
   ir <- list(name = name, description = description, methods = methods_ir)
-  if (length(requires) > 0L) {
-    check_members(requires, "requires", paste0("`", qname, "`"))
-    ir[["required_fields"]] <- declared(r8_required_fields(requires))
+  if (length(required_fields) > 0L) {
+    check_members(required_fields, "required_fields", paste0("`", qname, "`"))
+    ir[["required_fields"]] <- declared(r8_required_fields(required_fields))
   }
   if (!is.null(tag)) {
     ir[["tag"]] <- tag
@@ -1035,10 +1047,10 @@ register_trait <- function(trait, namespace) {
 #'
 #' Defines a trait's methods for a type, or for a tuple of types when its
 #' methods dispatch on several arguments; a method the impl omits takes the
-#' trait's default. Rust's orphan rule applies: an impl outside the trait's
-#' namespace names a type of its own namespace, with only types before it.
-#' Implementing the same trait for the same types again replaces the impl;
-#' an impl that another namespace declares is refused.
+#' trait's default implementation. Rust's orphan rule applies: an impl outside
+#' the trait's namespace names a type of its own namespace, with only types
+#' before it. Implementing the same trait for the same types again replaces the
+#' impl; an impl that another namespace declares is refused.
 #'
 #' @param trait A trait object.
 #' @param target What the trait is implemented for: an R8 type object or a
@@ -1125,7 +1137,7 @@ impl_declare <- function(
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
   source <- if (from) t[["source"]] else ""
-  source_type <- from && identical(t[["source_ir"]][["kind"]], "type")
+  source_type <- from && identical(t[["source_ir"]][["kind"]], "named")
   check_members(methods, "methods", "an impl")
   fns <- methods
   methods_ir <- trait_ir(t)[["methods"]]
@@ -1443,7 +1455,7 @@ host_methods <- function(t, class, fns) {
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
 #' @param type Character: The qualified type name, or `""` for the trait's
-#'   default.
+#'   default implementation.
 #' @param fn Function: The impl.
 #'
 #' @return `NULL`, invisibly.

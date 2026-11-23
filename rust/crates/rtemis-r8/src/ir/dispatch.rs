@@ -1,5 +1,6 @@
 //! Multiple dispatch: the positions of an impl, the orphan rule over them,
-//! coherence across namespaces, ambiguity, and the resolution of a call.
+//! coherence across namespaces, ambiguity, and the selection of a call's
+//! impl.
 //!
 //! A trait dispatches on the parameters its methods mark, the first when
 //! none is marked ([`TraitDef::dispatch_arity`]). An impl gives one type per
@@ -14,7 +15,8 @@
 //! spec: R8/class-system#multiple-dispatch
 
 use super::check::DeclError;
-use super::decl::{ImplDef, RequiredField, TraitDef, TypeRef};
+use super::decl::{ImplDef, RequiredField, ReturnType, TraitDef, TypeRef};
+use super::types::FieldType;
 use crate::name::{Name, QualifiedName};
 use crate::rules::{DocumentSet, TypeLookup};
 
@@ -32,17 +34,18 @@ pub fn same_tuple(a: &ImplDef, b: &ImplDef) -> bool {
     a.r#trait == b.r#trait && a.target == b.target && a.type_args == b.type_args
 }
 
-/// The problems of an impl declared in the namespace `ns`, at `path`: a
-/// number of types that differs from the trait's dispatched positions and
-/// type parameters (`impl_arity`), any in every dispatched position, which
-/// the trait's default serves (`impl_all_any`), any in a type parameter
-/// (`impl_type_param`), and an impl outside the trait's namespace that names
-/// no type of its own namespace in a position with only types before it
-/// (`impl_orphan`, Rust's orphan rule over the tuple). The checks that read
+/// The problems of an impl declared in the namespace `ns`, at `path`: a number
+/// of types that differs from the trait's dispatched positions and type
+/// parameters (`impl_arity`), any in every dispatched position, which the
+/// trait's default implementation serves (`impl_all_any`), any in a type
+/// parameter (`impl_type_param`), and an impl outside the trait's namespace
+/// that names no type of its own namespace in a position with only types before
+/// it (`impl_orphan`, Rust's orphan rule over the tuple). The checks that read
 /// the trait run when `lookup` holds it.
 pub fn check_impl(lookup: &dyn TypeLookup, ns: &Name, imp: &ImplDef, path: &str) -> Vec<DeclError> {
     let mut out = check_impl_arity(lookup, imp, path);
     out.extend(check_required(lookup, imp, path));
+    out.extend(check_signatures(lookup, imp, path));
     if imp.r#trait.namespace != *ns && !names_own_type(ns, imp) {
         out.push(DeclError {
             code: "impl_orphan",
@@ -96,7 +99,7 @@ pub fn check_required(lookup: &dyn TypeLookup, imp: &ImplDef, path: &str) -> Vec
         return Vec::new();
     }
     let fields = match &imp.target {
-        TypeRef::Type { name } => match lookup.find(name) {
+        TypeRef::Named { name } => match lookup.find(name) {
             Some(crate::ir::TypeDef::Struct(s)) => Some((name, &s.fields)),
             Some(_) => None,
             // A target outside the lookup is checked where it is declared.
@@ -139,6 +142,89 @@ pub fn check_required(lookup: &dyn TypeLookup, imp: &ImplDef, path: &str) -> Vec
     out
 }
 
+/// The problems of an impl against its trait's method signatures, when
+/// `lookup` holds the trait: a position that a dispatched parameter's type
+/// does not admit (`dispatch_param_type`), and a method's return type that
+/// does not fit its trait method's (`return_type_unfit`,
+/// [`super::fit::fits`]), including one on a method whose trait method
+/// declares none, returns `Self`, or replaces.
+pub fn check_signatures(lookup: &dyn TypeLookup, imp: &ImplDef, path: &str) -> Vec<DeclError> {
+    let Some(tr) = lookup.trait_of(&imp.r#trait) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let arity = tr.dispatch_arity();
+    let at = positions(imp, arity);
+    for m in &tr.methods {
+        for (k, i) in m.dispatched().into_iter().enumerate() {
+            let (Some(t), Some(p)) = (m.params[i].ty(), at.get(k)) else {
+                continue;
+            };
+            if !admits(lookup, t, p) {
+                out.push(DeclError {
+                    code: "dispatch_param_type",
+                    path: if k == 0 {
+                        format!("{path}/target")
+                    } else {
+                        format!("{path}/type_args/{}", k - 1)
+                    },
+                    message: format!(
+                        "the parameter `{}` of `{}@{}` admits no value of {p}",
+                        m.params[i].name(),
+                        imp.r#trait,
+                        m.name
+                    ),
+                });
+            }
+        }
+    }
+    for (j, im) in imp.methods.iter().enumerate() {
+        let Some(have) = im.return_type() else {
+            continue;
+        };
+        let Some(m) = tr.methods.iter().find(|m| &m.name == im.name()) else {
+            continue;
+        };
+        let unfit = match &m.return_type {
+            _ if m.name.is_replacement() => {
+                Some("replaces its value, whose type is `Self`".to_string())
+            }
+            None => Some("declares no return type to narrow".to_string()),
+            Some(ReturnType::SelfType(_)) => Some("returns `Self`".to_string()),
+            Some(ReturnType::Type(want)) => (!super::fit::fits(lookup, have, want))
+                .then(|| "declares a return type that this one does not fit".to_string()),
+        };
+        if let Some(why) = unfit {
+            out.push(DeclError {
+                code: "return_type_unfit",
+                path: format!("{path}/methods/{j}/return_type"),
+                message: format!(
+                    "the method `{}` of the impl of `{}` for {} declares a return type; `{}@{}` {why}",
+                    m.name, imp.r#trait, imp.target, imp.r#trait, m.name
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// `true` when a dispatched parameter of type `t` admits the values of the
+/// position `p`: any; under an R8 type, that type; under `subtype(S)`, `S`
+/// or a struct that extends it; under `dyn(Trait)`, an implementor of the
+/// trait; under `host_class()`, a host class.
+fn admits(lookup: &dyn TypeLookup, t: &FieldType, p: &TypeRef) -> bool {
+    match (t, p) {
+        (_, TypeRef::Any) => true,
+        (FieldType::Named { name }, TypeRef::Named { name: n }) => name == n,
+        (FieldType::Subtype { of }, TypeRef::Named { name }) => lookup.is_subtype(name, of),
+        (FieldType::Dyn { r#trait }, TypeRef::Named { name }) => {
+            lookup.implements(r#trait, name).is_some()
+        }
+        (FieldType::HostClass { .. }, TypeRef::HostClass { .. }) => true,
+        _ => false,
+    }
+}
+
 /// The problems of an impl's positions against its trait, when `lookup`
 /// holds the trait: `impl_arity`, `impl_all_any`, and `impl_type_param` of
 /// [`check_impl`].
@@ -152,16 +238,16 @@ pub fn check_impl_arity(lookup: &dyn TypeLookup, imp: &ImplDef, path: &str) -> V
 fn check_arity(tr: &TraitDef, imp: &ImplDef, path: &str) -> Vec<DeclError> {
     let mut out = Vec::new();
     let arity = tr.dispatch_arity();
-    let expected = arity - 1 + usize::from(tr.type_params);
+    let expected = arity - 1 + usize::from(tr.extra_type_params);
     if imp.type_args.len() != expected {
         out.push(DeclError {
             code: "impl_arity",
             path: format!("{path}/type_args"),
             message: format!(
-                "an impl of `{}` gives {} types after its target; the trait dispatches on {arity} arguments and has {} type parameters",
+                "an impl of `{}` gives {} types after its target; the trait dispatches on {arity} parameters and has {} type parameters",
                 imp.r#trait,
                 imp.type_args.len(),
-                tr.type_params
+                tr.extra_type_params
             ),
         });
         return out;
@@ -174,7 +260,7 @@ fn check_arity(tr: &TraitDef, imp: &ImplDef, path: &str) -> Vec<DeclError> {
             code: "impl_all_any",
             path: path.to_string(),
             message: format!(
-                "an impl of `{}` names a type in at least one position; the trait's default serves any value in every position",
+                "an impl of `{}` names a type in at least one position; the trait's default implementation serves any value in every position",
                 imp.r#trait
             ),
         });
@@ -200,11 +286,11 @@ fn check_arity(tr: &TraitDef, imp: &ImplDef, path: &str) -> Vec<DeclError> {
 fn names_own_type(ns: &Name, imp: &ImplDef) -> bool {
     for p in std::iter::once(&imp.target).chain(&imp.type_args) {
         match p {
-            TypeRef::Type { name } if name.namespace == *ns => return true,
+            TypeRef::Named { name } if name.namespace == *ns => return true,
             TypeRef::HostClass { package, .. } if package.as_str() == ns.as_str() => {
                 return true;
             }
-            TypeRef::Type { .. } | TypeRef::HostClass { .. } => {}
+            TypeRef::Named { .. } | TypeRef::HostClass { .. } => {}
             TypeRef::Any => return false,
         }
     }
@@ -269,12 +355,12 @@ enum Order {
 }
 
 fn order(lookup: &dyn TypeLookup, a: &TypeRef, b: &TypeRef) -> Order {
-    use TypeRef::{Any, HostClass, Type};
+    use TypeRef::{Any, HostClass, Named};
     match (a, b) {
         (Any, Any) => Order::Equal,
         (Any, _) => Order::Above,
         (_, Any) => Order::Below,
-        (Type { name: x }, Type { name: y }) => {
+        (Named { name: x }, Named { name: y }) => {
             if x == y {
                 Order::Equal
             } else if lookup.is_subtype(x, y) {
@@ -302,7 +388,7 @@ fn order(lookup: &dyn TypeLookup, a: &TypeRef, b: &TypeRef) -> Order {
 }
 
 /// Two impls of a trait that are each more specific in some position, with
-/// no impl declared at their meet, the tuple whose impl resolves them.
+/// no impl declared at their meet, the tuple whose impl disambiguates them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ambiguity {
     /// The position of the first impl in the list given.
@@ -351,10 +437,10 @@ pub fn ambiguities(
             if apart || !(below && above) {
                 continue;
             }
-            let resolved = tuples
+            let declared = tuples
                 .iter()
                 .any(|t| t.iter().zip(&meet).all(|(x, y)| *x == y));
-            if !resolved {
+            if !declared {
                 out.push(Ambiguity {
                     first: i,
                     second: j,
@@ -377,13 +463,13 @@ pub enum Arg {
     Other,
 }
 
-/// The impl that a call resolves to.
+/// The impl that dispatch selects for a call.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Resolution {
+pub enum Selection {
     /// The impl at this index of the list given, which provides every method
     /// of the trait.
     Impl(usize),
-    /// No impl applies; the trait's default serves the call.
+    /// No impl applies; the trait's default implementation serves the call.
     Default,
     /// Two applicable impls, each more specific in some position.
     Ambiguous(usize, usize),
@@ -407,30 +493,30 @@ enum Chain {
 fn rank(p: &TypeRef, chain: &Chain) -> Option<usize> {
     match (p, chain) {
         (TypeRef::Any, _) => Some(usize::MAX),
-        (TypeRef::Type { name }, Chain::Type(c)) => c.iter().position(|x| x == name),
+        (TypeRef::Named { name }, Chain::Type(c)) => c.iter().position(|x| x == name),
         (TypeRef::HostClass { class, .. }, Chain::Host(c)) => c.iter().position(|x| x == class),
         _ => None,
     }
 }
 
-/// Resolves a call of a trait of `arity` dispatched positions, whose
+/// Selects the impl for a call of a trait of `arity` dispatched positions, whose
 /// arguments are `args`, among `impls`: the most specific applicable impl.
 /// With `above`, the impl at that index is the running one, and the result
 /// is the most specific applicable impl that is less specific than it, for
 /// `r8_next_impl()`.
-pub fn resolve(
+pub fn select(
     lookup: &dyn TypeLookup,
     impls: &[&ImplDef],
     arity: usize,
     args: &[Arg],
     above: Option<usize>,
-) -> Resolution {
+) -> Selection {
     let mut chains: Vec<Chain> = Vec::with_capacity(args.len());
     for a in args {
         chains.push(match a {
             Arg::Type(t) => {
                 if lookup.is_stale(t) {
-                    return Resolution::Stale(t.clone());
+                    return Selection::Stale(t.clone());
                 }
                 Chain::Type(
                     std::iter::once(t.clone())
@@ -476,8 +562,8 @@ pub fn resolve(
         })
         .collect();
     match minimal.as_slice() {
-        [] => Resolution::Default,
-        [k] => Resolution::Impl(*k),
-        [a, b, ..] => Resolution::Ambiguous(*a, *b),
+        [] => Selection::Default,
+        [k] => Selection::Impl(*k),
+        [a, b, ..] => Selection::Ambiguous(*a, *b),
     }
 }

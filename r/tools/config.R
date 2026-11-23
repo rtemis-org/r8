@@ -68,8 +68,8 @@ patched <- nzchar(.cargo_config)
 .drop_lock <- ifelse(patched, "rm -f rust/Cargo.lock.saved", "")
 
 # R8_ORACLE, when set, builds the differential oracle (src/rust/src/oracle.rs)
-# that the tests compare native construction with. The `document` binary builds
-# without it, so R/extendr-wrappers.R is the same in every build.
+# that the tests compare in-place construction with. The `document` binary
+# builds without it, so R/extendr-wrappers.R is the same in every build.
 # R8_ALLOC_STATS, when set, builds the counting allocator
 # (src/rust/src/alloc.rs) that the memory rows of the benchmark read through
 # r8_alloc_stats().

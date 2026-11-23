@@ -1,5 +1,5 @@
 //! A safe view of the reader R8 lends a codec (`R8Reader`): the value R8 has
-//! read from a document and validated, from which `RustStored::from_reader` and
+//! read from a document and validated, from which `RustStoredStruct::from_reader` and
 //! `RustStoredEnum::from_reader` build a state without JSON text.
 
 use std::ffi::{CStr, c_char};
@@ -94,8 +94,8 @@ impl<'a> Reader<'a> {
     }
 
     /// An object's member `name`; absent when the object has none.
-    pub fn field(&self, n: Node<'a>, name: &CStr) -> Node<'a> {
-        self.node(match self.raw.field {
+    pub fn member(&self, n: Node<'a>, name: &CStr) -> Node<'a> {
+        self.node(match self.raw.member {
             Some(f) => unsafe { f(self.raw.context, n.raw, name.as_ptr()) },
             None => std::ptr::null(),
         })

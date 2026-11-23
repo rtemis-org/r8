@@ -53,9 +53,9 @@ use sha2::{Digest, Sha256};
 use crate::access::{Access, Json};
 use crate::emit::{self, Emitter, SameSink, Writer};
 
-pub use crate::emit::runtime_paths;
+pub use crate::emit::host_only_paths;
 
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 use crate::tree::{Tree, TreeRef};
@@ -234,12 +234,12 @@ fn reachable(
         TypeDef::Struct(s) => s.fields.iter().for_each(|f| named_in(&f.ty, &mut names)),
         TypeDef::Enum(e) => {
             for v in &e.variants {
-                match &v.shape {
-                    VariantShape::Unit => {}
-                    VariantShape::Struct { fields, .. } => {
+                match &v.kind {
+                    VariantKind::Unit => {}
+                    VariantKind::Struct { fields, .. } => {
                         fields.iter().for_each(|f| named_in(&f.ty, &mut names))
                     }
-                    VariantShape::Newtype { of } => names.push(of.clone()),
+                    VariantKind::Newtype { of } => names.push(of.clone()),
                 }
             }
         }
@@ -304,7 +304,7 @@ fn strip(def: &mut TypeDef) {
             e.extensions.clear();
             for v in &mut e.variants {
                 v.description.clear();
-                if let VariantShape::Struct { fields: fs, .. } = &mut v.shape {
+                if let VariantKind::Struct { fields: fs, .. } = &mut v.kind {
                     fields(fs);
                 }
             }
@@ -330,31 +330,31 @@ pub fn content_hash(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
 ) -> Result<String, Vec<ValueError>> {
-    content_hash_with_runtime(value, ty, lookup, &[])
+    content_hash_with_host_only(value, ty, lookup, &[])
 }
 
-/// The content hash of a valid value whose runtime-only fields at the JSON
-/// Pointers `runtime` hold values in the host. Their values have no JSON form
-/// and stay out of the hash; their presence enters it as `"runtime"`, the
-/// sorted paths, a member the hashed object holds only when `runtime` is not
+/// The content hash of a valid value whose host-only fields at the JSON
+/// Pointers `host_only` hold values in the host. Their values have no JSON form
+/// and stay out of the hash; their presence enters it as `"host_only"`, the
+/// sorted paths, a member the hashed object holds only when `host_only` is not
 /// empty.
-pub fn content_hash_with_runtime(
+pub fn content_hash_with_host_only(
     value: &Value,
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
-    runtime: &[String],
+    host_only: &[String],
 ) -> Result<String, Vec<ValueError>> {
     let errors = validate(value, ty, lookup);
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(hash_with(Json::new(value), ty, lookup, runtime.to_vec()))
+    Ok(hash_with(Json::new(value), ty, lookup, host_only.to_vec()))
 }
 
 /// The content hash of a valid value in any host form, streamed into
 /// SHA-256 without building its text: the hashed object's members in RFC
-/// 8785 order are `declaration`, `runtime` (the JSON Pointers of the
-/// runtime-only fields that hold a value, when there are any), `type`, and
+/// 8785 order are `declaration`, `host_only` (the JSON Pointers of the
+/// host-only fields that hold a value, when there are any), `type`, and
 /// `value`.
 pub fn content_hash_access<'a, A: Access<'a>>(
     value: A,
@@ -368,10 +368,10 @@ fn hash_with<'a, A: Access<'a>>(
     value: A,
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
-    runtime: Vec<String>,
+    host_only: Vec<String>,
 ) -> String {
-    let mut paths = runtime;
-    paths.extend(emit::runtime_paths(ty, value, lookup));
+    let mut paths = host_only;
+    paths.extend(emit::host_only_paths(ty, value, lookup));
     paths.sort();
     paths.dedup();
     let mut w = Writer::new(Sha256::new(), true);
@@ -379,7 +379,7 @@ fn hash_with<'a, A: Access<'a>>(
     w.key("declaration");
     w.string(&declaration_hash(ty, lookup));
     if !paths.is_empty() {
-        w.key("runtime");
+        w.key("host_only");
         w.begin_array();
         for p in &paths {
             w.string(p);
@@ -647,10 +647,10 @@ fn contained_named<'a, A: Access<'a>>(
                 .variants
                 .iter()
                 .find(|x| x.name.as_str() == variant)
-                .map(|x| &x.shape)
+                .map(|x| &x.kind)
             {
-                Some(VariantShape::Struct { fields, .. }) => fields,
-                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                Some(VariantKind::Struct { fields, .. }) => fields,
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => {
                         out.insert(of.to_string(), s.version);
                         &s.fields
@@ -734,10 +734,10 @@ fn fill_named(t: &mut Tree, name: &QualifiedName, lookup: &dyn TypeLookup) {
                 .variants
                 .iter()
                 .find(|x| x.name.as_str() == variant)
-                .map(|x| &x.shape)
+                .map(|x| &x.kind)
             {
-                Some(VariantShape::Struct { fields, .. }) => fields,
-                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                Some(VariantKind::Struct { fields, .. }) => fields,
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => &s.fields,
                     _ => return,
                 },

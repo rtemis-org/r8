@@ -145,7 +145,7 @@ r8_partial_cmp <- unclass(PartialOrd)[["generics"]][["partial_cmp"]]
 FROM_IR <- list(
   name = "From",
   description = "Conversion from a source class or type.",
-  type_params = 1L,
+  extra_type_params = 1L,
   methods = list(list(
     name = "from",
     description = "Converts x to the implementing type.",
@@ -164,7 +164,7 @@ From <- function(source) {
       generics = list(),
       defaults = list(),
       # The key of the source's impls: a qualified type name or a class.
-      source = if (identical(p[["kind"]], "type")) {
+      source = if (identical(p[["kind"]], "named")) {
         p[["name"]]
       } else {
         p[["class"]]

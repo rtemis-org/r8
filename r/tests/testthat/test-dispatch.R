@@ -95,7 +95,7 @@ test_that("an ambiguous call names the method to declare", {
       "implement it for \\(md3::A1, md3::B1\\).*dispatch_ambiguous",
       class = "r8_dispatch_error"
     )
-    # The error is not cached: declaring the meet resolves the call.
+    # The error is not cached: declaring the meet disambiguates the call.
     implement(combine, A1, B1) <- function(x, y) "A1, B1"
     expect_identical(combine(a1, b1), "A1, B1")
     expect_identical(nrow(r8_ambiguities(combine)), 0L)

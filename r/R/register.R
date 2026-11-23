@@ -409,7 +409,7 @@ compiled_method <- function(trait_name, type_name, method, pkg) {
     rep(list(quote(expr = )), length(params)),
     params
   )
-  # The function is resolved once, here; its pointer, which the body holds,
+  # The function is looked up once, here; its pointer, which the body holds,
   # is cleared when the package registers again or unloads.
   ptr <- r8_impl_fn(trait_name, type_name, method)
   .r8_compiled_ptrs[[pkg]] <- c(.r8_compiled_ptrs[[pkg]], list(ptr))

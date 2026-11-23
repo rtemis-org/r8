@@ -4,10 +4,10 @@
 \alias{subtype}
 \title{A field of a struct or of any struct that extends it}
 \usage{
-subtype(x)
+subtype(struct)
 }
 \arguments{
-\item{x}{An R8 struct type object.}
+\item{struct}{An R8 struct type object.}
 }
 \value{
 An \code{r8_field_type}.

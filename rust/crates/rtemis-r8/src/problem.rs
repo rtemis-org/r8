@@ -155,7 +155,7 @@ pub enum Problem {
         first: Vec<Segment>,
     },
     /// A type the lookup does not hold.
-    Unresolved(String),
+    UnknownType(String),
     /// A problem of a value's form, as text.
     Text(String),
 }
@@ -246,7 +246,7 @@ impl Problem {
             | Problem::UnknownField { .. }
             | Problem::UnknownColumn { .. }
             | Problem::Repeats { .. }
-            | Problem::Unresolved(_)
+            | Problem::UnknownType(_)
             | Problem::Text(_) => return None,
         })
     }
@@ -316,7 +316,7 @@ impl Problem {
                         and_list(&items, "and")
                     )
                 }
-                Problem::Unresolved(t) => {
+                Problem::UnknownType(t) => {
                     format!("{subject} has the type `{t}`, which is not registered")
                 }
                 Problem::Text(t) => format!("{subject}: {t}"),

@@ -47,7 +47,7 @@ pub fn table(
     cell: &'static OnceLock<usize>,
     package: &'static CStr,
     namespace: &str,
-    codecs: &'static [abi::TypeVTable],
+    codecs: &'static [abi::Codec],
     types: impl FnOnce() -> Vec<TypeDef>,
     impls: &'static [&'static ImplSet],
 ) -> *const abi::Exports {

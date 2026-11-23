@@ -2,7 +2,7 @@
 % Please edit documentation in R/dispatch.R
 \name{host_class}
 \alias{host_class}
-\title{A class of another class system in a dispatched position}
+\title{A class of another class system}
 \usage{
 host_class(class, package = "", system = c("s3", "s4", "implicit"))
 }
@@ -23,12 +23,15 @@ requires \code{package}; \code{r8_register()} checks at load that the package
 defines an S4 class of that name.}
 }
 \value{
-An object of class \code{r8_host_class}.
+An object of class \code{r8_host_class}, which is also a field type:
+\code{option(host_class("lm"))} declares a field that holds an \code{lm} object in
+R, host-only, absent from documents and from the content hash.
 }
 \description{
-Names a class that R8 did not declare, for an impl of an R8 generic or
-trait: an S3 class, an implicit class such as \code{"matrix"} or \code{"NULL"}, or
-an S4 class. A dispatched position matches an object whose class vector,
+Names a class that R8 did not declare: an S3 class, an implicit class
+such as \code{"matrix"} or \code{"NULL"}, or an S4 class. It is a dispatched
+position of an impl of an R8 generic or trait, and a field type inside
+\code{option()}. A dispatched position matches an object whose class vector,
 as \code{\link[=.class2]{.class2()}} reports it, contains the class; the nearer the class is to
 the front of that vector, the more specific the impl. In \code{implement()},
 \code{impl()}, \code{r8_method()}, and \code{r8_next_impl()}, a string is shorthand for
@@ -48,6 +51,7 @@ implement(shape_text, host_class("matrix")) <- function(x) {
 }
 shape_text(data.frame(a = 1:3))
 shape_text(diag(2))
+field(option(host_class("lm")), context = TRUE)
 options(op)
 
 }

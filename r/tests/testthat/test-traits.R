@@ -197,8 +197,8 @@ test_that("dispatch follows impls changed after a call, and serves defaults and 
     )
   )
   expect_identical(size(b), "second")
-  # An object of another class takes the trait's default, through the cache
-  # by its class, on every call.
+  # An object of another class takes the trait's default implementation, through
+  # the cache by its class, on every call.
   other <- structure(list(), class = "trc_other")
   expect_identical(size(other), "default")
   expect_identical(size(other), "default")
@@ -214,7 +214,7 @@ test_that("a trait's required fields are checked against each implementor", {
     Measured <- new_trait(
       "Measured",
       methods = list(span = trait_method(function(x) NULL)),
-      requires = list(
+      required_fields = list(
         lo = type_double(),
         hi = field(option(type_double()), description = "The upper end.")
       )
@@ -251,7 +251,7 @@ test_that("a trait's required fields are checked against each implementor", {
       new_trait(
         "Bad",
         methods = list(f = trait_method(function(x) NULL)),
-        requires = list(a = field(type_double(), default = 1))
+        required_fields = list(a = field(type_double(), default = 1))
       ),
       "required_field_form",
       class = "r8_declaration_error"

@@ -119,7 +119,7 @@ fn cases() -> Vec<(&'static str, Value)> {
         ),
         (
             "unit variant",
-            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "shape": "unit"}]}]}),
+            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "kind": "unit"}]}]}),
         ),
         (
             "variant shape missing",
@@ -185,11 +185,11 @@ fn cases() -> Vec<(&'static str, Value)> {
         ),
         (
             "newtype variant",
-            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "shape": "newtype", "of": "ns::A"}]}]}),
+            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "kind": "newtype", "of": "ns::A"}]}]}),
         ),
         (
             "newtype variant without of",
-            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "shape": "newtype"}]}]}),
+            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "kind": "newtype"}]}]}),
         ),
         (
             "table open as a string",

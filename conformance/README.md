@@ -6,7 +6,7 @@ Language-neutral test cases that every R8 host runs: the R package, `rtemis-r8`'
 
 - `corpus.schema.json`: the JSON Schema (draft 2020-12) of a suite file. A runner validates each file against it before running the cases.
 - `<area>/<suite>.json`: one suite per file, grouped by area (`declare/`, `decode/`, `canonical/`, and `hash/`).
-- `tools/reference-codec.mjs`: an independent JavaScript implementation of the canonical form and the content hash, written from the specification in `rust/crates/rtemis-r8/src/codec.rs`, which writes the expected results of the `canonical` and `hash` cases (`node conformance/tools/reference-codec.mjs <suite>...`).
+- `tools/reference-canonical.mjs`: an independent JavaScript implementation of the canonical form and the content hash, written from the specification in `rust/crates/rtemis-r8/src/canonical.rs`, which writes the expected results of the `canonical` and `hash` cases (`node conformance/tools/reference-canonical.mjs <suite>...`).
 
 A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compared as RFC 8785 text: the declaration hash reads that form. `R8_UPDATE_CORPUS=1 cargo test -p rtemis-r8 --all-features --test conformance`, run in `rust/`, rewrites it.
 
@@ -22,7 +22,7 @@ A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compa
 ```
 
 - `$corpus`: the format version, 1.
-- `ir`: an IR document, or an array of IR documents, one per namespace, that the value operations resolve types in; a suite of `declare` cases omits it.
+- `ir`: an IR document, or an array of IR documents, one per namespace, in which the value operations look up types; a suite of `declare` cases omits it.
 - `cases`: each with a unique kebab-case `id`, an optional `description`, an `op`, an `input`, and an `expect`.
 
 ## Operations

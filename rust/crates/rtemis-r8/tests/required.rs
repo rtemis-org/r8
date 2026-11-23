@@ -40,7 +40,7 @@ fn a_redeclaration_keeps_every_impl_s_required_fields() {
     let lo = json!([{"name": "lo", "type": {"kind": "double"}}]);
     assert!(codes(&r.declare_trait(&ns, measured(lo.clone())).unwrap()).is_empty());
     let imp: ImplDef = serde_json::from_value(json!({"trait": "ns::Measured",
-        "target": {"kind": "type", "name": "ns::Range"}, "methods": []}))
+        "target": {"kind": "named", "name": "ns::Range"}, "methods": []}))
     .unwrap();
     assert!(codes(&r.declare_impl(&ns, imp).unwrap()).is_empty());
     // The struct without `lo` is refused, and the registry keeps `Range`.

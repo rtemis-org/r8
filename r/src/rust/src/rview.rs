@@ -748,7 +748,7 @@ impl<'a> Access<'a> for RView<'a> {
         }
     }
 
-    fn runtime(self) -> Read<()> {
+    fn host_only(self) -> Read<()> {
         Ok(())
     }
 
@@ -1293,10 +1293,10 @@ fn elem_value(x: SEXP, i: usize, ft: &FieldType) -> Value {
             }
         }
         (FieldType::Date, _) => number_elt(x, i).map_or(Value::Null, |d| {
-            Value::from(rtemis_r8::codec::date_text(d as i64))
+            Value::from(rtemis_r8::canonical::date_text(d as i64))
         }),
         (FieldType::Posixct, _) => number_elt(x, i).map_or(Value::Null, |s| {
-            Value::from(rtemis_r8::codec::datetime_text((s * 1e6).round() as i64))
+            Value::from(rtemis_r8::canonical::datetime_text((s * 1e6).round() as i64))
         }),
         (_, SEXPTYPE::LGLSXP) => Value::Bool(int_elt(x, i) != 0),
         (_, SEXPTYPE::STRSXP) => {

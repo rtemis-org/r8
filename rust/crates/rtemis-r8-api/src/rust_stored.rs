@@ -1,6 +1,6 @@
-//! `RustStored` and `RustStoredEnum`: a Rust-stored struct or enum, whose values R8
+//! `RustStoredStruct` and `RustStoredEnum`: a Rust-stored struct or enum, whose values R8
 //! holds as the codec's state; `codec::<T>()` and `enum_codec::<T>()`, the
-//! codec tables R8 calls; `Codec`, which both kinds implement; and the
+//! codec tables R8 calls; `RustStored`, which both kinds implement; and the
 //! `extern "C"` functions behind them.
 
 use crate::reader::{Node, Reader};
@@ -17,7 +17,7 @@ use crate::sys::SEXP;
 /// A struct whose values R8 holds in Rust. `#[derive(R8)]` with
 /// `#[r8(storage = "rust")]` implements it from the struct's fields, each a
 /// [`Field`](crate::Field).
-pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
+pub trait RustStoredStruct: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The qualified type name, NUL-terminated.
     const TYPE_NAME: &'static CStr;
 
@@ -51,14 +51,14 @@ pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The value from bytes `write_state` wrote.
     fn read_state(input: &mut StateReader) -> Result<Self>;
 
-    /// The memory Rust owns for the value.
+    /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
 }
 
 /// An enum whose values, unit variants included, R8 holds in Rust.
 /// `#[derive(R8)]` with `#[r8(storage = "rust")]` implements it from the enum's
 /// variants: a struct variant's fields are each a [`Field`](crate::Field),
-/// and a newtype variant's struct implements [`RustStored`].
+/// and a newtype variant's struct implements [`RustStoredStruct`].
 pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The qualified type name, NUL-terminated.
     const TYPE_NAME: &'static CStr;
@@ -100,7 +100,7 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
     /// The value from bytes `write_state` wrote.
     fn read_state(input: &mut StateReader) -> Result<Self>;
 
-    /// The memory Rust owns for the value.
+    /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
 }
 
@@ -108,12 +108,12 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
 /// value from an R-stored value of the type. `#[derive(R8)]` with
 /// `#[r8(storage = "rust")]` implements it; `#[r8::methods]`, [`Value`](crate::Value),
 /// and `r8::exports!` take it.
-pub trait Codec: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
+pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The qualified type name, NUL-terminated.
     const TYPE_NAME: &'static CStr;
 
     /// The codec table: [`codec`] for a struct, [`enum_codec`] for an enum.
-    const TABLE: Shared<abi::TypeVTable>;
+    const TABLE: Shared<abi::Codec>;
 
     /// The value from an R-stored value `x` of the type, whose fields are
     /// `fields`, as `serialize(version = 2)` reads one back.
@@ -121,7 +121,7 @@ pub trait Codec: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// # Safety
     ///
     /// On R's main thread, with valid R objects.
-    unsafe fn from_r_native(x: SEXP, fields: &[SEXP]) -> Result<Self>;
+    unsafe fn from_r_stored(x: SEXP, fields: &[SEXP]) -> Result<Self>;
 }
 
 /// A table R8 reads through a pointer: static data without interior
@@ -132,9 +132,9 @@ pub struct Shared<T>(pub T);
 unsafe impl<T> Sync for Shared<T> {}
 
 /// The codec table of the struct `T`.
-pub const fn codec<T: RustStored>() -> Shared<abi::TypeVTable> {
-    Shared(abi::TypeVTable {
-        size: std::mem::size_of::<abi::TypeVTable>() as u32,
+pub const fn codec<T: RustStoredStruct>() -> Shared<abi::Codec> {
+    Shared(abi::Codec {
+        size: std::mem::size_of::<abi::Codec>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
         from_fields: Some(from_fields::<T>),
         encode: Some(struct_fns::encode::<T>),
@@ -143,7 +143,7 @@ pub const fn codec<T: RustStored>() -> Shared<abi::TypeVTable> {
         get_field: Some(struct_fns::get_field::<T>),
         with_field: Some(struct_fns::with_field::<T>),
         drop: Some(struct_fns::drop_state::<T>),
-        bytes: Some(struct_fns::bytes::<T>),
+        owned_bytes: Some(struct_fns::owned_bytes::<T>),
         variant: None,
         from_variant: None,
         from_reader: Some(struct_from_reader::<T>),
@@ -152,9 +152,9 @@ pub const fn codec<T: RustStored>() -> Shared<abi::TypeVTable> {
 }
 
 /// The codec table of the enum `T`.
-pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::TypeVTable> {
-    Shared(abi::TypeVTable {
-        size: std::mem::size_of::<abi::TypeVTable>() as u32,
+pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::Codec> {
+    Shared(abi::Codec {
+        size: std::mem::size_of::<abi::Codec>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
         from_fields: None,
         encode: Some(enum_fns::encode::<T>),
@@ -163,7 +163,7 @@ pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::TypeVTable> {
         get_field: Some(enum_fns::get_field::<T>),
         with_field: Some(enum_fns::with_field::<T>),
         drop: Some(enum_fns::drop_state::<T>),
-        bytes: Some(enum_fns::bytes::<T>),
+        owned_bytes: Some(enum_fns::owned_bytes::<T>),
         variant: Some(variant::<T>),
         from_variant: Some(from_variant::<T>),
         from_reader: Some(enum_from_reader::<T>),
@@ -201,7 +201,7 @@ fn state<'a, T>(p: *const c_void) -> &'a T {
     unsafe { &*p.cast::<T>() }
 }
 
-unsafe extern "C" fn from_fields<T: RustStored>(
+unsafe extern "C" fn from_fields<T: RustStoredStruct>(
     fields: *const abi::Sexp,
     n: usize,
     out: *mut *mut c_void,
@@ -219,7 +219,7 @@ unsafe extern "C" fn from_fields<T: RustStored>(
     })
 }
 
-unsafe extern "C" fn struct_from_reader<T: RustStored>(
+unsafe extern "C" fn struct_from_reader<T: RustStoredStruct>(
     r: *const abi::Reader,
     root: abi::Node,
     out: *mut *mut c_void,
@@ -353,7 +353,7 @@ macro_rules! shared_fns {
                 }));
             }
 
-            pub(super) unsafe extern "C" fn bytes<T: super::$tr>(s: *const c_void) -> usize {
+            pub(super) unsafe extern "C" fn owned_bytes<T: super::$tr>(s: *const c_void) -> usize {
                 catch_unwind(AssertUnwindSafe(|| {
                     std::mem::size_of::<T>() + super::state::<T>(s).owned_bytes()
                 }))
@@ -363,7 +363,7 @@ macro_rules! shared_fns {
     };
 }
 
-shared_fns!(struct_fns, RustStored);
+shared_fns!(struct_fns, RustStoredStruct);
 shared_fns!(enum_fns, RustStoredEnum);
 
 unsafe extern "C" fn variant<T: RustStoredEnum>(s: *const c_void) -> *const c_char {

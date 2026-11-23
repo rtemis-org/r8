@@ -1,26 +1,26 @@
 //! Checks that the Rust ABI types of `rtemis_r8::abi` match the C header
-//! `r/inst/include/R8.h`. The build script compiles `csrc/layout.c` against
-//! the header; [`c_layout()`] reads the sizes and offsets the C compiler
+//! `r/inst/include/R8.h`. The build script compiles `csrc/struct_offsets.c` against
+//! the header; [`c_struct_offsets()`] reads the sizes and offsets the C compiler
 //! computed.
 
 unsafe extern "C" {
-    fn r8_abi_layout(out: *mut usize, cap: usize) -> usize;
+    fn r8_abi_struct_offsets(out: *mut usize, cap: usize) -> usize;
     fn r8_abi_version() -> u32;
     fn r8_abi_has_seed() -> u32;
     fn r8_abi_statuses() -> u32;
 }
 
-/// The sizes and offsets of `R8.h`, in the order of `rtemis_r8::abi::layout()`.
-pub fn c_layout() -> Vec<usize> {
+/// The sizes and offsets of `R8.h`, in the order of `rtemis_r8::abi::struct_offsets()`.
+pub fn c_struct_offsets() -> Vec<usize> {
     let mut out = vec![0usize; 256];
     // SAFETY: `out` holds `out.len()` writable entries, and the function
     // writes at most that many.
-    let n = unsafe { r8_abi_layout(out.as_mut_ptr(), out.len()) };
+    let n = unsafe { r8_abi_struct_offsets(out.as_mut_ptr(), out.len()) };
     out.truncate(n);
     out
 }
 
-/// `R8_ABI_VERSION`, `R8_CONTEXT_HAS_SEED`, and the status codes `R8_OK`,
+/// `R8_ABI_VERSION`, `R8_CALL_HAS_SEED`, and the status codes `R8_OK`,
 /// `R8_ERROR`, and `R8_UNWIND` (one per hexadecimal digit), as the header
 /// defines them.
 pub fn c_constants() -> (u32, u32, u32) {

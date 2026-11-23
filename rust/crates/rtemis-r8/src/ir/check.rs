@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use super::decl::{
-    FieldDef, MethodDef, ParamDef, ReturnType, RuleDef, StructDef, TraitDef, VariantShape,
+    FieldDef, MethodDef, ParamDef, ReturnType, RuleDef, StructDef, TraitDef, VariantKind,
 };
 use super::document::{IrDocument, TypeDef};
 use super::types::{FieldType, Resolve};
@@ -247,7 +247,7 @@ impl Checker<'_> {
                     &mut crate::validate::RuleCache::new(),
                 )
                 .into_iter()
-                .filter(|e| e.code != "unresolved_type")
+                .filter(|e| e.code != "unknown_type")
                 {
                     self.report(
                         "default_invalid",
@@ -276,10 +276,10 @@ impl Checker<'_> {
                         ),
                     );
                 } else if let Resolve::Computed { expr } = r {
-                    if matches!(&f.ty, FieldType::Option { inner } if matches!(**inner, FieldType::R { .. }))
+                    if matches!(&f.ty, FieldType::Option { inner } if matches!(**inner, FieldType::HostClass { .. }))
                     {
                         self.report(
-                            "r_resolve",
+                            "host_resolve",
                             &format!("{fpath}/resolve"),
                             format!(
                                 "field `{}` holds an R value, which is filled from a context; use context = TRUE or none",
@@ -371,7 +371,7 @@ impl Checker<'_> {
     }
 
     /// Checks a field type. `at_field` is `true` where the type is a field's
-    /// own type, the one position that admits `option(type_r())`.
+    /// own type, the one position that admits `option(host_class())`.
     fn field_type(&mut self, ty: &FieldType, path: &str, at_field: bool) {
         match ty {
             FieldType::Integer(c) => {
@@ -462,12 +462,12 @@ impl Checker<'_> {
                 }
             }
             // Reached only outside `option()` at a field's own type: the
-            // `Option` arm returns before descending into `type_r()` there.
-            FieldType::R { class } => {
+            // `Option` arm returns before descending into a host class there.
+            FieldType::HostClass { class, .. } => {
                 self.report(
-                    "r_outside_option",
+                    "host_outside_option",
                     path,
-                    format!("`type_r(\"{class}\")` is runtime-only; declare the field `option(type_r(\"{class}\"))`"),
+                    format!("`host_class(\"{class}\")` is host-only, absent from documents; declare the field `option(host_class(\"{class}\"))`"),
                 );
             }
             FieldType::Vec {
@@ -501,7 +501,7 @@ impl Checker<'_> {
                         "`option(type_json())` cannot tell an absent value from JSON `null`"
                             .to_string(),
                     ),
-                    FieldType::R { .. } if at_field => return,
+                    FieldType::HostClass { .. } if at_field => return,
                     _ => {}
                 }
                 self.field_type(inner, &format!("{path}/inner"), false);
@@ -541,7 +541,7 @@ impl Checker<'_> {
                         "dyn_dispatch",
                         path,
                         format!(
-                            "`{trait}` dispatches on {} arguments; `dyn()` takes a trait that dispatches on one",
+                            "`{trait}` dispatches on {} parameters; `dyn()` takes a trait that dispatches on one",
                             t.dispatch_arity()
                         ),
                     );
@@ -572,14 +572,14 @@ impl Checker<'_> {
                 self.report(
                     "param_name",
                     &ppath,
-                    format!("`{name}` is not a syntactic R argument name"),
+                    format!("`{name}` is not a syntactic R name"),
                 );
             }
             if !seen.insert(name) {
                 self.report(
                     "duplicate_param",
                     &ppath,
-                    format!("duplicate argument `{name}`"),
+                    format!("duplicate parameter `{name}`"),
                 );
             }
             if let ParamDef::Full(q) = p {
@@ -594,7 +594,7 @@ impl Checker<'_> {
                 "dispatch_implicit",
                 &format!("{path}/params/0/dispatch"),
                 format!(
-                    "method `{}` dispatches on its first argument alone, which is written without a dispatch mark",
+                    "method `{}` dispatches on its first parameter alone, which is written without a dispatch mark",
                     m.name
                 ),
             );
@@ -604,7 +604,7 @@ impl Checker<'_> {
                 "dispatch_none",
                 &format!("{path}/params"),
                 format!(
-                    "method `{}` dispatches on at least one argument, its first unless others are marked",
+                    "method `{}` dispatches on at least one parameter, its first unless others are marked",
                     m.name
                 ),
             );
@@ -613,7 +613,7 @@ impl Checker<'_> {
             self.report(
                 "replacement_value",
                 &format!("{path}/params"),
-                format!("replacement method `{}` takes `value` as its last argument, as R passes it by that name", m.name),
+                format!("replacement method `{}` takes `value` as its last parameter, as R passes it by that name", m.name),
             );
         }
         if m.name.is_replacement() && m.dispatched().len() > 1 {
@@ -621,20 +621,36 @@ impl Checker<'_> {
                 "dispatch_replacement",
                 &format!("{path}/params"),
                 format!(
-                    "replacement method `{}` dispatches on its first argument only",
+                    "replacement method `{}` dispatches on its first parameter only",
                     m.name
                 ),
             );
         }
         if let Some(ReturnType::Type(t)) = &m.return_type {
-            self.field_type(t, &format!("{path}/return_type"), true);
+            self.value_type(t, &format!("{path}/return_type"));
+        }
+    }
+
+    /// The type of a parameter or a return value, which a call holds in the
+    /// host: a field type, of which a host class is also admitted outside
+    /// `option()`.
+    fn value_type(&mut self, t: &FieldType, path: &str) {
+        match t {
+            FieldType::HostClass { .. } => {}
+            FieldType::Option { inner } if matches!(**inner, FieldType::HostClass { .. }) => {}
+            _ => self.field_type(t, path, true),
         }
     }
 
     /// The object form of a parameter: a dispatch mark on a named argument,
     /// a type checked as a field type, and a default that satisfies it.
     fn param(&mut self, q: &super::decl::Param, path: &str) {
-        if !q.dispatch && q.ty.is_none() && q.default.is_none() && q.description.is_empty() {
+        if !q.dispatch
+            && q.ty.is_none()
+            && q.default.is_none()
+            && q.host_default.is_none()
+            && q.description.is_empty()
+        {
             self.report(
                 "param_form",
                 path,
@@ -648,11 +664,31 @@ impl Checker<'_> {
             self.report(
                 "dispatch_dots",
                 &format!("{path}/dispatch"),
-                "a method dispatches on named arguments, not on `...`".to_string(),
+                "a method dispatches on named parameters, not on `...`".to_string(),
             );
         }
         if let Some(t) = &q.ty {
-            self.field_type(t, &format!("{path}/type"), true);
+            self.value_type(t, &format!("{path}/type"));
+            if q.dispatch && !is_nominal(t) {
+                self.report(
+                    "dispatch_param_type",
+                    &format!("{path}/type"),
+                    format!(
+                        "dispatched parameter `{}` has a type that names its values' types: an R8 type, `subtype()`, `dyn()`, or `host_class()`",
+                        q.name
+                    ),
+                );
+            }
+        }
+        if q.default.is_some() && q.host_default.is_some() {
+            self.report(
+                "default_host_both",
+                path,
+                format!(
+                    "parameter `{}` has a default in its JSON form or in a host's language, not both",
+                    q.name
+                ),
+            );
         }
         match (&q.ty, &q.default) {
             (None, Some(_)) => self.report(
@@ -671,7 +707,7 @@ impl Checker<'_> {
                     &mut crate::validate::RuleCache::new(),
                 )
                 .into_iter()
-                .filter(|e| e.code != "unresolved_type")
+                .filter(|e| e.code != "unknown_type")
                 {
                     self.report(
                         "default_invalid",
@@ -795,7 +831,7 @@ impl Checker<'_> {
                     "dispatch_arity",
                     &format!("{path}/methods/{i}/params"),
                     format!(
-                        "method `{}` dispatches on {n} arguments and `{}` on {arity}; the methods of a trait dispatch on the same number of arguments",
+                        "method `{}` dispatches on {n} parameters and `{}` on {arity}; the methods of a trait dispatch on the same number of parameters",
                         m.name, t.methods[0].name
                     ),
                 );
@@ -806,7 +842,7 @@ impl Checker<'_> {
                 "dispatch_tag",
                 &format!("{path}/tag"),
                 format!(
-                    "trait `{}` dispatches on {arity} arguments and has no tag member; a `dyn()` value implements a trait of one",
+                    "trait `{}` dispatches on {arity} parameters and has no tag member; a `dyn()` value implements a trait of one",
                     t.name
                 ),
             );
@@ -889,6 +925,19 @@ impl Checker<'_> {
 /// The one variant name R8 reserves: `Enum@from` names the enum's
 /// conversion, as `Type@from` does for a struct.
 pub const RESERVED_VARIANT: &str = "from";
+
+/// `true` for a type that names the types of its values, which a
+/// dispatched parameter declares: an R8 type, `subtype()`, `dyn()`, or
+/// `host_class()`.
+pub fn is_nominal(t: &FieldType) -> bool {
+    matches!(
+        t,
+        FieldType::Named { .. }
+            | FieldType::Subtype { .. }
+            | FieldType::Dyn { .. }
+            | FieldType::HostClass { .. }
+    )
+}
 
 /// `true` for the types a table column holds: a scalar base type, a factor,
 /// or `option()` of one.
@@ -1049,10 +1098,10 @@ impl Checker<'_> {
                     } else {
                         c.class_name(&v.name, "variant", &format!("{vpath}/name"));
                     }
-                    if let VariantShape::Newtype { of } = &v.shape {
+                    if let VariantKind::Newtype { of } = &v.kind {
                         c.newtype(doc, of, &e.tag, &format!("{vpath}/of"), &mut wrapped);
                     }
-                    if let VariantShape::Struct { fields, rules } = &v.shape {
+                    if let VariantKind::Struct { fields, rules } = &v.kind {
                         c.fields(fields, &format!("{vpath}/fields"), FieldsAt::Variant);
                         c.rules(rules, fields, &format!("{vpath}/rules"));
                         if let Some(k) = fields.iter().position(|f| f.name == e.tag) {

@@ -23,7 +23,7 @@ dose_type <- function() {
           compute = g / 1000,
           unit = "kg"
         ),
-        model = field(option(type_r("lm")), context = TRUE)
+        model = field(option(host_class("lm")), context = TRUE)
       )
     )
   )

@@ -4,7 +4,7 @@
 
 # Multiple dispatch in R: the dispatched arguments of a generic or trait
 # method, the tuples of types an impl names, the keys of the dispatch tables,
-# and the resolution of a call through the core's resolver.
+# and the selection of a call's impl by the runtime's rule of dispatch.
 # spec: R8/class-system#multiple-dispatch
 
 # The most dispatched arguments a generic takes, one C routine per count.
@@ -259,11 +259,12 @@ IMPLICIT_CLASSES <- c(
 
 
 # %% host_class ----
-#' A class of another class system in a dispatched position
+#' A class of another class system
 #'
-#' Names a class that R8 did not declare, for an impl of an R8 generic or
-#' trait: an S3 class, an implicit class such as `"matrix"` or `"NULL"`, or
-#' an S4 class. A dispatched position matches an object whose class vector,
+#' Names a class that R8 did not declare: an S3 class, an implicit class
+#' such as `"matrix"` or `"NULL"`, or an S4 class. It is a dispatched
+#' position of an impl of an R8 generic or trait, and a field type inside
+#' `option()`. A dispatched position matches an object whose class vector,
 #' as [.class2()] reports it, contains the class; the nearer the class is to
 #' the front of that vector, the more specific the impl. In `implement()`,
 #' `impl()`, `r8_method()`, and `r8_next_impl()`, a string is shorthand for
@@ -286,7 +287,9 @@ IMPLICIT_CLASSES <- c(
 #'   requires `package`; `r8_register()` checks at load that the package
 #'   defines an S4 class of that name.
 #'
-#' @return An object of class `r8_host_class`.
+#' @return An object of class `r8_host_class`, which is also a field type:
+#'   `option(host_class("lm"))` declares a field that holds an `lm` object in
+#'   R, host-only, absent from documents and from the content hash.
 #'
 #' @examples
 #' op <- options(r8.namespace = "hosts")
@@ -297,6 +300,7 @@ IMPLICIT_CLASSES <- c(
 #' }
 #' shape_text(data.frame(a = 1:3))
 #' shape_text(diag(2))
+#' field(option(host_class("lm")), context = TRUE)
 #' options(op)
 #'
 #' @export
@@ -388,8 +392,14 @@ host_class <- function(
     )
   }
   structure(
-    list(class = class, package = package, system = system),
-    class = "r8_host_class"
+    list(
+      kind = "host_class",
+      host = "r",
+      package = package,
+      class = class,
+      system = system
+    ),
+    class = c("r8_host_class", "r8_field_type")
   )
 } # /R8::host_class
 
@@ -478,7 +488,7 @@ position_of <- function(type) {
   if (inherits(type, "r8_type")) {
     ensure_registered(type)
     name <- attr(type, "r8_name")
-    return(list(key = name, ir = list(kind = "type", name = name)))
+    return(list(key = name, ir = list(kind = "named", name = name)))
   }
   if (is.null(type)) {
     r8_abort(
@@ -596,12 +606,13 @@ dispatch_key <- function(x) {
 } # /R8::dispatch_key
 
 
-# %% resolve_tuple ----
+# %% select_tuple ----
 #' The impl of a trait method for the values of its dispatched arguments
 #'
-#' Resolves the call through the core's resolver over the registered impls
-#' (`r8_dispatch_resolve()`): the most specific applicable impl provides the
-#' method, or the trait's default when that impl omits it or none applies.
+#' Selects the impl through the runtime's rule of dispatch over the registered
+#' impls (`r8_dispatch_select()`): the most specific applicable impl provides
+#' the method, or the trait's default implementation when that impl omits it or
+#' none applies.
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
@@ -615,7 +626,7 @@ dispatch_key <- function(x) {
 #'
 #' @keywords internal
 #' @noRd
-resolve_tuple <- function(trait_name, method, args, above = NULL) {
+select_tuple <- function(trait_name, method, args, above = NULL) {
   if (length(args) == 1L) {
     x <- args[[1L]]
     if (inherits(x, "r8_value")) {
@@ -648,7 +659,7 @@ resolve_tuple <- function(trait_name, method, args, above = NULL) {
   above_positions <- if (!is.null(above)) {
     strsplit(above, ",", fixed = TRUE)[[1L]]
   }
-  r <- r8_dispatch_resolve(trait_name, types, chains, above_positions)
+  r <- r8_dispatch_select(trait_name, types, chains, above_positions)
   if (is.character(r)) {
     key <- if (length(r) == 1L) r else tuple_key(r)
     fn <- .r8_impls[[paste(trait_name, method, key, sep = "|")]] %||%
@@ -718,7 +729,7 @@ resolve_tuple <- function(trait_name, method, args, above = NULL) {
       "r8_dispatch_error"
     )
   )
-} # /R8::resolve_tuple
+} # /R8::select_tuple
 
 
 # %% r8_ambiguities ----
@@ -726,7 +737,7 @@ resolve_tuple <- function(trait_name, method, args, above = NULL) {
 #'
 #' Lists the pairs of registered impls of a generic or trait that are each
 #' more specific in one dispatched position, with no impl at their meet, the
-#' tuple whose impl resolves them. A package's tests call it to check that
+#' tuple whose impl disambiguates them. A package's tests call it to check that
 #' its impls, with those of the packages it uses, leave no call ambiguous.
 #'
 #' @param x A generic of class `r8_generic`, or a trait object.

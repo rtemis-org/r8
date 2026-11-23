@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 
 use crate::access::Access;
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 use crate::text::{Line, Role, Span, Text};
@@ -117,10 +117,10 @@ fn fields<'a, A: Access<'a>>(
                 .variants
                 .iter()
                 .find(|x| x.name.as_str() == variant)
-                .map(|x| &x.shape)
+                .map(|x| &x.kind)
             {
-                Some(VariantShape::Struct { fields, .. }) => fields,
-                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                Some(VariantKind::Struct { fields, .. }) => fields,
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => &s.fields,
                     _ => return,
                 },
@@ -419,7 +419,7 @@ fn value<'a, A: Access<'a>>(
             );
         }
         FieldType::Json => line.push(Span::new("json", Role::TypeOther)),
-        FieldType::R { class } => line.push(Span::new(class.clone(), Role::TypeOther)),
+        FieldType::HostClass { class, .. } => line.push(Span::new(class.clone(), Role::TypeOther)),
         FieldType::Vec { element, .. } => {
             let n = x.vec(element).unwrap_or(0);
             label(
@@ -819,8 +819,8 @@ mod tests {
         let doc = IrDocument::from_json(
             r#"{"$ir": 1, "namespace": "demo", "types": [
               {"kind": "enum", "name": "Kernel", "description": "", "tag": "type", "version": 1,
-               "variants": [{"name": "Linear", "description": "", "shape": "unit"},
-                            {"name": "Rbf", "description": "", "shape": "struct",
+               "variants": [{"name": "Linear", "description": "", "kind": "unit"},
+                            {"name": "Rbf", "description": "", "kind": "struct",
                              "fields": [{"name": "gamma", "type": {"kind": "double"}, "description": ""}]}]},
               {"kind": "struct", "name": "Fit", "description": "", "version": 1, "fields": [
                 {"name": "name", "type": {"kind": "character"}, "description": ""},

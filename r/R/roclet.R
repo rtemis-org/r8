@@ -478,7 +478,7 @@ enum_block <- function(block) {
     function(v) {
       item <- paste0(name, "@", v[["name"]])
       text <- switch(
-        v[["shape"]],
+        v[["kind"]],
         unit = item,
         struct = call_text(item, ctor_formals(v[["fields"]])),
         newtype = call_text(item, formals(.r8_types[[v[["of"]]]]))

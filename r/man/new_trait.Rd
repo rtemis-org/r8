@@ -10,7 +10,7 @@ new_trait(
   methods = list(),
   description = "",
   tag = NULL,
-  requires = list()
+  required_fields = list()
 )
 
 \method{@}{r8_trait}(object, name)
@@ -27,14 +27,14 @@ that holds the implementor's type, by its tag value; without it, the
 member \code{"$type"} holds the qualified type name. An enum's \code{tag} is
 another member, which holds a variant's name.}
 
-\item{requires}{Named list: The fields every implementor has, each a field
-type, an R8 type object, or \code{field(type, description = )}. An
-implementor is a struct whose field of each name has a type that fits
-the required one: the same type; \code{T} or \code{option(T)} for \code{option(T)}; a
-subtype of the struct for \code{subtype()}; an implementor of the trait for
-\code{dyn()}. A constraint narrows nothing, so a field of
-\code{type_double(min = 0)} fits \code{type_double(min = 0)} only. Code that
-receives a \code{dyn()} value of the trait reads these fields.}
+\item{required_fields}{Named list: The fields every implementor has, each a
+field type, an R8 type object, or \code{field(type, description = )}. An
+implementor is a struct whose field of each name has a type that fits the
+required one: the same type; \code{T} or \code{option(T)} for \code{option(T)}; a subtype
+of the struct for \code{subtype()}; an implementor of the trait for \code{dyn()}. A
+constraint narrows nothing, so a field of \code{type_double(min = 0)} fits
+\code{type_double(min = 0)} only. Code that receives a \code{dyn()} value of the
+trait reads these fields.}
 
 \item{object}{A trait object.}
 }

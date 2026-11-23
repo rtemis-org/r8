@@ -213,18 +213,6 @@ fn r8_ft_factor(levels: Robj, ordered: Robj) -> Robj {
     )
 }
 
-/// `type_r()`.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_ft_r(class: Robj) -> Robj {
-    written(
-        string(unsafe { class.get() }, "class")
-            .and_then(|c| c.ok_or(BuildError::NotOneString { arg: "class" }))
-            .map(|c| build::r_class(&c)),
-    )
-}
-
 /// A field-type argument as the R list a container holds: an
 /// `r8_field_type` as given, or the `named` field type of an R8 type object.
 /// The element is not read: the checks of a container do not depend on it,
@@ -776,7 +764,6 @@ extendr_module! {
     fn r8_ft_double;
     fn r8_ft_character;
     fn r8_ft_factor;
-    fn r8_ft_r;
     fn r8_ft_vec;
     fn r8_ft_option;
     fn r8_ft_map;

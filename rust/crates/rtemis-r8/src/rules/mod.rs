@@ -1,7 +1,7 @@
 //! The rule dialect: strict JSONLogic, extended by R8's intrinsics.
 //!
-//! A rule states what must hold. [`CompiledRule::compile`] resolves it
-//! against the fields in scope, a struct's, a variant's, or a table row's,
+//! A rule states what must hold. [`CompiledRule::compile`] binds it
+//! to the fields in scope, a struct's, a variant's, or a table row's,
 //! and reports declaration errors: an unknown operator or field, a type or
 //! unit mismatch, an unknown variant, loose equality. [`CompiledRule::check`]
 //! evaluates it over a value's JSON form. A rule holds when its `when`

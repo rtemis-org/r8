@@ -261,12 +261,12 @@
               {
                 "name": "A",
                 "description": "",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "from",
                 "description": "",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           }

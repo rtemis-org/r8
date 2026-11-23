@@ -227,7 +227,7 @@ r8_package_namespaces <- function(package) .Call(wrap__r8_package_namespaces, pa
 #' @noRd
 r8_check_namespaces <- function(namespaces, imports = character()) .Call(wrap__r8_check_namespaces, namespaces, imports)
 
-#' Resolves a call of a trait among its registered impls, with the core's
+#' Selects the impl for a call of a trait among its registered impls, with the core's
 #' rule of multiple dispatch.
 #'
 #' @param trait_name Character: The trait's qualified name.
@@ -238,13 +238,13 @@ r8_check_namespaces <- function(namespaces, imports = character()) .Call(wrap__r
 #' @param above Optional Character: The positions of the running impl, for
 #'   the next impl.
 #' @return Character: the providing impl's positions; `NULL` when no impl
-#'   applies and the trait's default serves the call; otherwise a list:
-#'   `kind` (`"ambiguous"` or `"stale"`), `tuple` and `other` (the two impls
-#'   of an ambiguous pair), `meet` (their positionwise more specific tuple),
-#'   and `stale` (a stale type).
+#'   applies and the trait's default implementation serves the call; otherwise
+#'   a list: `kind` (`"ambiguous"` or `"stale"`), `tuple` and `other` (the two
+#'   impls of an ambiguous pair), `meet` (their positionwise more specific
+#'   tuple), and `stale` (a stale type).
 #' @keywords internal
 #' @noRd
-r8_dispatch_resolve <- function(trait_name, types, chains, above) .Call(wrap__r8_dispatch_resolve, trait_name, types, chains, above)
+r8_dispatch_select <- function(trait_name, types, chains, above) .Call(wrap__r8_dispatch_select, trait_name, types, chains, above)
 
 #' The ambiguous pairs among a trait's registered impls.
 #'
@@ -331,12 +331,13 @@ r8_stale_types <- function(namespaces) .Call(wrap__r8_stale_types, namespaces)
 #' `name` (`value_schema::json_schema_with()`).
 #'
 #' @param name Character: The qualified type name.
-#' @param implementors Logical: Write each `dyn()` field as the closed list
-#'   of the registered implementors.
+#' @param closed Logical: Write each `dyn()` field as the closed list of the
+#'   registered implementors, and each `subtype()` field as the struct and
+#'   its registered descendants.
 #' @return Character: The schema as indented JSON text.
 #' @keywords internal
 #' @noRd
-r8_type_schema <- function(name, implementors) .Call(wrap__r8_type_schema, name, implementors)
+r8_type_schema <- function(name, closed) .Call(wrap__r8_type_schema, name, closed)
 
 #' The IR document of one registered type: its namespace and its
 #' declaration.
@@ -446,11 +447,6 @@ r8_ft_character <- function(pattern, values) .Call(wrap__r8_ft_character, patter
 #' @noRd
 r8_ft_factor <- function(levels, ordered) .Call(wrap__r8_ft_factor, levels, ordered)
 
-#' `type_r()`.
-#' @keywords internal
-#' @noRd
-r8_ft_r <- function(class) .Call(wrap__r8_ft_r, class)
-
 #' `vec()`.
 #' @keywords internal
 #' @noRd
@@ -497,7 +493,7 @@ r8_rule_operators <- function() .Call(wrap__r8_rule_operators)
 #' @return List: `state` and `fields`, or `NULL` for an R-stored value.
 #' @keywords internal
 #' @noRd
-r8_native_parts <- function(x) .Call(wrap__r8_native_parts, x)
+r8_rust_stored_parts <- function(x) .Call(wrap__r8_rust_stored_parts, x)
 
 #' The bytes of the states of Rust-stored values reachable from R, and the
 #' level at which R8 requests a collection.
@@ -505,7 +501,7 @@ r8_native_parts <- function(x) .Call(wrap__r8_native_parts, x)
 #' @return Double: `c(live, threshold)`.
 #' @keywords internal
 #' @noRd
-r8_native_memory <- function() .Call(wrap__r8_native_memory)
+r8_rust_stored_memory <- function() .Call(wrap__r8_rust_stored_memory)
 
 #' A size in bytes in IEC binary units to three significant digits, as the
 #' Rust core formats it (`rtemis_r8::text::format_size()`).
@@ -525,12 +521,12 @@ r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
 #' @noRd
 r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
 
-#' The required fields of `new_trait(requires = )`: each a field type, an R8
-#' type object, or `field(type, description = )`; a default, a fill policy,
-#' `sensitive`, a unit, and extensions belong to a struct's field.
+#' The required fields of `new_trait(required_fields = )`: each a field type,
+#' an R8 type object, or `field(type, description = )`; a default, a fill
+#' policy, `sensitive`, a unit, and extensions belong to a struct's field.
 #' @keywords internal
 #' @noRd
-r8_required_fields <- function(requires) .Call(wrap__r8_required_fields, requires)
+r8_required_fields <- function(required_fields) .Call(wrap__r8_required_fields, required_fields)
 
 #' Declares a struct or an enum from the user's objects: claims the
 #' namespace, reads the declaration, checks it, registers it, and writes its
@@ -654,11 +650,11 @@ r8_css_text <- function(theme, named) .Call(wrap__r8_css_text, theme, named)
 #' @return Character: The output type and the color depth, `256` or `24bit`.
 #' @keywords internal
 #' @noRd
-r8_resolve_output <- function(facts) .Call(wrap__r8_resolve_output, facts)
+r8_determine_output <- function(facts) .Call(wrap__r8_determine_output, facts)
 
-#' Resolves a struct value: given its fields, with runtime fields filled by
+#' Resolves a struct value: given its fields, with context fields filled by
 #' the caller, evaluates each absent computed field in dependency order over
-#' the R objects in place, then constructs the value natively.
+#' the R objects in place, then constructs the value in place.
 #'
 #' @param fields List: The fields, by name.
 #' @param type_name Character: The qualified struct name.
@@ -668,17 +664,17 @@ r8_resolve_output <- function(facts) .Call(wrap__r8_resolve_output, facts)
 r8_resolve_value <- function(fields, type_name) .Call(wrap__r8_resolve_value, fields, type_name)
 
 #' The identity of an R8 value: the canonical text of its normalized form,
-#' its content hash, and the paths of its runtime-only fields that hold a
+#' its content hash, and the paths of its host-only fields that hold a
 #' value, written from the R objects in place.
 #'
 #' @param x An R8 value.
-#' @return List: `canonical`, `hash`, and `runtime`, or `errors`.
+#' @return List: `canonical`, `hash`, and `host_only`, or `errors`.
 #' @keywords internal
 #' @noRd
 r8_value_identity <- function(x) .Call(wrap__r8_value_identity, x)
 
 #' Whether two R8 values of one type are equal: the same normalized form,
-#' and identical runtime-only fields, compared in place.
+#' and identical host-only fields, compared in place.
 #'
 #' @param x,y R8 values.
 #' @return Logical: One value.
@@ -722,7 +718,7 @@ r8_value_from_document <- function(text, type_name) .Call(wrap__r8_value_from_do
 #' Version of the R8 runtime
 #'
 #' Returns the version of the runtime compiled into R8, the Rust crate
-#' `rtemis-r8`, which provenance records alongside the versions of R8 and R.
+#' `rtemis-r8`.
 #'
 #' @return Character: The version, for example `"0.1.0"`.
 #'

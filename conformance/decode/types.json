@@ -1073,7 +1073,7 @@
       "expect": {
         "valid": true
       },
-      "id": "hashmap",
+      "id": "btree-map",
       "input": {
         "hm": {
           "a": 1,
@@ -1093,7 +1093,7 @@
           }
         ]
       },
-      "id": "hashmap-key",
+      "id": "btree-map-key",
       "input": {
         "hm": {
           "A": 1
@@ -1121,16 +1121,16 @@
       "type": "ns::T"
     },
     {
-      "description": "A runtime-only value has no JSON form.",
+      "description": "A host-only value has no JSON form.",
       "expect": {
         "errors": [
           {
-            "code": "runtime_only",
+            "code": "host_only",
             "path": "/r"
           }
         ]
       },
-      "id": "runtime-only",
+      "id": "host-only",
       "input": {
         "r": {
           "coefficients": [
@@ -1254,7 +1254,7 @@
       },
       "id": "unit-enum",
       "input": {
-        "shape": "Circle"
+        "figure": "Circle"
       },
       "op": "decode",
       "type": "ns::T"
@@ -1265,13 +1265,13 @@
         "errors": [
           {
             "code": "unknown_variant",
-            "path": "/shape"
+            "path": "/figure"
           }
         ]
       },
       "id": "unit-enum-unknown",
       "input": {
-        "shape": "Hexagon"
+        "figure": "Hexagon"
       },
       "op": "decode",
       "type": "ns::T"
@@ -1311,7 +1311,7 @@
       "expect": {
         "errors": [
           {
-            "code": "unresolved_type",
+            "code": "unknown_type",
             "path": "/algo"
           }
         ]
@@ -1552,8 +1552,10 @@
             "type": {
               "kind": "option",
               "inner": {
-                "kind": "r",
-                "class": "lm"
+                "kind": "host_class",
+                "host": "r",
+                "class": "lm",
+                "system": "s3"
               }
             },
             "description": "",
@@ -1610,12 +1612,12 @@
             "description": ""
           },
           {
-            "name": "shape",
+            "name": "figure",
             "type": {
               "kind": "option",
               "inner": {
                 "kind": "named",
-                "name": "ns::Shape"
+                "name": "ns::Figure"
               }
             },
             "description": ""
@@ -1646,7 +1648,7 @@
       },
       {
         "kind": "enum",
-        "name": "Shape",
+        "name": "Figure",
         "description": "",
         "tag": "type",
         "version": 1,
@@ -1654,12 +1656,12 @@
           {
             "name": "Circle",
             "description": "",
-            "shape": "unit"
+            "kind": "unit"
           },
           {
             "name": "Square",
             "description": "",
-            "shape": "unit"
+            "kind": "unit"
           }
         ]
       },
@@ -1714,7 +1716,7 @@
       {
         "trait": "ns::Algorithm",
         "target": {
-          "kind": "type",
+          "kind": "named",
           "name": "ns::Glmnet"
         },
         "tag_value": "GLMNET",
@@ -1723,7 +1725,7 @@
       {
         "trait": "ns::Algorithm",
         "target": {
-          "kind": "type",
+          "kind": "named",
           "name": "ns::Cart"
         },
         "methods": []
@@ -1731,7 +1733,7 @@
       {
         "trait": "ns::Plain",
         "target": {
-          "kind": "type",
+          "kind": "named",
           "name": "ns::Cart"
         },
         "methods": []

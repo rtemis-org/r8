@@ -132,17 +132,16 @@ r8_upcast <- function(x, type) {
 #' Call the next impl of the running method
 #'
 #' Called from the body of an impl, `r8_next_impl()` calls the impl that the
-#' running one takes precedence over: that of the nearest ancestor, after
-#' the type that provides the running impl, with an impl of the trait, or
-#' else the trait's default. For a method that dispatches on several
-#' arguments, the next impl is the most specific applicable impl less
-#' specific than the running one; when two are, each more specific in one
-#' position, `r8_next_impl(Type, ...)` names the one to continue to. It
-#' passes the current values of the running impl's formals, so an impl may
-#' change its arguments first, as with `NextMethod()`; generics in the next
-#' impl dispatch on the values passed. Every impl that R8 registers
-#' continues this way, an S3 method declared with `implement()` or `impl()`
-#' included.
+#' running one takes precedence over: that of the nearest ancestor, after the
+#' type that provides the running impl, with an impl of the trait, or else the
+#' trait's default implementation. For a method that dispatches on several
+#' arguments, the next impl is the most specific applicable impl less specific
+#' than the running one; when two are, each more specific in one position,
+#' `r8_next_impl(Type, ...)` names the one to continue to. It passes the current
+#' values of the running impl's formals, so an impl may change its arguments
+#' first, as with `NextMethod()`; generics in the next impl dispatch on the
+#' values passed. Every impl that R8 registers continues this way, an S3 method
+#' declared with `implement()` or `impl()` included.
 #'
 #' @param ... Optional R8 type objects: the impl to continue to, one per
 #'   dispatched argument, by position or by name, as `implement()` takes
@@ -194,7 +193,7 @@ r8_next_impl <- function(...) {
     if (!nzchar(after)) {
       NULL
     } else {
-      resolve_tuple(trait_name, method, values, above = after)
+      select_tuple(trait_name, method, values, above = after)
     }
   } else {
     next_in_chain(trait_name, method, values[[1L]], after)
@@ -225,7 +224,7 @@ r8_next_impl <- function(...) {
       if (nzchar(after)) {
         gsub(",", ", ", after, fixed = TRUE)
       } else {
-        "the trait's default"
+        "the trait's default implementation"
       },
       "` applies.",
       class = "r8_dispatch_error"
@@ -294,8 +293,7 @@ method_dispatch <- function(trait_name, method) {
 #' @param method Character: The method name.
 #' @param x The value of the dispatched argument.
 #' @param after Character: The type that provides the running impl, or
-#'   `""` for the trait's default.
-#'
+#'   `""` for the trait's default implementation.
 #' @return The impl function, or `NULL`.
 #'
 #' @keywords internal
@@ -324,7 +322,7 @@ next_in_chain <- function(trait_name, method, x, after) {
     # The method of an S3 generic that implement() declares for an R8 type.
     return(impl_in_chain(trait_name, method, type, r8 = r8, after = after))
   }
-  resolve_tuple(trait_name, method, list(x), above = after)
+  select_tuple(trait_name, method, list(x), above = after)
 } # /R8::next_in_chain
 
 
@@ -358,9 +356,9 @@ chain_keys <- function(x) {
 #' @param values List: Their current values.
 #' @param chosen List: The types named.
 #'
-#' @return The impl function, or the trait's default when the impl omits the
-#'   method. An impl that is not declared, or that does not apply to the
-#'   current arguments, raises `r8_dispatch_error`.
+#' @return The impl function, or the trait's default implementation when the impl omits the
+#'   method. An impl that is not declared, or that does not apply to the current
+#'   arguments, raises `r8_dispatch_error`.
 #'
 #' @keywords internal
 #' @noRd

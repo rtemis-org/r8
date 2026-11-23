@@ -1,6 +1,6 @@
-//! Rust-stored values: the values of a type whose codec (`R8TypeVTable`) a
+//! Rust-stored values: the values of a type whose codec (`R8Codec`) a
 //! package registered, held as an `ALTLIST` over the codec's state
-//! (`src/native.c`), and the value functions of `R8Api` (`src/view.c`).
+//! (`src/rust_stored.c`), and the value functions of `R8Api` (`src/view.c`).
 
 use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -11,8 +11,8 @@ use extendr_api::prelude::*;
 use extendr_ffi::{
     R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_STRING_ELT, SEXPTYPE, VECTOR_ELT,
 };
-use rtemis_r8::abi::{ERROR, Error, OK, Sexp, Status, TypeVTable};
-use rtemis_r8::ir::{TypeDef, VariantShape};
+use rtemis_r8::abi::{Codec, ERROR, Error, OK, Sexp, Status};
+use rtemis_r8::ir::{TypeDef, VariantKind};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 
@@ -27,15 +27,15 @@ static MEMORY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static PROTECT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static SYMBOLS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Receives the functions of `native.c` from `R_init_R8()`.
+/// Receives the functions of `rust_stored.c` from `R_init_R8()`.
 ///
 /// # Safety
 ///
 /// `wrap`, `state`, `parts`, `memory`, `protect`, and `symbols` are
-/// `r8_native_wrap()`, `r8_native_state()`, `r8_native_parts()`,
-/// `r8_native_memory()`, `r8_protect()`, and `r8_native_symbols()`.
+/// `r8_rust_stored_wrap()`, `r8_rust_stored_state()`, `r8_rust_stored_parts()`,
+/// `r8_rust_stored_memory()`, `r8_protect()`, and `r8_native_symbols()`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_set_native_functions(
+pub unsafe extern "C" fn r8_set_rust_stored_functions(
     wrap: *mut (),
     state: *mut (),
     parts: *mut (),
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn r8_set_native_functions(
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_native_parts(x: Robj) -> Robj {
+fn r8_rust_stored_parts(x: Robj) -> Robj {
     let f = PARTS.load(Ordering::Acquire);
     assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
     let f: unsafe extern "C" fn(SEXP) -> SEXP = unsafe { std::mem::transmute(f) };
@@ -73,7 +73,7 @@ fn r8_native_parts(x: Robj) -> Robj {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_native_memory() -> Robj {
+fn r8_rust_stored_memory() -> Robj {
     let f = MEMORY.load(Ordering::Acquire);
     assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
     let f: unsafe extern "C" fn() -> SEXP = unsafe { std::mem::transmute(f) };
@@ -96,9 +96,9 @@ fn r8_native_symbols() -> Robj {
 }
 
 extendr_module! {
-    mod native;
-    fn r8_native_parts;
-    fn r8_native_memory;
+    mod rust_stored;
+    fn r8_rust_stored_parts;
+    fn r8_rust_stored_memory;
     fn r8_format_size;
     fn r8_native_symbols;
 }
@@ -117,14 +117,14 @@ fn r8_format_size(bytes: f64) -> String {
 
 /// The value over `state` with the attributes of `like`, the assembled
 /// list of the value's fields; the value owns the state.
-pub(crate) fn wrap(vt: *const TypeVTable, state: *mut c_void, like: SEXP) -> SEXP {
+pub(crate) fn wrap(vt: *const Codec, state: *mut c_void, like: SEXP) -> SEXP {
     wrap_from(vt, state, like, unsafe { extendr_ffi::R_NilValue }, -1)
 }
 
 /// `wrap()` for a value derived from the Rust-stored value `from`, whose
 /// read fields, except field `skip`, the new value keeps.
 pub(crate) fn wrap_from(
-    vt: *const TypeVTable,
+    vt: *const Codec,
     state: *mut c_void,
     like: SEXP,
     from: SEXP,
@@ -132,7 +132,7 @@ pub(crate) fn wrap_from(
 ) -> SEXP {
     let f = WRAP.load(Ordering::Acquire);
     assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
-    let f: unsafe extern "C" fn(*const TypeVTable, *mut c_void, SEXP, SEXP, R_xlen_t) -> SEXP =
+    let f: unsafe extern "C" fn(*const Codec, *mut c_void, SEXP, SEXP, R_xlen_t) -> SEXP =
         unsafe { std::mem::transmute(f) };
     unsafe { f(vt, state, like, from, skip) }
 }
@@ -140,7 +140,7 @@ pub(crate) fn wrap_from(
 /// A state built by the codec from `state` with the field `name` replaced
 /// by `value`, validated and in its stored form.
 pub(crate) fn with_field(
-    vt: *const TypeVTable,
+    vt: *const Codec,
     state: *const c_void,
     name: &str,
     value: SEXP,
@@ -176,12 +176,12 @@ pub(crate) fn with_field(
 
 /// The state and codec of a Rust-stored value; `None` for any other
 /// object.
-pub(crate) fn state_of(x: SEXP) -> Option<(*const c_void, *const TypeVTable)> {
+pub(crate) fn state_of(x: SEXP) -> Option<(*const c_void, *const Codec)> {
     let f = STATE.load(Ordering::Acquire);
     assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
-    let f: unsafe extern "C" fn(SEXP, *mut *const TypeVTable) -> *const c_void =
+    let f: unsafe extern "C" fn(SEXP, *mut *const Codec) -> *const c_void =
         unsafe { std::mem::transmute(f) };
-    let mut vt: *const TypeVTable = std::ptr::null();
+    let mut vt: *const Codec = std::ptr::null();
     let state = unsafe { f(x, &mut vt) };
     (!state.is_null()).then_some((state, vt))
 }
@@ -201,7 +201,7 @@ fn error_text(err: &Error) -> String {
 
 /// A state built by the codec from the fields of `fields`, a list in
 /// declaration order whose fields are validated and in their stored forms.
-pub(crate) fn from_fields(vt: *const TypeVTable, fields: SEXP) -> Result<*mut c_void, String> {
+pub(crate) fn from_fields(vt: *const Codec, fields: SEXP) -> Result<*mut c_void, String> {
     let codec = unsafe { &*vt };
     let f = codec
         .from_fields
@@ -244,20 +244,20 @@ fn c_text(p: *const c_char) -> Option<String> {
 }
 
 /// Whether a codec table is an enum's: it sets both enum members.
-pub(crate) fn is_enum_codec(vt: *const TypeVTable) -> bool {
+pub(crate) fn is_enum_codec(vt: *const Codec) -> bool {
     let codec = unsafe { &*vt };
     codec.variant.is_some() && codec.from_variant.is_some()
 }
 
 /// Whether a codec table sets `from_reader`.
-pub(crate) fn has_from_reader(vt: *const TypeVTable) -> bool {
+pub(crate) fn has_from_reader(vt: *const Codec) -> bool {
     unsafe { &*vt }.from_reader.is_some()
 }
 
 /// A state built by the codec's `from_reader` from the value at `root`,
 /// which `reader` lends.
 pub(crate) fn from_reader(
-    vt: *const TypeVTable,
+    vt: *const Codec,
     reader: &rtemis_r8::abi::Reader,
     root: rtemis_r8::abi::Node,
 ) -> Result<*mut c_void, String> {
@@ -277,7 +277,7 @@ pub(crate) fn from_reader(
 }
 
 /// The variant of a state of an enum's codec; `None` for a struct's codec.
-pub(crate) fn state_variant(vt: *const TypeVTable, state: *const c_void) -> Option<String> {
+pub(crate) fn state_variant(vt: *const Codec, state: *const c_void) -> Option<String> {
     if !is_enum_codec(vt) {
         return None;
     }
@@ -289,7 +289,7 @@ pub(crate) fn state_variant(vt: *const TypeVTable, state: *const c_void) -> Opti
 /// the declaration order of the variant `variant`, validated and in their
 /// stored forms. The state's variant is checked against `variant`.
 pub(crate) fn from_variant(
-    vt: *const TypeVTable,
+    vt: *const Codec,
     variant: &str,
     fields: SEXP,
 ) -> Result<*mut c_void, String> {
@@ -327,7 +327,7 @@ pub(crate) fn from_variant(
 /// Checks that a new state of an enum's codec has the variant `expected`;
 /// on a mismatch, drops the state and returns the error `codec_variant`.
 pub(crate) fn check_variant(
-    vt: *const TypeVTable,
+    vt: *const Codec,
     state: *mut c_void,
     expected: &str,
 ) -> Result<(), String> {
@@ -360,10 +360,10 @@ pub(crate) fn value_fields(
                 .variants
                 .iter()
                 .find(|v| Some(v.name.as_str()) == variant)?;
-            let fields = match &v.shape {
-                VariantShape::Unit => Vec::new(),
-                VariantShape::Struct { fields, .. } => names(fields),
-                VariantShape::Newtype { of } => match lookup.find(of) {
+            let fields = match &v.kind {
+                VariantKind::Unit => Vec::new(),
+                VariantKind::Struct { fields, .. } => names(fields),
+                VariantKind::Newtype { of } => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => names(&s.fields),
                     _ => return None,
                 },
@@ -494,7 +494,7 @@ fn new_value(
 
 /// The arguments of `build_value()`, borrowed from `new_value()`.
 struct BuildArgs<'a> {
-    vt: *const TypeVTable,
+    vt: *const Codec,
     state: *mut c_void,
     qname: &'a str,
     names: &'a [String],
@@ -576,7 +576,7 @@ pub unsafe extern "C" fn r8_api_value_state(
         let name = c_text(type_name).unwrap_or_default();
         let Some((s, vt)) = state_of(value.cast()) else {
             return Err((
-                "not_native",
+                "not_rust_stored",
                 format!("the value is not a Rust-stored `{name}`"),
             ));
         };
@@ -615,7 +615,7 @@ pub unsafe extern "C" fn r8_api_value_state(
 ///
 /// `type_name` is NUL-terminated; called on R's main thread.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_native_meta(type_name: *const c_char) -> Sexp {
+pub unsafe extern "C" fn r8_rust_stored_meta(type_name: *const c_char) -> Sexp {
     let nil = unsafe { extendr_ffi::R_NilValue }.cast();
     let result = catch_unwind(AssertUnwindSafe(|| -> Option<Sexp> {
         let name = c_text(type_name)?;
@@ -660,14 +660,14 @@ unsafe fn scalar_string(s: &str) -> SEXP {
 ///
 /// `type_name` and `hash` are NUL-terminated; `err` is writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_native_resolve(
+pub unsafe extern "C" fn r8_rust_stored_codec(
     type_name: *const c_char,
     version: i32,
     hash: *const c_char,
     err: *mut Error,
-) -> *const TypeVTable {
+) -> *const Codec {
     let result = catch_unwind(AssertUnwindSafe(
-        || -> Result<*const TypeVTable, (&'static str, String)> {
+        || -> Result<*const Codec, (&'static str, String)> {
             let name = c_text(type_name).unwrap_or_default();
             let Some(vt) = crate::exports::codec(&name) else {
                 return Err((
@@ -709,7 +709,7 @@ pub unsafe extern "C" fn r8_native_resolve(
             std::ptr::null()
         }
         Err(_) => {
-            set_error(err, "panic", "R8 panicked while resolving a codec");
+            set_error(err, "panic", "R8 panicked while finding a codec");
             std::ptr::null()
         }
     }

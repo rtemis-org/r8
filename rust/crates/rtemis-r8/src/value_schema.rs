@@ -2,13 +2,13 @@
 //!
 //! [`json_schema`] writes each named type the type reaches into `$defs`,
 //! keyed by its qualified name, and the type itself as the root, which also
-//! admits the document envelope (`"$type"`, `"$types"`, `"$provenance"`). A
+//! admits the document envelope (`"$type"` and `"$types"`). A
 //! struct is an object without other members; an absent field is `null` or
 //! an omitted member. An enum of unit variants is an `enum` of names; an enum
 //! with a struct or newtype variant is an `anyOf` of objects whose tag member
 //! is a `const`. A `dyn()` field is an object with a required type member and
 //! `x-r8.dyn` naming the trait. R8's facts that JSON Schema cannot state
-//! travel as annotations under `x-r8`: rules, units, and runtime-only fields.
+//! travel as annotations under `x-r8`: rules, units, and host-only fields.
 //!
 //! The schema accepts every valid value. It rejects the errors JSON Schema
 //! expresses: a value of the wrong kind, a missing or unknown member, a
@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
-use crate::ir::{FieldDef, FieldType, RuleDef, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, RuleDef, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -33,7 +33,7 @@ struct Writer<'a> {
     /// Write a `dyn()` field as the closed list of the registered
     /// implementors, and a `subtype` field as the struct and its
     /// registered descendants.
-    implementors: bool,
+    closed: bool,
 }
 
 fn reference(q: &QualifiedName) -> Value {
@@ -187,7 +187,9 @@ impl Writer<'_> {
                 self.table(&fields, false, &[])
             }
             FieldType::Json => json!({}),
-            FieldType::R { class } => json!({"type": "null", "x-r8": {"runtime": class}}),
+            FieldType::HostClass { class, .. } => {
+                json!({"type": "null", "x-r8": {"host_only": class}})
+            }
             FieldType::Vec {
                 element,
                 min_length,
@@ -227,7 +229,7 @@ impl Writer<'_> {
                 self.define(name);
                 reference(name)
             }
-            FieldType::Dyn { r#trait } if self.implementors => {
+            FieldType::Dyn { r#trait } if self.closed => {
                 let member = self.lookup_tag(r#trait);
                 let alternatives: Vec<Value> = crate::rules::implementors(self.lookup, r#trait)
                     .iter()
@@ -241,7 +243,7 @@ impl Writer<'_> {
                     .collect();
                 json!({
                     "anyOf": alternatives,
-                    "x-r8": {"dyn": r#trait.to_string(), "implementors": "registered"}
+                    "x-r8": {"dyn": r#trait.to_string(), "closed": "registered"}
                 })
             }
             FieldType::Dyn { r#trait } => json!({
@@ -249,7 +251,7 @@ impl Writer<'_> {
                 "required": [self.lookup_tag(r#trait)],
                 "x-r8": {"dyn": r#trait.to_string()}
             }),
-            FieldType::Subtype { of } if self.implementors => {
+            FieldType::Subtype { of } if self.closed => {
                 let mut types = vec![of.clone()];
                 types.extend(self.lookup.descendants_of(of));
                 let alternatives: Vec<Value> = types
@@ -258,7 +260,7 @@ impl Writer<'_> {
                     .collect();
                 json!({
                     "anyOf": alternatives,
-                    "x-r8": {"subtype": of.to_string(), "implementors": "registered"}
+                    "x-r8": {"subtype": of.to_string(), "closed": "registered"}
                 })
             }
             FieldType::Subtype { of } => json!({
@@ -419,7 +421,7 @@ impl Writer<'_> {
         if let Some(TypeDef::Enum(e)) = self.lookup.find(t).cloned()
             && e.variants
                 .iter()
-                .all(|v| matches!(v.shape, VariantShape::Unit))
+                .all(|v| matches!(v.kind, VariantKind::Unit))
         {
             let names: Vec<&str> = e.variants.iter().map(|v| v.name.as_str()).collect();
             let mut s = self.object(&[], &[], &[(member, named)]);
@@ -445,14 +447,14 @@ impl Writer<'_> {
     /// The schema of a named type, with `extra` members admitted on a struct.
     fn named(&mut self, q: &QualifiedName, extra: &[(&str, Value)]) -> Value {
         match self.lookup.find(q).cloned() {
-            None => json!({"x-r8": {"unresolved": q.to_string()}}),
+            None => json!({"x-r8": {"unknown_type": q.to_string()}}),
             Some(TypeDef::Struct(s)) => {
                 with_description(self.object(&s.fields, &s.rules, extra), &s.description)
             }
             Some(TypeDef::Enum(e)) => {
                 if e.variants
                     .iter()
-                    .all(|v| matches!(v.shape, VariantShape::Unit))
+                    .all(|v| matches!(v.kind, VariantKind::Unit))
                 {
                     let names: Vec<&str> = e.variants.iter().map(|v| v.name.as_str()).collect();
                     return with_description(json!({"enum": names}), &e.description);
@@ -464,14 +466,14 @@ impl Writer<'_> {
                     .map(|v| {
                         let mut ex: Vec<(&str, Value)> = extra.to_vec();
                         ex.push((tag, json!({"const": v.name.as_str()})));
-                        let s = match &v.shape {
-                            VariantShape::Unit => self.object(&[], &[], &ex),
-                            VariantShape::Struct { fields, rules } => {
+                        let s = match &v.kind {
+                            VariantKind::Unit => self.object(&[], &[], &ex),
+                            VariantKind::Struct { fields, rules } => {
                                 self.object(fields, rules, &ex)
                             }
-                            VariantShape::Newtype { of } => match self.lookup.find(of).cloned() {
+                            VariantKind::Newtype { of } => match self.lookup.find(of).cloned() {
                                 Some(TypeDef::Struct(s)) => self.object(&s.fields, &s.rules, &ex),
-                                _ => json!({"x-r8": {"unresolved": of.to_string()}}),
+                                _ => json!({"x-r8": {"unknown_type": of.to_string()}}),
                             },
                         };
                         with_description(s, &v.description)
@@ -509,15 +511,15 @@ pub fn json_schema(ty: &QualifiedName, lookup: &dyn TypeLookup) -> Value {
     json_schema_with(ty, lookup, false)
 }
 
-/// [`json_schema`]; with `implementors`, a `dyn(Trait)` field is the closed
+/// [`json_schema`]; with `closed`, a `dyn(Trait)` field is the closed
 /// list (`anyOf`) of the trait's registered implementors, each with its type
 /// member as a constant, and a `subtype` field the struct and its
 /// registered descendants, each with `"$type"` as a constant.
-pub fn json_schema_with(ty: &QualifiedName, lookup: &dyn TypeLookup, implementors: bool) -> Value {
+pub fn json_schema_with(ty: &QualifiedName, lookup: &dyn TypeLookup, closed: bool) -> Value {
     let mut w = Writer {
         lookup,
         defs: BTreeMap::new(),
-        implementors,
+        closed,
     };
     let envelope = [
         ("$type", json!({"type": "string"})),
@@ -525,7 +527,6 @@ pub fn json_schema_with(ty: &QualifiedName, lookup: &dyn TypeLookup, implementor
             "$types",
             json!({"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}}),
         ),
-        ("$provenance", json!({"type": "object"})),
     ];
     let root = match lookup.find(ty) {
         Some(TypeDef::Struct(_)) => w.named(ty, &envelope),

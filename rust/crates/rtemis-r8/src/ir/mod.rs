@@ -23,9 +23,9 @@ pub use check::{
     report,
 };
 pub use decl::{
-    ClassSystem, Column, ColumnDef, EnumDef, FieldDef, ImplDef, MethodDef, Migration,
-    MigrationStep, Param, ParamDef, RequiredField, ReturnType, RuleDef, SelfType, SplitTarget,
-    StructDef, TraitDef, TypeRef, VariantDef, VariantShape,
+    ClassSystem, Column, ColumnDef, EnumDef, FieldDef, HostDefault, ImplDef, ImplMethod, MethodDef,
+    Migration, MigrationStep, Param, ParamDef, RequiredField, ReturnType, RuleDef, SelfMarker,
+    SplitTarget, StructDef, TraitDef, TypeRef, TypedImplMethod, VariantDef, VariantKind,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use logic::{Logic, Operator};

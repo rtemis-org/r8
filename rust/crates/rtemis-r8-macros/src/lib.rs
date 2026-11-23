@@ -24,12 +24,12 @@
 //! JSONLogic and a field's default are parsed when the crate compiles, so a
 //! text that does not read is a compile error at its attribute.
 //!
-//! `#[r8(storage = "rust")]` on a struct also implements `rtemis_r8_api::RustStored`, and
-//! on an enum `rtemis_r8_api::RustStoredEnum`; on both, `rtemis_r8_api::Codec`, so
+//! `#[r8(storage = "rust")]` on a struct also implements `rtemis_r8_api::RustStoredStruct`, and
+//! on an enum `rtemis_r8_api::RustStoredEnum`; on both, `rtemis_r8_api::RustStored`, so
 //! R8 holds the type's values in Rust: each field's type implements
 //! `rtemis_r8_api::Field`, a `vec()` field of numbers, logicals, or bytes is
 //! a `rtemis_r8_api::Buffer`, and a newtype variant's struct implements
-//! `rtemis_r8_api::RustStored`. `#[r8::methods]` and `r8::exports!`
+//! `rtemis_r8_api::RustStoredStruct`. `#[r8::methods]` and `r8::exports!`
 //! register the struct and its impls with R8.
 
 use proc_macro::TokenStream;
@@ -444,7 +444,7 @@ fn fields_of(fields: &Fields) -> Result<Vec<&syn::Field>> {
 
 /// Encoding, decoding, and registration of named fields, reading and
 /// writing `m`, the object of the JSON form.
-fn field_codec(fields: &[&syn::Field]) -> (Vec<Tokens>, Vec<Tokens>, Vec<Tokens>) {
+fn field_json(fields: &[&syn::Field]) -> (Vec<Tokens>, Vec<Tokens>, Vec<Tokens>) {
     let mut encode = Vec::new();
     let mut decode = Vec::new();
     let mut register = Vec::new();
@@ -490,7 +490,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                 .iter()
                 .map(|f| field_def(f))
                 .collect::<Result<Vec<_>>>()?;
-            let (enc, dec, reg) = field_codec(&fields);
+            let (enc, dec, reg) = field_json(&fields);
             let names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
             (
                 quote! {
@@ -535,7 +535,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                             ::rtemis_r8::ir::VariantDef {
                                 name: ::rtemis_r8::derive::name(#vname),
                                 description: #vdesc.to_string(),
-                                shape: ::rtemis_r8::ir::VariantShape::Unit,
+                                kind: ::rtemis_r8::ir::VariantKind::Unit,
                             }
                         });
                         if unit_only {
@@ -551,14 +551,14 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                             .iter()
                             .map(|f| field_def(f))
                             .collect::<Result<Vec<_>>>()?;
-                        let (enc, dec, r) = field_codec(&fields);
+                        let (enc, dec, r) = field_json(&fields);
                         let names: Vec<_> =
                             fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
                         variant_defs.push(quote! {
                             ::rtemis_r8::ir::VariantDef {
                                 name: ::rtemis_r8::derive::name(#vname),
                                 description: #vdesc.to_string(),
-                                shape: ::rtemis_r8::ir::VariantShape::Struct {
+                                kind: ::rtemis_r8::ir::VariantKind::Struct {
                                     fields: ::std::vec![#(#defs),*],
                                     rules: ::std::vec![#(#vrules),*],
                                 },
@@ -581,7 +581,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                             ::rtemis_r8::ir::VariantDef {
                                 name: ::rtemis_r8::derive::name(#vname),
                                 description: #vdesc.to_string(),
-                                shape: ::rtemis_r8::ir::VariantShape::Newtype {
+                                kind: ::rtemis_r8::ir::VariantKind::Newtype {
                                     of: ::rtemis_r8::name::QualifiedName::parse(
                                         <#inner as ::rtemis_r8::derive::R8>::NAME,
                                     )
@@ -652,11 +652,11 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             ));
         }
     };
-    let native = if attrs.rust_stored {
+    let rust_stored = if attrs.rust_stored {
         match &input.data {
-            Data::Struct(st) => native_impl(ident, &qualified, &fields_of(&st.fields)?)?,
+            Data::Struct(st) => rust_stored_impl(ident, &qualified, &fields_of(&st.fields)?)?,
             Data::Enum(e) => {
-                native_enum_impl(ident, &qualified, e, attrs.tag.as_deref().unwrap_or("type"))?
+                rust_stored_enum_impl(ident, &qualified, e, attrs.tag.as_deref().unwrap_or("type"))?
             }
             Data::Union(_) => {
                 return Err(Error::new(
@@ -669,7 +669,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
         quote! {}
     };
     Ok(quote! {
-        #native
+        #rust_stored
         impl ::rtemis_r8::derive::Encode for #ident {
             fn field_type() -> ::rtemis_r8::ir::FieldType {
                 ::rtemis_r8::derive::named(#qualified)
@@ -695,12 +695,12 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     })
 }
 
-/// `impl rtemis_r8_api::RustStoredEnum` and `impl rtemis_r8_api::Codec` for an
+/// `impl rtemis_r8_api::RustStoredEnum` and `impl rtemis_r8_api::RustStored` for an
 /// enum of `#[r8(storage = "rust")]`: unit variants, struct variants whose fields are
-/// each a `Field`, and newtype variants whose struct implements `RustStored`.
+/// each a `Field`, and newtype variants whose struct implements `RustStoredStruct`.
 /// The state's bytes are the variant's declaration index, a `u32`, then its
 /// fields.
-fn native_enum_impl(
+fn rust_stored_enum_impl(
     ident: &syn::Ident,
     qualified: &str,
     e: &syn::DataEnum,
@@ -780,7 +780,7 @@ fn native_enum_impl(
                     .map(|((i, t), name)| {
                         let name_c = c_str(name);
                         quote! {
-                            #i: <#t as #api::Field>::from_node(r, r.field(root, #name_c))
+                            #i: <#t as #api::Field>::from_node(r, r.member(root, #name_c))
                                 .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
                         }
                     })
@@ -834,27 +834,27 @@ fn native_enum_impl(
             Fields::Unnamed(u) if u.unnamed.len() == 1 => {
                 let inner = &u.unnamed[0].ty;
                 from.push(quote! {
-                    #vname => Ok(Self::#vid(unsafe { <#inner as #api::RustStored>::from_fields(fields) }?))
+                    #vname => Ok(Self::#vid(unsafe { <#inner as #api::RustStoredStruct>::from_fields(fields) }?))
                 });
                 from_node.push(quote! {
-                    #vname => Ok(Self::#vid(<#inner as #api::RustStored>::from_reader(r, root)?))
+                    #vname => Ok(Self::#vid(<#inner as #api::RustStoredStruct>::from_reader(r, root)?))
                 });
                 variant.push(quote! { Self::#vid(_) => #vname_c });
-                get.push(quote! { Self::#vid(inner) => <#inner as #api::RustStored>::get_field(inner, owner, name) });
+                get.push(quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::get_field(inner, owner, name) });
                 with.push(quote! {
-                    Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::RustStored>::with_field(inner, name, value) }?))
+                    Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::RustStoredStruct>::with_field(inner, name, value) }?))
                 });
                 write.push(quote! {
                     Self::#vid(inner) => {
                         out.write(&#idx.to_le_bytes())?;
-                        <#inner as #api::RustStored>::write_state(inner, out)
+                        <#inner as #api::RustStoredStruct>::write_state(inner, out)
                     }
                 });
                 read.push(
-                    quote! { #idx => Ok(Self::#vid(<#inner as #api::RustStored>::read_state(input)?)) },
+                    quote! { #idx => Ok(Self::#vid(<#inner as #api::RustStoredStruct>::read_state(input)?)) },
                 );
                 bytes.push(
-                    quote! { Self::#vid(inner) => <#inner as #api::RustStored>::owned_bytes(inner) },
+                    quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::owned_bytes(inner) },
                 );
             }
             Fields::Unnamed(u) => {
@@ -866,10 +866,10 @@ fn native_enum_impl(
         }
     }
     Ok(quote! {
-        impl #api::Codec for #ident {
+        impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
-            const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::enum_codec::<Self>();
-            unsafe fn from_r_native(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+            const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::enum_codec::<Self>();
+            unsafe fn from_r_stored(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 let variant = unsafe { #api::call::r_variant(x) }?;
                 unsafe { <Self as #api::RustStoredEnum>::from_variant(&variant, fields) }
             }
@@ -884,7 +884,7 @@ fn native_enum_impl(
                 }
             }
             fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
-                let variant = if #unit_only { r.string(root)? } else { r.string(r.field(root, #tag_c))? };
+                let variant = if #unit_only { r.string(root)? } else { r.string(r.member(root, #tag_c))? };
                 match variant {
                     #(#from_node,)*
                     _ => Err(#api::Error::new("unknown_variant", format!("`{}` has no variant `{}`", #qualified, variant))),
@@ -921,8 +921,8 @@ fn c_str(s: &str) -> Tokens {
     format!("c{s:?}").parse().expect("a C string literal")
 }
 
-/// `impl rtemis_r8_api::RustStored` for a struct of `#[r8(storage = "rust")]`.
-fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> Result<Tokens> {
+/// `impl rtemis_r8_api::RustStoredStruct` for a struct of `#[r8(storage = "rust")]`.
+fn rust_stored_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> Result<Tokens> {
     let type_c = c_str(qualified);
     let n = fields.len();
     let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
@@ -951,7 +951,7 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
         .map(|((i, t), name)| {
             let name_c = c_str(name);
             quote! {
-                #i: <#t as #api::Field>::from_node(r, r.field(root, #name_c))
+                #i: <#t as #api::Field>::from_node(r, r.member(root, #name_c))
                     .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
             }
         })
@@ -975,14 +975,14 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
         })
         .collect();
     Ok(quote! {
-        impl #api::Codec for #ident {
+        impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
-            const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::codec::<Self>();
-            unsafe fn from_r_native(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
-                unsafe { <Self as #api::RustStored>::from_fields(fields) }
+            const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::codec::<Self>();
+            unsafe fn from_r_stored(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+                unsafe { <Self as #api::RustStoredStruct>::from_fields(fields) }
             }
         }
-        impl #api::RustStored for #ident {
+        impl #api::RustStoredStruct for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             unsafe fn from_fields(fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 if fields.len() != #n {
@@ -1149,7 +1149,7 @@ fn methods_impl(trait_name: Option<syn::LitStr>, item: &syn::ItemImpl) -> Result
         fns.push(quote! {
             #[allow(non_snake_case)]
             unsafe extern "C" fn #fn_ident(
-                _ctx: *const #api::rtemis_r8::abi::CallContext,
+                _inputs: *const #api::rtemis_r8::abi::CallInputs,
                 args: *const #api::rtemis_r8::abi::Sexp,
                 nargs: usize,
                 result: *mut #api::rtemis_r8::abi::Sexp,
@@ -1176,7 +1176,7 @@ fn methods_impl(trait_name: Option<syn::LitStr>, item: &syn::ItemImpl) -> Result
         #[doc(hidden)]
         pub const #set_ident: #api::ImplSet = #api::ImplSet {
             trait_name: #trait_c,
-            type_name: <#self_ty as #api::Codec>::TYPE_NAME,
+            type_name: <#self_ty as #api::RustStored>::TYPE_NAME,
             methods: &[#(#rows),*],
         };
     })
@@ -1282,8 +1282,8 @@ fn exports_impl(a: &ExportsArgs) -> Result<Tokens> {
         .collect();
     let n_impls = sets.len();
     Ok(quote! {
-        static __R8_CODECS: #api::Shared<[#api::rtemis_r8::abi::TypeVTable; #n_types]> =
-            #api::Shared([#(<#types as #api::Codec>::TABLE.0),*]);
+        static __R8_CODECS: #api::Shared<[#api::rtemis_r8::abi::Codec; #n_types]> =
+            #api::Shared([#(<#types as #api::RustStored>::TABLE.0),*]);
         static __R8_IMPLS: [&#api::ImplSet; #n_impls] = [#(&#sets),*];
         static __R8_TABLE: ::std::sync::OnceLock<usize> = ::std::sync::OnceLock::new();
 

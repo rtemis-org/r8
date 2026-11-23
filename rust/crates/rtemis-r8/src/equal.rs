@@ -6,7 +6,7 @@
 //! difference. Numbers are equal when their canonical forms are (`-0` equals
 //! `0`, a `NaN` equals a `NaN`, and a missing value equals only a missing
 //! value); an absent field with a default equals its default; members of
-//! maps and tables compare by name. Runtime-only fields, which have no JSON
+//! maps and tables compare by name. Host-only fields, which have no JSON
 //! form, compare with [`Access::identical`]. Two handles to the same object
 //! are equal without a read ([`Access::same`]).
 
@@ -16,7 +16,7 @@ use std::borrow::Cow;
 
 use crate::access::{Access, Read, same_dimnames};
 use crate::emit::Emitter;
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -104,7 +104,7 @@ impl Eq<'_> {
             FieldType::Date => a.date().ok() == b.date().ok(),
             FieldType::Posixct => a.datetime().ok() == b.datetime().ok(),
             FieldType::Raw => a.bytes().ok() == b.bytes().ok(),
-            FieldType::R { .. } => a.identical(b),
+            FieldType::HostClass { .. } => a.identical(b),
             FieldType::Vec { element, .. } => match (a.vec(element), b.vec(element)) {
                 (Ok(n), Ok(m)) if n == m => self.sequence(element, a, b, n),
                 _ => false,
@@ -398,10 +398,10 @@ impl Eq<'_> {
                     .variants
                     .iter()
                     .find(|x| x.name.as_str() == va)
-                    .map(|x| &x.shape)
+                    .map(|x| &x.kind)
                 {
-                    Some(VariantShape::Struct { fields, .. }) => self.fields(fields, a, b),
-                    Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                    Some(VariantKind::Struct { fields, .. }) => self.fields(fields, a, b),
+                    Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                         Some(TypeDef::Struct(s)) => self.fields(&s.fields, a, b),
                         _ => false,
                     },

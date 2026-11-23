@@ -6,8 +6,8 @@
 //! A host binding reads the table's pointers and owns the registry; it
 //! passes the rows and the codec tables here.
 
-use crate::abi::TypeVTable;
-use crate::ir::{FieldDef, FieldType, ImplDef, TypeDef, TypeRef, VariantShape};
+use crate::abi::Codec;
+use crate::ir::{FieldDef, FieldType, ImplDef, ImplMethod, TypeDef, TypeRef, VariantKind};
 use crate::name::{MethodName, QualifiedName};
 use crate::rules::{DocumentSet, TypeLookup};
 
@@ -52,25 +52,24 @@ pub fn impls_from_rows(rows: &[ImplRow], package: &str) -> Result<Vec<ImplDef>, 
                 out.push(ImplDef {
                     r#trait: parse(&r.trait_name, "trait")?,
                     type_args: Vec::new(),
-                    target: TypeRef::Type {
+                    target: TypeRef::Named {
                         name: parse(&r.type_name, "type")?,
                     },
                     tag_value: None,
                     methods: Vec::new(),
-                    codec: false,
                 });
                 keys.push((&r.trait_name, &r.type_name));
                 out.len() - 1
             }
         };
         let methods = &mut out[at].methods;
-        if methods.contains(&method) {
+        if methods.iter().any(|m| m.name() == &method) {
             return Err(format!(
                 "the exports table of `{package}` has two impl functions `{}` of `{}` for `{}`",
                 r.method, r.trait_name, r.type_name
             ));
         }
-        methods.push(method);
+        methods.push(ImplMethod::Name(method));
     }
     Ok(out)
 }
@@ -109,18 +108,18 @@ pub fn check_params(rows: &[ImplRow], set: &DocumentSet, package: &str) -> Resul
 }
 
 /// Whether a codec table sets the members of an enum's codec.
-fn has_enum_members(v: &TypeVTable) -> bool {
+fn has_enum_members(v: &Codec) -> bool {
     v.variant.is_some() || v.from_variant.is_some()
 }
 
 /// Checks the codec of the Rust-stored type `name` against the type's
 /// declaration in `lookup`: a struct's codec sets `from_fields` and neither
 /// `variant` nor `from_variant`, an enum's sets both and not `from_fields`,
-/// and no field of the type, in any variant, is runtime-only, since the
+/// and no field of the type, in any variant, is host-only, since the
 /// codec's state holds every field.
 pub fn check_codec(
     name: &QualifiedName,
-    v: &TypeVTable,
+    v: &Codec,
     lookup: &dyn TypeLookup,
     package: &str,
 ) -> Result<(), String> {
@@ -140,29 +139,29 @@ pub fn check_codec(
             "the codec of `{name}` of `{package}` does not match its type: a struct's codec sets `from_fields` and neither `variant` nor `from_variant`, and an enum's sets `variant` and `from_variant` and not `from_fields`"
         ));
     }
-    let runtime = |fs: &[FieldDef]| {
+    let host_only = |fs: &[FieldDef]| {
         fs.iter()
             .find(|f| match &f.ty {
-                FieldType::R { .. } => true,
-                FieldType::Option { inner, .. } => matches!(**inner, FieldType::R { .. }),
+                FieldType::HostClass { .. } => true,
+                FieldType::Option { inner, .. } => matches!(**inner, FieldType::HostClass { .. }),
                 _ => false,
             })
             .map(|f| f.name.to_string())
     };
     let found = match def {
-        TypeDef::Struct(st) => runtime(&st.fields),
-        TypeDef::Enum(e) => e.variants.iter().find_map(|var| match &var.shape {
-            VariantShape::Struct { fields, .. } => runtime(fields),
-            VariantShape::Newtype { of } => match lookup.find(of) {
-                Some(TypeDef::Struct(st)) => runtime(&st.fields),
+        TypeDef::Struct(st) => host_only(&st.fields),
+        TypeDef::Enum(e) => e.variants.iter().find_map(|var| match &var.kind {
+            VariantKind::Struct { fields, .. } => host_only(fields),
+            VariantKind::Newtype { of } => match lookup.find(of) {
+                Some(TypeDef::Struct(st)) => host_only(&st.fields),
                 _ => None,
             },
-            VariantShape::Unit => None,
+            VariantKind::Unit => None,
         }),
     };
     match found {
         Some(field) => Err(format!(
-            "the Rust-stored type `{name}` of `{package}` declares the runtime-only field `{field}`; its codec's state holds every field"
+            "the Rust-stored type `{name}` of `{package}` declares the host-only field `{field}`; its codec's state holds every field"
         )),
         None => Ok(()),
     }
@@ -191,7 +190,7 @@ mod tests {
         let impls = impls_from_rows(&rows, "p").unwrap();
         assert_eq!(impls.len(), 2);
         assert_eq!(impls[0].r#trait.to_string(), "p::Norm");
-        let methods: Vec<&str> = impls[0].methods.iter().map(|m| m.as_str()).collect();
+        let methods: Vec<&str> = impls[0].methods.iter().map(|m| m.name().as_str()).collect();
         assert_eq!(methods, ["magnitude", "ratio"]);
         assert_eq!(impls[1].r#trait.to_string(), "R8::Display");
     }

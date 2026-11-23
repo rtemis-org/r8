@@ -9,7 +9,7 @@
 //! spec: R8/class-system#dyn
 
 use super::check::DeclError;
-use super::decl::{ImplDef, TypeRef, VariantShape};
+use super::decl::{ImplDef, TypeRef, VariantKind};
 use super::document::TypeDef;
 use crate::name::{Name, QualifiedName};
 use crate::rules::TypeLookup;
@@ -33,7 +33,7 @@ pub fn check_tags(
     let impls: Vec<&ImplDef> = lookup.impls_of(tr);
     let mut written: Vec<(String, QualifiedName)> = Vec::new();
     for imp in &impls {
-        let TypeRef::Type { name: target } = &imp.target else {
+        let TypeRef::Named { name: target } = &imp.target else {
             continue;
         };
         let path = path_of(imp);
@@ -114,8 +114,8 @@ fn tag_field(lookup: &dyn TypeLookup, ty: &QualifiedName, tag: &str) -> Option<&
             }
             e.variants
                 .iter()
-                .any(|v| match &v.shape {
-                    VariantShape::Struct { fields, .. } => {
+                .any(|v| match &v.kind {
+                    VariantKind::Struct { fields, .. } => {
                         fields.iter().any(|f| f.name.as_str() == tag)
                     }
                     _ => false,

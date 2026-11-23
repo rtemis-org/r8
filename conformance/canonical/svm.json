@@ -36,7 +36,7 @@
       "input": {
         "cost": 2.5,
         "kernel": {
-          "gamma": 1e-07,
+          "gamma": 1e-7,
           "type": "Rbf"
         },
         "weights": [
@@ -64,12 +64,12 @@
           {
             "name": "Linear",
             "description": "",
-            "shape": "unit"
+            "kind": "unit"
           },
           {
             "name": "Rbf",
             "description": "",
-            "shape": "struct",
+            "kind": "struct",
             "fields": [
               {
                 "name": "gamma",
@@ -195,7 +195,7 @@
       {
         "trait": "rtemis::Fit",
         "target": {
-          "kind": "type",
+          "kind": "named",
           "name": "rtemis::Svm"
         },
         "methods": [

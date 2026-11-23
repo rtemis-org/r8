@@ -61,7 +61,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": []
@@ -69,7 +69,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::B"
             },
             "methods": [],
@@ -140,7 +140,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
@@ -149,7 +149,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::B"
             },
             "methods": [],
@@ -225,7 +225,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
@@ -234,7 +234,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::B"
             },
             "methods": []
@@ -326,7 +326,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": []
@@ -334,7 +334,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::B"
             },
             "methods": [],
@@ -395,7 +395,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
@@ -455,7 +455,7 @@
           {
             "trait": "ns::Plain",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": [],
@@ -516,7 +516,7 @@
           {
             "trait": "ns::Algorithm",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "ns::A"
             },
             "methods": []

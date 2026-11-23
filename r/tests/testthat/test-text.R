@@ -182,7 +182,7 @@ test_that("a nested value whose type implements Display shows the impl's text", 
   expect_match(format(x$split, output_type = "ansi"), "\033[1;", fixed = TRUE)
 })
 
-test_that("a Print impl returns text in the output type print() resolves", {
+test_that("a Print impl returns text in the output type print() determines", {
   types <- gbm_types()
   x <- gbm_value(types)
   declare_in(
@@ -211,7 +211,7 @@ test_that("a Print impl returns text in the output type print() resolves", {
   expect_identical(format(x)[[1L]], "<demo::GBMT>")
 })
 
-test_that("r8_output_type() resolves the choice, the setting, and the environment", {
+test_that("r8_output_type() determines the choice, the setting, and the environment", {
   expect_identical(r8_output_type("html"), "html")
   with_opts(list(r8.output_type = "markdown"), {
     expect_identical(r8_output_type(), "markdown")

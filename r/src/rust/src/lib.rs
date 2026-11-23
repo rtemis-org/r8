@@ -17,10 +17,10 @@ mod exports;
 mod fieldtype;
 mod irde;
 mod irser;
-mod native;
 #[cfg(feature = "oracle")]
 mod oracle;
 mod reader;
+mod rust_stored;
 mod rview;
 mod text;
 mod values;
@@ -35,7 +35,7 @@ extendr_module! {
     use declare;
     use exports;
     use fieldtype;
-    use native;
+    use rust_stored;
     use reader;
     use text;
     use values;
@@ -50,7 +50,7 @@ extendr_module! {
     use declare;
     use exports;
     use fieldtype;
-    use native;
+    use rust_stored;
     use reader;
     use oracle;
     use text;

@@ -17,11 +17,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -33,7 +33,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -103,8 +103,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -180,11 +182,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -196,7 +198,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -266,8 +268,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -348,11 +352,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -364,7 +368,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -434,8 +438,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -516,11 +522,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -532,7 +538,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -602,8 +608,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -684,11 +692,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -700,7 +708,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -770,8 +778,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -852,11 +862,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -868,7 +878,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -938,8 +948,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -1023,11 +1035,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -1039,7 +1051,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -1109,8 +1121,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -1192,11 +1206,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -1208,7 +1222,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -1278,8 +1292,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -1355,11 +1371,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -1371,7 +1387,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -1441,8 +1457,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -1523,11 +1541,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -1539,7 +1557,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -1609,8 +1627,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -1693,11 +1713,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -1709,7 +1729,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -1779,8 +1799,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -1863,11 +1885,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -1879,7 +1901,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -1949,8 +1971,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -2028,11 +2052,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -2044,7 +2068,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -2114,8 +2138,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -2196,11 +2222,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -2212,7 +2238,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -2282,8 +2308,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -2351,7 +2379,7 @@
     },
     {
       "id": "runtime-field",
-      "description": "A runtime-only R value cannot be read.",
+      "description": "A host-only value cannot be read.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -2364,11 +2392,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -2380,7 +2408,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -2450,8 +2478,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -2531,11 +2561,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -2547,7 +2577,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -2617,8 +2647,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -2703,11 +2735,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -2719,7 +2751,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -2789,8 +2821,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -2875,11 +2909,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -2891,7 +2925,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -2961,8 +2995,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -3042,11 +3078,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -3058,7 +3094,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -3128,8 +3164,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -3210,11 +3248,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -3226,7 +3264,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -3296,8 +3334,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -3386,11 +3426,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -3402,7 +3442,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -3472,8 +3512,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -3556,11 +3598,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -3572,7 +3614,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -3642,8 +3684,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -3752,11 +3796,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -3768,7 +3812,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -3838,8 +3882,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -3937,11 +3983,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -3953,7 +3999,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -4023,8 +4069,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {
@@ -4113,11 +4161,11 @@
             "variants": [
               {
                 "name": "Linear",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -4129,7 +4177,7 @@
               },
               {
                 "name": "Poly",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "degree",
@@ -4199,8 +4247,10 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 },
                 "resolve": {

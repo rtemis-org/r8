@@ -41,11 +41,10 @@ field name. \code{NULL} removes the default of an \code{option()} field.}
 
 \item{storage}{Character \{"r", "rust"\}: Where values hold their fields.
 \code{"rust"}: a Rust-stored type, whose values the codec in the package's
-compiled exports builds and holds (\code{R8.h}). Its constructor
-signals \code{r8_codec_missing} until the codec is registered, and
-\code{r8_register()} checks that the exports carry the codec. A package whose
-types are declared in Rust generates these declarations with
-\code{r8_document_rust()}.}
+compiled exports builds and holds (\code{R8.h}). Its constructor signals
+\code{r8_codec_missing_error} until the codec is registered, and \code{r8_register()}
+checks that the exports carry the codec. A package whose types are declared
+in Rust generates these declarations with \code{r8_document_rust()}.}
 
 \item{object}{A struct type object.}
 }
