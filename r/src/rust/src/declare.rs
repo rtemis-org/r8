@@ -401,17 +401,27 @@ fn r8_package_namespaces(package: &str) -> Result<Vec<String>> {
 /// declaration's own check cannot see, such as a rule that reads a field of
 /// a type declared again without that field.
 ///
+/// The impls of these namespaces are also checked against the registry,
+/// and two impls of one trait that make a call ambiguous are reported when
+/// one belongs to these namespaces and the other to them or to `imports`.
+///
 /// @param namespaces Character: The namespaces.
+/// @param imports Character: The namespaces of the packages the package
+///   imports.
 /// @return List: The problems, as character vectors `namespace`, `code`,
 ///   `path`, and `message`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_check_namespaces(namespaces: Robj) -> Result<List> {
+fn r8_check_namespaces(
+    namespaces: Robj,
+    #[extendr(default = "character()")] imports: Robj,
+) -> Result<List> {
     let namespaces =
         crate::text::str_vec(&namespaces).ok_or_else(|| fail("`namespaces` is character"))?;
+    let imports = crate::text::str_vec(&imports).unwrap_or_default();
     let (mut ns, mut code, mut path, mut message) = (vec![], vec![], vec![], vec![]);
-    for (n, e) in registry().check_namespaces(&namespaces) {
+    for (n, e) in registry().check_namespaces_with(&namespaces, &imports) {
         ns.push(n);
         code.push(e.code.to_string());
         path.push(e.path);
@@ -423,6 +433,167 @@ fn r8_check_namespaces(namespaces: Robj) -> Result<List> {
         path = path,
         message = message
     ))
+}
+
+/// The impls of a trait and the dispatched-position count of the trait, from
+/// the registry's snapshot.
+fn trait_impls(
+    docs: &DocumentSet,
+    tr: &QualifiedName,
+) -> Result<(usize, Vec<(Name, rtemis_r8::ir::ImplDef)>)> {
+    use rtemis_r8::rules::TypeLookup;
+    let arity = docs
+        .trait_of(tr)
+        .map(|t| t.dispatch_arity())
+        .ok_or_else(|| fail(format!("`{tr}` is not a registered trait")))?;
+    let impls = rtemis_r8::ir::dispatch::impls_by_namespace(docs, tr)
+        .into_iter()
+        .map(|(n, i)| (n.clone(), i.clone()))
+        .collect();
+    Ok((arity, impls))
+}
+
+/// The positions of an impl as text: qualified type names, class names, or
+/// `any`.
+fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
+    rtemis_r8::ir::dispatch::positions(imp, arity)
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Resolves a call of a trait among its registered impls, with the core's
+/// rule of multiple dispatch.
+///
+/// @param trait_name Character: The trait's qualified name.
+/// @param types Character: The R8 type of each dispatched argument, `NA`
+///   for a value of no R8 type.
+/// @param above Optional Character: The positions of the running impl, for
+///   the next impl.
+/// @return List: `kind` (`"impl"`, `"default"`, `"ambiguous"`, or
+///   `"stale"`), `tuple` (the providing impl's positions, or the first of
+///   an ambiguous pair), `other` (the second of an ambiguous pair), `meet`
+///   (the positionwise more specific tuple of the pair), and `stale` (a
+///   stale type).
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_dispatch_resolve(trait_name: &str, types: Robj, above: Robj) -> Result<List> {
+    use rtemis_r8::ir::dispatch::{Arg, Resolution, resolve};
+    let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
+    let docs = snapshot()?;
+    let (arity, found) = trait_impls(&docs, &tr)?;
+    let impls: Vec<&rtemis_r8::ir::ImplDef> = found.iter().map(|(_, i)| i).collect();
+    let strings = types
+        .as_str_iter()
+        .ok_or_else(|| fail("`types` is character"))?;
+    let args: Vec<Arg> = strings
+        .map(|s| match s {
+            s if s.is_na() => Arg::Other,
+            s => QualifiedName::parse(s).map_or(Arg::Other, Arg::Type),
+        })
+        .collect();
+    let above = match above.as_str_vector() {
+        Some(v) => Some(
+            impls
+                .iter()
+                .position(|i| tuple_strings(i, arity) == v)
+                .ok_or_else(|| fail("the running impl is not registered"))?,
+        ),
+        None => None,
+    };
+    let none: Vec<String> = Vec::new();
+    let (kind, tuple, other, meet, stale) = match resolve(&*docs, &impls, arity, &args, above) {
+        Resolution::Impl(k) => (
+            "impl",
+            tuple_strings(impls[k], arity),
+            none.clone(),
+            none,
+            None,
+        ),
+        Resolution::Default => ("default", none.clone(), none.clone(), none, None),
+        Resolution::Ambiguous(a, b) => {
+            let (ta, tb) = (
+                tuple_strings(impls[a], arity),
+                tuple_strings(impls[b], arity),
+            );
+            let meet = ta
+                .iter()
+                .zip(&tb)
+                .zip(rtemis_r8::ir::dispatch::positions(impls[a], arity))
+                .zip(rtemis_r8::ir::dispatch::positions(impls[b], arity))
+                .map(|(((x, y), px), py)| {
+                    let below =
+                        |p: &rtemis_r8::ir::ImplTarget, q: &rtemis_r8::ir::ImplTarget| match (p, q)
+                        {
+                            (rtemis_r8::ir::ImplTarget::Any, _) => false,
+                            (_, rtemis_r8::ir::ImplTarget::Any) => true,
+                            (
+                                rtemis_r8::ir::ImplTarget::Type { name: n },
+                                rtemis_r8::ir::ImplTarget::Type { name: m },
+                            ) => rtemis_r8::rules::TypeLookup::descends(&*docs, n, m),
+                            _ => false,
+                        };
+                    if below(py, px) { y.clone() } else { x.clone() }
+                })
+                .collect();
+            ("ambiguous", ta, tb, meet, None)
+        }
+        Resolution::Stale(q) => (
+            "stale",
+            none.clone(),
+            none.clone(),
+            none,
+            Some(q.to_string()),
+        ),
+    };
+    Ok(list!(
+        kind = kind,
+        tuple = tuple,
+        other = other,
+        meet = meet,
+        stale = stale
+    ))
+}
+
+/// The ambiguous pairs among a trait's registered impls.
+///
+/// @param trait_name Character: The trait's qualified name.
+/// @return data.frame: `first`, `second`, and `meet`, each a tuple as
+///   `"(ns::A, ns::B)"`, and `namespaces`, the namespaces that declare the
+///   pair.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_dispatch_ambiguities(trait_name: &str) -> Result<Robj> {
+    let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
+    let docs = snapshot()?;
+    let (arity, found) = trait_impls(&docs, &tr)?;
+    let impls: Vec<&rtemis_r8::ir::ImplDef> = found.iter().map(|(_, i)| i).collect();
+    let text = |ps: Vec<String>| format!("({})", ps.join(", "));
+    let (mut first, mut second, mut meet, mut namespaces) = (vec![], vec![], vec![], vec![]);
+    for a in rtemis_r8::ir::dispatch::ambiguities(&*docs, &impls, arity, &|_, _| true) {
+        first.push(text(tuple_strings(impls[a.first], arity)));
+        second.push(text(tuple_strings(impls[a.second], arity)));
+        meet.push(text(a.meet.iter().map(ToString::to_string).collect()));
+        let (na, nb) = (&found[a.first].0, &found[a.second].0);
+        namespaces.push(if na == nb {
+            na.to_string()
+        } else {
+            format!("{na}, {nb}")
+        });
+    }
+    let n = first.len() as i32;
+    let df = list!(
+        first = first,
+        second = second,
+        meet = meet,
+        namespaces = namespaces
+    );
+    let mut df: Robj = df.into();
+    df.set_attrib("class", "data.frame")?;
+    df.set_attrib("row.names", (1..=n).collect::<Vec<i32>>())?;
+    Ok(df)
 }
 
 /// The package that owns a namespace, without claiming it.
@@ -737,6 +908,8 @@ extendr_module! {
     fn r8_namespace_owner;
     fn r8_package_namespaces;
     fn r8_check_namespaces;
+    fn r8_dispatch_resolve;
+    fn r8_dispatch_ambiguities;
     fn r8_declare_trait;
     fn r8_declare_impl;
     fn r8_ir_json;

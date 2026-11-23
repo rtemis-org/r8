@@ -4,20 +4,22 @@
 \alias{r8_method}
 \title{The method of a generic for a type}
 \usage{
-r8_method(generic, type)
+r8_method(generic, ...)
 }
 \arguments{
 \item{generic}{A generic, as \code{implement()} takes it.}
 
-\item{type}{An R8 type object.}
+\item{...}{The types, as \code{implement()} takes them: one R8 type object, or
+one per dispatched argument, by position or by name.}
 }
 \value{
-Function. A generic without a method for \code{type} raises
+Function. A generic without a method for the types raises
 \code{r8_dispatch_error}.
 }
 \description{
-Returns the function that \code{implement()} or \code{impl()} declared for \code{type},
-for tests and inspection.
+Returns the function that \code{implement()} or \code{impl()} declared for a type,
+or for a tuple of types of a generic that dispatches on several
+arguments, for tests and inspection.
 }
 \examples{
 op <- options(r8.namespace = "models")

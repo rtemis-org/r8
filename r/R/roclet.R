@@ -264,7 +264,10 @@ scan_unblocked <- function(blocks, base_path) {
 method_block <- function(block, blocks, env) {
   call <- block$call
   generic <- eval(call[[2L]][[2L]], env)
-  type <- eval(call[[2L]][[3L]], env)
+  # The types after the generic, by position or by name.
+  type_calls <- as.list(call[[2L]])[-(1:2)]
+  types <- lapply(type_calls, eval, env)
+  type <- types[[1L]]
   fn <- eval(call[[3L]], env)
   gcall <- call[[2L]][[2L]]
   # A symbol such as `tag<-` names the generic without its backticks.
@@ -297,7 +300,9 @@ method_block <- function(block, blocks, env) {
     topic <- topic_of(blocks, generic)
   }
   if (is.null(topic) && !is.character(type)) {
-    topic <- topic_of(blocks, type)
+    for (t in types) {
+      topic <- topic %||% topic_of(blocks, t)
+    }
   }
   documented <- length(block$tags) > 0L
   if (is.null(topic)) {
@@ -306,12 +311,38 @@ method_block <- function(block, blocks, env) {
     }
     topic <- paste0(rd_stem(gname), "-", tname)
   }
+  # A method of several types names each position: its kind and type, or
+  # any.
+  tuple <- if (length(types) > 1L || !is.null(names(types))) {
+    positions <- impl_tuple(types, attr(generic, "r8_dispatch"), gname)
+    paste(
+      vapply(
+        positions,
+        function(p) {
+          if (identical(p, "any")) {
+            return("any")
+          }
+          t <- Filter(function(x) identical(attr(x, "r8_name"), p), types)[[1L]]
+          paste0(type_kind(t), " '", sub("^.*::", "", p), "'")
+        },
+        character(1)
+      ),
+      collapse = ", "
+    )
+  }
   usage <- paste0(
     "## R8 method for ",
-    if (is.character(type)) "class" else type_kind(type),
-    " '",
-    tname,
-    "'\n\\special{",
+    if (!is.null(tuple)) {
+      tuple
+    } else {
+      paste0(
+        if (is.character(type)) "class" else type_kind(type),
+        " '",
+        tname,
+        "'"
+      )
+    },
+    "\n\\special{",
     call_text(gname, formals(fn)),
     "}"
   )
@@ -377,7 +408,7 @@ compiled_blocks <- function(blocks, env, base_path) {
       function(m) identical(m[["name"]], method),
       trait_ir(t)[["methods"]]
     )
-    params <- unlist(decl[[1L]][["params"]])
+    params <- param_names(decl[[1L]][["params"]])
     formals <- stats::setNames(
       rep(list(quote(expr = )), length(params)),
       params

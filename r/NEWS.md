@@ -25,6 +25,9 @@
 - `From("ns::Source")` names a registered type, and the source's namespace may declare the impl.
 - The IR's method parameters may carry a dispatch mark, a type, a default, and a description, and a method a return type; an impl's `type_args` are typed positions, an R8 type, a host class, or any.
 - An impl of a trait and type tuple that another namespace declares is refused (`duplicate_impl`), and an impl outside its trait's namespace names a type of its own namespace (`impl_orphan`).
+- `generic(dispatch = c("x", "y"))` and `trait_method(dispatch =)` dispatch on several arguments: `implement(f, A, B) <- fn`, `implement(f, y = B) <- fn`, and `impl(Trait, list(A, B), ...)` declare methods for tuples of types, and a position a method does not name matches any value. The most specific method in every position runs; a call that two methods make ambiguous raises `r8_dispatch_error` naming the method to declare, and `r8_ambiguities()` lists such pairs. A package whose methods make a call ambiguous with those of a package it imports is refused at load.
+- `r8_method(f, A, B)` returns the method of a tuple, and `r8_next_impl(A, B)` continues to the method it names.
+- A value without a class attribute, such as a number or a matrix, keeps its resolved method in the dispatch cache.
 
 # R8 0.4.0
 

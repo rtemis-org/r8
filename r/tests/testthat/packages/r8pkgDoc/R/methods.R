@@ -82,3 +82,23 @@ implement(`seed<-`, Resampler) <- function(x, value) {
 implement(as_resampler, "character") <- function(x) {
   Resampler(method = Method@Bootstrap, n_resamples = nchar(x))
 }
+
+#' Pair two values
+#'
+#' @param x A value.
+#' @param y A value.
+#'
+#' @return Character: The pair's description.
+#'
+#' @examples
+#' pair_with(Resampler(method = Method@Bootstrap, n_resamples = 2L), Method@Bootstrap)
+#' @export
+pair_with <- R8::generic("pair_with", c("x", "y"), dispatch = c("x", "y"))
+
+implement(pair_with, Resampler, Method) <- function(x, y) {
+  "a resampler and a method"
+}
+
+implement(pair_with, y = Resampler) <- function(x, y) {
+  "anything and a resampler"
+}

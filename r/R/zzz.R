@@ -429,6 +429,8 @@ declare_conversion <- function(converter, source, fn, env) {
   ns <- topenv()
   assign(".r8_c_find", .r8_native[["find"]], envir = ns)
   assign(".r8_c_replaced", .r8_native[["replaced"]], envir = ns)
+  assign(".r8_c_find2", .r8_native[["find2"]], envir = ns)
+  assign(".r8_c_find3", .r8_native[["find3"]], envir = ns)
   assign(".r8_c_invoke", .r8_native[["invoke"]], envir = ns)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Dim, PartialOrd, Print)) {

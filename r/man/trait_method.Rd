@@ -4,7 +4,13 @@
 \alias{trait_method}
 \title{Declare a trait method}
 \usage{
-trait_method(fn, description = "", default = NULL, stochastic = FALSE)
+trait_method(
+  fn,
+  description = "",
+  default = NULL,
+  stochastic = FALSE,
+  dispatch = NULL
+)
 }
 \arguments{
 \item{fn}{Function: Its formals are the method's signature; the first
@@ -16,6 +22,11 @@ formal is the value the method dispatches on.}
 type whose impl does not define the method.}
 
 \item{stochastic}{Logical: The method draws random numbers.}
+
+\item{dispatch}{Optional Character: The arguments the method dispatches
+on, by name, at most three and none of them \code{...}; the first argument
+by default. Every method of a trait dispatches on the same number of
+arguments, and an impl names a type for any of them (\code{impl()}).}
 }
 \value{
 An \code{r8_trait_method}.
@@ -25,5 +36,6 @@ Declare a trait method
 }
 \examples{
 trait_method(function(spec, x, y) NULL, description = "Trains a model.")
+trait_method(function(x, y, ...) NULL, dispatch = c("x", "y"))
 
 }

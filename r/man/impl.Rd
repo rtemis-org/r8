@@ -9,7 +9,9 @@ impl(trait, type, methods = list(), tag_value = NULL)
 \arguments{
 \item{trait}{A trait object.}
 
-\item{type}{An R8 type object.}
+\item{type}{An R8 type object; for a trait whose methods dispatch on
+several arguments, a list of them, one per dispatched argument the impl
+specializes, by position or by name, as \code{list(A, B)} or \code{list(y = B)}.}
 
 \item{methods}{Named list: One function per method.}
 
@@ -20,10 +22,12 @@ for this type; defaults to the type's name.}
 \code{NULL}, invisibly.
 }
 \description{
-Defines a trait's methods for a type; a method the impl omits takes the
-trait's default. Rust's orphan rule applies: an impl is declared in the
-namespace of the trait or of the type. Implementing the same trait for the
-same type again replaces the impl.
+Defines a trait's methods for a type, or for a tuple of types when its
+methods dispatch on several arguments; a method the impl omits takes the
+trait's default. Rust's orphan rule applies: an impl outside the trait's
+namespace names a type of its own namespace, with only types before it.
+Implementing the same trait for the same types again replaces the impl;
+an impl that another namespace declares is refused.
 }
 \examples{
 op <- options(r8.namespace = "demo")

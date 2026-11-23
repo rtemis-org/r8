@@ -35,6 +35,11 @@
 # loads.
 .r8_c_replaced <- NULL
 
+# The native symbols of the C routines `find2` and `find3`, which find the
+# impl for two and three dispatched arguments, bound when the package loads.
+.r8_c_find2 <- NULL
+.r8_c_find3 <- NULL
+
 # Trait objects by qualified name, for the impls of compiled code.
 .r8_traits <- new.env(parent = emptyenv())
 
@@ -52,18 +57,24 @@ BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
 #' @param default Optional function: A default implementation, used for a
 #'   type whose impl does not define the method.
 #' @param stochastic Logical: The method draws random numbers.
+#' @param dispatch Optional Character: The arguments the method dispatches
+#'   on, by name, at most three and none of them `...`; the first argument
+#'   by default. Every method of a trait dispatches on the same number of
+#'   arguments, and an impl names a type for any of them (`impl()`).
 #'
 #' @return An `r8_trait_method`.
 #'
 #' @examples
 #' trait_method(function(spec, x, y) NULL, description = "Trains a model.")
+#' trait_method(function(x, y, ...) NULL, dispatch = c("x", "y"))
 #'
 #' @export
 trait_method <- function(
   fn,
   description = "",
   default = NULL,
-  stochastic = FALSE
+  stochastic = FALSE,
+  dispatch = NULL
 ) {
   if (!is.function(fn) || length(formals(fn)) == 0L) {
     r8_abort(
@@ -79,7 +90,8 @@ trait_method <- function(
       fn = fn,
       description = description,
       default = default,
-      stochastic = isTRUE(stochastic)
+      stochastic = isTRUE(stochastic),
+      dispatch = dispatch
     ),
     class = "r8_trait_method"
   )
@@ -184,13 +196,17 @@ RESERVED_METHODS <- c(
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
 #' @param fn Function: The signature.
+#' @param dispatch Optional Character: The dispatched arguments, in formal
+#'   order; `NULL` for the first.
 #'
-#' @return The generic.
+#' @return The generic, with its dispatched arguments as the attribute
+#'   `r8_dispatch`.
 #'
 #' @keywords internal
 #' @noRd
-make_generic <- function(trait_name, method, fn) {
+make_generic <- function(trait_name, method, fn, dispatch = NULL) {
   args <- names(formals(fn))
+  dispatch <- dispatch %||% args[[1L]]
   first <- as.name(args[[1L]])
   call_args <- lapply(args, function(a) {
     if (a == "...") quote(...) else as.name(a)
@@ -199,7 +215,26 @@ make_generic <- function(trait_name, method, fn) {
   key <- as.name(paste(trait_name, method, sep = "|"))
   # Constants only: the method's key as a symbol and namespace bindings, so
   # a generic sent to a worker dispatches through the worker's impls.
-  find <- bquote(.Call(.r8_c_find, .(first), quote(.(key)), .r8_dispatch))
+  d <- lapply(dispatch, as.name)
+  find <- switch(
+    length(d),
+    bquote(.Call(.r8_c_find, .(d[[1L]]), quote(.(key)), .r8_dispatch)),
+    bquote(.Call(
+      .r8_c_find2,
+      .(d[[1L]]),
+      .(d[[2L]]),
+      quote(.(key)),
+      .r8_dispatch
+    )),
+    bquote(.Call(
+      .r8_c_find3,
+      .(d[[1L]]),
+      .(d[[2L]]),
+      .(d[[3L]]),
+      quote(.(key)),
+      .r8_dispatch
+    ))
+  )
   body <- as.call(c(list(call("(", find)), call_args))
   if (endsWith(method, "<-")) {
     body <- bquote(.Call(.r8_c_replaced, .(first), .(body), quote(.(key))))
@@ -209,7 +244,8 @@ make_generic <- function(trait_name, method, fn) {
     g,
     class = c("r8_generic", "function"),
     r8_trait = trait_name,
-    r8_method = method
+    r8_method = method,
+    r8_dispatch = dispatch
   )
 } # /R8::make_generic
 
@@ -326,53 +362,64 @@ replacement_abort <- function(key, x, out) {
 
 
 # %% dispatch_resolve ----
-#' Resolve the impl of a trait method for a value on a miss of the cache
+#' Resolve the impl of a trait method for a call on a miss of the cache
 #'
-#' Called by the C routine `find` when the dispatch cache has no impl for the
-#' value's type; `r8_find_impl()` finds the impl and stores it.
+#' Called by the C routines `find`, `find2`, and `find3` when the dispatch
+#' cache has no impl for the types of the dispatched arguments;
+#' `r8_find_impl()` finds the impl and stores it.
 #'
 #' @param key Character: `"Trait|method"`.
-#' @param x The value dispatched on.
+#' @param ... The values of the dispatched arguments, in order.
 #'
 #' @return The impl function.
 #'
 #' @keywords internal
 #' @noRd
-dispatch_resolve <- function(key, x) {
+dispatch_resolve <- function(key, ...) {
   at <- regexpr("|", key, fixed = TRUE)
-  r8_find_impl(substr(key, 1L, at - 1L), substr(key, at + 1L, nchar(key)), x)
+  r8_find_impl(
+    substr(key, 1L, at - 1L),
+    substr(key, at + 1L, nchar(key)),
+    list(...)
+  )
 } # /R8::dispatch_resolve
 
 
 # %% cache_impl ----
 #' Store a resolved impl in the dispatch cache
 #'
-#' Under the value's qualified type, or under `class:` and the first class of
-#' an object with a class attribute: the keys the C routine `find` reads.
+#' Under the dispatch key of each dispatched argument (`dispatch_key()`),
+#' one environment per position: the keys the C routines `find`, `find2`,
+#' and `find3` read.
 #'
 #' @param key Character: `"Trait|method"`.
-#' @param x The value dispatched on.
+#' @param args List: The values of the dispatched arguments.
 #' @param impl Function: The impl.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
-cache_impl <- function(key, x, impl) {
-  type <- attr(x, "r8_type", exact = TRUE)
-  name <- if (is.character(type) && length(type) == 1L) {
-    type
-  } else if (!is.null(attr(x, "class", exact = TRUE))) {
-    paste0("class:", class(x)[[1L]])
+cache_impl <- function(key, args, impl) {
+  keys <- lapply(args, dispatch_key)
+  if (any(vapply(keys, is.null, logical(1)))) {
+    return(invisible(NULL))
   }
-  if (!is.null(name)) {
-    index <- .r8_dispatch[[key]]
-    if (is.null(index)) {
-      index <- new.env(parent = emptyenv())
-      assign(key, index, envir = .r8_dispatch)
+  node <- .r8_dispatch[[key]]
+  if (is.null(node)) {
+    node <- new.env(parent = emptyenv())
+    assign(key, node, envir = .r8_dispatch)
+  }
+  n <- length(keys)
+  for (k in keys[-n]) {
+    nxt <- node[[k]]
+    if (!is.environment(nxt)) {
+      nxt <- new.env(parent = emptyenv())
+      assign(k, nxt, envir = node)
     }
-    assign(name, impl, envir = index)
+    node <- nxt
   }
+  assign(keys[[n]], impl, envir = node)
   invisible(NULL)
 } # /R8::cache_impl
 
@@ -594,22 +641,45 @@ is_compiled_impl <- function(fn) {
 
 
 # %% r8_find_impl ----
-#' The impl of a trait method for a value
+#' The impl of a trait method for the values of its dispatched arguments
+#'
+#' One dispatched argument resolves through the chain of its type
+#' (`impl_in_chain()`); several resolve through the core's rule of multiple
+#' dispatch (`resolve_tuple()`).
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
-#' @param x The value dispatched on.
+#' @param args List: The values of the dispatched arguments.
 #'
 #' @return The impl function.
 #'
 #' @keywords internal
 #' @noRd
-r8_find_impl <- function(trait_name, method, x) {
+r8_find_impl <- function(trait_name, method, args) {
+  key <- paste(trait_name, method, sep = "|")
+  if (length(args) > 1L) {
+    impl <- resolve_tuple(trait_name, method, args)
+    if (!is.null(impl)) {
+      cache_impl(key, args, impl)
+      return(impl)
+    }
+    r8_abort(
+      "No impl of `",
+      trait_name,
+      "` (method `",
+      method,
+      "`) applies to (",
+      paste(vapply(args, value_type_text, character(1)), collapse = ", "),
+      "), and the trait has no default.",
+      class = "r8_dispatch_error"
+    )
+  }
+  x <- args[[1L]]
   r8 <- inherits(x, "r8_value")
   type <- if (r8) attr(x, "r8_type") else class(x)[1L]
   impl <- impl_in_chain(trait_name, method, type, r8 = r8)
   if (!is.null(impl)) {
-    cache_impl(paste(trait_name, method, sep = "|"), x, impl)
+    cache_impl(key, args, impl)
     return(impl)
   }
   r8_abort(
@@ -623,6 +693,20 @@ r8_find_impl <- function(trait_name, method, x) {
     class = "r8_dispatch_error"
   )
 } # /R8::r8_find_impl
+
+
+# %% value_type_text ----
+#' The type of a value, for messages
+#'
+#' @param x The value.
+#'
+#' @return Character: Its R8 type, or its first class.
+#'
+#' @keywords internal
+#' @noRd
+value_type_text <- function(x) {
+  if (inherits(x, "r8_value")) attr(x, "r8_type") else class(x)[1L]
+} # /R8::value_type_text
 
 
 # %% new_trait ----
@@ -776,14 +860,35 @@ build_trait <- function(name, methods, description, tag, namespace, env) {
           class = "r8_declaration_error"
         )
       }
+    }
+    own_args <- names(formals(tm[["fn"]]))
+    dispatch <- check_dispatch(
+      tm[["dispatch"]],
+      own_args,
+      paste0(qname, "@", m),
+      replacement = endsWith(m, "<-")
+    )
+    if (!is.null(existing)) {
+      if (length(dispatch) > 1L) {
+        r8_abort(
+          "Method `",
+          m,
+          "` is an S3 method of `",
+          existing[["package"]],
+          "::",
+          m,
+          "`, which dispatches on its first argument only.",
+          class = "r8_declaration_error"
+        )
+      }
       generics[[m]] <- existing[["fn"]]
     } else {
-      generics[[m]] <- make_generic(qname, m, tm[["fn"]])
+      generics[[m]] <- make_generic(qname, m, tm[["fn"]], dispatch)
     }
     method_ir <- list(
       name = m,
       description = tm[["description"]],
-      params = as.list(names(formals(tm[["fn"]])))
+      params = dispatch_params(own_args, dispatch)
     )
     if (tm[["stochastic"]]) {
       method_ir[["stochastic"]] <- TRUE
@@ -865,13 +970,17 @@ register_trait <- function(trait, namespace) {
 # %% impl ----
 #' Implement a trait for a type
 #'
-#' Defines a trait's methods for a type; a method the impl omits takes the
-#' trait's default. Rust's orphan rule applies: an impl is declared in the
-#' namespace of the trait or of the type. Implementing the same trait for the
-#' same type again replaces the impl.
+#' Defines a trait's methods for a type, or for a tuple of types when its
+#' methods dispatch on several arguments; a method the impl omits takes the
+#' trait's default. Rust's orphan rule applies: an impl outside the trait's
+#' namespace names a type of its own namespace, with only types before it.
+#' Implementing the same trait for the same types again replaces the impl;
+#' an impl that another namespace declares is refused.
 #'
 #' @param trait A trait object.
-#' @param type An R8 type object.
+#' @param type An R8 type object; for a trait whose methods dispatch on
+#'   several arguments, a list of them, one per dispatched argument the impl
+#'   specializes, by position or by name, as `list(A, B)` or `list(y = B)`.
 #' @param methods Named list: One function per method.
 #' @param tag_value Optional Character: The value of the trait's tag member
 #'   for this type; defaults to the type's name.
@@ -897,48 +1006,63 @@ impl <- function(trait, type, methods = list(), tag_value = NULL) {
 #' Check, register, and record an impl
 #'
 #' @param trait A trait object.
-#' @param type An R8 type object.
+#' @param type An R8 type object, or a list of them, by name or by position, one per
+#'   dispatched argument the impl specializes.
 #' @param methods Named list: One function per method.
 #' @param tag_value Optional Character: The tag value.
 #' @param env Environment: Where the impl is declared.
+#' @param dispatch Optional Character: The dispatched arguments of the
+#'   method declared, which name the positions of `type`; by default those of
+#'   the trait's first method.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
-impl_declare <- function(trait, type, methods, tag_value, env) {
+impl_declare <- function(
+  trait,
+  type,
+  methods,
+  tag_value,
+  env,
+  dispatch = NULL
+) {
   if (!inherits(trait, "r8_trait")) {
     r8_abort("`trait` is a trait object.", class = "r8_declaration_error")
   }
-  if (!inherits(type, "r8_type")) {
-    r8_abort("`type` is an R8 type object.", class = "r8_declaration_error")
-  }
   t <- unclass(trait)
-  type_name <- attr(type, "r8_name")
-  namespace <- declaring_namespace(env)
-  claim_namespace(namespace, declaring_package(env))
-  trait_ns <- sub("::.*", "", t[["name"]])
-  type_ns <- sub("::.*", "", type_name)
   from <- inherits(trait, "r8_from_trait")
-  source <- if (from) t[["source"]] else ""
-  # A conversion from an R8 type may also be declared by the source's
-  # namespace, as Rust admits `impl From<Local> for Foreign`.
-  source_ns <- if (grepl("::", source, fixed = TRUE)) {
-    sub("::.*", "", source)
-  }
-  if (!namespace %in% c(trait_ns, type_ns, source_ns)) {
+  # The dispatched arguments, from the trait's first method.
+  # The dispatched arguments of the method declared, or else of the trait's
+  # first method.
+  dispatch <- dispatch %||%
+    if (from) {
+      "x"
+    } else {
+      dispatch_names(trait_ir(t)[["methods"]][[1L]][["params"]])
+    }
+  types <- if (inherits(type, "r8_type")) {
+    list(type)
+  } else if (is.list(type) && !is.object(type)) {
+    type
+  } else {
     r8_abort(
-      "An impl of `",
+      "`type` is an R8 type object, or a list of them, one per dispatched ",
+      "argument of `",
       t[["name"]],
-      "` for `",
-      type_name,
-      "` is declared in the namespace of the trait or of the type",
-      if (!is.null(source_ns)) " or of the source",
-      " (Rust's orphan rule); this code is in `",
-      namespace,
-      "`.",
+      "` (",
+      paste(dispatch, collapse = ", "),
+      ").",
       class = "r8_declaration_error"
     )
+  }
+  positions <- impl_tuple(types, dispatch, t[["name"]])
+  type_name <- tuple_key(positions)
+  namespace <- declaring_namespace(env)
+  claim_namespace(namespace, declaring_package(env))
+  source <- if (from) t[["source"]] else ""
+  source_ns <- if (grepl("::", source, fixed = TRUE)) {
+    sub("::.*", "", source)
   }
   if (!is.null(source_ns) && !r8_is_registered(source)) {
     r8_abort(
@@ -969,7 +1093,7 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
     )
   }
   for (m in names(fns)) {
-    params <- unlist(methods_ir[[match(m, declared)]][["params"]])
+    params <- param_names(methods_ir[[match(m, declared)]][["params"]])
     label <- if (isTRUE(trait_ir(t)[["generic"]])) {
       m
     } else {
@@ -995,18 +1119,21 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
       )
     }
   }
-  ir <- list(
-    `trait` = t[["name"]],
-    target = list(kind = "type", name = type_name),
-    methods = as.list(names(fns))
+  ir <- c(
+    list(`trait` = t[["name"]]),
+    tuple_ir(positions),
+    list(methods = as.list(names(fns)))
   )
+  if (length(ir[["type_args"]]) == 0L) {
+    ir[["type_args"]] <- NULL
+  }
   if (!is.null(tag_value)) {
     ir[["tag_value"]] <- tag_value
   }
   if (inherits(trait, "r8_from_trait")) {
     # The source is an R8 type, named with its namespace, or an R class.
     ir[["type_args"]] <- list(
-      if (grepl("::", t[["source"]], fixed = TRUE)) {
+      if (!is.null(source_ns)) {
         list(kind = "type", name = t[["source"]])
       } else {
         list(
@@ -1017,7 +1144,7 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
         )
       }
     )
-    if (type_name %in% ancestry(t[["source"]])[["ancestors"]]) {
+    if (!is.null(source_ns) && type_name %in% ancestry(source)[["ancestors"]]) {
       r8_abort(
         "`",
         t[["source"]],
@@ -1060,6 +1187,9 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
 #' @keywords internal
 #' @noRd
 register_impl <- function(entry) {
+  # The registry checks the impl first, so a refused impl leaves the R
+  # functions of the impls as they were.
+  register_records(list(entry[["record"]]))
   t <- if (!is.null(entry[["source"]])) {
     unclass(From(entry[["source"]]))
   } else {
@@ -1072,7 +1202,6 @@ register_impl <- function(entry) {
       entry[["type_name"]],
       entry[["fns"]][["from"]]
     )
-    register_records(list(entry[["record"]]))
     return(invisible(NULL))
   }
   # An impl that defines no method still takes precedence over the impls of
@@ -1096,7 +1225,6 @@ register_impl <- function(entry) {
       registerS3method(m, entry[["type_name"]], fn, envir = s3_envir(generic))
     }
   }
-  register_records(list(entry[["record"]]))
   invisible(NULL)
 } # /R8::register_impl
 
@@ -1171,7 +1299,7 @@ print.r8_trait <- function(x, ...) {
       "  ",
       m[["name"]],
       "(",
-      paste(unlist(m[["params"]]), collapse = ", "),
+      paste(param_names(m[["params"]]), collapse = ", "),
       ")\n",
       sep = ""
     )

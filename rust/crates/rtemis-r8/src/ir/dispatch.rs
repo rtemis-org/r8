@@ -47,7 +47,7 @@ pub fn check_impl(lookup: &dyn TypeLookup, ns: &Name, imp: &ImplDef, path: &str)
             code: "impl_orphan",
             path: path.to_string(),
             message: format!(
-                "an impl of `{}` outside its namespace names a type of the declaring namespace `{ns}` in one of its positions, after types only; this impl is for ({})",
+                "an impl of `{}` outside its namespace names a type of the declaring namespace `{ns}` in one of its positions, after types only (Rust's orphan rule); this impl is for ({})",
                 imp.r#trait,
                 tuple_text(std::iter::once(&imp.target).chain(&imp.type_args))
             ),

@@ -456,47 +456,87 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
   return out;
 }
 
-// The impl of the trait method `key`, a symbol "Trait|method", for the
-// value `x`: from the method's index in `dispatch` (`.r8_dispatch`), by the
-// value's `r8_type` attribute or by `class:` and the first element of its
-// class attribute; on a miss, R8's `dispatch_resolve()` finds the impl, stores it
-// in the index, and returns it, or raises the dispatch error. The routine
-// keeps no SEXP beyond installed symbols.
-// spec: R8/class-system#traits-equality-and-conformance-in-r
-static SEXP r8_find(SEXP x, SEXP key, SEXP dispatch) {
-  static SEXP type_sym = NULL, resolve_sym = NULL;
+// The key of a value in a dispatch index: its `r8_type` attribute; the first
+// element of its class attribute as `class:<class>`; for an object without
+// a class attribute, `class:matrix` or `class:array` when it has a `dim`
+// attribute, and otherwise `type:<typeof>`. R8's `dispatch_key()` computes
+// the same keys. Returns R_NilValue for a class name too long to key.
+static SEXP dispatch_key(SEXP x) {
+  static SEXP type_sym = NULL, matrix_sym = NULL, array_sym = NULL;
   if (type_sym == NULL) {
     type_sym = Rf_install("r8_type");
+    matrix_sym = Rf_install("class:matrix");
+    array_sym = Rf_install("class:array");
+  }
+  SEXP type = Rf_getAttrib(x, type_sym);
+  if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
+    return Rf_installTrChar(STRING_ELT(type, 0));
+  }
+  char buf[256];
+  SEXP cls = Rf_getAttrib(x, R_ClassSymbol);
+  if (TYPEOF(cls) == STRSXP && XLENGTH(cls) >= 1) {
+    const char *c = Rf_translateCharUTF8(STRING_ELT(cls, 0));
+    if (snprintf(buf, sizeof buf, "class:%s", c) < (int) sizeof buf) {
+      return Rf_install(buf);
+    }
+    return R_NilValue;
+  }
+  SEXP dim = Rf_getAttrib(x, R_DimSymbol);
+  if (dim != R_NilValue) {
+    return XLENGTH(dim) == 2 ? matrix_sym : array_sym;
+  }
+  snprintf(buf, sizeof buf, "type:%s", Rf_type2char(TYPEOF(x)));
+  return Rf_install(buf);
+}
+
+// The impl of the trait method `key`, a symbol "Trait|method", for the
+// values `args[0..n]` of its dispatched arguments: from the method's index in
+// `dispatch` (`.r8_dispatch`), one environment per position keyed by
+// `dispatch_key()`, the impl at the last; on a miss, R8's
+// `dispatch_resolve()` finds the impl, stores it in the index, and returns
+// it, or raises the dispatch error. The routine keeps no SEXP beyond
+// installed symbols.
+// spec: R8/class-system#traits-equality-and-conformance-in-r
+static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
+  static SEXP resolve_sym = NULL;
+  if (resolve_sym == NULL) {
     resolve_sym = Rf_install("dispatch_resolve");
   }
-  SEXP index = r8_get_var(key, dispatch, R_NilValue);
-  if (TYPEOF(index) == ENVSXP) {
-    SEXP name = R_NilValue;
-    SEXP type = Rf_getAttrib(x, type_sym);
-    if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
-      name = Rf_installTrChar(STRING_ELT(type, 0));
-    } else {
-      SEXP cls = Rf_getAttrib(x, R_ClassSymbol);
-      if (TYPEOF(cls) == STRSXP && XLENGTH(cls) >= 1) {
-        char buf[256];
-        const char *c = Rf_translateCharUTF8(STRING_ELT(cls, 0));
-        if (snprintf(buf, sizeof buf, "class:%s", c) < (int) sizeof buf) {
-          name = Rf_install(buf);
-        }
-      }
-    }
-    if (name != R_NilValue) {
-      SEXP impl = r8_get_var(name, index, R_NilValue);
-      if (impl != R_NilValue) {
-        return impl;
-      }
-    }
+  SEXP node = r8_get_var(key, dispatch, R_NilValue);
+  for (int i = 0; i < n && TYPEOF(node) == ENVSXP; i++) {
+    SEXP k = dispatch_key(args[i]);
+    node = k == R_NilValue ? R_NilValue : r8_get_var(k, node, R_NilValue);
+  }
+  if (TYPEOF(node) == CLOSXP) {
+    return node;
   }
   SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
-  SEXP call = PROTECT(Rf_lang3(resolve_sym, PROTECT(Rf_ScalarString(PRINTNAME(key))), x));
+  SEXP call = PROTECT(Rf_allocVector(LANGSXP, n + 2));
+  SETCAR(call, resolve_sym);
+  SEXP cell = CDR(call);
+  SETCAR(cell, PROTECT(Rf_ScalarString(PRINTNAME(key))));
+  for (int i = 0; i < n; i++) {
+    cell = CDR(cell);
+    SETCAR(cell, args[i]);
+  }
   SEXP impl = Rf_eval(call, ns);
   UNPROTECT(4);
   return impl;
+}
+
+static SEXP r8_find(SEXP x, SEXP key, SEXP dispatch) {
+  SEXP args[1] = {x};
+  return find_n(args, 1, key, dispatch);
+}
+
+static SEXP r8_find2(SEXP x, SEXP y, SEXP key, SEXP dispatch) {
+  SEXP args[2] = {x, y};
+  return find_n(args, 2, key, dispatch);
+}
+
+static SEXP r8_find3(SEXP x, SEXP y, SEXP z, SEXP key, SEXP dispatch) {
+  SEXP args[3] = {x, y, z};
+  return find_n(args, 3, key, dispatch);
 }
 
 // The result `out` of a replacement method called on `x`, through the trait
@@ -547,22 +587,26 @@ static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
 }
 
 // The C routines that R calls through `.Call()` on a native symbol:
-// list(invoke, exports, construct, find, replaced). R8's `.Call` routines are the Rust code's,
+// list(invoke, exports, construct, find, replaced, find2, find3). R8's `.Call` routines are the Rust code's,
 // registered by extendr; these continue a jump or call R_GetCCallable() from
 // C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 5));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 7));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
   SET_VECTOR_ELT(out, 3, native_symbol((DL_FUNC) r8_find));
   SET_VECTOR_ELT(out, 4, native_symbol((DL_FUNC) r8_replaced));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 5));
+  SET_VECTOR_ELT(out, 5, native_symbol((DL_FUNC) r8_find2));
+  SET_VECTOR_ELT(out, 6, native_symbol((DL_FUNC) r8_find3));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 7));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
   SET_STRING_ELT(names, 3, Rf_mkChar("find"));
   SET_STRING_ELT(names, 4, Rf_mkChar("replaced"));
+  SET_STRING_ELT(names, 5, Rf_mkChar("find2"));
+  SET_STRING_ELT(names, 6, Rf_mkChar("find3"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

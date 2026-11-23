@@ -5,7 +5,7 @@
 \alias{print.r8_generic}
 \title{Declare a generic}
 \usage{
-generic(name, args = "x", description = "")
+generic(name, args = "x", description = "", dispatch = NULL)
 
 \method{print}{r8_generic}(x, ...)
 }
@@ -23,6 +23,18 @@ error. Removing \code{...} from a generic breaks the methods that add
 arguments.}
 
 \item{description}{Character: What the generic does.}
+
+\item{dispatch}{Optional Character: The arguments the generic dispatches
+on, by name, at most three and none of them \code{...}; the first argument
+by default. A method names a type for any of them, by position or by
+name, and a position it does not name matches any value: with
+\code{dispatch = c("x", "y")}, \code{implement(f, A, B)} specializes both,
+\code{implement(f, A)} the first, and \code{implement(f, y = B)} the second. The
+generic forces exactly these arguments to choose a method. The most
+specific method in every position applies; two methods each more
+specific in one position make a call on both ambiguous, an
+\code{r8_dispatch_error} that names the method to declare, and
+\code{\link[=r8_ambiguities]{r8_ambiguities()}} lists such pairs.}
 
 \item{x}{A generic of class \code{r8_generic}.}
 

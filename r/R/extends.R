@@ -134,15 +134,23 @@ r8_upcast <- function(x, type) {
 #' Called from the body of an impl, `r8_next_impl()` calls the impl that the
 #' running one takes precedence over: that of the nearest ancestor, after
 #' the type that provides the running impl, with an impl of the trait, or
-#' else the trait's default. It passes the current values of the running
-#' impl's formals, so an impl may change its arguments first, as with
-#' `NextMethod()`; generics in the next impl dispatch on the value passed.
-#' Every impl that R8 registers continues this way, an S3 method declared
-#' with `implement()` or `impl()` included.
+#' else the trait's default. For a method that dispatches on several
+#' arguments, the next impl is the most specific applicable impl less
+#' specific than the running one; when two are, each more specific in one
+#' position, `r8_next_impl(Type, ...)` names the one to continue to. It
+#' passes the current values of the running impl's formals, so an impl may
+#' change its arguments first, as with `NextMethod()`; generics in the next
+#' impl dispatch on the values passed. Every impl that R8 registers
+#' continues this way, an S3 method declared with `implement()` or `impl()`
+#' included.
 #'
-#' @return The value of the next impl. Without a next impl, and for a first
-#'   argument whose type is not the provider of the running impl or one of
-#'   its descendants, raises `r8_dispatch_error`.
+#' @param ... Optional R8 type objects: the impl to continue to, one per
+#'   dispatched argument, by position or by name, as `implement()` takes
+#'   them; it applies to the current arguments.
+#'
+#' @return The value of the next impl. Without a next impl, with two next
+#'   impls, and for a first argument whose type is not the provider of the
+#'   running impl or one of its descendants, raises `r8_dispatch_error`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -155,7 +163,8 @@ r8_upcast <- function(x, type) {
 #' options(op)
 #'
 #' @export
-r8_next_impl <- function() {
+r8_next_impl <- function(...) {
+  chosen <- list(...)
   caller <- sys.function(sys.parent())
   provider <- attr(caller, "r8_provider")
   if (is.null(provider)) {
@@ -174,10 +183,92 @@ r8_next_impl <- function() {
   }
   frame <- parent.frame()
   formal_names <- names(formals(caller))
-  x <- get(formal_names[[1L]], envir = frame)
+  trait_name <- provider[[1L]]
+  method <- provider[[2L]]
+  after <- provider[[3L]]
+  dispatch <- method_dispatch(trait_name, method) %||% formal_names[[1L]]
+  values <- lapply(dispatch, get, envir = frame)
+  fn <- if (length(chosen) > 0L) {
+    chosen_impl(trait_name, method, dispatch, values, chosen)
+  } else if (length(dispatch) > 1L) {
+    if (!nzchar(after)) {
+      NULL
+    } else {
+      resolve_tuple(trait_name, method, values, above = after)
+    }
+  } else {
+    next_in_chain(trait_name, method, values[[1L]], after)
+  }
+  if (is.null(fn)) {
+    r8_abort(
+      "The impl of `",
+      trait_name,
+      "` (method `",
+      method,
+      "`) for (",
+      paste(vapply(values, value_type_text, character(1)), collapse = ", "),
+      ") has no next impl: no impl after `",
+      if (nzchar(after)) {
+        gsub(",", ", ", after, fixed = TRUE)
+      } else {
+        "the trait's default"
+      },
+      "` applies.",
+      class = "r8_dispatch_error"
+    )
+  }
+  args <- list()
+  for (n in formal_names) {
+    if (identical(n, "...")) {
+      args <- c(args, eval(quote(list(...)), frame))
+    } else if (!eval(call("missing", as.name(n)), frame)) {
+      args[n] <- list(get(n, envir = frame))
+    }
+  }
+  do.call(fn, args)
+} # /R8::r8_next_impl
+
+
+# %% method_dispatch ----
+#' The dispatched arguments of a trait method
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param method Character: The method name.
+#'
+#' @return Character, or `NULL` for a method of an S3 generic.
+#'
+#' @keywords internal
+#' @noRd
+method_dispatch <- function(trait_name, method) {
+  t <- .r8_traits[[trait_name]]
+  if (is.null(t)) {
+    return(NULL)
+  }
+  for (m in trait_ir(t)[["methods"]]) {
+    if (identical(m[["name"]], method)) {
+      return(dispatch_names(m[["params"]]))
+    }
+  }
+  NULL
+} # /R8::method_dispatch
+
+
+# %% next_in_chain ----
+#' The next impl of a method that dispatches on one argument
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param method Character: The method name.
+#' @param x The value of the dispatched argument.
+#' @param after Character: The type that provides the running impl, or
+#'   `""` for the trait's default.
+#'
+#' @return The impl function, or `NULL`.
+#'
+#' @keywords internal
+#' @noRd
+next_in_chain <- function(trait_name, method, x, after) {
   r8 <- inherits(x, "r8_value")
   type <- if (r8) attr(x, "r8_type") else class(x)[1L]
-  after <- provider[[3L]]
   if (nzchar(after)) {
     chain <- if (r8 && is.null(attr(x, "r8_variant"))) {
       c(type, r8_ancestors(x))
@@ -197,34 +288,67 @@ r8_next_impl <- function() {
       )
     }
   }
-  fn <- impl_in_chain(
-    provider[[1L]],
-    provider[[2L]],
-    type,
-    r8 = r8,
-    after = after
-  )
-  if (is.null(fn)) {
+  impl_in_chain(trait_name, method, type, r8 = r8, after = after)
+} # /R8::next_in_chain
+
+
+# %% chosen_impl ----
+#' The impl that `r8_next_impl(Type, ...)` names
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param method Character: The method name.
+#' @param dispatch Character: The dispatched arguments.
+#' @param values List: Their current values.
+#' @param chosen List: The types named.
+#'
+#' @return The impl function, or the trait's default when the impl omits the
+#'   method. An impl that is not declared, or that does not apply to the
+#'   current arguments, raises `r8_dispatch_error`.
+#'
+#' @keywords internal
+#' @noRd
+chosen_impl <- function(trait_name, method, dispatch, values, chosen) {
+  positions <- impl_tuple(chosen, dispatch, trait_name)
+  key <- tuple_key(positions)
+  if (
+    !exists(
+      paste(trait_name, key, sep = "|"),
+      envir = .r8_impl_of,
+      inherits = FALSE
+    )
+  ) {
     r8_abort(
-      "The impl of `",
-      provider[[1L]],
-      "` (method `",
-      provider[[2L]],
-      "`) for `",
-      type,
-      "` has no next impl: no ancestor after `",
-      if (nzchar(after)) after else "the trait's default",
-      "` implements it.",
+      "`",
+      trait_name,
+      "` has no impl for (",
+      paste(positions, collapse = ", "),
+      ").",
       class = "r8_dispatch_error"
     )
   }
-  args <- list()
-  for (n in formal_names) {
-    if (identical(n, "...")) {
-      args <- c(args, eval(quote(list(...)), frame))
-    } else if (!eval(call("missing", as.name(n)), frame)) {
-      args[n] <- list(get(n, envir = frame))
+  for (i in seq_along(positions)) {
+    p <- positions[[i]]
+    v <- values[[i]]
+    chain <- if (inherits(v, "r8_value") && is.null(attr(v, "r8_variant"))) {
+      c(attr(v, "r8_type"), r8_ancestors(v))
+    } else if (inherits(v, "r8_value")) {
+      attr(v, "r8_type")
+    }
+    if (!identical(p, "any") && !p %in% chain) {
+      r8_abort(
+        "The impl of `",
+        trait_name,
+        "` for (",
+        paste(positions, collapse = ", "),
+        ") does not apply to `",
+        dispatch[[i]],
+        "`, a value of `",
+        value_type_text(v),
+        "`.",
+        class = "r8_dispatch_error"
+      )
     }
   }
-  do.call(fn, args)
-} # /R8::r8_next_impl
+  .r8_impls[[paste(trait_name, method, key, sep = "|")]] %||%
+    .r8_impls[[paste(trait_name, method, "", sep = "|")]]
+} # /R8::chosen_impl

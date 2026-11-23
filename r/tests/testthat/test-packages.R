@@ -704,6 +704,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "as_resampler.Rd",
       "describe.Rd",
       "n_resamples.Rd",
+      "pair_with.Rd",
       "seed-set.Rd"
     )
   )
@@ -768,6 +769,17 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     "## R8 method for class 'character'\n\\special{as_resampler(x)}",
     fixed = TRUE
   )
+  # The methods of a generic that dispatches on two arguments.
+  expect_match(
+    rd("pair_with.Rd"),
+    "## R8 method for struct 'Resampler', enum 'Method'\n\\special{pair_with(x, y)}",
+    fixed = TRUE
+  )
+  expect_match(
+    rd("pair_with.Rd"),
+    "## R8 method for any, struct 'Resampler'\n\\special{pair_with(x, y)}",
+    fixed = TRUE
+  )
   # A second run writes nothing.
   again <- run_r(
     character(),
@@ -812,7 +824,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "cat(n_resamples(r), '\\n')",
       "print(Method@Bootstrap)",
       "seed(r) <- 9L",
-      "cat(r$seed, n_resamples(as_resampler('abc')), '\\n')"
+      "cat(r$seed, n_resamples(as_resampler('abc')), '\\n')",
+      "cat(pair_with(r, Method@Bootstrap), '|', pair_with(1, r), '\\n')"
     )
   )
   expect_identical(
@@ -823,7 +836,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "Resampler(2)",
       "2",
       "A resampling method",
-      "9 3"
+      "9 3",
+      "a resampler and a method | anything and a resampler"
     ),
     info = paste(used, collapse = "\n")
   )
@@ -833,7 +847,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
   skip_if_not_installed("future")
   task <- paste0(
     "{ library(r8pkgDoc); c(describe(r, verbose = TRUE), describe(Method@Bootstrap), ",
-    "toString(r), n_resamples(r), utils::capture.output(print(Method@Bootstrap))) }"
+    "toString(r), n_resamples(r), utils::capture.output(print(Method@Bootstrap)), ",
+    "pair_with(r, Method@Bootstrap)) }"
   )
   workers <- run_r(
     file.path(dir, "r8pkgDoc.Rcheck"),
@@ -855,7 +870,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "future::plan(future::sequential)"
     )
   )
-  expected <- "2 resamples, seed 1|a resampling method|Resampler(2)|2|A resampling method"
+  expected <- "2 resamples, seed 1|a resampling method|Resampler(2)|2|A resampling method|a resampler and a method"
   info <- paste(workers, collapse = "\n")
   expect_true(paste0("mirai|", expected) %in% workers, info = info)
   expect_true(paste0("future|", expected) %in% workers, info = info)

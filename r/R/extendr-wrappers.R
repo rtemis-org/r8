@@ -214,12 +214,45 @@ r8_package_namespaces <- function(package) .Call(wrap__r8_package_namespaces, pa
 #' declaration's own check cannot see, such as a rule that reads a field of
 #' a type declared again without that field.
 #'
+#' The impls of these namespaces are also checked against the registry,
+#' and two impls of one trait that make a call ambiguous are reported when
+#' one belongs to these namespaces and the other to them or to `imports`.
+#'
 #' @param namespaces Character: The namespaces.
+#' @param imports Character: The namespaces of the packages the package
+#'   imports.
 #' @return List: The problems, as character vectors `namespace`, `code`,
 #'   `path`, and `message`.
 #' @keywords internal
 #' @noRd
-r8_check_namespaces <- function(namespaces) .Call(wrap__r8_check_namespaces, namespaces)
+r8_check_namespaces <- function(namespaces, imports = character()) .Call(wrap__r8_check_namespaces, namespaces, imports)
+
+#' Resolves a call of a trait among its registered impls, with the core's
+#' rule of multiple dispatch.
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param types Character: The R8 type of each dispatched argument, `NA`
+#'   for a value of no R8 type.
+#' @param above Optional Character: The positions of the running impl, for
+#'   the next impl.
+#' @return List: `kind` (`"impl"`, `"default"`, `"ambiguous"`, or
+#'   `"stale"`), `tuple` (the providing impl's positions, or the first of
+#'   an ambiguous pair), `other` (the second of an ambiguous pair), `meet`
+#'   (the positionwise more specific tuple of the pair), and `stale` (a
+#'   stale type).
+#' @keywords internal
+#' @noRd
+r8_dispatch_resolve <- function(trait_name, types, above) .Call(wrap__r8_dispatch_resolve, trait_name, types, above)
+
+#' The ambiguous pairs among a trait's registered impls.
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @return data.frame: `first`, `second`, and `meet`, each a tuple as
+#'   `"(ns::A, ns::B)"`, and `namespaces`, the namespaces that declare the
+#'   pair.
+#' @keywords internal
+#' @noRd
+r8_dispatch_ambiguities <- function(trait_name) .Call(wrap__r8_dispatch_ambiguities, trait_name)
 
 #' Checks a trait declaration in its namespace and registers it.
 #'

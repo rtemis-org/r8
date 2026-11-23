@@ -5,12 +5,16 @@
 \alias{implement<-}
 \title{Declare the method of a generic for a type}
 \usage{
-implement(generic, type) <- value
+implement(generic, ...) <- value
 }
 \arguments{
 \item{generic}{A generic, written as its name.}
 
-\item{type}{An R8 type object.}
+\item{...}{The types of the method: one R8 type object, or for a generic
+that dispatches on several arguments, one per dispatched argument it
+specializes, matched by position or by name, as
+\code{implement(combine, A, B)} or \code{implement(combine, y = B)}; a converter
+from \code{\link[=r8_converter]{r8_converter()}} takes an R8 type object or a class name.}
 
 \item{value}{Function: The method.}
 }

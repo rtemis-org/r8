@@ -118,7 +118,14 @@ r8_register <- function(pkgname = NULL) {
 #' @keywords internal
 #' @noRd
 check_namespaces <- function(pkg) {
-  p <- r8_check_namespaces(r8_package_namespaces(pkg))
+  # The namespaces of the packages `pkg` imports, against whose impls an
+  # ambiguity is the package's.
+  imported <- if (isNamespaceLoaded(pkg)) names(getNamespaceImports(pkg))
+  imports <- unique(unlist(lapply(
+    setdiff(imported, c("base", pkg)),
+    r8_package_namespaces
+  )))
+  p <- r8_check_namespaces(r8_package_namespaces(pkg), as.character(imports))
   if (length(p[["code"]]) > 0L) {
     r8_abort(
       "The declarations of package '",
@@ -394,7 +401,7 @@ compiled_method <- function(trait_name, type_name, method, pkg) {
     function(m) identical(m[["name"]], method),
     trait_ir(t)[["methods"]]
   )
-  params <- unlist(decl[[1L]][["params"]])
+  params <- param_names(decl[[1L]][["params"]])
   args <- lapply(params, function(p) {
     if (identical(p, "...")) quote(list(...)) else as.name(p)
   })
