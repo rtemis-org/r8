@@ -32,7 +32,7 @@ declared in Rust. A codec written in C, whose type the exports declare
 only in R, sets the declaration hash of its type (\code{declaration_hash}),
 which registration compares with the hash of the R declaration, since the
 codec reads fields by position. Each impl declaration of the exports is
-built from its impl entries, grouped by trait and type.
+built from its impl entries, grouped by trait and positions.
 }
 \examples{
 \dontrun{

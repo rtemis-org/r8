@@ -1179,11 +1179,25 @@ fn rust_stored_impl(
 /// (`rtemis_r8_api::Receiver`), and returns a type that implements
 /// `rtemis_r8_api::IntoR`, a Rust-stored type among them; the trait is
 /// declared in R, whose method has the same parameters.
+///
+/// A type parameter of the trait is a dispatched position after the first,
+/// which `dispatch(x, y)` beside `trait` names, the first argument first:
+///
+/// ```text
+/// #[r8::methods(trait = "ns::overlaps", dispatch(x, y))]
+/// pub trait Overlaps<Y> {
+///     fn overlaps(&self, y: &Y) -> bool;
+/// }
+/// ```
+///
+/// Its argument is `&Y`, and a row names the type, `IRanges:
+/// Overlaps<GRanges>`, or any value, `IRanges: Overlaps<r8::Any>`. A
+/// replacement method `f<-` is `with_f(&self, value)`.
 #[proc_macro_attribute]
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as syn::Item);
-    methods::trait_name(attr.into())
-        .and_then(|name| methods::expand(&name, item))
+    methods::args(attr.into())
+        .and_then(|args| methods::expand(&args, item))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
@@ -1193,7 +1207,7 @@ fn valid_qualified(s: &str) -> bool {
 }
 
 /// `r8::exports! { package = "pkg", namespace = "ns", types = [T, ...],
-/// impls = [T: Trait, ...] }`: the package's exports table, built on first
+/// impls = [T: Trait, T: Trait<Y>, ...] }`: the package's exports table, built on first
 /// use, and `r8_init_<package>(dll)`, with an underscore for a period of the
 /// package's name, which the package's initialization routine calls to
 /// register it with `R_RegisterCCallable(pkg, "r8_exports", ...)`. It is

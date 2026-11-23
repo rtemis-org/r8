@@ -17,7 +17,7 @@ pub struct Args {
     impls: Vec<Row>,
 }
 
-/// A row of `impls`, `Type: Trait`.
+/// A row of `impls`, `Type: Trait` or `Type: Trait<Y>`.
 struct Row {
     ty: syn::Path,
     of: syn::Path,
@@ -29,7 +29,7 @@ impl Parse for Row {
         input.parse::<Token![:]>()?;
         Ok(Row {
             ty,
-            of: input.call(syn::Path::parse_mod_style)?,
+            of: input.parse()?,
         })
     }
 }

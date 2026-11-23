@@ -400,22 +400,24 @@ r8_exports_traits <- function(ptr) .Call(wrap__r8_exports_traits, ptr)
 #' @param ptr The external pointer that `r8_exports` returned.
 #' @param package Character: The registering package.
 #' @param ns Character: The package's namespace.
-#' @return List: `trait_name`, `type_name`, and `method` of each impl function.
+#' @return List: of each impl function, `trait_name`; `tuple`, the key of its
+#'   positions; `method`; and `s4`, the S4 classes of its positions, each a
+#'   list of `class` and `package`.
 #' @keywords internal
 #' @noRd
 r8_register_exports <- function(ptr, package, ns) .Call(wrap__r8_register_exports, ptr, package, ns)
 
 #' The compiled impl function of `method` of the trait `trait_name` for the
-#' type `type_name`, as an external pointer to the function, which R passes
+#' positions `tuple`, as an external pointer to the function, which R passes
 #' to R8's C routine `invoke` (`r8_native_symbols()`).
 #'
 #' @param trait_name Character: The qualified trait name.
-#' @param type_name Character: The qualified type name.
+#' @param tuple Character: The key of the positions (`tuple_key()`).
 #' @param method Character: The method.
 #' @return An external pointer.
 #' @keywords internal
 #' @noRd
-r8_impl_fn <- function(trait_name, type_name, method) .Call(wrap__r8_impl_fn, trait_name, type_name, method)
+r8_impl_fn <- function(trait_name, tuple, method) .Call(wrap__r8_impl_fn, trait_name, tuple, method)
 
 #' The registered Rust-stored types and whether each codec table holds
 #' every function.

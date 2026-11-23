@@ -3,8 +3,8 @@
 # 2026- EDG rtemis.org
 
 # The methods each package implements in compiled code, by package: a data
-# frame of `trait_name`, `type_name`, and `method`, which the roclet `r8_rd`
-# documents.
+# frame of `trait_name`, `tuple` (the key of the positions), and `method`,
+# which the roclet `r8_rd` documents.
 .r8_compiled_methods <- new.env(parent = emptyenv())
 
 # By package, the external pointers to compiled functions that the closures
@@ -36,7 +36,7 @@
 #' only in R, sets the declaration hash of its type (`declaration_hash`),
 #' which registration compares with the hash of the R declaration, since the
 #' codec reads fields by position. Each impl declaration of the exports is
-#' built from its impl entries, grouped by trait and type.
+#' built from its impl entries, grouped by trait and positions.
 #'
 #' @param pkgname Optional Character: The package; by default, the package
 #'   whose code calls `r8_register()`.
@@ -247,11 +247,14 @@ register_exports <- function(pkg, entries = list()) {
     check_trait_registered(name, pkg)
   }
   fns <- r8_register_exports(ptr, pkg, namespace)
+  for (class in unlist(fns[["s4"]], recursive = FALSE)) {
+    check_s4_class(class[["class"]], class[["package"]])
+  }
   assign(
     pkg,
     data.frame(
       trait_name = as.character(fns[["trait_name"]]),
-      type_name = as.character(fns[["type_name"]]),
+      tuple = as.character(fns[["tuple"]]),
       method = as.character(fns[["method"]])
     ),
     envir = .r8_compiled_methods
@@ -275,7 +278,7 @@ register_exports <- function(pkg, entries = list()) {
   for (i in seq_along(fns[["method"]])) {
     compiled_method(
       fns[["trait_name"]][[i]],
-      fns[["type_name"]][[i]],
+      fns[["tuple"]][[i]],
       fns[["method"]][[i]],
       pkg
     )
@@ -468,16 +471,18 @@ check_exports <- function(pkg, compared, rust_stored) {
 #'
 #' A function with the formals of the trait's method that passes its
 #' arguments, in the declared order, to the impl function; it is registered
-#' as the trait's method for the type, as `impl()` registers an R method.
+#' as the trait's method for the positions, as `impl()` registers an R method,
+#' and for `R8::From` as the conversion of its source to its type.
 #'
-#' @param trait_name,type_name,method Character: The impl.
+#' @param trait_name,tuple,method Character: The impl: its trait, the key of
+#'   its positions (`tuple_key()`), and the method.
 #' @param pkg Character: The package whose exports hold the function.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
-compiled_method <- function(trait_name, type_name, method, pkg) {
+compiled_method <- function(trait_name, tuple, method, pkg) {
   trait <- .r8_traits[[trait_name]]
   if (is.null(trait)) {
     r8_abort(
@@ -502,7 +507,7 @@ compiled_method <- function(trait_name, type_name, method, pkg) {
   )
   # The function is looked up once, here; its pointer, which the body holds,
   # is cleared when the package registers again or unloads.
-  ptr <- r8_impl_fn(trait_name, type_name, method)
+  ptr <- r8_impl_fn(trait_name, tuple, method)
   .r8_compiled_ptrs[[pkg]] <- c(.r8_compiled_ptrs[[pkg]], list(ptr))
   fn <- as.function(
     c(
@@ -516,15 +521,18 @@ compiled_method <- function(trait_name, type_name, method, pkg) {
     ),
     envir = asNamespace("R8")
   )
-  generic <- t[["generics"]][[method]]
-  set_impl(trait_name, method, type_name, fn)
-  if (!inherits(generic, "r8_generic")) {
-    if (identical(trait_name, "R8::Print")) {
-      fn <- print_method(fn)
-    } else if (identical(trait_name, "R8::Display")) {
-      fn <- display_method(fn)
+  if (identical(trait_name, "R8::From")) {
+    # The type, then the source.
+    source <- sub("^[^,]*,", "", tuple)
+    if (is_host_key(source)) {
+      source <- host_key_class(source)
     }
-    registerS3method(method, type_name, fn, envir = s3_envir(generic))
+    put_impl("R8::From", source, sub(",.*$", "", tuple), fn)
+    return(invisible(NULL))
   }
-  invisible(NULL)
+  if (is_host_key(tuple) && !grepl(",", tuple, fixed = TRUE)) {
+    # A class that has a method of an S3 generic keeps it.
+    host_methods(t, host_key_class(tuple), stats::setNames(list(fn), method))
+  }
+  register_method(t, method, tuple, fn)
 } # /R8::compiled_method

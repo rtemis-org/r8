@@ -2,9 +2,14 @@
 //! trait and `r8::exports!` lists. Each method's parameters follow the R
 //! trait's: the first is `&self`, and `...` is a [`Dots`].
 
+use rtemis_r8::abi;
 use rtemis_r8_macros::methods;
 
-use crate::call::{Dots, Sexp};
+use crate::api::Result;
+use crate::call::{self, Dots, IntoR, Receiver, Sexp};
+use crate::dispatch::Position;
+use crate::exports::{ImplSet, MethodRow};
+use crate::rust_stored::RustStored;
 
 /// `R8::Display`: the text of a value, `format(x, ...)`.
 #[methods(trait = "R8::Display")]
@@ -36,4 +41,67 @@ pub trait Shape {
 pub trait PartialOrd {
     /// The order of `self` and `y`.
     fn partial_cmp(&self, y: Sexp) -> Option<std::cmp::Ordering>;
+}
+
+/// `R8::From(Source)`: the conversion of a `Source` to the type, which
+/// `r8_convert(x, Type)` and `Type@from(x)` call. A value of a struct that
+/// extends `Source` converts through the `Source` that it holds, when its own
+/// type has no conversion. It is `std::convert::From` with the source by
+/// reference, as R8 lends it, and with an error.
+///
+/// ```no_run,standalone_crate
+/// # use rtemis_r8::R8;
+/// # use rtemis_r8_api as r8;
+/// # #[derive(R8, Clone)]
+/// # #[r8(namespace = "demo", version = 1, storage = "rust")]
+/// # pub struct Celsius { pub degrees: f64 }
+/// # #[derive(R8, Clone)]
+/// # #[r8(namespace = "demo", version = 1, storage = "rust")]
+/// # pub struct Kelvin { pub degrees: f64 }
+/// impl r8::From<Celsius> for Kelvin {
+///     fn from(source: &Celsius) -> r8::Result<Self> {
+///         Ok(Kelvin { degrees: source.degrees + 273.15 })
+///     }
+/// }
+/// # r8::exports! {
+/// #     package = "demo", namespace = "demo",
+/// #     types = [Celsius, Kelvin],
+/// #     impls = [Kelvin: r8::From<Celsius>],
+/// # }
+/// # fn main() {}
+/// ```
+pub trait From<Source>: Sized {
+    /// The value of the type from `source`.
+    fn from(source: &Source) -> Result<Self>;
+
+    #[doc(hidden)]
+    fn __r8_methods() -> ImplSet
+    where
+        Self: RustStored,
+        Source: RustStored,
+    {
+        unsafe extern "C" fn from<S: RustStored, T: From<S> + RustStored>(
+            _inputs: *const abi::CallInputs,
+            args: *const abi::Sexp,
+            nargs: usize,
+            result: *mut abi::Sexp,
+            err: *mut abi::Error,
+        ) -> abi::Status {
+            unsafe {
+                call::method(args, nargs, 1, result, err, |a| {
+                    let source = Receiver::<S>::from_arg(a[0])?;
+                    <T as From<S>>::from(&source).into_r()
+                })
+            }
+        }
+        ImplSet {
+            trait_name: c"R8::From",
+            positions: vec![<Self as Position>::ENTRY, <Source as Position>::ENTRY],
+            methods: vec![MethodRow {
+                name: c"from",
+                call: from::<Source, Self>,
+                n_params: 1,
+            }],
+        }
+    }
 }

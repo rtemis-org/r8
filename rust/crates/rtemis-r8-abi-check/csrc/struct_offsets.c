@@ -22,8 +22,10 @@ static const size_t struct_offsets[] = {
   OFFSET(R8Reader, item), OFFSET(R8Reader, length), OFFSET(R8Reader, logical),
   OFFSET(R8Reader, number), OFFSET(R8Reader, string), OFFSET(R8Reader, doubles),
   OFFSET(R8Reader, integers), OFFSET(R8Reader, logicals),
-  SIZE(R8ImplEntry), OFFSET(R8ImplEntry, type_name), OFFSET(R8ImplEntry, method),
-  OFFSET(R8ImplEntry, call), OFFSET(R8ImplEntry, n_params),
+  SIZE(R8Position), OFFSET(R8Position, name), OFFSET(R8Position, package),
+  OFFSET(R8Position, system),
+  SIZE(R8ImplEntry), OFFSET(R8ImplEntry, positions), OFFSET(R8ImplEntry, n_positions),
+  OFFSET(R8ImplEntry, method), OFFSET(R8ImplEntry, call), OFFSET(R8ImplEntry, n_params),
   SIZE(R8Exports), OFFSET(R8Exports, size), OFFSET(R8Exports, package),
   OFFSET(R8Exports, ir_record), OFFSET(R8Exports, ir_record_len), OFFSET(R8Exports, types),
   OFFSET(R8Exports, n_types), OFFSET(R8Exports, impls), OFFSET(R8Exports, n_impls),
@@ -47,6 +49,12 @@ size_t r8_abi_struct_offsets(size_t *out, size_t cap) {
  * compare constants. */
 unsigned r8_abi_version(void) { return R8_ABI_VERSION; }
 unsigned r8_abi_has_seed(void) { return R8_CALL_HAS_SEED; }
+
+/* The kinds of a position, R8_POSITION_TYPE, R8_POSITION_CLASS, and
+ * R8_POSITION_ANY, as one number in base 16. */
+unsigned r8_abi_positions(void) {
+  return R8_POSITION_TYPE | R8_POSITION_CLASS << 4 | R8_POSITION_ANY << 8;
+}
 
 /* The status codes R8_OK, R8_ERROR, and R8_UNWIND, as one number in base 16. */
 unsigned r8_abi_statuses(void) { return R8_OK | R8_ERROR << 4 | R8_UNWIND << 8; }

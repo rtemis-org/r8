@@ -631,7 +631,15 @@ impl Registry {
                 ));
             }
         }
-        out
+        // A document's own check reports an ambiguity between two of its
+        // impls of its own trait too.
+        let mut seen: Vec<(String, DeclError)> = Vec::with_capacity(out.len());
+        for problem in out {
+            if !seen.contains(&problem) {
+                seen.push(problem);
+            }
+        }
+        seen
     }
 
     /// Claims `namespace` for `package` (`""` for code outside a package):

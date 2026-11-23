@@ -191,6 +191,22 @@ fn the_namespace_check_reports_ambiguity_with_imports_only() {
 }
 
 #[test]
+fn the_namespace_check_reports_each_ambiguity_once() {
+    let r = registry();
+    // A pair of one namespace that also declares the trait, which the
+    // document's own check reports too.
+    for (t, o) in [("core::A", "core::B1"), ("core::A1", "core::B")] {
+        r.declare_impl(&name("core"), imp(t, o)).unwrap();
+    }
+    let found: Vec<String> = r
+        .check_namespaces(&["core".to_string()])
+        .into_iter()
+        .map(|(_, e)| format!("{} {}", e.code, e.path))
+        .collect();
+    assert_eq!(found, ["dispatch_ambiguous /impls/0"]);
+}
+
+#[test]
 fn the_next_impl_is_the_unique_less_specific_one() {
     let r = registry();
     for (t, o) in [

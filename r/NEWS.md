@@ -54,6 +54,9 @@
 - `new_struct(storage = "rust")` and `new_enum(storage = "rust")` replace `native = TRUE`; `r8_document_rust()` replaces `r8_document_native()`, and `#[r8(storage = "rust")]` replaces `#[r8(native)]`.
 - The standard trait `PartialOrd`'s method is `partial_cmp`, called by `r8_partial_cmp()`, which returns `-1L`, `0L`, `1L`, or `NA` for values that are not ordered; `<`, `<=`, `>`, and `>=` return `FALSE` for those, and any other result raises `r8_result_error`.
 - The standard trait `Dim` is `Shape`.
+- Compiled impls dispatch on several arguments: a type parameter of the Rust trait is a dispatched position, `#[r8::methods(trait = "ns::meets", dispatch(x, y))] trait Meets<Y>`, and a row names the types, `Interval: Meets<Band>`, or `Interval: Meets<r8::Any>`. `r8::From<Source>` converts a value of another type, and a replacement method `f<-` is `with_f(&self, value)`.
+- `R8.h`: an impl entry holds its positions (`R8Position`: a type, a class of R, or any value) in place of its type's name. An impl in compiled code defines every method of its trait without a default implementation, as `impl()` requires.
+- A problem of a package's declarations is reported once.
 - Type objects and the objects a declaration is written with (`rule()`, `field()`, `column()`, `variant()`, `trait_method()`, `params()`, `impl_method()`, and the field types) print in one notation, with their defaults, descriptions, and rules: `<r8 field> integer [1, Inf) = 10L`, `<r8 rule ORDER> lo <= hi`. `format()` gives the lines, of a type object too.
 - An error of a compiled method reports the call of the generic, `ratio(s, 0)`.
 - `x[c("a", "b")] <- list(v, w)` replaces several fields of a value: each is checked, then the rules that read any of them, once. `replace(x, c("a", "b"), list(v, w))` is the form in an expression.

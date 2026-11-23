@@ -10,6 +10,9 @@ shifted <- R8::generic("shifted", R8::params(x, by))
 overlap <- R8::generic("overlap", R8::params(x, y))
 total <- R8::generic("total", R8::params(x))
 shares <- R8::generic("shares", R8::params(x))
+meets <- R8::generic("meets", R8::params(x, y, by), dispatch = c("x", "y"))
+`label<-` <- R8::generic("label<-", R8::params(x, value))
+`upper<-` <- R8::generic("upper<-", R8::params(x, value))
 
 # An impl in R, which continues to the compiled impl of its parent.
 R8::implement(total, Strip) <- function(x) x[["number"]] + R8::r8_next_impl()

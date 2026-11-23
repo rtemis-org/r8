@@ -332,23 +332,9 @@ method_block <- function(block, blocks, env) {
   # any.
   tuple <- if (length(types) > 1L || !is.null(names(types))) {
     positions <- impl_tuple(types, attr(generic, "r8_dispatch"), gname)
-    paste(
-      vapply(
-        positions,
-        function(p) {
-          if (identical(p, "any")) {
-            return("any")
-          }
-          if (is_host_key(p)) {
-            return(paste0("class '", host_key_class(p), "'"))
-          }
-          t <- Filter(function(x) identical(attr(x, "r8_name"), p), types)[[1L]]
-          paste0(type_kind(t), " '", sub("^.*::", "", p), "'")
-        },
-        character(1)
-      ),
-      collapse = ", "
-    )
+    positions_text(positions, function(p) {
+      Filter(function(x) identical(attr(x, "r8_name"), p), types)[[1L]]
+    })
   }
   usage <- paste0(
     "## R8 method for ",
@@ -419,6 +405,39 @@ method_block <- function(block, blocks, env) {
 } # /R8::method_block
 
 
+# %% positions_text ----
+#' The positions of a method as its entry in a help page names them
+#'
+#' @param positions Character: The key of each position.
+#' @param type_of Function: The type object of a qualified name, or `NULL`.
+#'
+#' @return Character: Each position's kind and name, or `any`, joined by
+#'   commas.
+#'
+#' @keywords internal
+#' @noRd
+positions_text <- function(positions, type_of) {
+  paste(
+    vapply(
+      positions,
+      function(p) {
+        if (identical(p, "any")) {
+          return("any")
+        }
+        if (is_host_key(p)) {
+          return(paste0("class '", host_key_class(p), "'"))
+        }
+        type <- type_of(p)
+        kind <- if (is.null(type)) "type" else type_kind(type)
+        paste0(kind, " '", sub("^.*::", "", p), "'")
+      },
+      character(1)
+    ),
+    collapse = ", "
+  )
+} # /R8::positions_text
+
+
 # %% compiled_blocks ----
 #' Blocks of the methods a package implements in compiled code
 #'
@@ -444,8 +463,14 @@ compiled_blocks <- function(blocks, env, base_path) {
   out <- list()
   for (i in seq_len(nrow(methods))) {
     trait <- .r8_traits[[methods[["trait_name"]][[i]]]]
-    type <- .r8_types[[methods[["type_name"]][[i]]]]
-    if (is.null(trait) || is.null(type)) {
+    positions <- strsplit(methods[["tuple"]][[i]], ",", fixed = TRUE)[[1L]]
+    type <- .r8_types[[positions[[1L]]]]
+    # A conversion is documented by its converter.
+    if (
+      is.null(trait) ||
+        is.null(type) ||
+        identical(methods[["trait_name"]][[i]], "R8::From")
+    ) {
       next
     }
     t <- unclass(trait)
@@ -469,7 +494,6 @@ compiled_blocks <- function(blocks, env, base_path) {
     if (is.null(topic)) {
       next
     }
-    tname <- sub("^.*::", "", methods[["type_name"]][[i]])
     block <- roxygen2::roxy_block(
       list(),
       file = file.path(base_path, "src"),
@@ -478,10 +502,8 @@ compiled_blocks <- function(blocks, env, base_path) {
     )
     usage <- paste0(
       "## R8 method for ",
-      type_kind(type),
-      " '",
-      tname,
-      "'\n\\special{",
+      positions_text(positions, function(p) .r8_types[[p]]),
+      "\n\\special{",
       call_text(method, formals),
       "}"
     )

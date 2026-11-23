@@ -222,14 +222,42 @@ pub struct Codec {
 pub type MethodFn =
     unsafe extern "C" fn(*const CallInputs, *const Sexp, usize, *mut Sexp, *mut Error) -> Status;
 
+/// `R8_POSITION_TYPE`: a position that names an R8 type.
+pub const POSITION_TYPE: u32 = 0;
+/// `R8_POSITION_CLASS`: a position that names a class of the host.
+pub const POSITION_CLASS: u32 = 1;
+/// `R8_POSITION_ANY`: a position of any value.
+pub const POSITION_ANY: u32 = 2;
+
+/// `R8Position`: a position of an impl.
+#[repr(C)]
+pub struct Position {
+    /// [`POSITION_TYPE`], [`POSITION_CLASS`], or [`POSITION_ANY`].
+    pub kind: u32,
+    /// The qualified name of a type, or the name of a class, NUL-terminated;
+    /// NULL for any.
+    pub name: *const c_char,
+    /// The package that defines a class, NUL-terminated; NULL or empty when
+    /// the declaration names none.
+    pub package: *const c_char,
+    /// The class system of a class, NUL-terminated: `s3`, `s4`, or
+    /// `implicit`.
+    pub system: *const c_char,
+}
+
 /// `R8ImplEntry`: one method of one impl.
 #[repr(C)]
 pub struct ImplEntry {
     /// The qualified trait name, NUL-terminated.
     pub trait_name: *const c_char,
-    /// The qualified type name, NUL-terminated.
-    pub type_name: *const c_char,
-    /// The method name, NUL-terminated.
+    /// The type the trait is implemented for, its first dispatched position,
+    /// then the trait's other dispatched positions in order; for `R8::From`,
+    /// the type and the source.
+    pub positions: *const Position,
+    /// The number of `positions`.
+    pub n_positions: usize,
+    /// The method name, NUL-terminated, as the trait declares it or as its
+    /// identifier in the hosts other than R.
     pub method: *const c_char,
     /// The impl function.
     pub call: Option<MethodFn>,
@@ -373,8 +401,16 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Reader.doubles", offset_of!(Reader, doubles)),
         ("R8Reader.integers", offset_of!(Reader, integers)),
         ("R8Reader.logicals", offset_of!(Reader, logicals)),
+        ("R8Position", size_of::<Position>()),
+        ("R8Position.name", offset_of!(Position, name)),
+        ("R8Position.package", offset_of!(Position, package)),
+        ("R8Position.system", offset_of!(Position, system)),
         ("R8ImplEntry", size_of::<ImplEntry>()),
-        ("R8ImplEntry.type_name", offset_of!(ImplEntry, type_name)),
+        ("R8ImplEntry.positions", offset_of!(ImplEntry, positions)),
+        (
+            "R8ImplEntry.n_positions",
+            offset_of!(ImplEntry, n_positions),
+        ),
         ("R8ImplEntry.method", offset_of!(ImplEntry, method)),
         ("R8ImplEntry.call", offset_of!(ImplEntry, call)),
         ("R8ImplEntry.n_params", offset_of!(ImplEntry, n_params)),

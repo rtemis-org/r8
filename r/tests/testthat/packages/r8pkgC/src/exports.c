@@ -72,12 +72,42 @@ static R8Status format_impl(const R8CallInputs *inputs, const SEXP *args, size_t
   return R8_OK;
 }
 
-// The impls of pkgc::Point, whose declarations R8 builds from these entries;
-// the types are declared in R (R/types.R).
+// Norm for a double vector, a class of R.
+static R8Status vector_magnitude(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
+                                 SEXP *result, R8Error *err) {
+  (void) inputs;
+  (void) nargs;
+  (void) err;
+  double sum = 0;
+  const double *x = REAL(args[0]);
+  for (R_xlen_t i = 0; i < XLENGTH(args[0]); i++) {
+    sum += x[i] * x[i];
+  }
+  *result = Rf_ScalarReal(sqrt(sum));
+  return R8_OK;
+}
+
+static R8Status vector_ratio(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
+                             SEXP *result, R8Error *err) {
+  (void) inputs;
+  (void) nargs;
+  (void) err;
+  *result = Rf_ScalarReal(REAL(args[0])[0] / Rf_asReal(args[1]));
+  return R8_OK;
+}
+
+// The impls of pkgc::Point and of R's class "numeric", whose declarations R8
+// builds from these entries; the types are declared in R (R/types.R).
+static const R8Position point = {R8_POSITION_TYPE, "pkgc::Point", NULL, NULL};
+
+static const R8Position numeric = {R8_POSITION_CLASS, "numeric", NULL, "implicit"};
+
 static const R8ImplEntry impls[] = {
-    {"pkgc::Norm", "pkgc::Point", "magnitude", magnitude_impl, 1},
-    {"pkgc::Norm", "pkgc::Point", "ratio", ratio_impl, 2},
-    {"R8::Display", "pkgc::Point", "format", format_impl, 2},
+    {"pkgc::Norm", &point, 1, "magnitude", magnitude_impl, 1},
+    {"pkgc::Norm", &point, 1, "ratio", ratio_impl, 2},
+    {"R8::Display", &point, 1, "format", format_impl, 2},
+    {"pkgc::Norm", &numeric, 1, "magnitude", vector_magnitude, 1},
+    {"pkgc::Norm", &numeric, 1, "ratio", vector_ratio, 2},
 };
 
 // The codecs of pkgc::Signal (signal.c) and pkgc::Resampler (resampler.c),
@@ -93,24 +123,36 @@ SEXP pkgc_signal_make(SEXP name, SEXP n);
 SEXP pkgc_lend(SEXP x, SEXP type, SEXP upcast);
 SEXP pkgc_wrap(SEXP type);
 
-// Impl entries that registration refuses, by `kind`: 1 repeats a method,
-// and 2 has a NULL function.
+// Impl entries that registration refuses, by `kind`: 1 repeats a method, 2 has
+// a NULL function, 3 omits a method, 4 has no position, 5 has a position of an
+// unknown kind, 6 a class of an unknown system, 7 an unknown method, and 8
+// another number of parameters.
 static R8ImplEntry bad_rows[2];
 static R8Exports bad_impl_exports;
 
 static SEXP pkgc_bad_impls(SEXP kind) {
+  static const R8Position unknown = {9, "pkgc::Point", NULL, NULL};
+  static const R8Position system = {R8_POSITION_CLASS, "lm", NULL, "s5"};
+  int k = Rf_asInteger(kind);
   bad_rows[0] = impls[0];
-  bad_rows[1] = impls[0];
-  if (Rf_asInteger(kind) == 2) {
-    bad_rows[1] = impls[1];
+  bad_rows[1] = impls[k == 1 || k == 3 ? 0 : 1];
+  if (k == 2) {
     bad_rows[1].call = NULL;
+  } else if (k == 4) {
+    bad_rows[1].n_positions = 0;
+  } else if (k == 5 || k == 6) {
+    bad_rows[1].positions = k == 5 ? &unknown : &system;
+  } else if (k == 7) {
+    bad_rows[1].method = "norm";
+  } else if (k == 8) {
+    bad_rows[1].n_params = 3;
   }
   bad_impl_exports = (R8Exports) {
       .abi_version = R8_ABI_VERSION,
       .size = sizeof(R8Exports),
       .package = "r8pkgC",
       .impls = bad_rows,
-      .n_impls = 2,
+      .n_impls = k == 3 ? 1 : 2,
   };
   return R_MakeExternalPtr(&bad_impl_exports, Rf_install("r8_exports"), R_NilValue);
 }

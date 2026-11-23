@@ -24,8 +24,9 @@ fn rust_and_c_struct_offsets_match() {
 #[test]
 fn constants_match() {
     let statuses = (abi::OK | abi::ERROR << 4 | abi::UNWIND << 8) as u32;
+    let positions = abi::POSITION_TYPE | abi::POSITION_CLASS << 4 | abi::POSITION_ANY << 8;
     assert_eq!(
         c_constants(),
-        (abi::ABI_VERSION, abi::CALL_HAS_SEED, statuses)
+        (abi::ABI_VERSION, abi::CALL_HAS_SEED, statuses, positions)
     );
 }

@@ -56,6 +56,73 @@
 //! # fn main() {}
 //! ```
 //!
+//! A type parameter of the trait is a dispatched position after the first,
+//! which a row names, or [`Any`]; [`From`] converts a value of another type.
+//!
+//! ```no_run,standalone_crate
+//! use rtemis_r8::R8;
+//! use rtemis_r8_api as r8;
+//!
+//! /// A numeric interval.
+//! #[derive(R8, Clone)]
+//! #[r8(namespace = "demo", version = 1, storage = "rust")]
+//! pub struct Interval {
+//!     pub lo: f64,
+//!     pub hi: f64,
+//! }
+//!
+//! /// A point.
+//! #[derive(R8, Clone)]
+//! #[r8(namespace = "demo", version = 1, storage = "rust")]
+//! pub struct Point {
+//!     pub at: f64,
+//! }
+//!
+//! /// The Rust side of the generic `demo::covers(x, y)`, which dispatches on
+//! /// both arguments.
+//! #[r8::methods(trait = "demo::covers", dispatch(x, y))]
+//! pub trait Covers<Y> {
+//!     fn covers(&self, y: &Y) -> bool;
+//! }
+//!
+//! impl Covers<Interval> for Interval {
+//!     fn covers(&self, y: &Interval) -> bool {
+//!         self.lo <= y.lo && y.hi <= self.hi
+//!     }
+//! }
+//!
+//! impl Covers<Point> for Interval {
+//!     fn covers(&self, y: &Point) -> bool {
+//!         (self.lo..=self.hi).contains(&y.at)
+//!     }
+//! }
+//!
+//! impl Covers<r8::Any> for Point {
+//!     fn covers(&self, _y: &r8::Any) -> bool {
+//!         false
+//!     }
+//! }
+//!
+//! impl r8::From<Point> for Interval {
+//!     fn from(source: &Point) -> r8::Result<Self> {
+//!         Ok(Interval { lo: source.at, hi: source.at })
+//!     }
+//! }
+//!
+//! r8::exports! {
+//!     package = "demo",
+//!     namespace = "demo",
+//!     types = [Interval, Point],
+//!     impls = [
+//!         Interval: Covers<Interval>,
+//!         Interval: Covers<Point>,
+//!         Point: Covers<r8::Any>,
+//!         Interval: r8::From<Point>,
+//!     ],
+//! }
+//! # fn main() {}
+//! ```
+//!
 //! The crate reaches R through its own declarations of R's C API (`sys`)
 //! and R8 through `R8Api` (`R8.h`). Every R function that can jump runs
 //! inside `R8Api.protect`, so a jump skips no Rust destructor.
@@ -66,6 +133,7 @@ extern crate self as rtemis_r8_api;
 pub mod api;
 pub mod buffer;
 pub mod call;
+pub mod dispatch;
 pub mod exports;
 pub mod field;
 pub mod keep;
@@ -78,6 +146,7 @@ pub mod traits;
 pub use api::{Error, Jumped, Result};
 pub use buffer::{Buffer, Element, Logical};
 pub use call::{Dots, FromR, IntoR, Receiver, Sexp};
+pub use dispatch::{Any, Position, PositionEntry};
 pub use exports::{ImplSet, MethodRow};
 pub use field::Field;
 pub use reader::{Node, Reader};
@@ -85,7 +154,7 @@ pub use rust_stored::{
     RustStored, RustStoredEnum, RustStoredStruct, Shared, codec, enum_codec, module,
 };
 pub use state::{StateReader, StateWriter};
-pub use traits::{Debug, Display, PartialOrd, Shape};
+pub use traits::{Debug, Display, From, PartialOrd, Shape};
 
 #[doc(hidden)]
 pub use rtemis_r8;
@@ -192,6 +261,44 @@ pub use rtemis_r8_macros::{exports, methods};
 /// use rtemis_r8_api as r8;
 /// #[r8::methods(trait = "demo::Width")]
 /// trait Width {}
+/// ```
+///
+/// A type parameter that `dispatch(...)` does not name, an argument of
+/// another type or name than its position's, and a position that is not a
+/// Rust-stored type:
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::methods(trait = "demo::Meets")]
+/// trait Meets<Y> { fn meets(&self, y: &Y) -> bool; }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::methods(trait = "demo::Meets", dispatch(x, y))]
+/// trait Meets<Y> { fn meets(&self, y: f64) -> bool; }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::methods(trait = "demo::Meets", dispatch(x, z))]
+/// trait Meets<Y> { fn meets(&self, y: &Y) -> bool; }
+/// ```
+///
+/// ```compile_fail,E0277
+/// use rtemis_r8::R8;
+/// use rtemis_r8_api as r8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, storage = "rust")]
+/// struct Interval { lo: f64 }
+/// #[r8::methods(trait = "demo::Meets", dispatch(x, y))]
+/// trait Meets<Y> { fn meets(&self, y: &Y) -> bool; }
+/// impl Meets<f64> for Interval { fn meets(&self, _y: &f64) -> bool { true } }
+/// r8::exports! {
+///     package = "demo", namespace = "demo",
+///     types = [Interval], impls = [Interval: Meets<f64>],
+/// }
+/// fn main() {}
 /// ```
 #[cfg(doctest)]
 struct RefusedByTheMacros;

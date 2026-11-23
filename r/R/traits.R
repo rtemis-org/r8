@@ -1560,32 +1560,48 @@ register_impl <- function(entry) {
     )
   }
   for (m in names(entry[["fns"]])) {
-    generic <- t[["generics"]][[m]]
-    fn <- entry[["fns"]][[m]]
-    set_impl(t[["name"]], m, entry[["type_name"]], fn)
-    if (!inherits(generic, "r8_generic")) {
-      # An S3 method is registered for the class itself; a host class's key
-      # holds the name in double quotes.
-      s3_class <- if (is_host_key(entry[["type_name"]])) {
-        host_key_class(entry[["type_name"]])
-      } else {
-        entry[["type_name"]]
-      }
-      # The S3 method is the stamped impl, from which r8_next_impl() reads
-      # its provider.
-      fn <- .r8_impls[[paste(t[["name"]], m, entry[["type_name"]], sep = "|")]]
-      if (identical(t[["name"]], "R8::Print")) {
-        fn <- print_method(fn)
-      } else if (identical(t[["name"]], "R8::Display")) {
-        fn <- display_method(fn)
-      } else if (endsWith(m, "<-")) {
-        fn <- replacement_method(fn, paste(t[["name"]], m, sep = "|"))
-      }
-      registerS3method(m, s3_class, fn, envir = s3_envir(generic))
-    }
+    register_method(t, m, entry[["type_name"]], entry[["fns"]][[m]])
   }
   invisible(NULL)
 } # /R8::register_impl
+
+
+# %% register_method ----
+#' Register the function of an impl's method for dispatch
+#'
+#' The function is the trait's method for the positions; for a method that
+#' maps an S3 generic, it is the S3 method for the class too.
+#'
+#' @param t List: The trait, unclassed.
+#' @param m Character: The method.
+#' @param key Character: The key of the positions (`tuple_key()`).
+#' @param fn Function: The function.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+register_method <- function(t, m, key, fn) {
+  generic <- t[["generics"]][[m]]
+  set_impl(t[["name"]], m, key, fn)
+  if (!inherits(generic, "r8_generic")) {
+    # An S3 method is registered for the class itself; a host class's key
+    # holds the name in double quotes.
+    s3_class <- if (is_host_key(key)) host_key_class(key) else key
+    # The S3 method is the stamped impl, from which r8_next_impl() reads its
+    # provider.
+    fn <- .r8_impls[[paste(t[["name"]], m, key, sep = "|")]]
+    if (identical(t[["name"]], "R8::Print")) {
+      fn <- print_method(fn)
+    } else if (identical(t[["name"]], "R8::Display")) {
+      fn <- display_method(fn)
+    } else if (endsWith(m, "<-")) {
+      fn <- replacement_method(fn, paste(t[["name"]], m, sep = "|"))
+    }
+    registerS3method(m, s3_class, fn, envir = s3_envir(generic))
+  }
+  invisible(NULL)
+} # /R8::register_method
 
 
 # %% check_s4_class ----

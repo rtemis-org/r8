@@ -21,8 +21,11 @@ use std::sync::{Mutex, OnceLock};
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use extendr_ffi::{R_ExternalPtrAddr, R_ExternalPtrTag, Rf_install};
-use rtemis_r8::abi::{ABI_VERSION, Codec, Exports, ImplEntry, MethodFn};
-use rtemis_r8::ir::{IrDocument, TypeDef};
+use rtemis_r8::abi::{
+    ABI_VERSION, Codec, Exports, ImplEntry, MethodFn, POSITION_ANY, POSITION_CLASS, POSITION_TYPE,
+    Position,
+};
+use rtemis_r8::ir::{ClassSystem, IrDocument, TypeDef, TypeRef};
 use rtemis_r8::name::{Name, QualifiedName};
 
 fn fail(message: impl Into<String>) -> Error {
@@ -46,7 +49,8 @@ struct CodecPtr(*const Codec);
 // thread only.
 unsafe impl Send for CodecPtr {}
 
-/// An impl function's trait, type, and method.
+/// An impl function's trait, the key of its positions ([`tuple_key`]), and its
+/// method.
 type ImplKey = (String, String, String);
 
 /// The entries one package registered.
@@ -58,7 +62,7 @@ struct Owned {
 
 #[derive(Default)]
 struct Compiled {
-    /// Impl functions by trait, type, and method.
+    /// Impl functions by trait, positions, and method.
     impls: HashMap<ImplKey, ImplFn>,
     /// Codecs of Rust-stored types by qualified name.
     types: HashMap<String, CodecPtr>,
@@ -157,6 +161,71 @@ fn text(p: *const c_char, what: &str) -> Result<String> {
         .to_str()
         .map(str::to_string)
         .map_err(|_| fail(format!("the exports table's {what} is not UTF-8")))
+}
+
+/// The positions of an impl entry of the package `package`.
+fn positions(entry: &ImplEntry, package: &str) -> Result<Vec<TypeRef>> {
+    if entry.positions.is_null() || entry.n_positions == 0 {
+        return Ok(Vec::new());
+    }
+    let rows: &[Position] =
+        unsafe { std::slice::from_raw_parts(entry.positions, entry.n_positions) };
+    rows.iter()
+        .map(|p| match p.kind {
+            POSITION_TYPE => {
+                let name = text(p.name, "type name")?;
+                let name = QualifiedName::parse(&name).map_err(|e| {
+                    fail(format!(
+                        "the type name `{name}` of an impl entry of `{package}`: {e}"
+                    ))
+                })?;
+                Ok(TypeRef::Named { name })
+            }
+            POSITION_CLASS => {
+                let class = text(p.name, "class name")?;
+                let of = if p.package.is_null() {
+                    String::new()
+                } else {
+                    text(p.package, "class package")?
+                };
+                let system = match text(p.system, "class system")?.as_str() {
+                    "s3" => ClassSystem::S3,
+                    "s4" => ClassSystem::S4,
+                    "implicit" => ClassSystem::Implicit,
+                    other => {
+                        return Err(fail(format!(
+                            "the class `{class}` of an impl entry of `{package}` is of the system `{other}`, none of `s3`, `s4`, and `implicit`"
+                        )));
+                    }
+                };
+                Ok(TypeRef::HostClass {
+                    host: "r".into(),
+                    package: of,
+                    class,
+                    system,
+                })
+            }
+            POSITION_ANY => Ok(TypeRef::Any),
+            other => Err(fail(format!(
+                "a position of an impl entry of `{package}` is of the kind {other}, none of R8_POSITION_TYPE, R8_POSITION_CLASS, and R8_POSITION_ANY"
+            ))),
+        })
+        .collect()
+}
+
+/// The key of an impl's positions, as R's `tuple_key()` writes it: each
+/// position's qualified type name, class name in double quotes, or `any`,
+/// joined by commas.
+fn tuple_key(positions: &[TypeRef]) -> String {
+    positions
+        .iter()
+        .map(|p| match p {
+            TypeRef::Named { name } => name.to_string(),
+            TypeRef::HostClass { class, .. } => format!("\"{class}\""),
+            TypeRef::Any => "any".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// The `R8Exports` an external pointer holds, checked: the tag, the ABI
@@ -364,7 +433,9 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
 /// @param ptr The external pointer that `r8_exports` returned.
 /// @param package Character: The registering package.
 /// @param ns Character: The package's namespace.
-/// @return List: `trait_name`, `type_name`, and `method` of each impl function.
+/// @return List: of each impl function, `trait_name`; `tuple`, the key of its
+///   positions; `method`; and `s4`, the S4 classes of its positions, each a
+///   list of `class` and `package`.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -407,32 +478,56 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
         unsafe { std::slice::from_raw_parts(e.impls, e.n_impls) }
     };
     let mut rows = Vec::with_capacity(entries.len());
-    let mut impls = Vec::with_capacity(entries.len());
+    let mut calls = Vec::with_capacity(entries.len());
     for entry in entries {
-        let key = (
-            text(entry.trait_name, "trait name")?,
-            text(entry.type_name, "type name")?,
-            text(entry.method, "method name")?,
-        );
+        let row = rtemis_r8::exports::ImplRow {
+            trait_name: text(entry.trait_name, "trait name")?,
+            positions: positions(entry, package)?,
+            method: text(entry.method, "method name")?,
+            n_params: entry.n_params,
+        };
         let call = entry.call.ok_or_else(|| {
             fail(format!(
                 "the impl function `{}` of `{}` for `{}` is NULL",
-                key.2, key.0, key.1
+                row.method,
+                row.trait_name,
+                tuple_key(&row.positions)
             ))
         })?;
-        rows.push(rtemis_r8::exports::ImplRow {
-            trait_name: key.0.clone(),
-            type_name: key.1.clone(),
-            method: key.2.clone(),
-            n_params: entry.n_params,
-        });
-        impls.push((key, ImplFn { call }));
+        rows.push(row);
+        calls.push(ImplFn { call });
     }
-    for i in rtemis_r8::exports::impls_from_rows(&rows, package).map_err(fail)? {
+    rtemis_r8::exports::resolve_methods(&mut rows, &reg, package).map_err(fail)?;
+    let impls = rtemis_r8::exports::impls_from_rows(&rows, package).map_err(fail)?;
+    rtemis_r8::exports::check_complete(&impls, &reg, package).map_err(fail)?;
+    for i in impls {
         crate::declare::declare_impl(i, ns)?;
     }
-    let reg = crate::declare::snapshot()?;
-    rtemis_r8::exports::check_params(&rows, &reg, package).map_err(fail)?;
+    let keys: Vec<ImplKey> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.trait_name.clone(),
+                tuple_key(&r.positions),
+                r.method.clone(),
+            )
+        })
+        .collect();
+    let s4: Vec<Robj> = rows
+        .iter()
+        .map(|r| {
+            let classes = r.positions.iter().filter_map(|p| match p {
+                TypeRef::HostClass {
+                    class,
+                    package,
+                    system: ClassSystem::S4,
+                    ..
+                } => Some(list!(class = class.as_str(), package = package.as_str()).into()),
+                _ => None,
+            });
+            List::from_values(classes.collect::<Vec<Robj>>()).into()
+        })
+        .collect();
     let mut c = compiled()
         .lock()
         .map_err(|_| fail("the registry of compiled exports is unavailable"))?;
@@ -444,10 +539,9 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
             c.types.remove(&t);
         }
     }
-    let keys: Vec<ImplKey> = impls.iter().map(|(k, _)| k.clone()).collect();
     let names: Vec<String> = types.iter().map(|(n, _)| n.clone()).collect();
-    for (k, f) in impls {
-        c.impls.insert(k, f);
+    for (k, f) in keys.iter().zip(calls) {
+        c.impls.insert(k.clone(), f);
     }
     for (n, v) in types {
         c.types.insert(n, v);
@@ -460,12 +554,13 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
         },
     );
     let trait_names: Vec<String> = keys.iter().map(|k| k.0.clone()).collect();
-    let type_names: Vec<String> = keys.iter().map(|k| k.1.clone()).collect();
+    let tuples: Vec<String> = keys.iter().map(|k| k.1.clone()).collect();
     let methods: Vec<String> = keys.iter().map(|k| k.2.clone()).collect();
     Ok(list!(
         trait_name = trait_names,
-        type_name = type_names,
-        method = methods
+        tuple = tuples,
+        method = methods,
+        s4 = List::from_values(s4)
     ))
 }
 
@@ -489,17 +584,17 @@ fn r8_exports_traits(ptr: Robj) -> Result<Vec<String>> {
 }
 
 /// The compiled impl function of `method` of the trait `trait_name` for the
-/// type `type_name`, as an external pointer to the function, which R passes
+/// positions `tuple`, as an external pointer to the function, which R passes
 /// to R8's C routine `invoke` (`r8_native_symbols()`).
 ///
 /// @param trait_name Character: The qualified trait name.
-/// @param type_name Character: The qualified type name.
+/// @param tuple Character: The key of the positions (`tuple_key()`).
 /// @param method Character: The method.
 /// @return An external pointer.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_impl_fn(trait_name: &str, type_name: &str, method: &str) -> Result<Robj> {
+fn r8_impl_fn(trait_name: &str, tuple: &str, method: &str) -> Result<Robj> {
     let f = {
         let c = compiled()
             .lock()
@@ -507,14 +602,14 @@ fn r8_impl_fn(trait_name: &str, type_name: &str, method: &str) -> Result<Robj> {
         c.impls
             .get(&(
                 trait_name.to_string(),
-                type_name.to_string(),
+                tuple.to_string(),
                 method.to_string(),
             ))
             .copied()
     };
     let Some(f) = f else {
         return Err(fail(format!(
-            "`{type_name}` has no compiled impl of `{trait_name}` (method `{method}`)"
+            "`{tuple}` has no compiled impl of `{trait_name}` (method `{method}`)"
         )));
     };
     Ok(unsafe {

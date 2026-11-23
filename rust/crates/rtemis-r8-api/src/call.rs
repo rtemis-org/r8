@@ -135,7 +135,22 @@ impl<T> Receiver<'_, T> {
     where
         T: RustStored,
     {
-        unsafe { Self::lent(x, "x", api::api()?.upcast_state) }
+        unsafe { Self::from_dispatched_arg(x, "x") }
+    }
+
+    /// The value of the dispatched argument `name`, a value of `T` or of a
+    /// struct that extends it, to which the method for `T` applies; an object
+    /// of another type returns `type_mismatch`, naming the argument.
+    ///
+    /// # Safety
+    ///
+    /// On R's main thread, with a valid `x` that stays protected while the
+    /// value lives.
+    pub unsafe fn from_dispatched_arg(x: SEXP, name: &str) -> Result<Self>
+    where
+        T: RustStored,
+    {
+        unsafe { Self::lent(x, name, api::api()?.upcast_state) }
     }
 
     /// The value of the argument `name`, a parameter `&T` of a method: a

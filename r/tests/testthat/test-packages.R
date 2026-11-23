@@ -342,7 +342,7 @@ test_that("impls in C register through R8.h and dispatch", {
   expect_true("error TRUE " %in% out, info = info)
   expect_true("display Point(3, 4) " %in% out, info = info)
   expect_true("print Point(3, 4) " %in% out, info = info)
-  expect_true("again 7 10 " %in% out, info = info)
+  expect_true("again 9 10 " %in% out, info = info)
   # An R error raised under R8Api.protect reaches the caller after the impl
   # function returns.
   expect_true("unwind `by` is NA " %in% out, info = info)
@@ -819,6 +819,99 @@ test_that("Rust-stored structs extend one another, and compiled impls apply to d
   expect_true("flat differs " %in% out, info = info)
 })
 
+test_that("compiled impls dispatch on several arguments, replace, and convert", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("mirai")
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({ library(R8); library(r8pkgR); library(r8pkgS) })",
+      "say <- function(...) cat(..., '\\n')",
+      "cls <- function(x) tryCatch({ x; 'none' }, error = function(e) class(e)[1])",
+      "msg <- function(x) tryCatch(x, error = function(e) conditionMessage(e))",
+      "i <- Interval(lo = 1, hi = 2); b <- Band(label = 'b', weights = c(1, 5))",
+      "s <- Strip(hi = 4, label = 's', weights = 3)",
+      "g <- Signal(name = 'g', values = c(4, 2, 8)); t <- Tile(lo = 1, hi = 3, number = 7L)",
+      # The nearest impl in each position, each value lent as its type.
+      "say('pairs', meets(i, i, 1), '|', meets(i, b, 1), '|', meets(b, i, 1), '|', meets(s, s, 1))",
+      "say('again', meets(i, i, 1), '|', meets(i, b, 1), '|', meets(b, i, 1), '|', meets(s, s, 1))",
+      # Any value, an R one among them.
+      "say('any', meets(g, 1, 2), '|', meets(g, NULL, 2), '|', meets(g, g, 2))",
+      "say('none', cls(meets(i, 1, 2)), cls(meets(1, i, 2)))",
+      # Another package's types, read by their fields, and its own.
+      "say('other', meets(t, i, 1), '|', meets(t, s, 1), '|', meets(t, t, 1), '|', meets(i, t, 1))",
+      "w <- unserialize(serialize(b, NULL, version = 2))",
+      "say('r_stored', meets(i, w, 1), '|', meets(w, i, 1))",
+      "say('method', is.function(r8_method(meets, Interval, Band)), r8_method(meets, Interval, Interval)(i, i, 3))",
+      "say('ambiguities', nrow(r8_ambiguities(meets)))",
+      # A replacement method of a family keeps the type; one of a parent does
+      # not serve a child.
+      "label(b) <- 'new'; label(s) <- 'strip'",
+      "say('replace', class(b)[1], b$label, b$weights, class(s)[1], s$label, s$number)",
+      "upper(i) <- 9",
+      "say('upper', i$hi, cls(upper(b) <- 9), grepl('[below_lo]', msg(upper(i) <- 0), fixed = TRUE))",
+      "say('argument', cls(label(b) <- 1))",
+      # A conversion, of a descendant too, and its error.
+      "x <- r8_convert(b, Signal)",
+      "say('convert', format(r8_convert(g, Interval)), format(Interval@from(g)), class(x)[1], x$name, x$values)",
+      "say('child', format(r8_convert(s, Signal)), cls(r8_convert(i, Signal)))",
+      "say('empty', grepl('[no_values]', msg(r8_convert(Signal(name = 'e', values = numeric()), Interval)), fixed = TRUE))",
+      "m <- mirai::mirai({ library(r8pkgS); list(r8pkgR::meets(t, i, 1), r8pkgR::meets(i, t, 1), format(R8::r8_convert(g, r8pkgR::Interval))) }, t = t, i = r8pkgR::Interval(lo = 1, hi = 2), g = g)[]",
+      "say('mirai', unlist(m))"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  pairs <- paste(
+    "interval 2 interval 1 1 | interval 2 band b 1 |",
+    "interval 1 interval 1 1 | interval 4 band s 1 "
+  )
+  expect_true(paste("pairs", pairs) %in% out, info = info)
+  expect_true(paste("again", pairs) %in% out, info = info)
+  expect_true(
+    "any signal g any false 2 | signal g any false 2 | signal g any false 2 " %in%
+      out,
+    info = info
+  )
+  expect_true(
+    "none r8_dispatch_error r8_dispatch_error " %in% out,
+    info = info
+  )
+  expect_true(
+    "other tile 7 interval 2 | tile 7 band 1 | tile 7 tile 7 | interval 2 interval 1 1 " %in%
+      out,
+    info = info
+  )
+  expect_true(
+    "r_stored interval 2 band b 1 | interval 1 interval 1 1 " %in% out,
+    info = info
+  )
+  expect_true("method TRUE interval 2 interval 1 3 " %in% out, info = info)
+  expect_true("ambiguities 0 " %in% out, info = info)
+  expect_true(
+    "replace pkgr::Band new 1 5 pkgr::Strip strip 1 " %in% out,
+    info = info
+  )
+  expect_true("upper 9 r8_result_error TRUE " %in% out, info = info)
+  expect_true("argument simpleError " %in% out, info = info)
+  expect_true(
+    "convert [2, 8] [2, 8] pkgr::Signal new 1 5 " %in% out,
+    info = info
+  )
+  expect_true(
+    "child Signal strip (1 values) r8_dispatch_error " %in% out,
+    info = info
+  )
+  expect_true("empty TRUE " %in% out, info = info)
+  expect_true(
+    "mirai tile 7 interval 2 interval 2 interval 1 1 [2, 8] " %in% out,
+    info = info
+  )
+})
+
 test_that("a package's crate depends on another's, and registers its traits' impls for its own types", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
@@ -902,6 +995,9 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
       "cat('unpinned', grepl('sets no `declaration_hash`', chk(3)), grepl(h, chk(3), fixed = TRUE), '\\n')",
       "ri <- function(k) tryCatch(R8:::r8_register_exports(r8pkgC:::bad_impls(k), 'r8pkgC', 'pkgc'), error = function(e) conditionMessage(e))",
       "cat('impls', grepl('two impl functions `magnitude`', ri(1)), grepl('`ratio` of `pkgc::Norm` for `pkgc::Point` is NULL', ri(2)), '\\n')",
+      "has <- function(k, text) grepl(text, ri(k), fixed = TRUE)",
+      "cat('rows', has(3, 'defines `ratio`, which has no default'), has(4, 'names no type that it is for'), has(5, 'of the kind 9'), has(6, 'of the system `s5`'), has(7, 'the method `norm` of `pkgc::Norm`, which declares no such method'), has(8, 'takes 3 parameters, and the trait declares 2'), '\\n')",
+      "cat('class', magnitude(c(3, 4)), ratio(c(8, 1), 2), tryCatch(magnitude('a'), error = function(e) class(e)[1]), '\\n')",
       "s <- Signal(name = 'a', values = 1)",
       "cat('after', grepl('r8 rust-stored pkgc::Signal', inspect(s)), '\\n')"
     )
@@ -920,6 +1016,9 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
   expect_true("stale TRUE TRUE " %in% out, info = info)
   expect_true("unpinned TRUE TRUE " %in% out, info = info)
   expect_true("impls TRUE TRUE " %in% out, info = info)
+  expect_true("rows TRUE TRUE TRUE TRUE TRUE TRUE " %in% out, info = info)
+  # A compiled impl for a class of R.
+  expect_true("class 5 4 r8_dispatch_error " %in% out, info = info)
   expect_true("after TRUE " %in% out, info = info)
 })
 
@@ -1011,12 +1110,25 @@ test_that("the roclet r8_rd documents the methods a package implements in Rust",
         "rd <- readLines(file.path(%s, 'man', 'Resampler.Rd'))",
         deparse(copy)
       ),
-      "cat('resampler', any(grepl(\"R8 method for enum 'Resampler'\", rd, fixed = TRUE)), any(grepl('special{format(x, ...)}', rd, fixed = TRUE)), '\\n')"
+      "cat('resampler', any(grepl(\"R8 method for enum 'Resampler'\", rd, fixed = TRUE)), any(grepl('special{format(x, ...)}', rd, fixed = TRUE)), '\\n')",
+      # Methods on several positions, and a replacement method.
+      sprintf(
+        "rd <- function(f) readLines(file.path(%s, 'man', f))",
+        deparse(copy)
+      ),
+      "has <- function(f, text) any(grepl(text, rd(f), fixed = TRUE))",
+      "cat('positions', has('Signal.Rd', \"R8 method for struct 'Signal', any\"), has('Interval.Rd', \"R8 method for struct 'Interval', struct 'Band'\"), has('Interval.Rd', 'special{meets(x, y, by)}'), '\\n')",
+      "cat('replace', has('Band.Rd', 'special{label(x) <- value}'), '\\n')",
+      "cat('from', has('Interval.Rd', 'special{from(x)}'), '\\n')"
     )
   )
   info <- paste(out, collapse = "\n")
-  expect_true("signal 4 TRUE " %in% out, info = info)
+  expect_true("signal 5 TRUE " %in% out, info = info)
   expect_true("resampler TRUE TRUE " %in% out, info = info)
+  expect_true("positions TRUE TRUE TRUE " %in% out, info = info)
+  expect_true("replace TRUE " %in% out, info = info)
+  # A conversion has no entry of its own.
+  expect_true("from FALSE " %in% out, info = info)
 })
 
 test_that("roxygen2 documents R8 declarations and the package passes check", {

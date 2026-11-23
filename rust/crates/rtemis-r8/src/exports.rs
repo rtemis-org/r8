@@ -1,84 +1,55 @@
 //! The host-neutral checks of a package's compiled exports (`R8Exports`):
-//! the impl declarations that the impl entries make, the codec of a
-//! Rust-stored type against its type's declaration, and the number of an
-//! impl function's parameters against its trait's method.
+//! the method of its trait that an impl entry names, with the number of its
+//! parameters, the impl declarations that the entries make, and the codec of
+//! a Rust-stored type against its type's declaration.
 //!
 //! A host binding reads the table's pointers and owns the registry; it
 //! passes the rows and the codec tables here.
 
 use crate::abi::Codec;
+use crate::ir::dispatch::tuple_text;
 use crate::ir::{FieldDef, FieldType, ImplDef, ImplMethod, TypeDef, TypeRef, VariantKind};
 use crate::name::{MethodName, QualifiedName};
 use crate::rules::{DocumentSet, TypeLookup};
 
 /// One impl entry of an exports table, its strings read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImplRow {
     /// The qualified trait name.
     pub trait_name: String,
-    /// The qualified name of the type the trait is implemented for.
-    pub type_name: String,
-    /// The method's name.
+    /// The type the trait is implemented for, its first dispatched position,
+    /// then the trait's other positions.
+    pub positions: Vec<TypeRef>,
+    /// The method's name, as the trait declares it or as its identifier in
+    /// the hosts other than R ([`MethodName::host_identifier`]).
     pub method: String,
     /// The number of the method's parameters, `x` included and `...`
     /// counted as one.
     pub n_params: usize,
 }
 
-/// The impl declarations of an exports table's rows: one per trait and
-/// type, in the order of their first row, with the methods in row order.
-/// A row that repeats a trait, type, and method is an error.
-pub fn impls_from_rows(rows: &[ImplRow], package: &str) -> Result<Vec<ImplDef>, String> {
-    let mut out: Vec<ImplDef> = Vec::new();
-    let mut keys: Vec<(&str, &str)> = Vec::new();
-    for r in rows {
-        let method = MethodName::new(r.method.clone()).map_err(|e| {
-            format!(
-                "the impl function `{}` of `{}` for `{}` of `{package}`: {e}",
-                r.method, r.trait_name, r.type_name
-            )
-        })?;
-        let at = match keys
-            .iter()
-            .position(|k| *k == (r.trait_name.as_str(), r.type_name.as_str()))
-        {
-            Some(i) => i,
-            None => {
-                let parse = |s: &str, what: &str| {
-                    QualifiedName::parse(s).map_err(|e| {
-                        format!("the {what} name `{s}` of an impl entry of `{package}`: {e}")
-                    })
-                };
-                out.push(ImplDef {
-                    r#trait: parse(&r.trait_name, "trait")?,
-                    type_args: Vec::new(),
-                    target: TypeRef::Named {
-                        name: parse(&r.type_name, "type")?,
-                    },
-                    tag_value: None,
-                    methods: Vec::new(),
-                });
-                keys.push((&r.trait_name, &r.type_name));
-                out.len() - 1
-            }
-        };
-        let methods = &mut out[at].methods;
-        if methods.iter().any(|m| m.name() == &method) {
-            return Err(format!(
-                "the exports table of `{package}` has two impl functions `{}` of `{}` for `{}`",
-                r.method, r.trait_name, r.type_name
-            ));
+impl ImplRow {
+    /// The impl's positions as a message writes them: a single type bare,
+    /// several in parentheses.
+    fn target(&self) -> String {
+        match &self.positions[..] {
+            [one] => format!("`{one}`"),
+            many => format!("({})", tuple_text(many)),
         }
-        methods.push(ImplMethod::Name(method));
     }
-    Ok(out)
 }
 
-/// Checks that each row names a method of a declared trait, and that its
-/// number of parameters equals the number the trait declares for it.
-pub fn check_params(rows: &[ImplRow], set: &DocumentSet, package: &str) -> Result<(), String> {
+/// Reads each row's method as the one its trait declares: the method of that
+/// name, or the one whose identifier in the hosts other than R it is, such as
+/// `labels<-` for `with_labels`. The trait is declared, and its method has as
+/// many parameters as the row's function.
+pub fn resolve_methods(
+    rows: &mut [ImplRow],
+    set: &DocumentSet,
+    package: &str,
+) -> Result<(), String> {
     for r in rows {
-        let Some(declared_in) = QualifiedName::parse(&r.trait_name).ok().and_then(|q| {
+        let Some(declared) = QualifiedName::parse(&r.trait_name).ok().and_then(|q| {
             set.namespace(&q.namespace)?
                 .traits
                 .iter()
@@ -89,25 +60,131 @@ pub fn check_params(rows: &[ImplRow], set: &DocumentSet, package: &str) -> Resul
                 r.trait_name
             ));
         };
-        let declared = declared_in
+        let method = declared
             .methods
             .iter()
             .find(|m| m.name.as_str() == r.method)
-            .map(|m| m.params.len());
-        match declared {
-            Some(n) if n != r.n_params => {
-                return Err(format!(
-                    "the impl function `{}` of `{}` for `{}` takes {} parameters, and the trait declares {n}",
-                    r.method, r.trait_name, r.type_name, r.n_params
-                ));
-            }
-            Some(_) => {}
+            .or_else(|| {
+                declared
+                    .methods
+                    .iter()
+                    .find(|m| m.name.host_identifier() == r.method)
+            });
+        match method {
             None => {
                 return Err(format!(
                     "`{package}` implements the method `{}` of `{}`, which declares no such method",
                     r.method, r.trait_name
                 ));
             }
+            Some(m) if m.params.len() != r.n_params => {
+                return Err(format!(
+                    "the impl function `{}` of `{}` for {} takes {} parameters, and the trait declares {}",
+                    r.method,
+                    r.trait_name,
+                    r.target(),
+                    r.n_params,
+                    m.params.len()
+                ));
+            }
+            Some(m) => r.method = m.name.to_string(),
+        }
+    }
+    Ok(())
+}
+
+/// The impl declarations of an exports table's rows: one per trait and
+/// positions, in the order of their first row, with the methods in row order.
+/// A row that repeats a trait, positions, and method is an error.
+pub fn impls_from_rows(rows: &[ImplRow], package: &str) -> Result<Vec<ImplDef>, String> {
+    let mut out: Vec<ImplDef> = Vec::new();
+    let mut keys: Vec<(&str, &[TypeRef])> = Vec::new();
+    for r in rows {
+        let Some((target, type_args)) = r.positions.split_first() else {
+            return Err(format!(
+                "the impl function `{}` of `{}` of `{package}` names no type that it is for",
+                r.method, r.trait_name
+            ));
+        };
+        let method = MethodName::new(r.method.clone()).map_err(|e| {
+            format!(
+                "the impl function `{}` of `{}` for {} of `{package}`: {e}",
+                r.method,
+                r.trait_name,
+                r.target()
+            )
+        })?;
+        let at = match keys
+            .iter()
+            .position(|k| *k == (r.trait_name.as_str(), &r.positions[..]))
+        {
+            Some(i) => i,
+            None => {
+                let r#trait = QualifiedName::parse(&r.trait_name).map_err(|e| {
+                    format!(
+                        "the trait name `{}` of an impl entry of `{package}`: {e}",
+                        r.trait_name
+                    )
+                })?;
+                out.push(ImplDef {
+                    r#trait,
+                    type_args: type_args.to_vec(),
+                    target: target.clone(),
+                    tag_value: None,
+                    methods: Vec::new(),
+                });
+                keys.push((&r.trait_name, &r.positions));
+                out.len() - 1
+            }
+        };
+        let methods = &mut out[at].methods;
+        if methods.iter().any(|m| m.name() == &method) {
+            return Err(format!(
+                "the exports table of `{package}` has two impl functions `{}` of `{}` for {}",
+                r.method,
+                r.trait_name,
+                r.target()
+            ));
+        }
+        methods.push(ImplMethod::Name(method));
+    }
+    Ok(out)
+}
+
+/// Checks that each impl defines every method of its trait that has no default
+/// implementation. An impl for a class of the host may take the methods that
+/// the class has, which the host checks.
+pub fn check_complete(impls: &[ImplDef], set: &DocumentSet, package: &str) -> Result<(), String> {
+    for i in impls {
+        if matches!(i.target, TypeRef::HostClass { .. }) {
+            continue;
+        }
+        let Some(tr) = set
+            .namespace(&i.r#trait.namespace)
+            .and_then(|d| d.traits.iter().find(|t| t.name == i.r#trait.name))
+        else {
+            continue;
+        };
+        let missing = tr
+            .methods
+            .iter()
+            .find(|m| !m.has_default_impl && !i.methods.iter().any(|d| d.name() == &m.name));
+        if let Some(m) = missing {
+            let row = ImplRow {
+                trait_name: i.r#trait.to_string(),
+                positions: std::iter::once(&i.target)
+                    .chain(&i.type_args)
+                    .cloned()
+                    .collect(),
+                method: m.name.to_string(),
+                n_params: 0,
+            };
+            return Err(format!(
+                "the impl of `{}` for {} of `{package}` defines `{}`, which has no default implementation",
+                row.trait_name,
+                row.target(),
+                m.name
+            ));
         }
     }
     Ok(())
@@ -182,28 +259,48 @@ pub fn check_codec(
 mod tests {
     use super::*;
 
+    fn named(name: &str) -> TypeRef {
+        TypeRef::Named {
+            name: QualifiedName::parse(name).unwrap(),
+        }
+    }
+
     fn row(t: &str, ty: &str, m: &str) -> ImplRow {
         ImplRow {
             trait_name: t.into(),
-            type_name: ty.into(),
+            positions: vec![named(ty)],
             method: m.into(),
             n_params: 1,
         }
     }
 
     #[test]
-    fn rows_group_by_trait_and_type_in_order() {
+    fn rows_group_by_trait_and_positions_in_order() {
+        let pair = |m: &str, y: TypeRef| {
+            let mut r = row("p::Overlaps", "p::Point", m);
+            r.positions.push(y);
+            r
+        };
         let rows = [
             row("p::Norm", "p::Point", "magnitude"),
             row("R8::Display", "p::Point", "format"),
             row("p::Norm", "p::Point", "ratio"),
+            pair("overlaps", named("p::Line")),
+            pair("overlaps", TypeRef::Any),
+            pair("distance", named("p::Line")),
         ];
         let impls = impls_from_rows(&rows, "p").unwrap();
-        assert_eq!(impls.len(), 2);
+        assert_eq!(impls.len(), 4);
         assert_eq!(impls[0].r#trait.to_string(), "p::Norm");
-        let methods: Vec<&str> = impls[0].methods.iter().map(|m| m.name().as_str()).collect();
-        assert_eq!(methods, ["magnitude", "ratio"]);
+        let methods = |i: usize| -> Vec<&str> {
+            impls[i].methods.iter().map(|m| m.name().as_str()).collect()
+        };
+        assert_eq!(methods(0), ["magnitude", "ratio"]);
         assert_eq!(impls[1].r#trait.to_string(), "R8::Display");
+        assert_eq!(methods(2), ["overlaps", "distance"]);
+        assert_eq!(impls[2].target, named("p::Point"));
+        assert_eq!(impls[2].type_args, [named("p::Line")]);
+        assert_eq!(impls[3].type_args, [TypeRef::Any]);
     }
 
     #[test]
@@ -214,6 +311,88 @@ mod tests {
         ];
         let e = impls_from_rows(&rows, "p").unwrap_err();
         assert!(e.contains("two impl functions `magnitude`"), "{e}");
+        assert!(e.contains("for `p::Point`"), "{e}");
+    }
+
+    #[test]
+    fn a_row_without_positions_is_an_error() {
+        let mut r = row("p::Norm", "p::Point", "magnitude");
+        r.positions.clear();
+        let e = impls_from_rows(&[r], "p").unwrap_err();
+        assert!(e.contains("names no type"), "{e}");
+    }
+
+    #[test]
+    fn an_impl_without_a_method_is_an_error() {
+        let set = declared();
+        let with = |rows: &[ImplRow]| {
+            let impls = impls_from_rows(rows, "q").unwrap();
+            check_complete(&impls, &set, "q")
+        };
+        let rows = [
+            row("p::Label", "p::Point", "labels<-"),
+            row("p::Label", "p::Point", "as.text"),
+        ];
+        assert_eq!(with(&rows), Ok(()));
+        let e = with(&rows[..1]).unwrap_err();
+        assert!(
+            e.contains("for `p::Point`") && e.contains("defines `as.text`"),
+            "{e}"
+        );
+        // A class of the host may have the method.
+        let mut host = row("p::Label", "p::Point", "labels<-");
+        host.positions = vec![TypeRef::HostClass {
+            host: "r".into(),
+            package: String::new(),
+            class: "data.frame".into(),
+            system: crate::ir::ClassSystem::S3,
+        }];
+        assert_eq!(with(&[host]), Ok(()));
+    }
+
+    fn declared() -> DocumentSet {
+        let doc: crate::ir::IrDocument = serde_json::from_value(serde_json::json!({
+            "$ir": 1,
+            "namespace": "p",
+            "types": [],
+            "traits": [{
+                "name": "Label",
+                "description": "",
+                "methods": [
+                    {"name": "labels<-", "description": "", "params": ["x", "value"]},
+                    {"name": "as.text", "description": "", "params": ["x"]},
+                ],
+            }],
+            "impls": [],
+        }))
+        .unwrap();
+        DocumentSet::from(vec![doc])
+    }
+
+    #[test]
+    fn a_method_is_found_by_its_name_or_its_identifier() {
+        let with = |m: &str, n: usize| ImplRow {
+            n_params: n,
+            ..row("p::Label", "p::Point", m)
+        };
+        let mut rows = [
+            with("with_labels", 2),
+            with("labels<-", 2),
+            with("as_text", 1),
+        ];
+        resolve_methods(&mut rows, &declared(), "q").unwrap();
+        let found: Vec<&str> = rows.iter().map(|r| r.method.as_str()).collect();
+        assert_eq!(found, ["labels<-", "labels<-", "as.text"]);
+        let e = resolve_methods(&mut [with("labels", 2)], &declared(), "q").unwrap_err();
+        assert!(e.contains("declares no such method"), "{e}");
+        let e = resolve_methods(&mut [with("as_text", 2)], &declared(), "q").unwrap_err();
+        assert!(
+            e.contains("takes 2 parameters, and the trait declares 1"),
+            "{e}"
+        );
+        let mut other = [row("p::Other", "p::Point", "m")];
+        let e = resolve_methods(&mut other, &declared(), "q").unwrap_err();
+        assert!(e.contains("`p::Other`, which is not registered"), "{e}");
     }
 
     #[test]

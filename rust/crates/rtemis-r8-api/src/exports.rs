@@ -8,6 +8,7 @@ use rtemis_r8::abi::{self, ABI_VERSION, MethodFn};
 use rtemis_r8::ir::TypeDef;
 use rtemis_r8::name::Name;
 
+use crate::dispatch::PositionEntry;
 use crate::keep;
 use crate::sys;
 
@@ -27,10 +28,25 @@ pub struct MethodRow {
 pub struct ImplSet {
     /// The qualified trait name.
     pub trait_name: &'static CStr,
-    /// The qualified type name.
-    pub type_name: &'static CStr,
+    /// The type the trait is implemented for, then the trait's other
+    /// dispatched positions; for `R8::From`, the type and the source.
+    pub positions: Vec<PositionEntry>,
     /// The methods.
     pub methods: Vec<MethodRow>,
+}
+
+/// A position as an impl entry states it.
+fn position(p: &PositionEntry) -> abi::Position {
+    let (kind, name) = match p {
+        PositionEntry::Type(name) => (abi::POSITION_TYPE, name.as_ptr()),
+        PositionEntry::Any => (abi::POSITION_ANY, std::ptr::null()),
+    };
+    abi::Position {
+        kind,
+        name,
+        package: std::ptr::null(),
+        system: std::ptr::null(),
+    }
 }
 
 /// The package's exports table, built on first use: the declaration record
@@ -61,9 +77,12 @@ pub fn table(
             .iter()
             .flat_map(|set| {
                 let set = set();
+                let positions: &'static [abi::Position] =
+                    Box::leak(set.positions.iter().map(position).collect());
                 set.methods.into_iter().map(move |m| abi::ImplEntry {
                     trait_name: set.trait_name.as_ptr(),
-                    type_name: set.type_name.as_ptr(),
+                    positions: positions.as_ptr(),
+                    n_positions: positions.len(),
                     method: m.name.as_ptr(),
                     call: Some(m.call),
                     n_params: m.n_params,

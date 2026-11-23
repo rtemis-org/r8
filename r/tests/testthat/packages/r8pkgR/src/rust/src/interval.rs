@@ -146,3 +146,87 @@ impl r8::Display for Interval {
         format!("[{}, {}]", self.lo, self.hi)
     }
 }
+
+/// The Rust side of the generic `pkgr::meets`, which dispatches on both
+/// arguments. The result names the impl and the values that it read.
+#[r8::methods(trait = "pkgr::meets", dispatch(x, y))]
+pub trait Meets<Y> {
+    fn meets(&self, y: &Y, by: f64) -> String;
+}
+
+impl Meets<Interval> for Interval {
+    fn meets(&self, y: &Interval, by: f64) -> String {
+        format!("interval {} interval {} {by}", self.hi, y.lo)
+    }
+}
+
+impl Meets<Band> for Interval {
+    fn meets(&self, y: &Band, by: f64) -> String {
+        format!("interval {} band {} {by}", self.hi, y.label)
+    }
+}
+
+impl Meets<r8::Any> for crate::Signal {
+    fn meets(&self, y: &r8::Any, by: f64) -> String {
+        let null = y.sexp().0.is_null();
+        format!("signal {} any {null} {by}", self.name)
+    }
+}
+
+/// The Rust side of the replacement generic `pkgr::label<-`: an impl for
+/// `Band` and every struct that extends it, whose result keeps the type.
+#[r8::methods(trait = "pkgr::with_label")]
+pub trait WithLabel {
+    fn with_label(&self, value: String) -> Self;
+}
+
+impl<T: BandLike> WithLabel for T {
+    fn with_label(&self, value: String) -> Self {
+        self.with_band(Band {
+            label: value,
+            ..self.to_band()
+        })
+    }
+}
+
+/// The Rust side of the replacement generic `pkgr::upper<-`, for `Interval`
+/// alone, whose result for a value of a child is refused.
+#[r8::methods(trait = "pkgr::with_upper")]
+pub trait WithUpper {
+    fn with_upper(&self, value: f64) -> r8::Result<Self>
+    where
+        Self: Sized;
+}
+
+impl WithUpper for Interval {
+    fn with_upper(&self, value: f64) -> r8::Result<Self> {
+        if value < self.lo {
+            return Err(r8::Error::new("below_lo", "`value` is at least `lo`"));
+        }
+        Ok(Interval {
+            hi: value,
+            ..self.clone()
+        })
+    }
+}
+
+/// The interval of the values of a signal.
+impl r8::From<crate::Signal> for Interval {
+    fn from(source: &crate::Signal) -> r8::Result<Self> {
+        let of = |f: fn(f64, f64) -> f64| source.values.iter().copied().reduce(f);
+        match (of(f64::min), of(f64::max)) {
+            (Some(lo), Some(hi)) => Ok(Interval { lo, hi, unit: None }),
+            _ => Err(r8::Error::new("no_values", "the signal has values")),
+        }
+    }
+}
+
+/// The weights of a band as a signal.
+impl r8::From<Band> for crate::Signal {
+    fn from(source: &Band) -> r8::Result<Self> {
+        Ok(crate::Signal {
+            name: source.label.clone(),
+            values: source.weights.clone(),
+        })
+    }
+}

@@ -193,5 +193,13 @@ r8::exports! {
         Strip: Shifted,
         Band: Total,
         Strip: Shares,
+        Interval: Meets<Interval>,
+        Interval: Meets<Band>,
+        Signal: Meets<r8::Any>,
+        Band: WithLabel,
+        Strip: WithLabel,
+        Interval: WithUpper,
+        Interval: r8::From<Signal>,
+        Signal: r8::From<Band>,
     ],
 }

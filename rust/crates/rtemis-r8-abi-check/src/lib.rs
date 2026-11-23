@@ -8,6 +8,7 @@ unsafe extern "C" {
     fn r8_abi_version() -> u32;
     fn r8_abi_has_seed() -> u32;
     fn r8_abi_statuses() -> u32;
+    fn r8_abi_positions() -> u32;
 }
 
 /// The sizes and offsets of `R8.h`, in the order of `rtemis_r8::abi::struct_offsets()`.
@@ -20,10 +21,18 @@ pub fn c_struct_offsets() -> Vec<usize> {
     out
 }
 
-/// `R8_ABI_VERSION`, `R8_CALL_HAS_SEED`, and the status codes `R8_OK`,
-/// `R8_ERROR`, and `R8_UNWIND` (one per hexadecimal digit), as the header
-/// defines them.
-pub fn c_constants() -> (u32, u32, u32) {
+/// `R8_ABI_VERSION`, `R8_CALL_HAS_SEED`, the status codes `R8_OK`,
+/// `R8_ERROR`, and `R8_UNWIND`, and the kinds of a position,
+/// `R8_POSITION_TYPE`, `R8_POSITION_CLASS`, and `R8_POSITION_ANY` (one per
+/// hexadecimal digit), as the header defines them.
+pub fn c_constants() -> (u32, u32, u32, u32) {
     // SAFETY: the functions take no arguments and return a constant.
-    unsafe { (r8_abi_version(), r8_abi_has_seed(), r8_abi_statuses()) }
+    unsafe {
+        (
+            r8_abi_version(),
+            r8_abi_has_seed(),
+            r8_abi_statuses(),
+            r8_abi_positions(),
+        )
+    }
 }

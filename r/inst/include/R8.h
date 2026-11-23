@@ -221,12 +221,34 @@ typedef struct R8Codec {
 typedef R8Status (*R8MethodFn)(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
                                SEXP *result, R8Error *err);
 
+/* What a position of an impl names: an R8 type, a class of R, or any value. */
+#define R8_POSITION_TYPE 0
+#define R8_POSITION_CLASS 1
+#define R8_POSITION_ANY 2
+
+/* A position of an impl. */
+typedef struct R8Position {
+  uint32_t kind;
+  /* The qualified name of a type, or the name of a class; NULL for any. */
+  const char *name;
+  /* Of a class: the package that defines it, which is NULL or empty when the
+   * declaration names none. */
+  const char *package;
+  /* Of a class: its class system, "s3", "s4", or "implicit". */
+  const char *system;
+} R8Position;
+
 /* One method of one impl. */
 typedef struct R8ImplEntry {
-  /* Qualified names of the trait and of the type it is implemented for. */
+  /* The qualified name of the trait. */
   const char *trait_name;
-  const char *type_name;
-  /* The method's name, as declared by the trait. */
+  /* The type the trait is implemented for, its first dispatched position, then
+   * the trait's other dispatched positions in order; for R8::From, the type
+   * and the source. The entries of one impl have equal positions. */
+  const R8Position *positions;
+  size_t n_positions;
+  /* The method's name, as declared by the trait, or its identifier in the
+   * languages other than R, such as `with_labels` for `labels<-`. */
   const char *method;
   R8MethodFn call;
   /* The number of the method's parameters, `x` included and `...` counted
@@ -236,7 +258,7 @@ typedef struct R8ImplEntry {
 
 /* What a package registers: the declarations of its types in Rust, the
  * codecs of its Rust-stored types, and its impl functions. R8 builds each
- * impl declaration from the impl entries, grouped by trait and type. */
+ * impl declaration from the impl entries, grouped by trait and positions. */
 typedef struct R8Exports {
   uint32_t abi_version;
   uint32_t size;
