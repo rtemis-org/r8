@@ -31,6 +31,13 @@
 #' file of the converter, or else of its target type. The usage of an enum
 #' lists its variants, such as `Method@KFold(k)` and `Method@Bootstrap`.
 #'
+#' In the block of a typed generic, each `@param` of a typed parameter begins
+#' with the parameter's type, such as `Integer [0, Inf):`, which a package
+#' leaves out of the tag, and a block without `@return` takes the return type
+#' as its value. The block of a method with a return type of its own adds it
+#' to the value of the generic's Rd file. A type that the package documents is
+#' a link.
+#'
 #' @return A roxygen2 roclet, of class `roclet_r8_rd`.
 #'
 #' @examples
@@ -306,10 +313,13 @@ method_block <- function(block, blocks, env) {
   } else if (identical(target[["package"]], declaring_package(env))) {
     topic <- topic_of(blocks, generic)
   }
-  if (is.null(topic)) {
+  # A method in its type's Rd file leaves that file's value as it is.
+  in_type_file <- is.null(topic)
+  if (in_type_file) {
     for (t in Filter(function(x) inherits(x, "r8_type"), types)) {
       topic <- topic %||% topic_of(blocks, t)
     }
+    in_type_file <- !is.null(topic)
   }
   documented <- length(block$tags) > 0L
   if (is.null(topic)) {
@@ -360,6 +370,32 @@ method_block <- function(block, blocks, env) {
     roxy_tag_of(block, "usage", structure(usage, class = "rd")),
     roxy_tag_of(block, ".formals", names(formals(fn)))
   )
+  returned <- as.list(call[[2L]])[["return_type"]]
+  if (
+    !is.null(returned) &&
+      !in_type_file &&
+      !roxygen2::block_has_tags(block, c("return", "returns"))
+  ) {
+    notation <- r8_type_notation(return_type_ir(eval(returned, env), FALSE))
+    new <- c(
+      new,
+      list(roxy_tag_of(
+        block,
+        "return",
+        paste0(
+          "The method for ",
+          if (is.null(tuple)) {
+            paste0(if (host) "class" else type_kind(type), " '", tname, "'")
+          } else {
+            tuple
+          },
+          ": ",
+          rd_notation(notation, blocks, env),
+          "."
+        )
+      ))
+    )
+  }
   if (!roxygen2::block_has_tags(block, c("name", "rdname", "describeIn"))) {
     new <- c(
       new,
@@ -503,6 +539,115 @@ enum_block <- function(block) {
 } # /R8::enum_block
 
 
+# %% rd_notation ----
+#' The notation of a type as Rd text
+#'
+#' Its names are code, a type or trait that the package documents a link, and
+#' its first letter a capital.
+#'
+#' @param notation Character: A notation.
+#' @param blocks List: Every block of the package.
+#' @param env Environment: The package environment.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+rd_notation <- function(notation, blocks, env) {
+  escape <- function(x) {
+    gsub("([\\\\%{}])", "\\\\\\1", x)
+  }
+  ns <- paste0(declaring_namespace(env), "::")
+  code <- function(name) {
+    bare <- sub("^.*::", "", name)
+    own <- startsWith(name, ns)
+    object <- .r8_types[[name]] %||% .r8_traits[[name]]
+    if (own && !is.null(object) && !is.null(topic_of(blocks, object))) {
+      return(paste0("\\code{\\link{", bare, "}}"))
+    }
+    paste0("\\code{", escape(if (own) bare else name), "}")
+  }
+  # The text between backticks is at the even positions.
+  parts <- strsplit(notation, "`", fixed = TRUE)[[1L]]
+  even <- seq_along(parts) %% 2L == 0L
+  parts[!even] <- escape(parts[!even])
+  parts[even] <- vapply(parts[even], code, character(1))
+  first <- parts[[1L]]
+  if (nzchar(first)) {
+    parts[[1L]] <- paste0(toupper(substr(first, 1L, 1L)), substring(first, 2L))
+  }
+  paste(parts, collapse = "")
+} # /R8::rd_notation
+
+
+# %% generic_block ----
+#' Add the types of a typed generic to its block
+#'
+#' @param block A roxygen2 block of a generic.
+#' @param blocks List: Every block of the package.
+#' @param env Environment: The package environment.
+#'
+#' @return The block.
+#'
+#' @keywords internal
+#' @noRd
+generic_block <- function(block, blocks, env) {
+  g <- roxygen_value(block$object$value)
+  trait <- .r8_traits[[attr(g, "r8_trait")]]
+  if (is.null(trait)) {
+    return(block)
+  }
+  m <- Filter(
+    function(m) identical(m[["name"]], attr(g, "r8_method")),
+    trait_ir(trait)[["methods"]]
+  )[[1L]]
+  types <- list()
+  for (p in m[["params"]]) {
+    if (is.list(p) && !is.null(p[["type"]])) {
+      types[[p[["name"]]]] <- rd_notation(
+        r8_type_notation(p[["type"]]),
+        blocks,
+        env
+      )
+    }
+  }
+  block$tags <- lapply(block$tags, function(tag) {
+    if (!identical(tag$tag, "param")) {
+      return(tag)
+    }
+    # A tag of several parameters takes their type when they share one.
+    names <- trimws(strsplit(tag$val$name, ",", fixed = TRUE)[[1L]])
+    text <- unique(types[names])
+    if (
+      length(text) == 1L &&
+        !is.null(text[[1L]]) &&
+        !startsWith(tag$val$description, text[[1L]])
+    ) {
+      tag$val$description <- paste0(text[[1L]], ": ", tag$val$description)
+    }
+    tag
+  })
+  if (
+    !is.null(m[["return_type"]]) &&
+      !roxygen2::block_has_tags(block, c("return", "returns"))
+  ) {
+    notation <- return_notation(
+      m[["return_type"]],
+      dispatch_names(m[["params"]])
+    )
+    block$tags <- c(
+      block$tags,
+      list(roxy_tag_of(
+        block,
+        "return",
+        paste0(rd_notation(notation, blocks, env), ".")
+      ))
+    )
+  }
+  block
+} # /R8::generic_block
+
+
 # %% roclet_process.roclet_r8_rd ----
 #' @exportS3Method roxygen2::roclet_process
 roclet_process.roclet_r8_rd <- function(x, blocks, env, base_path) {
@@ -515,6 +660,11 @@ roclet_process.roclet_r8_rd <- function(x, blocks, env, base_path) {
         next
       }
       block <- method_block(block, blocks, env)
+    } else if (
+      inherits(roxygen_value(block$object$value), "r8_generic") &&
+        !roxygen2::block_has_tags(block, "noRd")
+    ) {
+      block <- generic_block(block, blocks, env)
     } else if (
       inherits(block$object$value, "r8_enum_type") &&
         !roxygen2::block_has_tags(block, "noRd") &&

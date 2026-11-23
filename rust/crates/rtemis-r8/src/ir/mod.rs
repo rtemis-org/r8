@@ -13,6 +13,7 @@ mod document;
 pub mod fit;
 mod logic;
 mod lower;
+pub mod notation;
 mod number;
 mod tags;
 mod types;

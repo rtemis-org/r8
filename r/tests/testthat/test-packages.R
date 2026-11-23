@@ -793,14 +793,24 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
   # the method's tuple.
   expect_match(
     rd("label_of.Rd"),
-    "label_of(x, sep = default_sep(), n = 2L, ...)",
+    "label_of(x, sep = default_sep(), n = 2L, method = NULL, ...)",
     fixed = TRUE
   )
   expect_match(
     rd("label_of.Rd"),
-    "## R8 method for struct 'Resampler'\n\\special{label_of(x, sep, n, ...)}",
+    "## R8 method for struct 'Resampler'\n\\special{label_of(x, sep, n, method, ...)}",
     fixed = TRUE
   )
+  # The types of the parameters, a documented type as a link, and the return
+  # types of the generic and of the method.
+  for (text in c(
+    "\\item{sep}{Character: The separator.}",
+    "\\item{n}{Integer [1, Inf): The number of marks.}",
+    "\\item{method}{Optional \\code{\\link{Method}}: The method.}",
+    "\\value{\nCharacter.\n\nThe method for struct 'Resampler': Character.\n}"
+  )) {
+    expect_match(rd("label_of.Rd"), text, fixed = TRUE)
+  }
   # A second run writes nothing.
   again <- run_r(
     character(),

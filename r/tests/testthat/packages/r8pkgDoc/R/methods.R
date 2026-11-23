@@ -114,11 +114,10 @@ implement(pair_with, "data.frame", Resampler) <- function(x, y) {
 #' Label a value
 #'
 #' @param x A value of a type with a method of `label_of()`.
-#' @param sep Character: The separator.
-#' @param n Integer: The number of marks.
+#' @param sep The separator.
+#' @param n The number of marks.
+#' @param method The method.
 #' @param ... Arguments of methods.
-#'
-#' @return Character: The label.
 #'
 #' @examples
 #' label_of(Resampler(method = Method@Bootstrap, n_resamples = 2L))
@@ -129,6 +128,7 @@ label_of <- R8::generic(
     x,
     sep = R8::arg_character(default = default_sep()),
     n = R8::arg_integer(min = 1L, default = 2L),
+    method = R8::arg_option(Method),
     "..."
   ),
   description = "Labels x.",
@@ -142,6 +142,7 @@ implement(label_of, Resampler, return_type = R8::type_character()) <- function(
   x,
   sep,
   n,
+  method,
   ...
 ) {
   paste(rep("r", n), collapse = sep)

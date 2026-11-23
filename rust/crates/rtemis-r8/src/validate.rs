@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use crate::access::{
     Access, CSC_FORM, Codes, DATE_MAX_DAYS, DATE_MIN_DAYS, Form, Json, MISSING_CODE,
-    POSIXCT_MICROS, csc_well_formed,
+    POSIXCT_MICROS, Unnamed, csc_well_formed,
 };
 use crate::ir::{
     CharacterType, DoubleType, FieldDef, FieldType, IntegerType, RuleDef, TypeDef, VariantKind,
@@ -1557,18 +1557,37 @@ impl<'l> Validator<'l, '_> {
                 path,
                 format!("`{ty}` is not a registered type"),
             ),
-            Ok((ty, _)) if self.lookup.implements(tr, &ty).is_none() => self.error(
-                "not_implementor",
-                path,
-                format!("`{ty}` does not implement `{tr}`, nor does any type it extends"),
-            ),
+            Ok((ty, _)) if self.lookup.implements(tr, &ty).is_none() => {
+                self.not_implementor(tr, format!("a value of `{ty}`"), path);
+            }
             // The type member names the type; the rest is the type's value.
             Ok((ty, member)) => match &member {
                 Some(m) => self.named(&ty, v, path, &[m.as_str()]),
                 None => self.named(&ty, v, path, &[]),
             },
-            Err(msg) => self.error("unknown_type", path, msg),
+            Err(Unnamed::Unknown(msg)) => self.error("unknown_type", path, msg),
+            Err(Unnamed::NotValue(found)) => self.not_implementor(tr, found, path),
         }
+    }
+
+    fn not_implementor(&mut self, tr: &QualifiedName, found: String, path: &P) {
+        self.report(
+            "not_implementor",
+            path,
+            Problem::Kind(format!("a value of a type that implements `{tr}`")),
+            Some(Shown::Kind(found)),
+            None,
+        );
+    }
+
+    fn not_subtype(&mut self, of: &QualifiedName, found: String, path: &P) {
+        self.report(
+            "not_subtype",
+            path,
+            Problem::Kind(format!("a value of `{of}` or of a struct that extends it")),
+            Some(Shown::Kind(found)),
+            None,
+        );
     }
 
     /// Checks a value of `subtype(of)` for the struct `of`: the type the value
@@ -1585,12 +1604,9 @@ impl<'l> Validator<'l, '_> {
                 path,
                 format!("`{ty}` is not a registered type"),
             ),
-            Ok((ty, _)) => self.error(
-                "not_subtype",
-                path,
-                format!("`{ty}` is not `{of}` and does not extend it"),
-            ),
-            Err(msg) => self.error("unknown_type", path, msg),
+            Ok((ty, _)) => self.not_subtype(of, format!("a value of `{ty}`"), path),
+            Err(Unnamed::Unknown(msg)) => self.error("unknown_type", path, msg),
+            Err(Unnamed::NotValue(found)) => self.not_subtype(of, found, path),
         }
     }
 }

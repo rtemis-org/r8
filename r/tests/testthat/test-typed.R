@@ -702,3 +702,81 @@ test_that("a From impl's result of another type is a result error", {
   })
   expect_error(r8_convert(1, t), "From", class = "r8_result_error")
 })
+
+test_that("print() of a generic and of a trait shows types, defaults, and return types", {
+  t <- declare_in("ty20", {
+    Model <- new_struct("Model")
+    Linear <- new_struct("Linear", extends = Model)
+    A <- new_struct("A")
+    B <- new_struct("B")
+    train <- generic(
+      "train",
+      params(
+        x,
+        y,
+        n = arg_integer(min = 0L, default = 1),
+        loss = arg_character(values = c("sq", "log")),
+        w = arg_option(vec(type_double(min = 0))),
+        k = length(x),
+        "..."
+      ),
+      return_type = subtype(Model)
+    )
+    implement(train, A, return_type = Linear) <- function(
+      x,
+      y,
+      n,
+      loss,
+      w,
+      k,
+      ...
+    ) {
+      Linear()
+    }
+    implement(train, B) <- function(x, y, n, loss, w, k, ...) Model()
+    plain <- generic("plain", params(x, y))
+    same <- generic("same", params(x, y), return_type = "Self")
+    Fit <- new_trait(
+      "Fit",
+      methods = list(
+        fit = trait_method(
+          params(x, n = arg_double(default = 1)),
+          return_type = Model
+        ),
+        note = trait_method(params(x))
+      )
+    )
+    list(train = train, plain = plain, same = same, Fit = Fit)
+  })
+  expect_identical(
+    utils::capture.output(print(t[["train"]])),
+    c(
+      "<r8 generic ty20::train>",
+      "train(x, y, n, loss, w, k, ...)",
+      "  n: integer [0, Inf) = 1L",
+      "  loss: character {\"sq\", \"log\"}",
+      "  w: optional vector of double [0, Inf) = NULL",
+      "  k = length(x)",
+      "  returns subtype of ty20::Model",
+      "Methods for: ty20::A (returns ty20::Linear), ty20::B"
+    )
+  )
+  expect_identical(
+    utils::capture.output(print(t[["plain"]])),
+    c("<r8 generic ty20::plain>", "plain(x, y)")
+  )
+  expect_identical(
+    utils::capture.output(print(t[["same"]]))[[3L]],
+    "  returns the type of x"
+  )
+  expect_identical(
+    utils::capture.output(print(t[["Fit"]])),
+    c(
+      "<r8 trait ty20::Fit>",
+      "  fit(x, n)",
+      "    n: double = 1",
+      "    returns ty20::Model",
+      "  note(x)"
+    )
+  )
+})

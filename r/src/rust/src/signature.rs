@@ -273,6 +273,23 @@ fn tuple_key<'a>(positions: impl Iterator<Item = &'a TypeRef>) -> String {
         .join(",")
 }
 
+/// The return types that the impls of the trait `q` declare for `method`,
+/// with the key of each impl's tuple.
+fn narrowed<'a>(
+    docs: &'a DocumentSet,
+    q: &QualifiedName,
+    method: &str,
+) -> Vec<(String, &'a FieldType)> {
+    rtemis_r8::ir::dispatch::impls_by_namespace(docs, q)
+        .into_iter()
+        .filter_map(|(_, imp)| {
+            let own = imp.methods.iter().find(|i| i.name().as_str() == method)?;
+            let positions = std::iter::once(&imp.target).chain(&imp.type_args);
+            Some((tuple_key(positions), own.return_type()?))
+        })
+        .collect()
+}
+
 fn build(key: SEXP, generation: u64) -> Option<Signature> {
     let (q, method) = key_parts(key)?;
     let docs = crate::declare::registry().snapshot();
@@ -307,14 +324,10 @@ fn build(key: SEXP, generation: u64) -> Option<Signature> {
         Some(ReturnType::SelfType(_)) => Returned::SelfType,
         Some(ReturnType::Type(t)) => Returned::Type((**t).clone(), Test::of(t)),
     };
-    let mut narrowed = Vec::new();
-    for (_, imp) in rtemis_r8::ir::dispatch::impls_by_namespace(&docs, &q) {
-        let own = imp.methods.iter().find(|i| i.name() == &m.name);
-        if let Some(t) = own.and_then(|i| i.return_type()) {
-            let positions = std::iter::once(&imp.target).chain(&imp.type_args);
-            narrowed.push((tuple_key(positions).into(), t.clone(), Test::of(t)));
-        }
-    }
+    let narrowed = narrowed(&docs, &q, method)
+        .into_iter()
+        .map(|(k, t)| (k.into(), t.clone(), Test::of(t)))
+        .collect();
     Some(Signature {
         generation,
         forced,
@@ -571,8 +584,41 @@ fn r8_stored_form(x: Robj, r#type: Robj) -> Result<Robj> {
     Ok(normalize(unsafe { x.get() }, &ty, &*docs)?.unwrap_or(x))
 }
 
+/// The notation of a field type (`rtemis_r8::ir::notation`).
+///
+/// @param type List: The field type in its IR form.
+/// @return Character.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_type_notation(r#type: Robj) -> Result<String> {
+    let ty: FieldType = crate::irde::from_r(unsafe { r#type.get() })
+        .map_err(|e| Error::Other(format!("the type does not read: {e}")))?;
+    Ok(rtemis_r8::ir::notation::notation(&ty))
+}
+
+/// The return types that the methods of a generic or trait method declare.
+///
+/// @param trait_name Character: The qualified trait name.
+/// @param method Character: The method.
+/// @return List: `tuple`, the tuple keys, and `notation`, the notations.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_method_returns(trait_name: &str, method: &str) -> Result<List> {
+    let q = QualifiedName::parse(trait_name).map_err(|e| Error::Other(e.to_string()))?;
+    let docs = crate::declare::registry().snapshot();
+    let (tuple, ty): (Vec<String>, Vec<String>) = narrowed(&docs, &q, method)
+        .into_iter()
+        .map(|(k, t)| (k, rtemis_r8::ir::notation::notation(t)))
+        .unzip();
+    Ok(list!(tuple = tuple, notation = ty))
+}
+
 extendr_module! {
     mod signature;
+    fn r8_type_notation;
+    fn r8_method_returns;
     fn r8_check_args;
     fn r8_check_result;
     fn r8_stored_form;

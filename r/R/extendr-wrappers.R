@@ -580,6 +580,23 @@ r8_ft_table <- function(columns, open, rules) .Call(wrap__r8_ft_table, columns, 
 #' @noRd
 r8_default_canonical <- function(x, type) .Call(wrap__r8_default_canonical, x, type)
 
+#' The notation of a field type (`rtemis_r8::ir::notation`).
+#'
+#' @param type List: The field type in its IR form.
+#' @return Character.
+#' @keywords internal
+#' @noRd
+r8_type_notation <- function(type) .Call(wrap__r8_type_notation, type)
+
+#' The return types that the methods of a generic or trait method declare.
+#'
+#' @param trait_name Character: The qualified trait name.
+#' @param method Character: The method.
+#' @return List: `tuple`, the tuple keys, and `notation`, the notations.
+#' @keywords internal
+#' @noRd
+r8_method_returns <- function(trait_name, method) .Call(wrap__r8_method_returns, trait_name, method)
+
 #' Validates the arguments of a call that the tests did not pass.
 #'
 #' @param key The method's key, a symbol.

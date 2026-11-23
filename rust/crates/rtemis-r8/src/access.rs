@@ -87,6 +87,15 @@ impl Form {
 /// A read from a host form.
 pub type Read<T> = Result<T, Form>;
 
+/// Why a value of a `dyn()` or `subtype()` type does not name its type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unnamed {
+    /// The value names no type, or one that is not known: the message.
+    Unknown(String),
+    /// The host's object is not a value of an R8 type: what it is.
+    NotValue(String),
+}
+
 /// The names of a dense matrix's or array's dimensions: per dimension, a
 /// handle over its names, or `None` for a dimension without names.
 pub type Dimnames<A> = Vec<Option<Names<A>>>;
@@ -640,10 +649,10 @@ pub trait Access<'a>: Copy + 'a {
         self,
         r#trait: &QualifiedName,
         lookup: &dyn TypeLookup,
-    ) -> Result<(QualifiedName, Option<String>), String>;
+    ) -> Result<(QualifiedName, Option<String>), Unnamed>;
     /// The type a value of a `subtype(Parent)` field names, and the member of
     /// the value that names it, if the host form has one.
-    fn named_type(self) -> Result<(QualifiedName, Option<String>), String>;
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), Unnamed>;
 
     /// Whether two handles name the same object, which is then equal to
     /// itself without a read.
@@ -667,7 +676,7 @@ pub fn concrete<'a, A: Access<'a>>(
     v: A,
     ft: &FieldType,
     lookup: &dyn TypeLookup,
-) -> Option<Result<(QualifiedName, Option<String>), String>> {
+) -> Option<Result<(QualifiedName, Option<String>), Unnamed>> {
     match ft {
         FieldType::Dyn { r#trait } => Some(v.implementor(r#trait, lookup)),
         FieldType::Subtype { .. } => Some(v.named_type()),
@@ -1572,20 +1581,24 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         self,
         r#trait: &QualifiedName,
         lookup: &dyn TypeLookup,
-    ) -> Result<(QualifiedName, Option<String>), String> {
+    ) -> Result<(QualifiedName, Option<String>), Unnamed> {
         let found = match self.val() {
             Some(v) => v.with_value(|v| lookup.implementor(r#trait, v)),
             None => lookup.implementor(r#trait, &Value::Null),
         };
-        found.map(|(ty, member)| (ty, Some(member)))
+        found
+            .map(|(ty, member)| (ty, Some(member)))
+            .map_err(Unnamed::Unknown)
     }
 
-    fn named_type(self) -> Result<(QualifiedName, Option<String>), String> {
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), Unnamed> {
         let found = match self.val() {
             Some(v) => v.with_value(crate::rules::dollar_type),
             None => crate::rules::dollar_type(&Value::Null),
         };
-        found.map(|(ty, member)| (ty, Some(member)))
+        found
+            .map(|(ty, member)| (ty, Some(member)))
+            .map_err(Unnamed::Unknown)
     }
 
     fn same(self, other: Self) -> bool {

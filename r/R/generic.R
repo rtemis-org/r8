@@ -979,6 +979,93 @@ usage_line <- function(method, args) {
 } # /R8::usage_line
 
 
+# %% return_notation ----
+#' The notation of a return type
+#'
+#' @param return_type The return type's IR: a field type, or `"Self"`.
+#' @param dispatch Character: The dispatched parameters.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+return_notation <- function(return_type, dispatch) {
+  if (identical(return_type, "Self")) {
+    return(paste0("the type of `", dispatch[[1L]], "`"))
+  }
+  r8_type_notation(return_type)
+} # /R8::return_notation
+
+
+# %% signature_lines ----
+#' The lines of a method's signature that its call does not show
+#'
+#' One line per parameter with a type or a default, then the return type.
+#'
+#' @param m List: The method's IR.
+#' @param g Function: Its generic, whose formals hold the defaults; `NULL`
+#'   for a method of an existing S3 generic.
+#' @param indent Character: The indentation of the parameters.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+signature_lines <- function(m, g, indent) {
+  out <- character()
+  fmls <- if (inherits(g, "r8_generic")) formals(g)
+  for (p in m[["params"]]) {
+    if (!is.list(p)) {
+      next
+    }
+    n <- p[["name"]]
+    has_default <- n %in% names(fmls) && !identical(fmls[[n]], quote(expr = ))
+    if (is.null(p[["type"]]) && !has_default) {
+      next
+    }
+    out <- c(
+      out,
+      paste0(
+        indent,
+        n,
+        if (!is.null(p[["type"]])) {
+          paste0(": ", plain_notation(r8_type_notation(p[["type"]])))
+        },
+        if (has_default) paste0(" = ", deparse1(fmls[[n]]))
+      )
+    )
+  }
+  if (!is.null(m[["return_type"]])) {
+    out <- c(
+      out,
+      paste0(
+        indent,
+        "returns ",
+        plain_notation(return_notation(
+          m[["return_type"]],
+          dispatch_names(m[["params"]])
+        ))
+      )
+    )
+  }
+  out
+} # /R8::signature_lines
+
+
+# %% plain_notation ----
+#' A notation as the console shows it, without the backticks of its names
+#'
+#' @param x Character: A notation.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+plain_notation <- function(x) {
+  gsub("`", "", x, fixed = TRUE)
+} # /R8::plain_notation
+
+
 # %% print.r8_generic ----
 #' @rdname generic
 #' @param x A generic of class `r8_generic`.
@@ -1000,6 +1087,16 @@ print.r8_generic <- function(x, ...) {
     sep = ""
   )
   cat(usage_line(method, names(formals(x))), "\n", sep = "")
+  m <- if (!is.null(t)) {
+    Filter(
+      function(m) identical(m[["name"]], method),
+      trait_ir(t)[["methods"]]
+    )[[1L]]
+  }
+  lines <- signature_lines(m, x, "  ")
+  if (length(lines) > 0L) {
+    cat(lines, sep = "\n")
+  }
   dispatch <- attr(x, "r8_dispatch")
   if (length(dispatch) > 1L) {
     cat("Dispatches on: ", paste(dispatch, collapse = ", "), "\n", sep = "")
@@ -1007,15 +1104,22 @@ print.r8_generic <- function(x, ...) {
   prefix <- paste(trait, method, "", sep = "|")
   keys <- ls(.r8_impls, all.names = TRUE)
   types <- substring(keys[startsWith(keys, prefix)], nchar(prefix) + 1L)
-  types <- types[nzchar(types)]
+  types <- sort(types[nzchar(types)])
   if (length(types) > 0L) {
     # A tuple of types, from a generic that dispatches on several arguments.
-    types <- ifelse(
+    text <- ifelse(
       grepl(",", types, fixed = TRUE),
       paste0("(", gsub(",", ", ", types, fixed = TRUE), ")"),
       types
     )
-    cat("Methods for: ", paste(sort(types), collapse = ", "), "\n", sep = "")
+    own <- if (!is.null(m[["return_type"]])) r8_method_returns(trait, method)
+    at <- match(types, own[["tuple"]])
+    text <- ifelse(
+      is.na(at),
+      text,
+      paste0(text, " (returns ", plain_notation(own[["notation"]][at]), ")")
+    )
+    cat("Methods for: ", paste(text, collapse = ", "), "\n", sep = "")
   }
   invisible(x)
 } # /R8::print.r8_generic

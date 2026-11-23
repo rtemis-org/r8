@@ -177,3 +177,40 @@ test_that("r8_schema() writes a dyn() field open or as its registered implemento
   )
   expect_setequal(tags, c("GLMNET", "Cart", "Pruned"))
 })
+
+test_that("a value that is not a subtype or an implementor is named by what it is", {
+  t <- declare_in("dynmsg", {
+    Range <- new_struct("Range", fields = list(lo = type_double()))
+    Other <- new_struct("Other")
+    Planar <- new_trait(
+      "Planar",
+      methods = list(area = trait_method(params(x)))
+    )
+    impl(Planar, Range, methods = list(area = function(x) x$lo))
+    S <- new_struct(
+      "S",
+      fields = list(r = option(subtype(Range)), p = option(dyn(Planar)))
+    )
+    list(S = S, Other = Other)
+  })
+  S <- t[["S"]]
+  refused <- function(expr, text) {
+    expect_error(expr, text, fixed = TRUE, class = "r8_value_error")
+  }
+  refused(
+    S(r = c(2, 5)),
+    "`r` must be a value of `dynmsg::Range` or of a struct that extends it; found a numeric vector. [not_subtype]"
+  )
+  refused(
+    S(r = t[["Other"]]()),
+    "`r` must be a value of `dynmsg::Range` or of a struct that extends it; found a value of `dynmsg::Other`. [not_subtype]"
+  )
+  refused(
+    S(p = data.frame()),
+    "`p` must be a value of a type that implements `dynmsg::Planar`; found an object of class \"data.frame\". [not_implementor]"
+  )
+  refused(
+    S(p = t[["Other"]]()),
+    "found a value of `dynmsg::Other`. [not_implementor]"
+  )
+})

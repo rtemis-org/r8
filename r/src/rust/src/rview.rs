@@ -23,7 +23,7 @@ use extendr_ffi::{
     TYPEOF, VECTOR_ELT, XLENGTH,
 };
 use rtemis_r8::access::{
-    Access, Codes, Dense, Dimnames, Factor, Form, Indices, Names, Read, Sparse, Table,
+    Access, Codes, Dense, Dimnames, Factor, Form, Indices, Names, Read, Sparse, Table, Unnamed,
 };
 use rtemis_r8::ir::{EnumDef, FieldType};
 use rtemis_r8::name::QualifiedName;
@@ -663,6 +663,15 @@ impl<'a> RView<'a> {
         }
     }
 
+    /// What the view reads, for a message: an object's class when it has a
+    /// class attribute.
+    fn described(self) -> String {
+        match self.sexp().map(classes) {
+            Some(c) if !c.is_empty() => format!("an object of class {c}"),
+            _ => self.found().to_string(),
+        }
+    }
+
     /// A scalar: a length-one atomic vector of `ft` without other attributes
     /// than `ft` allows, not `NA`; or an element of a vector.
     fn scalar(self, ft: &FieldType) -> Read<(SEXP, usize)> {
@@ -821,13 +830,10 @@ impl<'a> Access<'a> for RView<'a> {
     fn host_class(self, host: &str, class: &str) -> Read<()> {
         match self.sexp() {
             Some(x) if host == "r" && is_host_class(x, class) => Ok(()),
-            x => Err(Form::problem(
+            _ => Err(Form::problem(
                 "r_type",
                 rtemis_r8::problem::Problem::Kind(format!("an object of class {class:?}")),
-                Some(rtemis_r8::rules::Shown::Kind(match x.map(classes) {
-                    Some(c) if !c.is_empty() => format!("an object of class {c}"),
-                    _ => self.found().to_string(),
-                })),
+                Some(rtemis_r8::rules::Shown::Kind(self.described())),
             )),
         }
     }
@@ -1316,18 +1322,15 @@ impl<'a> Access<'a> for RView<'a> {
         self,
         _trait: &QualifiedName,
         _lookup: &dyn TypeLookup,
-    ) -> Result<(QualifiedName, Option<String>), String> {
-        let ty = self.sexp().and_then(|x| attr_string(x, sym_r8_type()));
-        ty.and_then(|t| QualifiedName::parse(&t).ok())
-            .map(|q| (q, None))
-            .ok_or_else(|| "a dyn() field holds an R8 value".to_string())
+    ) -> Result<(QualifiedName, Option<String>), Unnamed> {
+        self.named_type()
     }
 
-    fn named_type(self) -> Result<(QualifiedName, Option<String>), String> {
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), Unnamed> {
         let ty = self.sexp().and_then(|x| attr_string(x, sym_r8_type()));
         ty.and_then(|t| QualifiedName::parse(&t).ok())
             .map(|q| (q, None))
-            .ok_or_else(|| "a dyn() field holds an R8 value".to_string())
+            .ok_or_else(|| Unnamed::NotValue(self.described()))
     }
 
     fn same(self, other: Self) -> bool {

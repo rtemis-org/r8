@@ -1811,6 +1811,10 @@ print.r8_trait <- function(x, ...) {
       ")\n",
       sep = ""
     )
+    lines <- signature_lines(m, t[["generics"]][[m[["name"]]]], "    ")
+    if (length(lines) > 0L) {
+      cat(lines, sep = "\n")
+    }
   }
   invisible(x)
 } # /R8::print.r8_trait

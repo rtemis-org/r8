@@ -30,6 +30,13 @@ is written as its call, \code{labels(x) <- value}. A method of a converter
 from \code{r8_converter()}, \code{implement(as_target, "character") <- function(x) ...}, takes the entry \verb{## R8 method for class 'character'} in the Rd
 file of the converter, or else of its target type. The usage of an enum
 lists its variants, such as \code{Method@KFold(k)} and \code{Method@Bootstrap}.
+
+In the block of a typed generic, each \verb{@param} of a typed parameter begins
+with the parameter's type, such as \verb{Integer [0, Inf):}, which a package
+leaves out of the tag, and a block without \verb{@return} takes the return type
+as its value. The block of a method with a return type of its own adds it
+to the value of the generic's Rd file. A type that the package documents is
+a link.
 }
 \examples{
 \dontrun{
