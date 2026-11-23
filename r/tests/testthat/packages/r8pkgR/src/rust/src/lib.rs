@@ -1,6 +1,6 @@
-//! The Rust code of r8pkgR: a Rust-native struct, `pkgr::Signal`, with
+//! The Rust code of r8pkgR: a Rust-stored struct, `pkgr::Signal`, with
 //! impls of `pkgr::Norm`, declared in R, and of `R8::Display`; and a
-//! Rust-native enum, `pkgr::Resampler`, of every variant shape, with an impl
+//! Rust-stored enum, `pkgr::Resampler`, of every variant shape, with an impl
 //! of `R8::Display`; and `pkgr::Conform`, a field of every Rust field type,
 //! against which the conformance tests of `tests/testthat/conformance` run.
 
@@ -10,7 +10,7 @@ use rtemis_r8_api::{Buffer, Dots, Logical};
 
 /// A named series of values.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub struct Signal {
     /// The name.
     pub name: String,
@@ -64,7 +64,7 @@ impl r8::Display for Signal {
 /// A field of every Rust field type, with constraints, a default, and
 /// rules.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 #[r8(rule(
     id = "seed_below_count",
     invariant = r#"{"<": [{"var": "seed"}, {"var": "count"}]}"#,
@@ -109,14 +109,14 @@ impl r8::Display for Conform {
 
 #[r8::methods(trait = "R8::PartialOrd")]
 impl r8::PartialOrd for Conform {
-    fn cmp(&self, other: r8::Sexp) -> Option<i32> {
+    fn partial_cmp(&self, other: r8::Sexp) -> Option<std::cmp::Ordering> {
         let other = unsafe { r8::Receiver::<Conform>::from_named_arg(other.0, "y") }.ok()?;
-        self.ratio.partial_cmp(&other.ratio).map(|o| o as i32)
+        self.ratio.partial_cmp(&other.ratio)
     }
 }
 
-#[r8::methods(trait = "R8::Dim")]
-impl r8::Dim for Conform {
+#[r8::methods(trait = "R8::Shape")]
+impl r8::Shape for Conform {
     fn dim(&self) -> Vec<i32> {
         vec![self.index.len() as i32, 2]
     }
@@ -124,7 +124,7 @@ impl r8::Dim for Conform {
 
 /// A train and test split of case indices.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub struct Split {
     /// The indices of the training cases.
     pub train: Buffer<i32>,
@@ -134,7 +134,7 @@ pub struct Split {
 
 /// A resampling method.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub enum Resampler {
     /// K-fold cross-validation.
     KFold {
@@ -184,6 +184,6 @@ r8::exports! {
         Resampler: Display,
         Conform: Display,
         Conform: PartialOrd,
-        Conform: Dim,
+        Conform: Shape,
     ],
 }

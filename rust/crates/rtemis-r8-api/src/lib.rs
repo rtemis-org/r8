@@ -1,7 +1,7 @@
-//! R8's C services for an R package's Rust code: Rust-native types, whose
+//! R8's C services for an R package's Rust code: Rust-stored types, whose
 //! values R8 holds in Rust, and impls of R8 traits written in Rust.
 //!
-//! A package declares a struct with `#[derive(R8)]` and `#[r8(native)]`,
+//! A package declares a struct with `#[derive(R8)]` and `#[r8(storage = "rust")]`,
 //! implements its traits with `#[r8::methods(trait = "pkg::Trait")]` on an
 //! ordinary Rust trait impl, and lists both in `r8::exports!`, which emits
 //! `r8_init()` for the package's initialization routine. The traits are
@@ -28,10 +28,10 @@ pub use buffer::{Buffer, Element, Logical};
 pub use call::{Dots, FromR, IntoR, Receiver, Sexp, Value};
 pub use exports::{ImplSet, MethodRow};
 pub use field::Field;
-pub use native::{Codec, Native, NativeEnum, Shared, codec, enum_codec};
+pub use native::{Codec, RustStored, RustStoredEnum, Shared, codec, enum_codec};
 pub use reader::{Node, Reader};
 pub use state::{StateReader, StateWriter};
-pub use traits::{Debug, Dim, Display, PartialOrd};
+pub use traits::{Debug, Display, PartialOrd, Shape};
 
 #[doc(hidden)]
 pub use rtemis_r8;

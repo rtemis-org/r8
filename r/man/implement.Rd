@@ -33,8 +33,8 @@ arguments, or, for a generic with \code{...}, the generic's arguments first,
 \item A generic from \code{generic()}, or a trait method such as \code{Fit@fit}: an
 impl of its trait.
 \item \code{format}, \code{str}, and \code{dim}: an impl of the standard trait \code{Display},
-\code{Debug}, or \code{Dim}; \code{r8_cmp}: of \code{PartialOrd}, which \code{<}, \code{<=}, \code{>}, and
-\code{>=} use.
+\code{Debug}, or \code{Shape}; \code{r8_partial_cmp}: of \code{PartialOrd}, which \code{<},
+\code{<=}, \code{>}, and \code{>=} use.
 \item \code{print}: an impl of the standard trait \code{Print}; \code{print()} calls the
 function and returns the value invisibly, and \code{format()} keeps its own
 text. The declaration states this in a message.

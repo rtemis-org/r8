@@ -139,14 +139,6 @@
               },
               "description": "Former qualified names, which readers accept."
             },
-            "provenance": {
-              "type": "boolean",
-              "description": "Values carry a provenance record."
-            },
-            "s4": {
-              "type": "boolean",
-              "description": "Registered with `methods::setOldClass()`."
-            },
             "extensions": {
               "type": "object",
               "additionalProperties": true,
@@ -256,19 +248,18 @@
             "string",
             "null"
           ],
-          "description": "A UCUM code."
+          "description": "A unit code, by convention UCUM, such as `\"mg\"`."
         },
-        "external": {
-          "type": "boolean",
-          "description": "Written to an Arrow IPC file by `write_json()`."
-        },
-        "unique": {
-          "type": "boolean",
-          "description": "A table column whose values are distinct."
-        },
-        "optional": {
-          "type": "boolean",
-          "description": "A table column that may be absent from the table, as distinct from a\npresent column with missing cells, which is `option()`."
+        "resolve": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Resolve"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who fills the absent value of a struct field of type `option()`."
         },
         "inherited_from": {
           "anyOf": [
@@ -291,7 +282,7 @@
         "name",
         "type"
       ],
-      "description": "A field of a struct, a struct variant, a table, or a trait's required\nfields."
+      "description": "A field of a struct, a struct variant, or a trait's required fields, and\nthe field of a table column."
     },
     "FieldType": {
       "oneOf": [
@@ -663,7 +654,7 @@
             "columns": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/FieldDef"
+                "$ref": "#/$defs/ColumnDef"
               },
               "description": "The declared columns."
             },
@@ -789,17 +780,13 @@
             "inner": {
               "$ref": "#/$defs/FieldType",
               "description": "The type of a present value."
-            },
-            "resolve": {
-              "$ref": "#/$defs/Resolve",
-              "description": "Who fills an absent value."
             }
           },
           "required": [
             "kind",
             "inner"
           ],
-          "description": "`option(T, resolve)`."
+          "description": "`option(T)`: the value may be absent, `Option<T>`."
         },
         {
           "type": "object",
@@ -807,7 +794,7 @@
           "properties": {
             "kind": {
               "type": "string",
-              "const": "hashmap"
+              "const": "btree_map"
             },
             "value": {
               "$ref": "#/$defs/FieldType",
@@ -822,7 +809,7 @@
             "kind",
             "value"
           ],
-          "description": "`hashmap(T, keys)`: string keys, sorted at construction."
+          "description": "`btree_map(T, keys)`: `BTreeMap<String, T>`, string keys in code-point\norder, equal by key."
         },
         {
           "type": "object",
@@ -830,7 +817,7 @@
           "properties": {
             "kind": {
               "type": "string",
-              "const": "ordered_map"
+              "const": "index_map"
             },
             "value": {
               "$ref": "#/$defs/FieldType",
@@ -845,7 +832,7 @@
             "kind",
             "value"
           ],
-          "description": "`ordered_map(T, keys)`: unique string keys in insertion order; a named\nlist in R and an array of `{\"name\", \"value\"}` pairs in JSON. Order is\npart of the value."
+          "description": "`index_map(T, keys)`: unique string keys in insertion order; a named\nlist in R and an array of `{\"name\", \"value\"}` pairs in JSON. Order is\npart of the value."
         },
         {
           "type": "object",
@@ -891,7 +878,7 @@
           "properties": {
             "kind": {
               "type": "string",
-              "const": "descendant"
+              "const": "subtype"
             },
             "of": {
               "$ref": "#/$defs/QualifiedName",
@@ -902,7 +889,7 @@
             "kind",
             "of"
           ],
-          "description": "`dyn(Parent)` for a struct: the struct or any struct that descends\nfrom it through `extends`."
+          "description": "`subtype(Parent)`: the struct `of` or any struct that extends a\nsubtype of it."
         }
       ],
       "description": "A field type."
@@ -914,6 +901,47 @@
       "not": {
         "pattern": "^(if|else|repeat|while|function|for|in|next|break|TRUE|FALSE|NULL|Inf|NaN|NA|NA_integer_|NA_real_|NA_character_|NA_complex_|self|Self|super|crate)::|::(if|else|repeat|while|function|for|in|next|break|TRUE|FALSE|NULL|Inf|NaN|NA|NA_integer_|NA_real_|NA_character_|NA_complex_|self|Self|super|crate)$"
       }
+    },
+    "ColumnDef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/Name"
+        },
+        "type": {
+          "$ref": "#/$defs/FieldType"
+        },
+        "default": true,
+        "description": {
+          "type": "string",
+          "default": ""
+        },
+        "sensitive": {
+          "type": "boolean"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unique": {
+          "type": "boolean"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "description": "The JSON form of a [`ColumnDef`]."
     },
     "RuleDef": {
       "type": "object",
@@ -972,22 +1000,32 @@
     "Logic": {
       "description": "A JSONLogic expression of the rule dialect."
     },
+    "CharacterType": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A regular expression in Rust `regex` syntax, compiled at declaration."
+        },
+        "enum": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "The admitted values."
+        }
+      },
+      "description": "Constraints of `type_character()`, and of the keys of `btree_map()` and\n`index_map()`."
+    },
     "Resolve": {
       "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "policy": {
-              "type": "string",
-              "const": "none"
-            }
-          },
-          "required": [
-            "policy"
-          ],
-          "additionalProperties": false,
-          "description": "Absent is final."
-        },
         {
           "type": "object",
           "additionalProperties": false,
@@ -1012,41 +1050,17 @@
           "properties": {
             "policy": {
               "type": "string",
-              "const": "runtime"
+              "const": "context"
             }
           },
           "required": [
             "policy"
           ],
           "additionalProperties": false,
-          "description": "`r8_resolve(x, context)` fills the value from data or the environment."
+          "description": "`r8_resolve(x, context)` fills the value from its `context`."
         }
       ],
-      "description": "What an absent `option()` value means."
-    },
-    "CharacterType": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "pattern": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "A regular expression in Rust `regex` syntax, compiled at declaration."
-        },
-        "enum": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "The admitted values."
-        }
-      },
-      "description": "Constraints of `type_character()`, and of the keys of `hashmap()`."
+      "description": "Who fills an absent value of a struct field of type `option()`; a field\nwithout a policy keeps its absent value."
     },
     "Migration": {
       "type": "object",
@@ -1489,9 +1503,9 @@
         "required_fields": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/FieldDef"
+            "$ref": "#/$defs/RequiredField"
           },
-          "description": "Fields every implementing type has."
+          "description": "Fields every implementing struct has, each of a type that the\nstruct's field fits."
         },
         "supertraits": {
           "type": "array",
@@ -1562,9 +1576,9 @@
         },
         "stochastic": {
           "type": "boolean",
-          "description": "The method receives a seed and records it in provenance."
+          "description": "The method draws random numbers."
         },
-        "has_default": {
+        "has_default_impl": {
           "type": "boolean",
           "description": "The trait supplies a default implementation."
         }
@@ -1662,6 +1676,30 @@
       ],
       "description": "The marker of [`ReturnType::Receiver`], written `\"Self\"`."
     },
+    "RequiredField": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/Name",
+          "description": "The field's name."
+        },
+        "type": {
+          "$ref": "#/$defs/FieldType",
+          "description": "The type the implementor's field fits."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the field holds.",
+          "default": ""
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "description": "A field that every implementor of a trait has: a struct field of this\nname whose type fits `ty` ([`super::fit::fits`])."
+    },
     "ImplDef": {
       "type": "object",
       "additionalProperties": false,
@@ -1673,12 +1711,12 @@
         "type_args": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ImplTarget"
+            "$ref": "#/$defs/TypeRef"
           },
           "description": "The types of the trait's positions after the first: its dispatched\npositions after the first, in order, then its type parameters, such\nas the source of `From(source)`. Rust writes the impl\n`impl Trait<B> for A`."
         },
         "target": {
-          "$ref": "#/$defs/ImplTarget",
+          "$ref": "#/$defs/TypeRef",
           "description": "What the trait is implemented for: its first dispatched position."
         },
         "tag_value": {
@@ -1707,7 +1745,7 @@
       ],
       "description": "`impl()`: a trait implemented for a type."
     },
-    "ImplTarget": {
+    "TypeRef": {
       "oneOf": [
         {
           "type": "object",
@@ -1759,7 +1797,7 @@
             "class",
             "system"
           ],
-          "description": "A class of another package in a host language, such as `dgCMatrix`."
+          "description": "A class of another class system of the host language, such as R's\n`data.frame` or `dgCMatrix`."
         },
         {
           "type": "object",
@@ -1776,19 +1814,24 @@
           "description": "Any value: a dispatched position that an impl does not specialize."
         }
       ],
-      "description": "What an impl implements its trait for."
+      "description": "A type an impl names: its target, or one of its type arguments."
     },
     "ClassSystem": {
       "oneOf": [
         {
           "type": "string",
           "const": "s3",
-          "description": "An S3 class."
+          "description": "An S3 class: a name in an object's `class` attribute."
         },
         {
           "type": "string",
           "const": "s4",
-          "description": "An S4 class."
+          "description": "An S4 class: a class defined with `methods::setClass()`."
+        },
+        {
+          "type": "string",
+          "const": "implicit",
+          "description": "An implicit class: a name that `.class2()` derives from an object's\ntype and `dim` attribute, such as `\"matrix\"` or `\"NULL\"`."
         }
       ],
       "description": "The class system of a host class."

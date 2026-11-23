@@ -10,6 +10,7 @@ mod check;
 mod decl;
 pub mod dispatch;
 mod document;
+pub mod fit;
 mod logic;
 mod lower;
 mod number;
@@ -22,9 +23,9 @@ pub use check::{
     report,
 };
 pub use decl::{
-    ClassSystem, EnumDef, FieldDef, ImplDef, ImplTarget, MethodDef, Migration, MigrationStep,
-    Param, ParamDef, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef, VariantDef,
-    VariantShape,
+    ClassSystem, Column, ColumnDef, EnumDef, FieldDef, ImplDef, MethodDef, Migration,
+    MigrationStep, Param, ParamDef, RequiredField, ReturnType, RuleDef, SelfType, SplitTarget,
+    StructDef, TraitDef, TypeRef, VariantDef, VariantShape,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use logic::{Logic, Operator};

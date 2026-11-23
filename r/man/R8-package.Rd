@@ -11,7 +11,7 @@ with other host languages.
 }
 \section{Runtime}{
 
-\code{\link[=r8_core_version]{r8_core_version()}}.
+\code{\link[=r8_runtime_version]{r8_runtime_version()}}.
 }
 
 \section{Names}{
@@ -36,7 +36,7 @@ register.
 such as a type object where a value is expected, or a replacement
 method or \code{From} impl that returns a value of another type.
 \item \code{r8_value_error}: a value that does not satisfy its type; its subclass
-\code{r8_codec_missing} is a Rust-native type whose codec is not registered.
+\code{r8_codec_missing} is a Rust-stored type whose codec is not registered.
 \item \code{r8_dispatch_error}: a generic or trait method with no impl for the
 value's type, a conversion without a \code{From} impl, or \code{r8_next_impl()}
 without a next impl.

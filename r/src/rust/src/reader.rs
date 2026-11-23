@@ -46,6 +46,7 @@ fn built(path: &str, e: BuildError) -> Problem {
     let code = match e {
         BuildError::NotFieldType => "field_type",
         BuildError::DefaultNotValue => "field_default",
+        BuildError::ColumnOutsideTable => "column_position",
         BuildError::NotVariant { .. } => "variant_declaration",
         _ => "declaration_argument",
     };
@@ -149,8 +150,18 @@ fn default_value(
     }
 }
 
-/// A field from its name and the user's object.
-fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<FieldDef> {
+/// A field from its name and the user's object; `column` admits a
+/// `column()`, whose own members the caller reads.
+fn field_def(
+    n: &str,
+    x: SEXP,
+    lookup: &impl TypeLookup,
+    path: &str,
+    column: bool,
+) -> Read<FieldDef> {
+    if !column && inherits(x, "r8_column") {
+        return Err(built(path, BuildError::ColumnOutsideTable));
+    }
     let n = name(n, &format!("{path}/name"))?;
     let type_path = format!("{path}/type");
     if !inherits(x, "r8_field") {
@@ -161,9 +172,7 @@ fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Fie
             description: "".into(),
             sensitive: false,
             unit: None,
-            external: false,
-            unique: false,
-            optional: false,
+            resolve: None,
             inherited_from: None,
             extensions: None,
         });
@@ -198,9 +207,17 @@ fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Fie
             .into_boxed_str(),
         sensitive: is_true(member(x, "sensitive")),
         unit: one_string(member(x, "unit")).map(String::into_boxed_str),
-        external: is_true(member(x, "external")),
-        unique: is_true(member(x, "unique")),
-        optional: is_true(member(x, "optional")),
+        resolve: {
+            let r = member(x, "resolve");
+            if is_null(r) {
+                None
+            } else {
+                Some(read::<rtemis_r8::ir::Resolve>(
+                    r,
+                    &format!("{path}/resolve"),
+                )?)
+            }
+        },
         inherited_from: None,
         extensions: extensions.filter(|m| !m.is_empty()),
     })
@@ -213,7 +230,38 @@ pub(crate) fn fields(x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Vec<
     let items = entries(x);
     let mut out = Vec::with_capacity(items.len());
     for (i, (n, f)) in items.into_iter().enumerate() {
-        out.push(field_def(&n, f, lookup, &format!("{path}/{i}"))?);
+        out.push(field_def(&n, f, lookup, &format!("{path}/{i}"), false)?);
+    }
+    Ok(out)
+}
+
+/// The columns of `type_table(columns)`: each a field type, a `field()`, or
+/// a `column()`, which adds `unique` and `required`.
+pub(crate) fn columns(
+    x: SEXP,
+    lookup: &impl TypeLookup,
+    path: &str,
+) -> Read<Vec<rtemis_r8::ir::ColumnDef>> {
+    let items = entries(x);
+    let mut out = Vec::with_capacity(items.len());
+    for (i, (n, c)) in items.into_iter().enumerate() {
+        let p = format!("{path}/{i}");
+        let column = inherits(c, "r8_column");
+        let field = field_def(&n, c, lookup, &p, column)?;
+        if field.resolve.is_some() {
+            return Err(problem(
+                "resolve_position",
+                &format!("{p}/resolve"),
+                format!(
+                    "column `{n}` has a fill policy, which the fields of a struct or a struct variant take"
+                ),
+            ));
+        }
+        out.push(rtemis_r8::ir::ColumnDef {
+            field,
+            unique: column && is_true(member(c, "unique")),
+            required: !column || is_true(member(c, "required")),
+        });
     }
     Ok(out)
 }
@@ -359,8 +407,6 @@ fn r8_declare(
                 rules: self::rules(unsafe { rules.get() }, "/rules")?,
                 migrations: Vec::new(),
                 aliases: Vec::new(),
-                provenance: false,
-                s4: false,
                 extensions: BTreeMap::new(),
             })
         })
@@ -544,7 +590,8 @@ fn r8_ft_table(columns: Robj, open: Robj, rules: Robj) -> extendr_api::Result<Ro
     let snapshot = crate::declare::snapshot()?;
     let built = (|| -> Read<FieldType> {
         Ok(FieldType::Table {
-            columns: fields(unsafe { columns.get() }, &*snapshot, "/columns")?.into_boxed_slice(),
+            columns: self::columns(unsafe { columns.get() }, &*snapshot, "/columns")?
+                .into_boxed_slice(),
             open: is_true(unsafe { open.get() }),
             rules: self::rules(unsafe { rules.get() }, "/rules")?.into_boxed_slice(),
         })
@@ -575,8 +622,51 @@ fn r8_default_canonical(x: Robj, r#type: Robj) -> extendr_api::Result<String> {
         .unwrap_or_default())
 }
 
+/// The required fields of `new_trait(requires = )`: each a field type, an R8
+/// type object, or `field(type, description = )`; a default, a fill policy,
+/// `sensitive`, a unit, and extensions belong to a struct's field.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_required_fields(requires: Robj) -> extendr_api::Result<Robj> {
+    let snapshot = crate::declare::snapshot()?;
+    let built = (|| -> Read<Vec<rtemis_r8::ir::RequiredField>> {
+        let fs = fields(unsafe { requires.get() }, &*snapshot, "/required_fields")?;
+        fs.into_iter()
+            .enumerate()
+            .map(|(i, f)| {
+                if f.default.is_some()
+                    || f.resolve.is_some()
+                    || f.sensitive
+                    || f.unit.is_some()
+                    || f.extensions.is_some()
+                {
+                    return Err(problem(
+                        "required_field_form",
+                        &format!("/required_fields/{i}"),
+                        format!(
+                            "required field `{}` has a type and a description; its default, fill policy, sensitivity, unit, and extensions belong to a struct's field",
+                            f.name
+                        ),
+                    ));
+                }
+                Ok(rtemis_r8::ir::RequiredField {
+                    name: f.name,
+                    ty: f.ty,
+                    description: f.description,
+                })
+            })
+            .collect()
+    })();
+    Ok(match built {
+        Ok(r) => crate::irser::to_r(&r).map_err(|e| extendr_api::Error::Other(e.to_string()))?,
+        Err(p) => Robj::from(format!("{} [{} at {}]", p.message, p.code, p.path)),
+    })
+}
+
 extendr_module! {
     mod reader;
+    fn r8_required_fields;
     fn r8_declare;
     fn r8_ft_table;
     fn r8_default_canonical;

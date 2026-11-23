@@ -2,7 +2,7 @@
 // ::r8pkgC::
 // 2026- EDG rtemis.org
 
-// The codec of pkgc::Resampler, a Rust-native enum implemented in C, with
+// The codec of pkgc::Resampler, a Rust-stored enum implemented in C, with
 // the variants KFold { k } and Loocv: its state holds the variant and `k`.
 // Also an exports table whose struct codec sets the enum members, which
 // registration refuses.

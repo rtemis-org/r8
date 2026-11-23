@@ -85,12 +85,12 @@
                       "inner": {
                         "kind": "integer",
                         "min": 1
-                      },
-                      "resolve": {
-                        "policy": "runtime"
                       }
                     },
-                    "description": "Number of resamples, one per case; filled from the data."
+                    "description": "Number of resamples, one per case; filled from the data.",
+                    "resolve": {
+                      "policy": "context"
+                    }
                   }
                 ]
               }
@@ -129,12 +129,12 @@
                       "cox",
                       "mgaussian"
                     ]
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
                 },
-                "description": "GLM family; filled from the outcome type."
+                "description": "GLM family; filled from the outcome type.",
+                "resolve": {
+                  "policy": "context"
+                }
               },
               {
                 "name": "which_lambda_cv",
@@ -167,12 +167,12 @@
                       "kind": "double",
                       "min": 0
                     }
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
                 },
-                "description": "Regularization strength; filled by the backend's internal cross-validation during tuning."
+                "description": "Regularization strength; filled by the backend's internal cross-validation during tuning.",
+                "resolve": {
+                  "policy": "context"
+                }
               },
               {
                 "name": "penalty_factor",
@@ -222,12 +222,12 @@
                   "inner": {
                     "kind": "double",
                     "exclusive_min": 0
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
                 },
-                "description": "Lambda minimizing cross-validated error; `lambda.min` in rtemis, renamed by the name rule."
+                "description": "Lambda minimizing cross-validated error; `lambda.min` in rtemis, renamed by the name rule.",
+                "resolve": {
+                  "policy": "context"
+                }
               },
               {
                 "name": "lambda_1se",
@@ -236,12 +236,12 @@
                   "inner": {
                     "kind": "double",
                     "exclusive_min": 0
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
                 },
-                "description": "Largest lambda within one standard error of the minimum; `lambda.1se` in rtemis."
+                "description": "Largest lambda within one standard error of the minimum; `lambda.1se` in rtemis.",
+                "resolve": {
+                  "policy": "context"
+                }
               }
             ]
           },
@@ -343,7 +343,7 @@
                         }
                       },
                       "description": "Present for a binary outcome.",
-                      "optional": true
+                      "required": false
                     },
                     {
                       "name": "specificity",
@@ -356,7 +356,7 @@
                         }
                       },
                       "description": "Present for a binary outcome.",
-                      "optional": true
+                      "required": false
                     },
                     {
                       "name": "ppv",
@@ -369,7 +369,7 @@
                         }
                       },
                       "description": "Present for a binary outcome.",
-                      "optional": true
+                      "required": false
                     },
                     {
                       "name": "npv",
@@ -382,7 +382,7 @@
                         }
                       },
                       "description": "Present for a binary outcome.",
-                      "optional": true
+                      "required": false
                     },
                     {
                       "name": "auc",
@@ -395,7 +395,7 @@
                         }
                       },
                       "description": "Present with predicted probabilities.",
-                      "optional": true
+                      "required": false
                     },
                     {
                       "name": "brier_score",
@@ -408,7 +408,7 @@
                         }
                       },
                       "description": "Present with predicted probabilities.",
-                      "optional": true
+                      "required": false
                     }
                   ]
                 },

@@ -29,9 +29,9 @@
 #' A package with compiled exports (`R8.h`) registers them after its R
 #' declarations. Every type of the exports has an R declaration with the same
 #' declaration hash, the type of every codec is declared with
-#' `native = TRUE`, and every type declared with `native = TRUE` has a codec;
+#' `storage = "rust"`, and every type declared with `storage = "rust"` has a codec;
 #' otherwise registration signals `r8_declaration_error` and lists each
-#' difference. `r8_document_native()` generates the R declarations of types
+#' difference. `r8_document_rust()` generates the R declarations of types
 #' declared in Rust. A codec written in C, whose type the exports declare
 #' only in R, sets the declaration hash of its type (`declaration_hash`),
 #' which registration compares with the hash of the R declaration, since the
@@ -203,7 +203,7 @@ stale_elsewhere <- function(pkg) {
 #' Fetches the function the package registered with
 #' `R_RegisterCCallable(pkg, "r8_exports", fn)`, when it registered one, and
 #' registers the `R8Exports` table it returns (`R8.h`): the codecs of
-#' Rust-native types, checked against the package's R declarations, and the
+#' Rust-stored types, checked against the package's R declarations, and the
 #' impl functions, whose entries make the impl declarations and each of which
 #' becomes the R method of its trait for its type.
 #'
@@ -215,8 +215,8 @@ stale_elsewhere <- function(pkg) {
 #' @keywords internal
 #' @noRd
 register_exports <- function(pkg, entries = list()) {
-  native <- unlist(lapply(entries, function(e) {
-    if (identical(e[["kind"]], "type") && isTRUE(e[["native"]])) {
+  rust_stored <- unlist(lapply(entries, function(e) {
+    if (identical(e[["kind"]], "type") && isTRUE(e[["rust_stored"]])) {
       e[["name"]]
     }
   }))
@@ -227,13 +227,13 @@ register_exports <- function(pkg, entries = list()) {
     error = function(e) NULL
   )
   if (is.null(ptr)) {
-    check_exports(pkg, NULL, native)
+    check_exports(pkg, NULL, rust_stored)
     return(0L)
   }
   namespace <- declaring_namespace(asNamespace(pkg))
   claim_namespace(namespace, pkg)
   compared <- r8_exports_compare(ptr, namespace)
-  check_exports(pkg, compared, native)
+  check_exports(pkg, compared, rust_stored)
   fns <- r8_register_exports(ptr, pkg, namespace)
   assign(
     pkg,
@@ -301,15 +301,15 @@ clear_compiled <- function(pkg) {
 #' @param pkg Character: The package.
 #' @param compared Optional list: `r8_exports_compare()` of the package's
 #'   exports, or `NULL` for a package without exports.
-#' @param native Character: The qualified names the package declares with
-#'   `native = TRUE`.
+#' @param rust_stored Character: The qualified names the package declares with
+#'   `storage = "rust"`.
 #'
 #' @return `NULL`, invisibly; signals `r8_declaration_error` listing each
 #'   difference.
 #'
 #' @keywords internal
 #' @noRd
-check_exports <- function(pkg, compared, native) {
+check_exports <- function(pkg, compared, rust_stored) {
   names <- compared[["type_name"]]
   status <- compared[["status"]]
   codec <- compared[["codec"]]
@@ -344,12 +344,12 @@ check_exports <- function(pkg, compared, native) {
       hash[status == "stale"]
     ),
     sprintf(
-      "`%s` has a codec in the compiled exports; its R declaration takes native = TRUE.",
-      names[codec & declared & !names %in% native]
+      "`%s` has a codec in the compiled exports; its R declaration takes storage = \"rust\".",
+      names[codec & declared & !names %in% rust_stored]
     ),
     sprintf(
-      "`%s` is declared with native = TRUE; the compiled exports carry no codec for it.",
-      setdiff(native, names[codec])
+      "`%s` is declared with storage = \"rust\"; the compiled exports carry no codec for it.",
+      setdiff(rust_stored, names[codec])
     )
   )
   if (length(problems) > 0L) {
@@ -361,7 +361,7 @@ check_exports <- function(pkg, compared, native) {
       paste0("- ", problems, collapse = "\n"),
       if (regenerate) {
         paste0(
-          "\nR8::r8_document_native() regenerates R/r8-types.R from the ",
+          "\nR8::r8_document_rust() regenerates R/r8-types.R from the ",
           "declarations in Rust."
         )
       },

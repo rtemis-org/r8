@@ -9,24 +9,27 @@ dose_type <- function() {
       "DoseR",
       fields = list(
         mg = field(
-          option(type_double(min = 0), resolve = "runtime"),
+          option(type_double(min = 0)),
+          context = TRUE,
           unit = "mg"
         ),
         g = field(
-          option(type_double(), resolve = "computed", compute = mg / 1000),
+          option(type_double()),
+          compute = mg / 1000,
           unit = "g"
         ),
         kg = field(
-          option(type_double(), resolve = "computed", compute = g / 1000),
+          option(type_double()),
+          compute = g / 1000,
           unit = "kg"
         ),
-        model = option(type_r("lm"), resolve = "runtime")
+        model = field(option(type_r("lm")), context = TRUE)
       )
     )
   )
 }
 
-test_that("r8_resolve() fills runtime fields from context and computed fields in order", {
+test_that("r8_resolve() fills context fields from context and computed fields in order", {
   Dose <- dose_type()
   x <- Dose()
   expect_null(x$g)
@@ -50,7 +53,7 @@ test_that("resolution reports what it cannot fill", {
   )
   expect_error(
     r8_resolve(Dose(), context = list(g = 1)),
-    "not an absent runtime field",
+    "not an absent context field",
     class = "r8_value_error"
   )
 })
@@ -60,7 +63,7 @@ test_that("r8_validate(complete = TRUE) names the pending fields", {
   x <- Dose()
   expect_invisible(r8_validate(x))
   e <- expect_error(r8_validate(x, complete = TRUE), class = "r8_value_error")
-  expect_match(conditionMessage(e), "`mg` \\(runtime\\)")
+  expect_match(conditionMessage(e), "`mg` \\(context\\)")
   expect_match(conditionMessage(e), "`g` \\(computed\\)")
   done <- r8_resolve(
     x,

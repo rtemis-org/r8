@@ -1,6 +1,6 @@
 # r8-types.R
 # ::r8pkgR::
-# R8::r8_document_native() writes this file from the R8 declarations in
+# R8::r8_document_rust() writes this file from the R8 declarations in
 # the package's Rust code, and replaces it when they change.
 
 #' Signal
@@ -21,7 +21,7 @@ Signal <- R8::new_struct(
   ),
   description = "A named series of values.",
   version = 1L,
-  native = TRUE
+  storage = "rust"
 )
 
 #' Split
@@ -92,7 +92,7 @@ Resampler <- R8::new_enum(
   description = "A resampling method.",
   tag = "type",
   version = 1L,
-  native = TRUE
+  storage = "rust"
 )
 
 #' Conform
@@ -158,5 +158,5 @@ Conform <- R8::new_struct(
       id = "weights_match_index"
     )
   ),
-  native = TRUE
+  storage = "rust"
 )

@@ -120,7 +120,7 @@ impl Eq<'_> {
                 _ => false,
             },
             FieldType::Named { name } => self.named(name, a, b),
-            FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
                 match (
                     crate::access::concrete(a, ft, lookup),
                     crate::access::concrete(b, ft, lookup),
@@ -136,8 +136,8 @@ impl Eq<'_> {
                 Some(TypeDef::Struct(s)) => self.table(&s.fields, false, a, b),
                 _ => false,
             },
-            FieldType::Hashmap { value, .. } => self.map(value, false, a, b),
-            FieldType::OrderedMap { value, .. } => self.map(value, true, a, b),
+            FieldType::BtreeMap { value, .. } => self.map(value, false, a, b),
+            FieldType::IndexMap { value, .. } => self.map(value, true, a, b),
             // JSON values compare by the digest of their canonical form.
             _ => self.digest(ft, a) == self.digest(ft, b),
         }
@@ -302,7 +302,13 @@ impl Eq<'_> {
 
     /// Two tables: rows, then each column by name, with equal types for the
     /// extra columns of an open table.
-    fn table<'a, A: Access<'a>>(&self, columns: &[FieldDef], open: bool, a: A, b: A) -> bool {
+    fn table<'a, A: Access<'a>, C: crate::ir::Column>(
+        &self,
+        columns: &[C],
+        open: bool,
+        a: A,
+        b: A,
+    ) -> bool {
         let (Ok(x), Ok(y)) = (a.table(columns, open), b.table(columns, open)) else {
             return false;
         };
@@ -314,8 +320,11 @@ impl Eq<'_> {
             let Some((_, cy)) = y.columns.iter().find(|(k, _)| k == name) else {
                 return false;
             };
-            let ty = match columns.iter().find(|c| c.name.as_str() == name.as_ref()) {
-                Some(c) => c.ty.clone(),
+            let ty = match columns
+                .iter()
+                .find(|c| c.field().name.as_str() == name.as_ref())
+            {
+                Some(c) => c.field().ty.clone(),
                 None => match (a.extra_column_type(name), b.extra_column_type(name)) {
                     (Ok(p), Ok(q)) if p == q => p,
                     _ => return false,
@@ -328,7 +337,7 @@ impl Eq<'_> {
         })
     }
 
-    /// Two maps: an ordered map pairs entries by position, a hashmap by
+    /// Two maps: an index map pairs entries by position, a btree map by
     /// name.
     fn map<'a, A: Access<'a>>(&self, value: &FieldType, ordered: bool, a: A, b: A) -> bool {
         let entries = |v: A| {

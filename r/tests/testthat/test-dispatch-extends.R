@@ -48,7 +48,7 @@ test_that("an impl is the unit of precedence through extends", {
       "Shape",
       methods = list(
         name = trait_method(function(x) NULL),
-        size = trait_method(function(x) NULL, default = function(x) {
+        size = trait_method(function(x) NULL, default_impl = function(x) {
           "default size"
         })
       )
@@ -111,7 +111,7 @@ test_that("r8_upcast() and r8_convert() return the value of an ancestor", {
     expect_identical(r8_ancestors(A), character())
     expect_error(r8_upcast(a, C), "not an ancestor", class = "r8_type_error")
     expect_error(
-      impl(From("dx4::C"), A, methods = list(from = function(x) A(a = x$a))),
+      impl(From(C), A, methods = list(from = function(x) A(a = x$a))),
       "reserved",
       class = "r8_declaration_error"
     )

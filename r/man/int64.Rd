@@ -14,8 +14,9 @@ leading \code{-}.}
 An \code{r8_int64}: the text, of that class.
 }
 \description{
-An integer of more than 2^53 in magnitude, which neither an R integer nor a
-double holds exactly, given as its decimal digits: for a rule's constant or
+Declaration vocabulary, without the \code{r8_} prefix of operations on values:
+an integer of more than 2^53 in magnitude, which neither an R integer nor a
+double holds exactly, given as its decimal digits, for a rule's constant or
 a default. R8 writes such an integer of a declaration in this form.
 }
 \examples{

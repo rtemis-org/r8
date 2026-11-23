@@ -13,7 +13,7 @@ new_struct(
   rules = list(),
   extends = NULL,
   defaults = list(),
-  native = FALSE
+  storage = c("r", "rust")
 )
 
 \method{@}{r8_struct_type}(object, name)
@@ -39,12 +39,13 @@ parent apply to them where the child has none.}
 \item{defaults}{Named list: The child's defaults of inherited fields, by
 field name. \code{NULL} removes the default of an \code{option()} field.}
 
-\item{native}{Logical: A Rust-native type, whose values the codec in the
-package's compiled exports builds and holds (\code{R8.h}). Its constructor
+\item{storage}{Character \{"r", "rust"\}: Where values hold their fields.
+\code{"rust"}: a Rust-stored type, whose values the codec in the package's
+compiled exports builds and holds (\code{R8.h}). Its constructor
 signals \code{r8_codec_missing} until the codec is registered, and
 \code{r8_register()} checks that the exports carry the codec. A package whose
 types are declared in Rust generates these declarations with
-\code{r8_document_native()}.}
+\code{r8_document_rust()}.}
 
 \item{object}{A struct type object.}
 }

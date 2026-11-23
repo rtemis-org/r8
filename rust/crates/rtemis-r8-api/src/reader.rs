@@ -1,6 +1,6 @@
 //! A safe view of the reader R8 lends a codec (`R8Reader`): the value R8 has
-//! read from a document and validated, from which `Native::from_reader` and
-//! `NativeEnum::from_reader` build a state without JSON text.
+//! read from a document and validated, from which `RustStored::from_reader` and
+//! `RustStoredEnum::from_reader` build a state without JSON text.
 
 use std::ffi::{CStr, c_char};
 

@@ -1,4 +1,4 @@
-//! Rust-native values: the values of a type whose codec (`R8TypeVTable`) a
+//! Rust-stored values: the values of a type whose codec (`R8TypeVTable`) a
 //! package registered, held as an `ALTLIST` over the codec's state
 //! (`src/native.c`), and the value functions of `R8Api` (`src/view.c`).
 
@@ -51,11 +51,11 @@ pub unsafe extern "C" fn r8_set_native_functions(
     SYMBOLS.store(symbols, Ordering::Release);
 }
 
-/// The parts of a Rust-native value that `r8_size()` adds up: the bytes of
+/// The parts of a Rust-stored value that `r8_size()` adds up: the bytes of
 /// its state and the cached fields that are not views of the state.
 ///
 /// @param x An R8 value.
-/// @return List: `state` and `fields`, or `NULL` for an R-native value.
+/// @return List: `state` and `fields`, or `NULL` for an R-stored value.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -66,7 +66,7 @@ fn r8_native_parts(x: Robj) -> Robj {
     unsafe { Robj::from_sexp(f(x.get())) }
 }
 
-/// The bytes of the states of Rust-native values reachable from R, and the
+/// The bytes of the states of Rust-stored values reachable from R, and the
 /// level at which R8 requests a collection.
 ///
 /// @return Double: `c(live, threshold)`.
@@ -121,7 +121,7 @@ pub(crate) fn wrap(vt: *const TypeVTable, state: *mut c_void, like: SEXP) -> SEX
     wrap_from(vt, state, like, unsafe { extendr_ffi::R_NilValue }, -1)
 }
 
-/// `wrap()` for a value derived from the Rust-native value `from`, whose
+/// `wrap()` for a value derived from the Rust-stored value `from`, whose
 /// read fields, except field `skip`, the new value keeps.
 pub(crate) fn wrap_from(
     vt: *const TypeVTable,
@@ -174,7 +174,7 @@ pub(crate) fn with_field(
     Ok(new_state)
 }
 
-/// The state and codec of a Rust-native value; `None` for any other
+/// The state and codec of a Rust-stored value; `None` for any other
 /// object.
 pub(crate) fn state_of(x: SEXP) -> Option<(*const c_void, *const TypeVTable)> {
     let f = STATE.load(Ordering::Acquire);
@@ -381,7 +381,7 @@ fn def_version(def: &TypeDef) -> u32 {
     }
 }
 
-/// `R8Api.new_value`: wraps a state of a registered Rust-native struct or
+/// `R8Api.new_value`: wraps a state of a registered Rust-stored struct or
 /// enum as an R8 value, taking ownership of the state, also on error; an
 /// enum value takes the variant that the codec's `variant` names.
 ///
@@ -422,7 +422,7 @@ fn new_value(
         return Err((
             "unknown_type",
             format!(
-                "`{}` is not a registered Rust-native type",
+                "`{}` is not a registered Rust-stored type",
                 name.unwrap_or_default()
             ),
         ));
@@ -502,7 +502,7 @@ struct BuildArgs<'a> {
     variant: Option<&'a str>,
 }
 
-/// Builds a Rust-native value under `r8_protect()`; it holds only borrows,
+/// Builds a Rust-stored value under `r8_protect()`; it holds only borrows,
 /// so a jump out of it skips no destructor.
 extern "C" fn build_value(p: *mut c_void) -> SEXP {
     let a = unsafe { &*p.cast::<BuildArgs>() };
@@ -534,7 +534,7 @@ fn protect(
 
 /// A list of the field names `names` with the attributes of a value of the
 /// type `qname`, of the variant `variant` for an enum, the template of a
-/// Rust-native value; returned protected.
+/// Rust-stored value; returned protected.
 /// It allocates no Rust memory, so it runs inside `r8_protect()`.
 ///
 /// # Safety
@@ -577,7 +577,7 @@ pub unsafe extern "C" fn r8_api_value_state(
         let Some((s, vt)) = state_of(value.cast()) else {
             return Err((
                 "not_native",
-                format!("the value is not a Rust-native `{name}`"),
+                format!("the value is not a Rust-stored `{name}`"),
             ));
         };
         let held = c_text(unsafe { (*vt).type_name }).unwrap_or_default();
@@ -607,7 +607,7 @@ pub unsafe extern "C" fn r8_api_value_state(
 }
 
 /// The version, declaration hash, and registering package of the
-/// Rust-native type `name`, which `Serialized_state` records with the
+/// Rust-stored type `name`, which `Serialized_state` records with the
 /// state's bytes: `list(version, hash, package)`, or `NULL` when the type
 /// is not registered.
 ///

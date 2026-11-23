@@ -287,7 +287,7 @@ pub fn check_extends(
             return out;
         }
     };
-    if parent_name == name || lookup.descends(parent_name, name) {
+    if parent_name == name || lookup.is_subtype(parent_name, name) {
         report(
             "extends_cycle",
             at,

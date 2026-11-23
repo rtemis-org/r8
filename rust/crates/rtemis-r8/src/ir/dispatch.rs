@@ -4,7 +4,7 @@
 //! A trait dispatches on the parameters its methods mark, the first when
 //! none is marked ([`TraitDef::dispatch_arity`]). An impl gives one type per
 //! dispatched position: its `target`, then the first `arity - 1` of its
-//! `type_args`; [`ImplTarget::Any`] matches any value. A position's types are
+//! `type_args`; [`TypeRef::Any`] matches any value. A position's types are
 //! ordered by `extends`, with any above every type, so an impl is more
 //! specific than another when it is at least as specific in every position
 //! and more specific in one. With single inheritance, a call is ambiguous
@@ -14,13 +14,13 @@
 //! spec: R8/class-system#multiple-dispatch
 
 use super::check::DeclError;
-use super::decl::{ImplDef, ImplTarget, TraitDef};
+use super::decl::{ImplDef, RequiredField, TraitDef, TypeRef};
 use crate::name::{Name, QualifiedName};
 use crate::rules::{DocumentSet, TypeLookup};
 
 /// The dispatched positions of an impl of a trait of `arity` positions: its
 /// target, then its first `arity - 1` type arguments.
-pub fn positions(imp: &ImplDef, arity: usize) -> Vec<&ImplTarget> {
+pub fn positions(imp: &ImplDef, arity: usize) -> Vec<&TypeRef> {
     std::iter::once(&imp.target)
         .chain(imp.type_args.iter())
         .take(arity)
@@ -42,6 +42,7 @@ pub fn same_tuple(a: &ImplDef, b: &ImplDef) -> bool {
 /// the trait run when `lookup` holds it.
 pub fn check_impl(lookup: &dyn TypeLookup, ns: &Name, imp: &ImplDef, path: &str) -> Vec<DeclError> {
     let mut out = check_impl_arity(lookup, imp, path);
+    out.extend(check_required(lookup, imp, path));
     if imp.r#trait.namespace != *ns && !names_own_type(ns, imp) {
         out.push(DeclError {
             code: "impl_orphan",
@@ -52,6 +53,88 @@ pub fn check_impl(lookup: &dyn TypeLookup, ns: &Name, imp: &ImplDef, path: &str)
                 tuple_text(std::iter::once(&imp.target).chain(&imp.type_args))
             ),
         });
+    }
+    out
+}
+
+/// The required fields of the trait `tr` and of its supertraits, each once,
+/// when `lookup` holds them.
+pub fn required_fields(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<RequiredField> {
+    fn collect(
+        lookup: &dyn TypeLookup,
+        tr: &QualifiedName,
+        seen: &mut Vec<QualifiedName>,
+        out: &mut Vec<RequiredField>,
+    ) {
+        if seen.contains(tr) {
+            return;
+        }
+        seen.push(tr.clone());
+        let Some(t) = lookup.trait_of(tr) else { return };
+        for f in &t.required_fields {
+            if !out.iter().any(|g| g.name == f.name) {
+                out.push(f.clone());
+            }
+        }
+        for s in &t.supertraits {
+            collect(lookup, s, seen, out);
+        }
+    }
+    let mut out = Vec::new();
+    collect(lookup, tr, &mut Vec::new(), &mut out);
+    out
+}
+
+/// The problems of an impl against the required fields of its trait and its
+/// supertraits: an implementor that is not a struct
+/// (`required_field_target`), a struct without a required field
+/// (`required_field_missing`), and a field whose type does not fit the
+/// required type (`required_field_type`, [`super::fit::fits`]).
+pub fn check_required(lookup: &dyn TypeLookup, imp: &ImplDef, path: &str) -> Vec<DeclError> {
+    let required = required_fields(lookup, &imp.r#trait);
+    if required.is_empty() {
+        return Vec::new();
+    }
+    let fields = match &imp.target {
+        TypeRef::Type { name } => match lookup.find(name) {
+            Some(crate::ir::TypeDef::Struct(s)) => Some((name, &s.fields)),
+            Some(_) => None,
+            // A target outside the lookup is checked where it is declared.
+            None => return Vec::new(),
+        },
+        _ => None,
+    };
+    let Some((name, fields)) = fields else {
+        return vec![DeclError {
+            code: "required_field_target",
+            path: format!("{path}/target"),
+            message: format!(
+                "`{}` requires fields, which a struct holds; its impl for {} names no struct",
+                imp.r#trait, imp.target
+            ),
+        }];
+    };
+    let mut out = Vec::new();
+    for r in &required {
+        match fields.iter().find(|f| f.name == r.name) {
+            None => out.push(DeclError {
+                code: "required_field_missing",
+                path: format!("{path}/target"),
+                message: format!(
+                    "`{}` requires the field `{}`, which `{name}` does not have",
+                    imp.r#trait, r.name
+                ),
+            }),
+            Some(f) if !super::fit::fits(lookup, &f.ty, &r.ty) => out.push(DeclError {
+                code: "required_field_type",
+                path: format!("{path}/target"),
+                message: format!(
+                    "`{}` requires the field `{}` of a type that fits the required one; the field of `{name}` is of another type",
+                    imp.r#trait, r.name
+                ),
+            }),
+            Some(_) => {}
+        }
     }
     out
 }
@@ -85,7 +168,7 @@ fn check_arity(tr: &TraitDef, imp: &ImplDef, path: &str) -> Vec<DeclError> {
     }
     if positions(imp, arity)
         .iter()
-        .all(|p| matches!(p, ImplTarget::Any))
+        .all(|p| matches!(p, TypeRef::Any))
     {
         out.push(DeclError {
             code: "impl_all_any",
@@ -97,7 +180,7 @@ fn check_arity(tr: &TraitDef, imp: &ImplDef, path: &str) -> Vec<DeclError> {
         });
     }
     for (k, p) in imp.type_args.iter().enumerate().skip(arity - 1) {
-        if matches!(p, ImplTarget::Any) {
+        if matches!(p, TypeRef::Any) {
             out.push(DeclError {
                 code: "impl_type_param",
                 path: format!("{path}/type_args/{k}"),
@@ -117,19 +200,19 @@ fn check_arity(tr: &TraitDef, imp: &ImplDef, path: &str) -> Vec<DeclError> {
 fn names_own_type(ns: &Name, imp: &ImplDef) -> bool {
     for p in std::iter::once(&imp.target).chain(&imp.type_args) {
         match p {
-            ImplTarget::Type { name } if name.namespace == *ns => return true,
-            ImplTarget::HostClass { package, .. } if package.as_str() == ns.as_str() => {
+            TypeRef::Type { name } if name.namespace == *ns => return true,
+            TypeRef::HostClass { package, .. } if package.as_str() == ns.as_str() => {
                 return true;
             }
-            ImplTarget::Type { .. } | ImplTarget::HostClass { .. } => {}
-            ImplTarget::Any => return false,
+            TypeRef::Type { .. } | TypeRef::HostClass { .. } => {}
+            TypeRef::Any => return false,
         }
     }
     false
 }
 
 /// A tuple of positions as text, `ns::A, ns::B, any`.
-pub fn tuple_text<'a>(ps: impl IntoIterator<Item = &'a ImplTarget>) -> String {
+pub fn tuple_text<'a>(ps: impl IntoIterator<Item = &'a TypeRef>) -> String {
     ps.into_iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
@@ -185,8 +268,8 @@ enum Order {
     Apart,
 }
 
-fn order(lookup: &dyn TypeLookup, a: &ImplTarget, b: &ImplTarget) -> Order {
-    use ImplTarget::{Any, HostClass, Type};
+fn order(lookup: &dyn TypeLookup, a: &TypeRef, b: &TypeRef) -> Order {
+    use TypeRef::{Any, HostClass, Type};
     match (a, b) {
         (Any, Any) => Order::Equal,
         (Any, _) => Order::Above,
@@ -194,9 +277,9 @@ fn order(lookup: &dyn TypeLookup, a: &ImplTarget, b: &ImplTarget) -> Order {
         (Type { name: x }, Type { name: y }) => {
             if x == y {
                 Order::Equal
-            } else if lookup.descends(x, y) {
+            } else if lookup.is_subtype(x, y) {
                 Order::Below
-            } else if lookup.descends(y, x) {
+            } else if lookup.is_subtype(y, x) {
                 Order::Above
             } else {
                 Order::Apart
@@ -227,7 +310,7 @@ pub struct Ambiguity {
     /// The position of the second impl.
     pub second: usize,
     /// The positionwise more specific tuple.
-    pub meet: Vec<ImplTarget>,
+    pub meet: Vec<TypeRef>,
 }
 
 /// The ambiguous pairs among `impls`, the impls of one trait of `arity`
@@ -240,7 +323,7 @@ pub fn ambiguities(
     arity: usize,
     pair: &dyn Fn(usize, usize) -> bool,
 ) -> Vec<Ambiguity> {
-    let tuples: Vec<Vec<&ImplTarget>> = impls.iter().map(|i| positions(i, arity)).collect();
+    let tuples: Vec<Vec<&TypeRef>> = impls.iter().map(|i| positions(i, arity)).collect();
     let mut out = Vec::new();
     for i in 0..impls.len() {
         for j in (i + 1)..impls.len() {
@@ -321,11 +404,11 @@ enum Chain {
 /// The rank of an impl's position for an argument: its index in the
 /// argument's chain, or the top for any; `None` when the position does not
 /// apply.
-fn rank(p: &ImplTarget, chain: &Chain) -> Option<usize> {
+fn rank(p: &TypeRef, chain: &Chain) -> Option<usize> {
     match (p, chain) {
-        (ImplTarget::Any, _) => Some(usize::MAX),
-        (ImplTarget::Type { name }, Chain::Type(c)) => c.iter().position(|x| x == name),
-        (ImplTarget::HostClass { class, .. }, Chain::Host(c)) => c.iter().position(|x| x == class),
+        (TypeRef::Any, _) => Some(usize::MAX),
+        (TypeRef::Type { name }, Chain::Type(c)) => c.iter().position(|x| x == name),
+        (TypeRef::HostClass { class, .. }, Chain::Host(c)) => c.iter().position(|x| x == class),
         _ => None,
     }
 }

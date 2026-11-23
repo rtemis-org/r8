@@ -4,23 +4,26 @@
 \alias{type_matrix}
 \title{Matrix field type}
 \usage{
-type_matrix(type, nrow = NULL, ncol = NULL)
+type_matrix(type = NULL, nrow = NULL, ncol = NULL, of = NULL)
 }
 \arguments{
-\item{type}{An \code{r8_field_type} of a scalar type (or \code{option()} of one, for
-missing cells), or an R8 struct type.}
+\item{type}{An \code{r8_field_type} of a scalar type, or \code{option()} of one for
+missing cells.}
 
 \item{nrow}{Optional Integer: The number of rows.}
 
 \item{ncol}{Optional Integer: The number of columns.}
+
+\item{of}{Optional R8 struct type: The struct whose fields are the
+columns, in place of \code{type}, \code{nrow}, and \code{ncol}.}
 }
 \value{
 An \code{r8_field_type}.
 }
 \description{
-A dense matrix of a scalar type, an atomic vector with \code{dim} in R. Given an
-R8 struct type, a matrix whose columns are the struct's fields, all of one
-scalar type.
+A dense matrix of a scalar type, an atomic vector with \code{dim} in R; with
+\code{of}, a matrix whose columns are the fields of a struct, all of one scalar
+type.
 }
 \examples{
 type_matrix(option(type_double()), nrow = 2L)

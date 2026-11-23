@@ -258,7 +258,7 @@ fn named_in(ft: &FieldType, out: &mut Vec<QualifiedName>) {
         | FieldType::Matrix { element, .. }
         | FieldType::Array { element, .. }
         | FieldType::SparseMatrix { element, .. } => named_in(element, out),
-        FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+        FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
             named_in(value, out)
         }
         FieldType::Table { columns, .. } => columns.iter().for_each(|c| named_in(&c.ty, out)),
@@ -276,12 +276,16 @@ fn strip(def: &mut TypeDef) {
             f.extensions = None;
             f.inherited_from = None;
             if let FieldType::Table { columns, .. } = &mut f.ty {
-                fields(columns);
+                columns
+                    .iter_mut()
+                    .for_each(|c| fields(std::slice::from_mut(&mut c.field)));
             }
             if let FieldType::Option { inner, .. } = &mut f.ty
                 && let FieldType::Table { columns, .. } = inner.as_mut()
             {
-                fields(columns);
+                columns
+                    .iter_mut()
+                    .for_each(|c| fields(std::slice::from_mut(&mut c.field)));
             }
         }
     }
@@ -575,12 +579,10 @@ pub fn read_document_cached(
 /// A field type through which a value can hold a named type.
 fn holds_named(ft: &FieldType) -> bool {
     match ft {
-        FieldType::Named { .. } | FieldType::Dyn { .. } | FieldType::Descendant { .. } => true,
+        FieldType::Named { .. } | FieldType::Dyn { .. } | FieldType::Subtype { .. } => true,
         FieldType::Option { inner, .. } => holds_named(inner),
         FieldType::Vec { element, .. } => holds_named(element),
-        FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
-            holds_named(value)
-        }
+        FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => holds_named(value),
         _ => false,
     }
 }
@@ -605,7 +607,7 @@ fn contained<'a, A: Access<'a>>(
                 contained(v.item(i), element, lookup, out);
             }
         }
-        FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+        FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
             v.each_entry(|_, e| {
                 if let Ok((_, x)) = e {
                     contained(x, value, lookup, out);
@@ -613,7 +615,7 @@ fn contained<'a, A: Access<'a>>(
             });
         }
         FieldType::Named { name } => contained_named(v, name, lookup, out),
-        FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+        FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
             if let Some(Ok((ty, _))) = crate::access::concrete(v, ft, lookup) {
                 contained_named(v, &ty, lookup, out);
             }
@@ -685,14 +687,14 @@ pub fn fill_defaults(t: &mut Tree, ft: &FieldType, lookup: &dyn TypeLookup) {
                 }
             }
         }
-        FieldType::Hashmap { value, .. } => {
+        FieldType::BtreeMap { value, .. } => {
             if let Tree::Object(m) = t {
                 for (_, x) in m.iter_mut() {
                     fill_defaults(x, value, lookup);
                 }
             }
         }
-        FieldType::OrderedMap { value, .. } => {
+        FieldType::IndexMap { value, .. } => {
             if let Tree::Array(pairs) = t {
                 for p in pairs.iter_mut() {
                     if let Some(m) = p.members_mut()
@@ -704,7 +706,7 @@ pub fn fill_defaults(t: &mut Tree, ft: &FieldType, lookup: &dyn TypeLookup) {
             }
         }
         FieldType::Named { name } => fill_named(t, name, lookup),
-        FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+        FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
             let found =
                 crate::access::concrete(crate::access::JsonOf::of(TreeRef::new(t)), ft, lookup);
             if let Some(Ok((ty, _))) = found {

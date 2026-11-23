@@ -1307,7 +1307,7 @@
             {
               "name": "assays",
               "type": {
-                "kind": "ordered_map",
+                "kind": "index_map",
                 "value": {
                   "kind": "named",
                   "name": "SummarizedExperiment::AssayData"
@@ -1460,7 +1460,7 @@
             {
               "name": "assays",
               "type": {
-                "kind": "ordered_map",
+                "kind": "index_map",
                 "value": {
                   "kind": "named",
                   "name": "SummarizedExperiment::AssayData"

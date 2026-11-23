@@ -12,7 +12,7 @@
  *    initialization routine, where `fn` is an `R8ExportsFn` returning its
  *    static `R8Exports`. `R8::r8_register()`, called from the package's
  *    `.onLoad`, fetches `fn` with `R_GetCCallable()` and registers the table:
- *    the IR document, the codecs of Rust-native types, and the impl
+ *    the IR document, the codecs of Rust-stored types, and the impl
  *    functions. Registering a package again replaces its entries.
  *
  * 2. The API, from R8 to a package. `R8_api()` returns R8's function table
@@ -145,7 +145,7 @@ typedef struct R8CallContext {
   uint64_t seed;
 } R8CallContext;
 
-/* The codec of a Rust-native type. `state` is the type's Rust value, owned
+/* The codec of a Rust-stored type. `state` is the type's Rust value, owned
  * by R8 between `from_fields`, `from_reader`, or `with_field` and `drop`. A
  * package's `types` array holds codecs of one size, `size`, which is the
  * array's stride; fields are appended within a major version. */
@@ -225,7 +225,7 @@ typedef struct R8ImplEntry {
 } R8ImplEntry;
 
 /* What a package registers: the declarations of its types in Rust, the
- * codecs of its Rust-native types, and its impl functions. R8 builds each
+ * codecs of its Rust-stored types, and its impl functions. R8 builds each
  * impl declaration from the impl entries, grouped by trait and type. */
 typedef struct R8Exports {
   uint32_t abi_version;
@@ -250,7 +250,7 @@ typedef const R8Exports *(*R8ExportsFn)(void);
 typedef struct R8Api {
   uint32_t abi_version;
   uint32_t size;
-  /* Wraps a state of a registered Rust-native type as an R8 value. Takes
+  /* Wraps a state of a registered Rust-stored type as an R8 value. Takes
    * ownership of `state`, also on error. */
   R8Status (*new_value)(const char *type_name, void *state, SEXP *value, R8Error *err);
   /* Borrows the state of a value of the given type; the state stays valid

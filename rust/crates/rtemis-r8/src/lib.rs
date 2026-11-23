@@ -25,7 +25,7 @@
 //!   and the R8 registry.
 //!
 //! The R package `R8` binds the crate through extendr. The [`access`]
-//! module's trait is unstable until the release that adds Rust-native values.
+//! module's trait is unstable until the release that adds Rust-stored values.
 //!
 //! Features: `macros` re-exports the procedural macros of `rtemis-r8-macros`,
 //! `#[derive(R8)]`; `schema`

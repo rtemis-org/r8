@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::decl::{FieldDef, RuleDef};
+use super::decl::RuleDef;
 use super::logic::Logic;
 use crate::name::QualifiedName;
 
@@ -347,7 +347,8 @@ impl schemars::JsonSchema for DoubleType {
     }
 }
 
-/// Constraints of `type_character()`, and of the keys of `hashmap()`.
+/// Constraints of `type_character()`, and of the keys of `btree_map()` and
+/// `index_map()`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -360,27 +361,19 @@ pub struct CharacterType {
     pub values: Option<Box<[Box<str>]>>,
 }
 
-/// What an absent `option()` value means.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// Who fills an absent value of a struct field of type `option()`; a field
+/// without a policy keeps its absent value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "policy", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Resolve {
-    /// Absent is final.
-    #[default]
-    None,
     /// `r8_resolve()` fills the value from an expression over other fields.
     Computed {
         /// The expression over the other fields.
         expr: Logic,
     },
-    /// `r8_resolve(x, context)` fills the value from data or the environment.
-    Runtime,
-}
-
-impl Resolve {
-    fn is_none(&self) -> bool {
-        matches!(self, Resolve::None)
-    }
+    /// `r8_resolve(x, context)` fills the value from its `context`.
+    Context,
 }
 
 /// A field type.
@@ -456,7 +449,7 @@ pub enum FieldType {
     /// by name.
     Table {
         /// The declared columns.
-        columns: Box<[FieldDef]>,
+        columns: Box<[super::decl::ColumnDef]>,
         #[serde(default, skip_serializing_if = "is_false")]
         /// Columns the declaration does not list are admitted.
         open: bool,
@@ -491,26 +484,24 @@ pub enum FieldType {
         /// The elements are distinct.
         unique: bool,
     },
-    /// `option(T, resolve)`.
+    /// `option(T)`: the value may be absent, `Option<T>`.
     Option {
         /// The type of a present value.
         inner: Box<FieldType>,
-        #[serde(default, skip_serializing_if = "Resolve::is_none")]
-        /// Who fills an absent value.
-        resolve: Resolve,
     },
-    /// `hashmap(T, keys)`: string keys, sorted at construction.
-    Hashmap {
+    /// `btree_map(T, keys)`: `BTreeMap<String, T>`, string keys in code-point
+    /// order, equal by key.
+    BtreeMap {
         /// The value type.
         value: Box<FieldType>,
         #[serde(default, skip_serializing_if = "is_default_keys")]
         /// The constraints on keys.
         keys: CharacterType,
     },
-    /// `ordered_map(T, keys)`: unique string keys in insertion order; a named
+    /// `index_map(T, keys)`: unique string keys in insertion order; a named
     /// list in R and an array of `{"name", "value"}` pairs in JSON. Order is
     /// part of the value.
-    OrderedMap {
+    IndexMap {
         /// The value type.
         value: Box<FieldType>,
         #[serde(default, skip_serializing_if = "is_default_keys")]
@@ -527,9 +518,9 @@ pub enum FieldType {
         /// The trait.
         r#trait: QualifiedName,
     },
-    /// `dyn(Parent)` for a struct: the struct or any struct that descends
-    /// from it through `extends`.
-    Descendant {
+    /// `subtype(Parent)`: the struct `of` or any struct that extends a
+    /// subtype of it.
+    Subtype {
         /// The struct.
         of: QualifiedName,
     },

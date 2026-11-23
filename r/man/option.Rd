@@ -4,29 +4,21 @@
 \alias{option}
 \title{Optional field type}
 \usage{
-option(type, resolve = "none", compute = NULL)
+option(type)
 }
 \arguments{
 \item{type}{An \code{r8_field_type} or an R8 type: The type when present.}
-
-\item{resolve}{Character \{"none", "computed", "runtime"\}: \code{"none"},
-absence is final; \code{"computed"}, \code{r8_resolve()} fills the value from
-\code{compute}; \code{"runtime"}, \code{r8_resolve()} fills it from data or the
-environment.}
-
-\item{compute}{Optional expression: For \code{resolve = "computed"}, the value
-as an expression over the other fields, captured unevaluated and
-written in the rule dialect.}
 }
 \value{
 An \code{r8_field_type}.
 }
 \description{
-\verb{Option<T>}: the value may be absent, \code{NULL}. \code{resolve} declares what
-absence means.
+\verb{Option<T>}: the value may be absent, \code{NULL} for a field and \code{NA} for an
+element of a vector or a cell of a table. A struct field of this type may
+declare who fills an absent value, with \code{\link[=field]{field()}}'s \code{compute} or
+\code{context}.
 }
 \examples{
-option(type_integer(min = 1L), resolve = "runtime")
-option(type_double(), resolve = "computed", compute = dose_mg / 1000)
+option(type_integer(min = 1L))
 
 }

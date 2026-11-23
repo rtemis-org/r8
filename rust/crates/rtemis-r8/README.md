@@ -13,7 +13,7 @@ The R package `R8`, in the [same repository](https://github.com/rtemis-org/r8), 
 
 ## Stability
 
-The crate is at version 0.2. The value-access trait (`rtemis_r8::access::Access`) and the C interface (`rtemis_r8::abi`) are unstable until the release that adds Rust-native values.
+The crate is at version 0.2. The value-access trait (`rtemis_r8::access::Access`) and the C interface (`rtemis_r8::abi`) are unstable until the release that adds Rust-stored values.
 
 ## License
 

@@ -19,7 +19,7 @@ The text that \code{print()} shows for a value whose type has no \code{Display} 
 \code{Print} impl: a header naming the type, and each field on its own line,
 a nested value's fields indented under it. A vector shows its element
 type, its length, and its first \code{head} items; a factor, a matrix, a table,
-and a sparse matrix show their shape. The header of a Rust-native value
+and a sparse matrix show their shape. The header of a Rust-stored value
 shows the size of its state in IEC binary units. A nested value whose
 type implements \code{Display} shows the impl's text. The layout reads no
 vector whole.

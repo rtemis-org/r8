@@ -146,7 +146,7 @@ test_that("a trait's methods dispatch on several arguments, with one impl per tu
         label = trait_method(
           function(p, q) NULL,
           dispatch = c("p", "q"),
-          default = function(p, q) "default label"
+          default_impl = function(p, q) "default label"
         )
       )
     )
@@ -272,7 +272,7 @@ test_that("values without a class attribute hit the dispatch cache", {
     Show <- new_trait(
       "Show",
       methods = list(
-        show_it = trait_method(function(x) NULL, default = function(x) {
+        show_it = trait_method(function(x) NULL, default_impl = function(x) {
           "default"
         })
       )

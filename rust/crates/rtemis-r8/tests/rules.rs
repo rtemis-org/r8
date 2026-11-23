@@ -163,7 +163,7 @@ fn rule_of(doc: &IrDocument, ty: &str, id: &str) -> CompiledRule {
 }
 
 #[test]
-fn all_reports_each_failing_element_of_an_ordered_map() {
+fn all_reports_each_failing_element_of_an_index_map() {
     let doc = bioc_doc("summarized-experiment");
     let rows = rule_of(&doc, "SummarizedExperiment", "ASSAY_ROWS");
     let matrix = |r: u64| json!({"type": "Double", "values": {"shape": [r, 2], "data": vec![0.0; (r * 2) as usize]}});
@@ -201,7 +201,8 @@ fn row_rules_report_the_cell_and_decode_factors() {
     let FieldType::Table { columns, rules, .. } = &gr.fields[0].ty else {
         panic!()
     };
-    let end_fits = CompiledRule::compile(&rules[0], columns, &doc).unwrap();
+    let fields: Vec<_> = columns.iter().map(|c| c.field.clone()).collect();
+    let end_fits = CompiledRule::compile(&rules[0], &fields, &doc).unwrap();
     let ranges = json!({
         "$length": 3,
         "seqnames": {"levels": ["chr1", "chr2"], "codes": [1, 1, 2]},

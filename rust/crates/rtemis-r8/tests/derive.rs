@@ -46,10 +46,10 @@ struct Svm {
     #[r8(default = r#"{"type": "Linear"}"#)]
     kernel: Kernel,
     /// Case weights.
-    #[r8(min = 0, external)]
+    #[r8(min = 0)]
     weights: Option<Vec<f64>>,
     /// Variables per split.
-    #[r8(min = 1, resolve = "runtime")]
+    #[r8(min = 1, context)]
     mtry: Option<i32>,
 }
 

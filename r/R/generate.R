@@ -10,13 +10,13 @@
 # declaration hash of every type with the exports' hash.
 # spec: R8/class-system#types-declared-in-rust
 
-# %% r8_document_native ----
+# %% r8_document_rust ----
 #' Generate the R declarations of types declared in Rust
 #'
 #' Writes `R/r8-types.R`, the R declaration of each type that a package
 #' declares in Rust and lists in its compiled exports (`R8.h`): one
-#' `new_struct()` or `new_enum()` call per type, Rust-native types with
-#' `native = TRUE`, with roxygen comments from the Rust doc comments. The R
+#' `new_struct()` or `new_enum()` call per type, Rust-stored types with
+#' `storage = "rust"`, with roxygen comments from the Rust doc comments. The R
 #' code of the package then has the type objects, their constructors, and
 #' their declarations at install, before the shared object loads, and
 #' `r8_register()` checks at load that each R declaration has the declaration
@@ -29,7 +29,7 @@
 #' writes, it declares the rendered file in the session and compares the
 #' declaration hash of every type with the exports' hash, so it runs in an R
 #' session of its own, without the package loaded:
-#' `Rscript -e "R8::r8_document_native()"`, after `pkgbuild::compile_dll()`
+#' `Rscript -e "R8::r8_document_rust()"`, after `pkgbuild::compile_dll()`
 #' and before roxygen.
 #'
 #' @param path Character: The package's root directory.
@@ -45,12 +45,12 @@
 #' @examples
 #' \dontrun{
 #' pkgbuild::compile_dll()
-#' system2("Rscript", c("-e", shQuote("R8::r8_document_native()")))
+#' system2("Rscript", c("-e", shQuote("R8::r8_document_rust()")))
 #' roxygen2::roxygenise()
 #' }
 #'
 #' @export
-r8_document_native <- function(path = ".", check = FALSE) {
+r8_document_rust <- function(path = ".", check = FALSE) {
   desc <- read.dcf(
     file.path(path, "DESCRIPTION"),
     fields = c("Package", "Config/R8/namespace")
@@ -62,9 +62,9 @@ r8_document_native <- function(path = ".", check = FALSE) {
   }
   if (isNamespaceLoaded(pkg)) {
     r8_abort(
-      "r8_document_native() runs in an R session without '",
+      "r8_document_rust() runs in an R session without '",
       pkg,
-      "' loaded: Rscript -e \"R8::r8_document_native()\".",
+      "' loaded: Rscript -e \"R8::r8_document_rust()\".",
       class = "r8_declaration_error"
     )
   }
@@ -116,7 +116,7 @@ r8_document_native <- function(path = ".", check = FALSE) {
         file,
         " differs from the declarations in the compiled exports of '",
         pkg,
-        "'; R8::r8_document_native() regenerates it.",
+        "'; R8::r8_document_rust() regenerates it.",
         class = "r8_declaration_error"
       )
     }
@@ -124,11 +124,11 @@ r8_document_native <- function(path = ".", check = FALSE) {
     writeLines(lines, file)
   }
   invisible(file)
-} # /R8::r8_document_native
+} # /R8::r8_document_rust
 
 
 # The R objects of the types of other namespaces that the rendered file
-# names, by qualified name, while r8_document_native() renders.
+# names, by qualified name, while r8_document_rust() renders.
 .r8_render_refs <- new.env(parent = emptyenv())
 
 
@@ -288,17 +288,17 @@ render_document <- function(doc, pkg, codecs) {
   ns <- doc[["namespace"]]
   types <- type_order(doc[["types"]], ns)
   blocks <- lapply(types, function(t) {
-    native <- paste0(ns, "::", t[["name"]]) %in% codecs
+    rust_stored <- paste0(ns, "::", t[["name"]]) %in% codecs
     if (identical(t[["kind"]], "struct")) {
-      render_struct(t, ns, native)
+      render_struct(t, ns, rust_stored)
     } else {
-      render_enum(t, ns, native)
+      render_enum(t, ns, rust_stored)
     }
   })
   text <- c(
     "# r8-types.R",
     paste0("# ::", pkg, "::"),
-    "# R8::r8_document_native() writes this file from the R8 declarations in",
+    "# R8::r8_document_rust() writes this file from the R8 declarations in",
     "# the package's Rust code, and replaces it when they change.",
     unlist(lapply(blocks, function(b) c("", b)))
   )
@@ -415,13 +415,13 @@ check_renderable <- function(x, members, what) {
 #'
 #' @param t List: The IR declaration.
 #' @param ns Character: The namespace.
-#' @param native Logical: The type has a codec.
+#' @param rust_stored Logical: The type has a codec.
 #'
 #' @return Character: The lines.
 #'
 #' @keywords internal
 #' @noRd
-render_struct <- function(t, ns, native) {
+render_struct <- function(t, ns, rust_stored) {
   qname <- paste0(ns, "::", t[["name"]])
   check_renderable(
     t,
@@ -456,7 +456,7 @@ render_struct <- function(t, ns, native) {
     if (length(t[["rules"]]) > 0L) {
       paste0("rules = ", render_rules(t[["rules"]], "  "))
     },
-    if (native) "native = TRUE"
+    if (rust_stored) "storage = \"rust\""
   )
   c(
     roxygen_block(t, qname),
@@ -475,13 +475,13 @@ render_struct <- function(t, ns, native) {
 #'
 #' @param t List: The IR declaration.
 #' @param ns Character: The namespace.
-#' @param native Logical: The type has a codec.
+#' @param rust_stored Logical: The type has a codec.
 #'
 #' @return Character: The lines.
 #'
 #' @keywords internal
 #' @noRd
-render_enum <- function(t, ns, native = FALSE) {
+render_enum <- function(t, ns, rust_stored = FALSE) {
   qname <- paste0(ns, "::", t[["name"]])
   check_renderable(
     t,
@@ -545,7 +545,7 @@ render_enum <- function(t, ns, native = FALSE) {
     },
     paste0("tag = ", deparse_string(t[["tag"]] %||% "type")),
     paste0("version = ", t[["version"]], "L"),
-    if (native) "native = TRUE"
+    if (rust_stored) "storage = \"rust\""
   )
   c(
     roxygen_block(t, qname),
@@ -651,9 +651,13 @@ render_field <- function(f, ns) {
     },
     if (isTRUE(f[["sensitive"]])) "sensitive = TRUE",
     if (!is.null(f[["unit"]])) paste0("unit = ", deparse_string(f[["unit"]])),
-    if (isTRUE(f[["external"]])) "external = TRUE",
+    switch(
+      f[["resolve"]][["policy"]] %||% "",
+      computed = paste0("compute = ", render_logic(f[["resolve"]][["expr"]])),
+      context = "context = TRUE"
+    ),
     if (isTRUE(f[["unique"]])) "unique = TRUE",
-    if (isTRUE(f[["optional"]])) "optional = TRUE",
+    if (isFALSE(f[["required"]])) "required = FALSE",
     if (length(f[["extensions"]]) > 0L) {
       paste0("extensions = ", deparse_value(f[["extensions"]]))
     }
@@ -661,7 +665,13 @@ render_field <- function(f, ns) {
   if (length(args) == 0L) {
     return(type)
   }
-  paste0("R8::field(", paste(c(type, args), collapse = ", "), ")")
+  # A column's own facts take column(); everything else is field().
+  fn <- if (isTRUE(f[["unique"]]) || isFALSE(f[["required"]])) {
+    "column"
+  } else {
+    "field"
+  }
+  paste0("R8::", fn, "(", paste(c(type, args), collapse = ", "), ")")
 } # /R8::render_field
 
 
@@ -742,19 +752,9 @@ render_type <- function(t, ns) {
       arg("max_length", int(t[["max_length"]])),
       if (isTRUE(t[["unique"]])) "unique = TRUE"
     ),
-    option = {
-      policy <- t[["resolve"]][["policy"]]
-      call(
-        "option",
-        render_type(t[["inner"]], ns),
-        if (!is.null(policy)) arg("resolve", deparse_string(policy)),
-        if (identical(policy, "computed")) {
-          arg("compute", render_logic(t[["resolve"]][["expr"]]))
-        }
-      )
-    },
-    hashmap = ,
-    ordered_map = call(
+    option = call("option", render_type(t[["inner"]], ns)),
+    btree_map = ,
+    index_map = call(
       kind,
       render_type(t[["value"]], ns),
       if (length(t[["keys"]]) > 0L) {
@@ -771,7 +771,7 @@ render_type <- function(t, ns) {
       arg("nrow", int(t[["nrow"]])),
       arg("ncol", int(t[["ncol"]]))
     ),
-    matrix_of = call("type_matrix", type_ref(t[["of"]], ns)),
+    matrix_of = call("type_matrix", arg("of", type_ref(t[["of"]], ns))),
     array = call(
       "type_array",
       render_type(t[["element"]], ns),
@@ -804,7 +804,7 @@ render_type <- function(t, ns) {
         arg("rules", render_rules(t[["rules"]], ""))
       }
     ),
-    table_of = call("type_table", type_ref(t[["of"]], ns)),
+    table_of = call("type_table", arg("of", type_ref(t[["of"]], ns))),
     r8_abort(
       "The field type `",
       kind,
@@ -841,7 +841,7 @@ type_ref <- function(qname, ns) {
   r8_abort(
     "The type `",
     qname,
-    "` belongs to another namespace, whose package r8_document_native() ",
+    "` belongs to another namespace, whose package r8_document_rust() ",
     "finds among the Imports of the package's DESCRIPTION.",
     class = "r8_declaration_error"
   )

@@ -96,7 +96,7 @@ test_that("a host object's replacement result keeps its class vector", {
       methods = list(
         `note<-` = trait_method(
           function(x, value) NULL,
-          default = function(x, value) {
+          default_impl = function(x, value) {
             if (identical(value, "drop")) {
               return(unclass(x))
             }

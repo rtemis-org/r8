@@ -214,19 +214,18 @@ type_json <- function() {
 
 
 # %% dyn ----
-#' A field of any implementor of a trait, or of a struct and its descendants
+#' A field of any implementor of a trait
 #'
-#' `dyn(Trait)` holds a value of any type that implements `Trait`, or that
-#' extends a type that does. Its JSON form names the type in the trait's tag
-#' member, or else in `"$type"`. `dyn(generic)`, for a generic from
-#' [generic()] that dispatches on one argument, holds a value of any type
-#' with a method of the generic. `dyn(Struct)` holds a value of `Struct` or of
-#' any struct that extends it, named in `"$type"`. A value of a class of
+#' `dyn(Trait)` holds a value of any R8 type that implements `Trait`, or
+#' that extends a type that does, as Rust's `dyn Trait`. Its JSON form names
+#' the type in the trait's tag member, or else in `"$type"`. `dyn(generic)`,
+#' for a generic from [generic()] that dispatches on one argument, holds a
+#' value of any type with a method of the generic. A value of a class of
 #' another class system is not held, even when the class has an impl of the
-#' trait; [r8_convert()] through a `From` impl turns it into an R8 value.
+#' trait; [r8_convert()] through a `From` impl turns it into an R8 value. A
+#' struct and the structs that extend it are [subtype()].
 #'
-#' @param x A trait object from [new_trait()], a generic from [generic()], or
-#'   an R8 struct type object.
+#' @param x A trait object from [new_trait()], or a generic from [generic()].
 #'
 #' @return An `r8_field_type`.
 #'
@@ -264,31 +263,76 @@ dyn <- function(x) {
     ))
   }
   if (inherits(x, "r8_struct_type")) {
-    ensure_registered(x)
-    name <- attr(x, "r8_name")
-    a <- ancestry(name)
-    if (isTRUE(a[["stale"]])) {
-      stale_abort(name, a[["parent"]], "r8_declaration_error")
-    }
-    return(structure(
-      list(kind = "descendant", of = name),
-      class = "r8_field_type"
-    ))
+    r8_abort(
+      "dyn() takes a trait, as Rust's `dyn` does; a struct and the structs ",
+      "that extend it are subtype(",
+      sub("^.*::", "", attr(x, "r8_name")),
+      ").",
+      class = "r8_declaration_error"
+    )
   }
   if (inherits(x, "r8_enum_type")) {
     r8_abort(
-      "dyn() takes a trait object or a struct type object; `",
+      "dyn() takes a trait object; `",
       attr(x, "r8_name"),
       "` is an enum, a closed set of variants: use it as the field type.",
       class = "r8_declaration_error"
     )
   }
   r8_abort(
-    "dyn() takes a trait object, such as dyn(Shape), or a struct type ",
-    "object, such as dyn(Interval).",
+    "dyn() takes a trait object, such as dyn(Shape), or a generic of one ",
+    "dispatched argument.",
     class = "r8_declaration_error"
   )
 } # /R8::dyn
+
+
+# %% subtype ----
+#' A field of a struct or of any struct that extends it
+#'
+#' `subtype(Struct)` holds a value of `Struct` or of a struct that extends a
+#' subtype of it: a type is a subtype of itself and of every ancestor
+#' through `extends`. Such a value has the struct's fields and satisfies its
+#' rules, and [r8_upcast()] gives its value of `Struct`. A plain struct type
+#' holds exactly that struct. Its JSON form names the value's type in
+#' `"$type"`. Any implementor of a trait, related by `extends` or not, is
+#' [dyn()].
+#'
+#' @param x An R8 struct type object.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
+#' Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
+#' Plot <- new_struct("Plot", fields = list(x = subtype(Range)))
+#' Plot(x = Window(lo = 0, hi = 1, label = "w"))
+#' options(op)
+#'
+#' @export
+subtype <- function(x) {
+  if (inherits(x, "r8_trait") || inherits(x, "r8_generic")) {
+    r8_abort(
+      "subtype() takes a struct type object; any implementor of a trait is ",
+      "dyn() of the trait.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (!inherits(x, "r8_struct_type")) {
+    r8_abort(
+      "subtype() takes a struct type object, such as subtype(Interval).",
+      class = "r8_declaration_error"
+    )
+  }
+  ensure_registered(x)
+  name <- attr(x, "r8_name")
+  a <- ancestry(name)
+  if (isTRUE(a[["stale"]])) {
+    stale_abort(name, a[["parent"]], "r8_declaration_error")
+  }
+  structure(list(kind = "subtype", of = name), class = "r8_field_type")
+} # /R8::subtype
 
 
 # %% type_r ----
@@ -302,7 +346,7 @@ dyn <- function(x) {
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' option(type_r("lm"), resolve = "runtime")
+#' field(option(type_r("lm")), context = TRUE)
 #'
 #' @export
 type_r <- function(class) {
@@ -334,37 +378,32 @@ vec <- function(type, min_length = NULL, max_length = NULL, unique = FALSE) {
 # %% option ----
 #' Optional field type
 #'
-#' `Option<T>`: the value may be absent, `NULL`. `resolve` declares what
-#' absence means.
+#' `Option<T>`: the value may be absent, `NULL` for a field and `NA` for an
+#' element of a vector or a cell of a table. A struct field of this type may
+#' declare who fills an absent value, with [field()]'s `compute` or
+#' `context`.
 #'
 #' @param type An `r8_field_type` or an R8 type: The type when present.
-#' @param resolve Character \{"none", "computed", "runtime"\}: `"none"`,
-#'   absence is final; `"computed"`, `r8_resolve()` fills the value from
-#'   `compute`; `"runtime"`, `r8_resolve()` fills it from data or the
-#'   environment.
-#' @param compute Optional expression: For `resolve = "computed"`, the value
-#'   as an expression over the other fields, captured unevaluated and
-#'   written in the rule dialect.
 #'
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' option(type_integer(min = 1L), resolve = "runtime")
-#' option(type_double(), resolve = "computed", compute = dose_mg / 1000)
+#' option(type_integer(min = 1L))
 #'
 #' @export
-option <- function(type, resolve = "none", compute = NULL) {
-  if (!identical(resolve, "none")) {
-    resolve <- match.arg(resolve, c("none", "computed", "runtime"))
-  }
-  declared(r8_ft_option(type, resolve, substitute(compute)))
+option <- function(type) {
+  declared(r8_ft_option(type))
 } # /R8::option
 
 
-# %% hashmap ----
-#' Map field type
+# %% btree_map ----
+#' Sorted map field type
 #'
-#' `HashMap<String, T>`: string keys, sorted at construction.
+#' `BTreeMap<String, T>`: unique string keys in code-point order, a named
+#' vector or list in R. Two maps with the same keys and values are equal in
+#' any order of construction. Canonical JSON writes the keys in RFC 8785's
+#' UTF-16 order, which differs from code-point order only for keys that mix
+#' characters above U+FFFF with characters from U+E000 to U+FFFF.
 #'
 #' @param type An `r8_field_type` or an R8 type: The value type.
 #' @param keys Optional `r8_field_type`: A `type_character()` constraining
@@ -373,19 +412,20 @@ option <- function(type, resolve = "none", compute = NULL) {
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' hashmap(type_integer())
+#' btree_map(type_integer())
 #'
 #' @export
-hashmap <- function(type, keys = NULL) {
+btree_map <- function(type, keys = NULL) {
   declared(r8_ft_map(type, keys, FALSE))
-} # /R8::hashmap
+} # /R8::btree_map
 
 
-# %% ordered_map ----
-#' Ordered map field type
+# %% index_map ----
+#' Insertion-ordered map field type
 #'
-#' Unique string keys in insertion order: a named list in R. Order is part of
-#' the value.
+#' `IndexMap<String, T>`: unique string keys in insertion order, a named
+#' list in R and an array of `{"name", "value"}` pairs in JSON. Order is part
+#' of the value, its equality, and its hash.
 #'
 #' @param type An `r8_field_type` or an R8 type: The value type.
 #' @param keys Optional `r8_field_type`: A `type_character()` constraining
@@ -394,12 +434,12 @@ hashmap <- function(type, keys = NULL) {
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' ordered_map(type_double())
+#' index_map(type_double())
 #'
 #' @export
-ordered_map <- function(type, keys = NULL) {
+index_map <- function(type, keys = NULL) {
   declared(r8_ft_map(type, keys, TRUE))
-} # /R8::ordered_map
+} # /R8::index_map
 
 
 # %% print.r8_field_type ----
@@ -420,14 +460,16 @@ print.r8_field_type <- function(x, ...) {
 # %% type_matrix ----
 #' Matrix field type
 #'
-#' A dense matrix of a scalar type, an atomic vector with `dim` in R. Given an
-#' R8 struct type, a matrix whose columns are the struct's fields, all of one
-#' scalar type.
+#' A dense matrix of a scalar type, an atomic vector with `dim` in R; with
+#' `of`, a matrix whose columns are the fields of a struct, all of one scalar
+#' type.
 #'
-#' @param type An `r8_field_type` of a scalar type (or `option()` of one, for
-#'   missing cells), or an R8 struct type.
+#' @param type An `r8_field_type` of a scalar type, or `option()` of one for
+#'   missing cells.
 #' @param nrow Optional Integer: The number of rows.
 #' @param ncol Optional Integer: The number of columns.
+#' @param of Optional R8 struct type: The struct whose fields are the
+#'   columns, in place of `type`, `nrow`, and `ncol`.
 #'
 #' @return An `r8_field_type`.
 #'
@@ -435,9 +477,59 @@ print.r8_field_type <- function(x, ...) {
 #' type_matrix(option(type_double()), nrow = 2L)
 #'
 #' @export
-type_matrix <- function(type, nrow = NULL, ncol = NULL) {
+type_matrix <- function(type = NULL, nrow = NULL, ncol = NULL, of = NULL) {
+  if (!is.null(of)) {
+    return(struct_columns(
+      "matrix_of",
+      of,
+      "type_matrix",
+      is.null(type) && is.null(nrow) && is.null(ncol)
+    ))
+  }
+  if (inherits(type, "r8_struct_type")) {
+    r8_abort(
+      "A matrix whose columns are a struct's fields is type_matrix(of = ",
+      sub("^.*::", "", attr(type, "r8_name")),
+      ").",
+      class = "r8_declaration_error"
+    )
+  }
   declared(r8_ft_matrix(type, nrow, ncol, NULL, FALSE))
 } # /R8::type_matrix
+
+
+# %% struct_columns ----
+#' The field type of a matrix or table whose columns are a struct's fields
+#'
+#' @param kind Character: `"matrix_of"` or `"table_of"`.
+#' @param of An R8 struct type object.
+#' @param fn Character: The declaring function, for messages.
+#' @param alone Logical: `of` is given without the arguments it replaces.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @keywords internal
+#' @noRd
+struct_columns <- function(kind, of, fn, alone) {
+  if (!inherits(of, "r8_struct_type")) {
+    r8_abort(
+      "`of` is an R8 struct type object.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (!alone) {
+    r8_abort(
+      fn,
+      "(of = ) takes its columns from the struct and no other argument.",
+      class = "r8_declaration_error"
+    )
+  }
+  ensure_registered(of)
+  structure(
+    list(kind = kind, of = attr(of, "r8_name")),
+    class = "r8_field_type"
+  )
+} # /R8::struct_columns
 
 
 # %% type_array ----
@@ -486,13 +578,15 @@ type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
 #' A `data.frame` of equal-length columns, each a scalar type, a factor, or
 #' `option()` of one, with automatic row names. An open table also accepts
 #' columns its declaration does not name. A table's rules run once per row
-#' and read the row's columns by name. Given an R8 struct type, a table whose
-#' columns are the struct's fields.
+#' and read the row's columns by name. With `of`, a table whose columns are
+#' the fields of a struct.
 #'
-#' @param columns Named list of fields or field types, or an R8 struct type.
+#' @param columns Named list of fields or field types.
 #' @param open Logical: Accept columns the declaration does not name.
 #' @param rules A `rule()`, or a list of `rule()` calls, over a row's
 #'   columns.
+#' @param of Optional R8 struct type: The struct whose fields are the columns,
+#'   in place of `columns`, `open`, and `rules`.
 #'
 #' @return An `r8_field_type`.
 #'
@@ -507,12 +601,27 @@ type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
 #' )
 #'
 #' @export
-type_table <- function(columns = list(), open = FALSE, rules = list()) {
-  if (inherits(columns, "r8_struct_type")) {
-    return(structure(
-      list(kind = "table_of", of = attr(columns, "r8_name")),
-      class = "r8_field_type"
+type_table <- function(
+  columns = list(),
+  open = FALSE,
+  rules = list(),
+  of = NULL
+) {
+  if (!is.null(of)) {
+    return(struct_columns(
+      "table_of",
+      of,
+      "type_table",
+      length(columns) == 0L && isFALSE(open) && length(rules) == 0L
     ))
+  }
+  if (inherits(columns, "r8_struct_type")) {
+    r8_abort(
+      "A table whose columns are a struct's fields is type_table(of = ",
+      sub("^.*::", "", attr(columns, "r8_name")),
+      ").",
+      class = "r8_declaration_error"
+    )
   }
   if (
     length(columns) > 0L &&

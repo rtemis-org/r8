@@ -2,7 +2,7 @@
 // ::r8pkgC::
 // 2026- EDG rtemis.org
 
-// The codec of pkgc::Signal, a Rust-native type implemented in C: its state
+// The codec of pkgc::Signal, a Rust-stored type implemented in C: its state
 // holds the name and a copy of the values, and `values` reads as a view of
 // the state's memory through R8Api.
 

@@ -37,23 +37,60 @@ test_that("PartialOrd orders values; without it, ordering is an error", {
     impl(
       PartialOrd,
       Money,
-      methods = list(cmp = function(x, y) x$cents - y$cents)
+      methods = list(partial_cmp = function(x, y) sign(x$cents - y$cents))
     )
   )
   expect_true(a < b)
   expect_true(b >= a)
   expect_false(a > b)
-  expect_identical(r8_cmp(a, b), -100L)
+  expect_identical(r8_partial_cmp(a, b), -1)
 })
 
-test_that("Dim reports dimensions, which nrow() and ncol() follow", {
+test_that("PartialOrd's result is -1L, 0L, 1L, or NA, and NA orders nothing", {
+  declare_in("po2", {
+    Score <- new_struct("Score", fields = list(v = type_double(finite = FALSE)))
+    impl(
+      PartialOrd,
+      Score,
+      methods = list(partial_cmp = function(x, y) {
+        if (is.nan(x$v) || is.nan(y$v)) {
+          NA_integer_
+        } else {
+          as.integer(sign(x$v - y$v))
+        }
+      })
+    )
+    a <- Score(v = 1)
+    n <- Score(v = NaN)
+    expect_true(a < Score(v = 2))
+    expect_false(a < n)
+    expect_false(a >= n)
+    expect_false(n == a)
+    Bad <- new_struct("Bad", fields = list(v = type_double()))
+    impl(PartialOrd, Bad, methods = list(partial_cmp = function(x, y) "a"))
+    expect_error(
+      Bad(v = 1) < Bad(v = 2),
+      "return_type",
+      class = "r8_result_error"
+    )
+    Far <- new_struct("Far", fields = list(v = type_double()))
+    impl(
+      PartialOrd,
+      Far,
+      methods = list(partial_cmp = function(x, y) x$v - y$v)
+    )
+    expect_error(Far(v = 1) < Far(v = 5), "found", class = "r8_result_error")
+  })
+})
+
+test_that("Shape reports dimensions, which nrow() and ncol() follow", {
   Grid <- declare_in(
     "demo",
     new_struct("Grid", fields = list(r = type_integer(), c = type_integer()))
   )
   declare_in(
     "demo",
-    impl(Dim, Grid, methods = list(dim = function(x) c(x$r, x$c)))
+    impl(Shape, Grid, methods = list(dim = function(x) c(x$r, x$c)))
   )
   g <- Grid(r = 3L, c = 4L)
   expect_identical(dim(g), c(3L, 4L))
@@ -135,7 +172,7 @@ test_that("a converter is the generic of the conversions to its target", {
     )
     expect_error(
       implement(as_target, 1) <- function(x) NULL,
-      "an R8 type object or a class name",
+      "an R8 type object, a class name",
       class = "r8_declaration_error"
     )
     implement(as_target, "numeric") <- function(x) Range(lo = 0, hi = x)
@@ -196,7 +233,7 @@ test_that("a From impl of an ancestor converts a descendant, which it receives u
   })
 })
 
-test_that("a From impl names a registered source and follows the orphan rule with the source", {
+test_that("a From impl names its source by type object and follows the orphan rule with the source", {
   Target <- declare_in(
     "cv3",
     new_struct("Target", fields = list(n = type_double()))
@@ -206,7 +243,7 @@ test_that("a From impl names a registered source and follows the orphan rule wit
       "cv3",
       impl(From("cv3::Rnage"), Target, methods = list(from = function(x) x))
     ),
-    "not a registered type",
+    "by its type object",
     class = "r8_declaration_error"
   )
   Local <- declare_in(
@@ -216,7 +253,7 @@ test_that("a From impl names a registered source and follows the orphan rule wit
   expect_no_error(declare_in(
     "cv4",
     impl(
-      From("cv4::Local"),
+      From(Local),
       Target,
       methods = list(from = function(x) Target(n = x$n))
     )

@@ -114,11 +114,11 @@ r8_upcast <- function(x, type) {
       class = "r8_type_error"
     )
   }
-  if (isTRUE(attr(type, "r8_native"))) {
+  if (identical(attr(type, "r8_storage"), "rust")) {
     r8_abort(
       "`",
       source,
-      "` is Rust-native; its value of `",
+      "` is Rust-stored; its value of `",
       target,
       "` is the embedded parent that `#[r8(extends)]` declares in Rust.",
       class = "r8_type_error"

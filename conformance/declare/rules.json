@@ -105,16 +105,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -268,16 +268,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -436,16 +436,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -604,16 +604,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -772,16 +772,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -940,16 +940,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -1111,16 +1111,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -1280,16 +1280,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -1443,16 +1443,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -1611,16 +1611,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -1781,16 +1781,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -1951,16 +1951,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -2116,16 +2116,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -2284,16 +2284,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -2452,16 +2452,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -2619,16 +2619,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -2791,16 +2791,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -2963,16 +2963,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -3130,16 +3130,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -3298,16 +3298,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -3474,16 +3474,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -3644,16 +3644,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -3840,16 +3840,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -4025,16 +4025,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -4069,20 +4069,20 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": {
-                      "+": [
-                        {
-                          "var": "dose_mg"
-                        },
-                        1
-                      ]
-                    }
                   }
                 },
-                "unit": "g"
+                "unit": "g",
+                "resolve": {
+                  "policy": "computed",
+                  "expr": {
+                    "+": [
+                      {
+                        "var": "dose_mg"
+                      },
+                      1
+                    ]
+                  }
+                }
               }
             ],
             "rules": []
@@ -4093,7 +4093,7 @@
         "errors": [
           {
             "code": "rule_unit",
-            "path": "/types/1/fields/9/type/resolve/expr"
+            "path": "/types/1/fields/9/resolve/expr"
           }
         ]
       }
@@ -4201,16 +4201,16 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               },
               {
                 "name": "assays",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "matrix",
                     "element": {
@@ -4245,20 +4245,20 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": {
-                      "/": [
-                        {
-                          "var": "dose_mg"
-                        },
-                        1000
-                      ]
-                    }
                   }
                 },
-                "unit": "g"
+                "unit": "g",
+                "resolve": {
+                  "policy": "computed",
+                  "expr": {
+                    "/": [
+                      {
+                        "var": "dose_mg"
+                      },
+                      1000
+                    ]
+                  }
+                }
               }
             ],
             "rules": []
@@ -4294,17 +4294,17 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": {
-                      "*": [
-                        {
-                          "var": "a"
-                        },
-                        2
-                      ]
-                    }
+                  }
+                },
+                "resolve": {
+                  "policy": "computed",
+                  "expr": {
+                    "*": [
+                      {
+                        "var": "a"
+                      },
+                      2
+                    ]
                   }
                 }
               },
@@ -4314,17 +4314,17 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": {
-                      "+": [
-                        {
-                          "var": "b"
-                        },
-                        1
-                      ]
-                    }
+                  }
+                },
+                "resolve": {
+                  "policy": "computed",
+                  "expr": {
+                    "+": [
+                      {
+                        "var": "b"
+                      },
+                      1
+                    ]
                   }
                 }
               }
@@ -4355,12 +4355,12 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": {
-                      "var": "c"
-                    }
+                  }
+                },
+                "resolve": {
+                  "policy": "computed",
+                  "expr": {
+                    "var": "c"
                   }
                 }
               },
@@ -4370,12 +4370,12 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": {
-                      "var": "b"
-                    }
+                  }
+                },
+                "resolve": {
+                  "policy": "computed",
+                  "expr": {
+                    "var": "b"
                   }
                 }
               }
@@ -4387,11 +4387,11 @@
         "errors": [
           {
             "code": "computed_cycle",
-            "path": "/types/0/fields/0/type/resolve/expr"
+            "path": "/types/0/fields/0/resolve/expr"
           },
           {
             "code": "computed_cycle",
-            "path": "/types/0/fields/1/type/resolve/expr"
+            "path": "/types/0/fields/1/resolve/expr"
           }
         ]
       }

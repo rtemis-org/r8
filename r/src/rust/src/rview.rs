@@ -25,7 +25,7 @@ use extendr_ffi::{
 use rtemis_r8::access::{
     Access, Codes, Dense, Dimnames, Factor, Form, Indices, Names, Read, Sparse, Table,
 };
-use rtemis_r8::ir::{EnumDef, FieldDef, FieldType};
+use rtemis_r8::ir::{EnumDef, FieldType};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 use serde_json::Value;
@@ -1127,7 +1127,7 @@ impl<'a> Access<'a> for RView<'a> {
         })
     }
 
-    fn table(self, _columns: &[FieldDef], _open: bool) -> Read<Table<'a, Self>> {
+    fn table<C: rtemis_r8::ir::Column>(self, _columns: &[C], _open: bool) -> Read<Table<'a, Self>> {
         let Some(x) = self.sexp() else {
             return Err(r_type("expected a data.frame"));
         };
@@ -1413,7 +1413,6 @@ pub(crate) fn infer_column(col: SEXP) -> Option<FieldType> {
     };
     Some(FieldType::Option {
         inner: Box::new(base),
-        resolve: Default::default(),
     })
 }
 

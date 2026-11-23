@@ -2,26 +2,25 @@
 % Please edit documentation in R/types.R
 \name{dyn}
 \alias{dyn}
-\title{A field of any implementor of a trait, or of a struct and its descendants}
+\title{A field of any implementor of a trait}
 \usage{
 dyn(x)
 }
 \arguments{
-\item{x}{A trait object from \code{\link[=new_trait]{new_trait()}}, a generic from \code{\link[=generic]{generic()}}, or
-an R8 struct type object.}
+\item{x}{A trait object from \code{\link[=new_trait]{new_trait()}}, or a generic from \code{\link[=generic]{generic()}}.}
 }
 \value{
 An \code{r8_field_type}.
 }
 \description{
-\code{dyn(Trait)} holds a value of any type that implements \code{Trait}, or that
-extends a type that does. Its JSON form names the type in the trait's tag
-member, or else in \code{"$type"}. \code{dyn(generic)}, for a generic from
-\code{\link[=generic]{generic()}} that dispatches on one argument, holds a value of any type
-with a method of the generic. \code{dyn(Struct)} holds a value of \code{Struct} or of
-any struct that extends it, named in \code{"$type"}. A value of a class of
+\code{dyn(Trait)} holds a value of any R8 type that implements \code{Trait}, or
+that extends a type that does, as Rust's \verb{dyn Trait}. Its JSON form names
+the type in the trait's tag member, or else in \code{"$type"}. \code{dyn(generic)},
+for a generic from \code{\link[=generic]{generic()}} that dispatches on one argument, holds a
+value of any type with a method of the generic. A value of a class of
 another class system is not held, even when the class has an impl of the
-trait; \code{\link[=r8_convert]{r8_convert()}} through a \code{From} impl turns it into an R8 value.
+trait; \code{\link[=r8_convert]{r8_convert()}} through a \code{From} impl turns it into an R8 value. A
+struct and the structs that extend it are \code{\link[=subtype]{subtype()}}.
 }
 \examples{
 op <- options(r8.namespace = "demo")

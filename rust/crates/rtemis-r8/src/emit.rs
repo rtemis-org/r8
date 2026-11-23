@@ -664,8 +664,8 @@ pub fn sparse_binary_access<'a, A: Access<'a>, O: Out>(element: &FieldType, v: A
 }
 
 /// The canonical binary form of a table (`R8T1`).
-pub fn table_binary_access<'a, A: Access<'a>, O: Out>(
-    columns: &[FieldDef],
+pub fn table_binary_access<'a, A: Access<'a>, O: Out, C: crate::ir::Column>(
+    columns: &[C],
     open: bool,
     v: A,
     out: &mut O,
@@ -682,8 +682,8 @@ pub fn table_binary_access<'a, A: Access<'a>, O: Out>(
     for (name, cells) in cols {
         let ft = columns
             .iter()
-            .find(|c| c.name.as_str() == name)
-            .map(|c| c.ty.clone())
+            .find(|c| c.field().name.as_str() == name)
+            .map(|c| c.field().ty.clone())
             .or_else(|| v.extra_column_type(&name).ok())
             .unwrap_or(FieldType::Json);
         let (tag, inner) = element_tag(&ft);
@@ -836,7 +836,7 @@ impl<'l, S: Sink> Emitter<'l, S> {
                 let n = v.vec(element).unwrap_or(0);
                 self.sequence(element, v, n);
             }
-            FieldType::Hashmap { value, .. } => {
+            FieldType::BtreeMap { value, .. } => {
                 let mut entries: Vec<(Cow<'a, str>, A)> = Vec::new();
                 v.each_entry(|_, e| {
                     if let Ok(e) = e {
@@ -853,7 +853,7 @@ impl<'l, S: Sink> Emitter<'l, S> {
                 }
                 self.w.end_object();
             }
-            FieldType::OrderedMap { value, .. } => {
+            FieldType::IndexMap { value, .. } => {
                 let mut entries: Vec<(Cow<'a, str>, A)> = Vec::new();
                 v.each_entry(|_, e| {
                     if let Ok(e) = e {
@@ -893,7 +893,7 @@ impl<'l, S: Sink> Emitter<'l, S> {
                 _ => self.w.null(),
             },
             FieldType::Named { name } => self.named(name, v, None),
-            FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
                 match crate::access::concrete(v, ft, lookup).expect("a dynamic field type") {
                     Ok((ty, member)) => {
                         let tag = match &member {
@@ -1108,7 +1108,7 @@ impl<'l, S: Sink> Emitter<'l, S> {
         self.w.end_object();
     }
 
-    fn table<'a, A: Access<'a>>(&mut self, columns: &[FieldDef], open: bool, v: A) {
+    fn table<'a, A: Access<'a>, C: crate::ir::Column>(&mut self, columns: &[C], open: bool, v: A) {
         if self.digest {
             let hex = digest_hex(|h| table_binary_access(columns, open, v, h));
             return self.digest_object(hex);
@@ -1121,8 +1121,8 @@ impl<'l, S: Sink> Emitter<'l, S> {
         // under "$columns".
         let mut cols: Vec<(Cow<'a, str>, A, FieldType, bool)> = Vec::new();
         for (name, cells) in t.columns {
-            match columns.iter().find(|c| c.name.as_str() == name) {
-                Some(c) => cols.push((name, cells, c.ty.clone(), false)),
+            match columns.iter().find(|c| c.field().name.as_str() == name) {
+                Some(c) => cols.push((name, cells, c.field().ty.clone(), false)),
                 None => {
                     if let Ok(ft) = v.extra_column_type(&name) {
                         cols.push((name, cells, ft, true));
@@ -1352,7 +1352,7 @@ fn walk<'a, A: Access<'a>>(
     match unwrap_option(ft) {
         FieldType::R { .. } => out.push(path.to_string()),
         FieldType::Named { name } => walk_named(name, v, lookup, path, out),
-        t @ (FieldType::Dyn { .. } | FieldType::Descendant { .. }) => {
+        t @ (FieldType::Dyn { .. } | FieldType::Subtype { .. }) => {
             if let Some(Ok((ty, _))) = crate::access::concrete(v, t, lookup) {
                 walk_named(&ty, v, lookup, path, out);
             }
@@ -1362,7 +1362,7 @@ fn walk<'a, A: Access<'a>>(
                 unwrap_option(element),
                 FieldType::Named { .. }
                     | FieldType::Dyn { .. }
-                    | FieldType::Descendant { .. }
+                    | FieldType::Subtype { .. }
                     | FieldType::Vec { .. }
             ) =>
         {
@@ -1374,16 +1374,16 @@ fn walk<'a, A: Access<'a>>(
                 }
             }
         }
-        FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. }
+        FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. }
             if matches!(
                 unwrap_option(value),
                 FieldType::Named { .. }
                     | FieldType::Dyn { .. }
-                    | FieldType::Descendant { .. }
+                    | FieldType::Subtype { .. }
                     | FieldType::Vec { .. }
             ) =>
         {
-            let ordered = matches!(unwrap_option(ft), FieldType::OrderedMap { .. });
+            let ordered = matches!(unwrap_option(ft), FieldType::IndexMap { .. });
             let mut entries = Vec::new();
             v.each_entry(|i, e| {
                 if let Ok((k, x)) = e {

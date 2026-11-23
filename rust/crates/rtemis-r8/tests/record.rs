@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 
 use rtemis_r8::codec::declaration_hash;
 use rtemis_r8::ir::{
-    Bound, CharacterType, ClassSystem, DoubleType, FieldDef, FieldType, ImplDef, ImplTarget,
-    IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep, Param, ParamDef, Resolve,
-    ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef, TypeDef,
+    Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, FieldDef, FieldType, ImplDef,
+    IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep, Param, ParamDef,
+    RequiredField, Resolve, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef,
+    TypeDef, TypeRef,
 };
 use rtemis_r8::name::{MethodName, Name, QualifiedName};
 use rtemis_r8::record::{self, Declaration, DeclarationRef, Entry, RecordError};
@@ -142,9 +143,9 @@ fn full_field(n: &str, ty: FieldType) -> FieldDef {
         description: "A field.".into(),
         sensitive: true,
         unit: Some("mg/L".into()),
-        external: true,
-        unique: true,
-        optional: true,
+        resolve: Some(Resolve::Computed {
+            expr: serde_json::from_value(json!({"+": [{"var": "a"}, 1]})).unwrap(),
+        }),
         inherited_from: Some(Box::new(q("ns::Parent"))),
         extensions: Some(Box::new(ext)),
     }
@@ -158,9 +159,7 @@ fn bare_field(n: &str, ty: FieldType) -> FieldDef {
         description: Box::default(),
         sensitive: false,
         unit: None,
-        external: false,
-        unique: false,
-        optional: false,
+        resolve: None,
         inherited_from: None,
         extensions: None,
     }
@@ -169,7 +168,6 @@ fn bare_field(n: &str, ty: FieldType) -> FieldDef {
 /// One sample of every field type. The `match` below lists every variant, so
 /// a new variant fails to compile until it has a sample here.
 fn sample_types() -> Vec<FieldType> {
-    let logic: Logic = serde_json::from_value(json!({"+": [{"var": "a"}, 1]})).unwrap();
     let rule = RuleDef {
         id: Some(name("R")),
         invariant: serde_json::from_value(json!({"<": [{"var": "start"}, 10]})).unwrap(),
@@ -224,8 +222,20 @@ fn sample_types() -> Vec<FieldType> {
         FieldType::MatrixOf { of: q("ns::P") },
         FieldType::Table {
             columns: Box::new([
-                bare_field("start", FieldType::Integer(IntegerType::default())),
-                full_field("label", FieldType::Character(CharacterType::default())),
+                ColumnDef {
+                    field: bare_field("start", FieldType::Integer(IntegerType::default())),
+                    unique: false,
+                    required: true,
+                },
+                ColumnDef {
+                    field: FieldDef {
+                        resolve: None,
+                        inherited_from: None,
+                        ..full_field("label", FieldType::Character(CharacterType::default()))
+                    },
+                    unique: true,
+                    required: false,
+                },
             ]),
             open: true,
             rules: Box::new([rule]),
@@ -241,20 +251,15 @@ fn sample_types() -> Vec<FieldType> {
         },
         FieldType::Option {
             inner: Box::new(FieldType::Integer(IntegerType::default())),
-            resolve: Resolve::Computed { expr: logic },
         },
-        FieldType::Option {
-            inner: Box::new(FieldType::Logical),
-            resolve: Resolve::Runtime,
-        },
-        FieldType::Hashmap {
+        FieldType::BtreeMap {
             value: Box::new(FieldType::Json),
             keys: CharacterType {
                 pattern: Some("^k".into()),
                 values: None,
             },
         },
-        FieldType::OrderedMap {
+        FieldType::IndexMap {
             value: Box::new(FieldType::Date),
             keys: CharacterType::default(),
         },
@@ -262,7 +267,7 @@ fn sample_types() -> Vec<FieldType> {
         FieldType::Dyn {
             r#trait: q("ns::Kernel"),
         },
-        FieldType::Descendant { of: q("ns::Base") },
+        FieldType::Subtype { of: q("ns::Base") },
     ];
     for t in &out {
         match t {
@@ -284,11 +289,11 @@ fn sample_types() -> Vec<FieldType> {
             | FieldType::R { .. }
             | FieldType::Vec { .. }
             | FieldType::Option { .. }
-            | FieldType::Hashmap { .. }
-            | FieldType::OrderedMap { .. }
+            | FieldType::BtreeMap { .. }
+            | FieldType::IndexMap { .. }
             | FieldType::Named { .. }
             | FieldType::Dyn { .. }
-            | FieldType::Descendant { .. } => {}
+            | FieldType::Subtype { .. } => {}
         }
     }
     out
@@ -398,6 +403,14 @@ fn sample_struct() -> TypeDef {
         f.default = Some(Box::new(rtemis_r8::tree::Tree::from_value(&v)));
         fields.push(f);
     }
+    let mut context = bare_field(
+        "c0",
+        FieldType::Option {
+            inner: Box::new(FieldType::Logical),
+        },
+    );
+    context.resolve = Some(Resolve::Context);
+    fields.push(context);
     let mut ext = std::collections::BTreeMap::new();
     ext.insert("x:y".to_string(), json!({"k": 1}));
     TypeDef::Struct(StructDef {
@@ -424,8 +437,6 @@ fn sample_struct() -> TypeDef {
             },
         ],
         aliases: vec![q("old::Sample")],
-        provenance: true,
-        s4: true,
         extensions: ext,
     })
 }
@@ -468,7 +479,7 @@ fn sample_trait() -> TraitDef {
                     DoubleType::default(),
                 )))),
                 stochastic: true,
-                has_default: true,
+                has_default_impl: true,
             },
             MethodDef {
                 name: MethodName::new("[").unwrap(),
@@ -476,13 +487,14 @@ fn sample_trait() -> TraitDef {
                 params: vec![],
                 return_type: Some(ReturnType::Receiver(SelfType::SelfType)),
                 stochastic: false,
-                has_default: false,
+                has_default_impl: false,
             },
         ],
-        required_fields: vec![full_field(
-            "gamma",
-            FieldType::Double(DoubleType::default()),
-        )],
+        required_fields: vec![RequiredField {
+            name: name("gamma"),
+            ty: FieldType::Double(DoubleType::default()),
+            description: "A required field.".into(),
+        }],
         supertraits: vec![q("R8::Display")],
         tag: Some(name("kind")),
         generic: true,
@@ -495,7 +507,7 @@ fn sample_impls() -> Vec<ImplDef> {
         ImplDef {
             r#trait: q("ns::Kernel"),
             type_args: vec![],
-            target: ImplTarget::Type {
+            target: TypeRef::Type {
                 name: q("ns::Sample"),
             },
             tag_value: Some("sample".into()),
@@ -505,18 +517,18 @@ fn sample_impls() -> Vec<ImplDef> {
         ImplDef {
             r#trait: q("R8::From"),
             type_args: vec![
-                ImplTarget::Type {
+                TypeRef::Type {
                     name: q("ns::Sample"),
                 },
-                ImplTarget::HostClass {
+                TypeRef::HostClass {
                     host: "r".into(),
                     package: String::new(),
                     class: "data.frame".into(),
                     system: ClassSystem::S3,
                 },
-                ImplTarget::Any,
+                TypeRef::Any,
             ],
-            target: ImplTarget::HostClass {
+            target: TypeRef::HostClass {
                 host: "r".into(),
                 package: "Matrix".into(),
                 class: "dgCMatrix".into(),
@@ -579,11 +591,11 @@ fn samples_of_every_member_round_trip() {
     );
 }
 
-/// The golden record of format 4: `tests/fixtures/sample.r8d` holds the
-/// samples as format 4 wrote them, and `sample.r8d.json` their IR. With
+/// The golden record of the current format: `tests/fixtures/sample.r8d` holds the
+/// samples as that format writes them, and `sample.r8d.json` their IR. With
 /// `R8_UPDATE_RECORD=1`, the test writes both files.
 #[test]
-fn the_golden_record_of_format_4_reads_and_writes_back() {
+fn the_golden_record_of_the_current_format_reads_and_writes_back() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let (_, entries) = sample_record();
     let bytes = encode_entries(&entries);
@@ -601,7 +613,7 @@ fn the_golden_record_of_format_4_reads_and_writes_back() {
     // The header names the writer; the payload from the checksum on is the
     // format's bytes, which the current encoder reproduces.
     let (format, _) = record::header(&golden).unwrap();
-    assert_eq!(format, 4);
+    assert_eq!(format, record::FORMAT);
     let payload = |b: &[u8]| {
         let (_, writer) = record::header(b).unwrap();
         b[4 + 1 + 1 + writer.len()..].to_vec()
@@ -654,7 +666,7 @@ fn damaged_and_hostile_records_return_errors() {
     magic[0] = b'X';
     assert_eq!(record::decode(&magic), Err(RecordError::Magic));
     // A format other than the current one is refused.
-    for other in [3u8, 5] {
+    for other in [record::FORMAT as u8 - 1, record::FORMAT as u8 + 1] {
         let mut b = bytes.clone();
         b[4] = other;
         assert!(matches!(
@@ -698,8 +710,6 @@ fn deep_nesting_is_refused() {
         rules: vec![],
         migrations: vec![],
         aliases: vec![],
-        provenance: false,
-        s4: false,
         extensions: Default::default(),
     });
     let ns = name("ns");

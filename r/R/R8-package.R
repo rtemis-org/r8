@@ -11,7 +11,7 @@
 #' with other host languages.
 #'
 #' @section Runtime:
-#' [r8_core_version()].
+#' [r8_runtime_version()].
 #'
 #' @section Names:
 #' A function that a declaration is written with takes no prefix:
@@ -31,7 +31,7 @@
 #'   such as a type object where a value is expected, or a replacement
 #'   method or `From` impl that returns a value of another type.
 #' - `r8_value_error`: a value that does not satisfy its type; its subclass
-#'   `r8_codec_missing` is a Rust-native type whose codec is not registered.
+#'   `r8_codec_missing` is a Rust-stored type whose codec is not registered.
 #' - `r8_dispatch_error`: a generic or trait method with no impl for the
 #'   value's type, a conversion without a `From` impl, or `r8_next_impl()`
 #'   without a next impl.

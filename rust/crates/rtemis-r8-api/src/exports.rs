@@ -1,5 +1,5 @@
 //! The exports table of a package (`R8Exports`): what `r8::exports!`
-//! builds from the package's Rust-native types and the impls that
+//! builds from the package's Rust-stored types and the impls that
 //! `#[r8::methods]` generates.
 
 use std::ffi::{CStr, c_void};
@@ -34,7 +34,7 @@ pub struct ImplSet {
 }
 
 /// The package's exports table, built on first use: the declaration record
-/// of `types` (the declarations of the Rust-native types), the codec tables
+/// of `types` (the declarations of the Rust-stored types), the codec tables
 /// `codecs`, and the impl entries, from which R8 builds the impl
 /// declarations.
 ///

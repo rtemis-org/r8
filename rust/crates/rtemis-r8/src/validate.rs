@@ -124,11 +124,11 @@ enum P<'p> {
     Root(&'p str),
     /// A field.
     Key(&'p P<'p>, &'p str),
-    /// A key of a `hashmap()`.
+    /// A key of a `btree_map()`.
     MapKey(&'p P<'p>, &'p str),
     /// A table column.
     Col(&'p P<'p>, &'p str),
-    /// An element of a vector or an `ordered_map()`.
+    /// An element of a vector or an `index_map()`.
     Idx(&'p P<'p>, usize),
     /// A JSON Pointer suffix, already escaped.
     Raw(&'p P<'p>, &'p str),
@@ -543,11 +543,11 @@ impl<'l> Validator<'l, '_> {
                 self.lengths(n, *min_length, *max_length, path);
                 self.sequence(element, v, n, path, false, *unique);
             }
-            FieldType::Hashmap { value, keys } => self.map(value, keys, false, v, path),
-            FieldType::OrderedMap { value, keys } => self.map(value, keys, true, v, path),
+            FieldType::BtreeMap { value, keys } => self.map(value, keys, false, v, path),
+            FieldType::IndexMap { value, keys } => self.map(value, keys, true, v, path),
             FieldType::Named { name } => self.named(name, v, path, &[]),
             FieldType::Dyn { r#trait } => self.dynamic(r#trait, v, path),
-            FieldType::Descendant { of } => self.descendant(of, v, path),
+            FieldType::Subtype { of } => self.subtype(of, v, path),
         }
     }
 
@@ -786,7 +786,7 @@ impl<'l> Validator<'l, '_> {
             let (values, total) = listed(values);
             let values = values.into_iter().map(|v| Lit::Num(f64::from(v))).collect();
             self.report(
-                "not_in_enum",
+                "not_in_values",
                 path,
                 Problem::OneOf { values, total },
                 Some(Shown::number(f64::from(x))),
@@ -819,7 +819,7 @@ impl<'l> Validator<'l, '_> {
             let (values, total) = listed(values);
             let values = values.into_iter().map(Lit::Num).collect();
             self.report(
-                "not_in_enum",
+                "not_in_values",
                 path,
                 Problem::OneOf { values, total },
                 Some(Shown::number(x)),
@@ -899,7 +899,7 @@ impl<'l> Validator<'l, '_> {
 
     fn datetime(&mut self, m: i64, path: &P) {
         if !(-POSIXCT_MICROS..=POSIXCT_MICROS).contains(&m) {
-            self.report("invalid_datetime", path, Problem::DateTimeRange, None, None);
+            self.report("invalid_posixct", path, Problem::DateTimeRange, None, None);
         }
     }
 
@@ -928,7 +928,7 @@ impl<'l> Validator<'l, '_> {
                 .map(|v| Lit::Str(v.to_string()))
                 .collect();
             self.report(
-                "not_in_enum",
+                "not_in_values",
                 path,
                 Problem::OneOf { values, total },
                 Some(Shown::string(s)),
@@ -1180,9 +1180,9 @@ impl<'l> Validator<'l, '_> {
         self.sequence(element, s.data, s.len, &P::Raw(path, "/data"), false, false);
     }
 
-    fn table<'a, A: Access<'a>>(
+    fn table<'a, A: Access<'a>, C: crate::ir::Column>(
         &mut self,
-        columns: &[FieldDef],
+        columns: &[C],
         open: bool,
         rules: &[RuleDef],
         v: A,
@@ -1198,14 +1198,16 @@ impl<'l> Validator<'l, '_> {
         }
         let n = t.rows;
         let present = |name: &str| t.columns.iter().find(|(k, _)| k == name).map(|(_, c)| *c);
-        let mut all_columns: Vec<(FieldDef, A)> = Vec::new();
+        // Each column's field, whether its values are distinct, and its cells.
+        let mut all_columns: Vec<(FieldDef, bool, A)> = Vec::new();
         for c in columns {
-            match present(c.name.as_str()) {
-                Some(cells) => all_columns.push((c.clone(), cells)),
-                None if c.optional => {}
+            let f = c.field();
+            match present(f.name.as_str()) {
+                Some(cells) => all_columns.push((f.clone(), c.unique(), cells)),
+                None if !c.required() => {}
                 None => self.report(
                     "missing_column",
-                    &P::Col(path, c.name.as_str()),
+                    &P::Col(path, f.name.as_str()),
                     Problem::Required,
                     None,
                     None,
@@ -1213,14 +1215,18 @@ impl<'l> Validator<'l, '_> {
             }
         }
         for (k, cells) in &t.columns {
-            if columns.iter().any(|c| c.name.as_str() == k.as_ref()) {
+            if columns
+                .iter()
+                .any(|c| c.field().name.as_str() == k.as_ref())
+            {
                 continue;
             }
             if !open {
-                let suggestion = crate::name::nearest(k, columns.iter().map(|c| c.name.as_str()))
-                    .map(str::to_string);
+                let suggestion =
+                    crate::name::nearest(k, columns.iter().map(|c| c.field().name.as_str()))
+                        .map(str::to_string);
                 let names = if columns.len() <= crate::problem::LISTED_NAMES {
-                    columns.iter().map(|c| c.name.to_string()).collect()
+                    columns.iter().map(|c| c.field().name.to_string()).collect()
                 } else {
                     Vec::new()
                 };
@@ -1243,12 +1249,11 @@ impl<'l> Validator<'l, '_> {
                         description: Box::default(),
                         sensitive: false,
                         unit: None,
-                        external: false,
-                        unique: false,
-                        optional: false,
+                        resolve: None,
                         inherited_from: None,
                         extensions: Default::default(),
                     },
+                    false,
                     *cells,
                 )),
                 (Ok(_), Ok(_)) => self.error(
@@ -1259,7 +1264,7 @@ impl<'l> Validator<'l, '_> {
                 (Err(f), Ok(_)) => self.form(f, path),
             }
         }
-        for (c, cells) in &all_columns {
+        for (c, unique, cells) in &all_columns {
             let p = P::Col(path, c.name.as_str());
             let (inner, optional) = unwrap_option(&c.ty);
             if let FieldType::Factor { levels, ordered } = inner {
@@ -1293,10 +1298,10 @@ impl<'l> Validator<'l, '_> {
                 );
                 continue;
             }
-            self.sequence(inner, *cells, len, &p, optional, c.unique);
+            self.sequence(inner, *cells, len, &p, optional, *unique);
         }
         if !rules.is_empty() && self.count == before {
-            let scope: Vec<FieldDef> = all_columns.into_iter().map(|(c, _)| c).collect();
+            let scope: Vec<FieldDef> = all_columns.into_iter().map(|(c, _, _)| c).collect();
             for (ri, r) in rules.iter().enumerate() {
                 if let Some(rule) = self.compiled(r, ri, &scope) {
                     match rule.check_rows_access(v, n as usize, &scope, self.lookup) {
@@ -1585,9 +1590,9 @@ impl<'l> Validator<'l, '_> {
     /// Checks a value of `dyn(of)` for the struct `of`: the type the value
     /// names is `of` or descends from it, and the value is valid as that
     /// type.
-    fn descendant<'a, A: Access<'a>>(&mut self, of: &QualifiedName, v: A, path: &P) {
+    fn subtype<'a, A: Access<'a>>(&mut self, of: &QualifiedName, v: A, path: &P) {
         match v.named_type() {
-            Ok((ty, member)) if self.lookup.descends(&ty, of) => match &member {
+            Ok((ty, member)) if self.lookup.is_subtype(&ty, of) => match &member {
                 Some(m) => self.named(&ty, v, path, &[m.as_str()]),
                 None => self.named(&ty, v, path, &[]),
             },
@@ -1597,7 +1602,7 @@ impl<'l> Validator<'l, '_> {
                 format!("`{ty}` is not a registered type"),
             ),
             Ok((ty, _)) => self.error(
-                "not_descendant",
+                "not_subtype",
                 path,
                 format!("`{ty}` is not `{of}` and does not extend it"),
             ),

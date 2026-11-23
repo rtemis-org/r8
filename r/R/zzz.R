@@ -12,26 +12,38 @@
 #' Traits that R8 declares in its namespace `R8`, which a type implements
 #' with `impl()` like any trait:
 #'
+#' Four are Rust's standard traits, with their Rust meaning:
+#'
 #' - `Display`: `format(x, ...)`, which `print()` shows for a type without
 #'   a `Print` impl.
-#' - `Print`: `print(x, ...)`, which `print()` calls before it returns `x`
-#'   invisibly; `format()` keeps the `Display` text.
 #' - `Debug`: `str(object, ...)`.
-#' - `Dim`: `dim(x)`; `nrow()` and `ncol()` follow.
-#' - `PartialOrd`: `cmp(x, y)`, which returns a negative number, zero, or a
-#'   positive number as `x` sorts before, with, or after `y`; `<`, `<=`, `>`,
-#'   and `>=` use it, and `r8_cmp()` calls it.
+#' - `PartialOrd`: `partial_cmp(x, y)`, which returns `-1L`, `0L`, or `1L`
+#'   as `x` sorts before, with, or after `y`, and `NA` when the two are not
+#'   ordered; a whole double converts, as in construction, and any other
+#'   result raises `r8_result_error`. `<`, `<=`, `>`, and `>=` use it, and
+#'   return `FALSE` for values that are not ordered, as Rust's do;
+#'   `r8_partial_cmp()` calls it. A result of `0L` agrees with `r8_equal()`.
 #' - `From(source)`: `from(x)`, which converts a value of the class or R8
 #'   type `source` to the implementing type; `r8_convert()`, `Type@from()`,
 #'   and `r8_converter()` use it.
 #'
-#' R8 provides `format()`, `print()`, and `str()` for every value, `==` and
-#' `r8_hash()` through `r8_equal()`, `r8_to_json()` and `r8_from_json()`, and a
-#' type whose required fields have defaults is constructed with no
-#' arguments.
+#' Two are R's host traits, for R's own functions:
 #'
-#' @param source Character: The class or qualified R8 type converted from.
-#' @param x,y Values of one R8 type, for `r8_cmp()`.
+#' - `Print`: `print(x, ...)`, which `print()` calls before it returns `x`
+#'   invisibly; `format()` keeps the `Display` text.
+#' - `Shape`: `dim(x)`; `nrow()` and `ncol()` follow.
+#'
+#' Every type has, without an impl, the behavior of Rust's `PartialEq`
+#' (`==` and `r8_equal()`), `Hash` (`r8_hash()`, the hash of the canonical
+#' form), `Serialize` and `Deserialize` (`r8_to_json()` and
+#' `r8_from_json()`), and, for a type whose required fields have defaults,
+#' `Default` (the constructor called with no arguments); these are not
+#' traits that a type implements.
+#'
+#' @param source The source converted from: an R8 type object, a class name
+#'   such as `"data.frame"` or `"numeric"`, a [host_class()], or an S4 class
+#'   object, as a dispatched position takes it.
+#' @param x,y Values of one R8 type, for `r8_partial_cmp()`.
 #'
 #' @return A trait object. `From()` returns one of the internal class
 #'   `r8_from_trait`, which holds its type parameter `source`.
@@ -40,7 +52,7 @@
 #' op <- options(r8.namespace = "demo")
 #' Money <- new_struct("Money", fields = list(cents = type_integer()))
 #' impl(Display, Money, methods = list(format = function(x, ...) sprintf("$%.2f", x$cents / 100)))
-#' impl(PartialOrd, Money, methods = list(cmp = function(x, y) x$cents - y$cents))
+#' impl(PartialOrd, Money, methods = list(partial_cmp = function(x, y) sign(x$cents - y$cents)))
 #' impl(From("numeric"), Money, methods = list(
 #'   from = function(x) Money(cents = as.integer(round(x * 100)))
 #' ))
@@ -83,8 +95,8 @@ Debug <- build_trait(
 
 #' @rdname standard_traits
 #' @export
-Dim <- build_trait(
-  "Dim",
+Shape <- build_trait(
+  "Shape",
   list(dim = trait_method(function(x) NULL, description = "The dimensions.")),
   "A value's dimensions.",
   NULL,
@@ -97,9 +109,9 @@ Dim <- build_trait(
 PartialOrd <- build_trait(
   "PartialOrd",
   list(
-    cmp = trait_method(
+    partial_cmp = trait_method(
       function(x, y) NULL,
-      description = "The order of x relative to y."
+      description = "The order of x relative to y, or NA when not ordered."
     )
   ),
   "An order between values of a type.",
@@ -126,7 +138,7 @@ Print <- build_trait(
 
 #' @rdname standard_traits
 #' @export
-r8_cmp <- unclass(PartialOrd)[["generics"]][["cmp"]]
+r8_partial_cmp <- unclass(PartialOrd)[["generics"]][["partial_cmp"]]
 
 # The declaration of `From`, one trait whose impls carry their source as a
 # type argument.
@@ -144,23 +156,42 @@ FROM_IR <- list(
 #' @rdname standard_traits
 #' @export
 From <- function(source) {
-  if (!is.character(source) || length(source) != 1L || !nzchar(source)) {
-    r8_abort(
-      "`source` is one class or qualified type name.",
-      class = "r8_declaration_error"
-    )
-  }
+  p <- position_of(source)[["ir"]]
   structure(
     list(
       name = "R8::From",
       ir = FROM_IR,
       generics = list(),
       defaults = list(),
-      source = source
+      # The key of the source's impls: a qualified type name or a class.
+      source = if (identical(p[["kind"]], "type")) {
+        p[["name"]]
+      } else {
+        p[["class"]]
+      },
+      source_ir = p
     ),
     class = c("r8_from_trait", "r8_trait")
   )
 } # /R8::From
+
+
+# %% from_text ----
+#' A `From()` source as R code, for messages
+#'
+#' @param s Character: A source key, a qualified type name or a class.
+#'
+#' @return Character: The type's name, or the class in double quotes.
+#'
+#' @keywords internal
+#' @noRd
+from_text <- function(s) {
+  if (grepl("::", s, fixed = TRUE)) {
+    sub("^.*::", "", s)
+  } else {
+    paste0("\"", s, "\"")
+  }
+} # /R8::from_text
 
 
 # %% r8_convert ----
@@ -216,9 +247,9 @@ r8_convert <- function(x, type) {
     if (!is.null(fn)) {
       if (r8 && !identical(s, attr(x, "r8_type")) && is_compiled_impl(fn)) {
         r8_abort(
-          "The compiled From(\"",
-          s,
-          "\") impl of `",
+          "The compiled From(",
+          from_text(s),
+          ") impl of `",
           target,
           "` takes a value of `",
           s,
@@ -226,9 +257,9 @@ r8_convert <- function(x, type) {
           attr(x, "r8_type"),
           "`; convert r8_upcast(x, ",
           sub("^.*::", "", s),
-          "), or declare From(\"",
-          attr(x, "r8_type"),
-          "\").",
+          "), or declare From(",
+          from_text(attr(x, "r8_type")),
+          ").",
           class = "r8_dispatch_error"
         )
       }
@@ -237,9 +268,9 @@ r8_convert <- function(x, type) {
         !inherits(out, "r8_value") || !identical(attr(out, "r8_type"), target)
       ) {
         r8_abort(
-          "The From(\"",
-          s,
-          "\") impl of `",
+          "The From(",
+          from_text(s),
+          ") impl of `",
           target,
           "` returned ",
           if (inherits(out, "r8_value")) {
@@ -360,20 +391,11 @@ print.r8_converter <- function(x, ...) {
 #' @noRd
 declare_conversion <- function(converter, source, fn, env) {
   target <- converter_target(converter)
-  name <- if (inherits(source, "r8_type")) {
-    ensure_registered(source)
-    attr(source, "r8_name")
-  } else if (
-    is.character(source) &&
-      length(source) == 1L &&
-      !is.na(source) &&
-      nzchar(source)
-  ) {
-    source
-  } else {
+  if (!is_position(source)) {
     r8_abort(
       "A converter's method is declared for the class of `x`: an R8 type ",
-      "object or a class name, such as implement(as_",
+      "object, a class name, host_class(), or an S4 class object, such as ",
+      "implement(as_",
       tolower(sub("^.*::", "", attr(target, "r8_name"))),
       ", \"character\") <- function(x) ...",
       class = "r8_declaration_error"
@@ -384,7 +406,7 @@ declare_conversion <- function(converter, source, fn, env) {
     "x",
     paste0("r8_converter(", sub("^.*::", "", attr(target, "r8_name")), ")")
   )
-  impl_declare(From(name), target, list(from = fn), NULL, env)
+  impl_declare(From(source), target, list(from = fn), NULL, env)
 } # /R8::declare_conversion
 
 
@@ -435,7 +457,7 @@ declare_conversion <- function(converter, source, fn, env) {
   assign(".r8_c_find3", .r8_native[["find3"]], envir = ns)
   assign(".r8_c_invoke", .r8_native[["invoke"]], envir = ns)
   claim_namespace("R8", "R8")
-  for (t in list(Display, Debug, Dim, PartialOrd, Print)) {
+  for (t in list(Display, Debug, Shape, PartialOrd, Print)) {
     register_trait(t, "R8")
   }
   register_trait(

@@ -3,7 +3,7 @@
 # 2026- EDG rtemis.org
 
 # Traits and generics declared in R for `Conform`, and the impls of R8's
-# standard traits that the provider declares, for R-native and Rust-native
+# standard traits that the provider declares, for R-stored and Rust-stored
 # values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 
@@ -43,12 +43,12 @@ test_that("PartialOrd orders values", {
   expect_true(x > y)
   expect_false(x < y)
   expect_true(x <= x)
-  expect_identical(r8_cmp(x, y), 1L)
-  expect_identical(r8_cmp(y, x), -1L)
-  expect_null(r8_cmp(x, 1))
+  expect_identical(r8_partial_cmp(x, y), 1L)
+  expect_identical(r8_partial_cmp(y, x), -1L)
+  expect_identical(r8_partial_cmp(x, 1), NA_integer_)
 })
 
-test_that("Dim gives dim(), nrow(), and ncol()", {
+test_that("Shape gives dim(), nrow(), and ncol()", {
   p <- conformance_provider()
   x <- conform_value(p)
   expect_identical(dim(x), c(2L, 2L))

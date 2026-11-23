@@ -38,7 +38,7 @@ struct ImplFn {
     call: MethodFn,
 }
 
-/// A registered codec of a Rust-native type.
+/// A registered codec of a Rust-stored type.
 #[derive(Clone, Copy)]
 struct VTable(*const TypeVTable);
 
@@ -60,7 +60,7 @@ struct Owned {
 struct Compiled {
     /// Impl functions by trait, type, and method.
     impls: HashMap<ImplKey, ImplFn>,
-    /// Codecs of Rust-native types by qualified name.
+    /// Codecs of Rust-stored types by qualified name.
     types: HashMap<String, VTable>,
     /// The entries each package registered, for their replacement.
     owned: HashMap<String, Owned>,
@@ -71,12 +71,12 @@ fn compiled() -> &'static Mutex<Compiled> {
     COMPILED.get_or_init(|| Mutex::new(Compiled::default()))
 }
 
-/// The codec of the Rust-native type `name`, when a package registered one.
+/// The codec of the Rust-stored type `name`, when a package registered one.
 pub(crate) fn codec(name: &str) -> Option<*const TypeVTable> {
     compiled().lock().ok()?.types.get(name).map(|v| v.0)
 }
 
-/// The package that registered the codec of the Rust-native type `name`.
+/// The package that registered the codec of the Rust-stored type `name`.
 pub(crate) fn codec_package(name: &str) -> Option<String> {
     let c = compiled().lock().ok()?;
     c.owned
@@ -85,7 +85,7 @@ pub(crate) fn codec_package(name: &str) -> Option<String> {
         .map(|(p, _)| p.clone())
 }
 
-/// The registered Rust-native types and whether each codec table holds
+/// The registered Rust-stored types and whether each codec table holds
 /// every function.
 ///
 /// @return List: `type_name` and `complete`.
@@ -342,7 +342,7 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
 }
 
 /// Registers an exports table: declares the impls its impl entries make and
-/// keeps the codecs of its Rust-native types and its impl functions,
+/// keeps the codecs of its Rust-stored types and its impl functions,
 /// replacing the package's earlier entries. The types are the package's R
 /// declarations, registered before, which `r8_exports_compare()` checks
 /// against the table.

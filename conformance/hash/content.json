@@ -4,7 +4,7 @@
     {
       "description": "The Svm defaults.",
       "expect": {
-        "hash": "sha256:19dc8b7b087bc6bc4d58f62af46e48af5c205777613e605d7ea1bf2ef514a8cd"
+        "hash": "sha256:46ffb691ce5a87320f5dd7cc0abaaa70ae91a7ef1339aca2af9a62ac8176d3b7"
       },
       "id": "svm-defaults",
       "input": {},
@@ -14,7 +14,7 @@
     {
       "description": "The same value with defaults written out and members in another order hashes the same.",
       "expect": {
-        "hash": "sha256:19dc8b7b087bc6bc4d58f62af46e48af5c205777613e605d7ea1bf2ef514a8cd"
+        "hash": "sha256:46ffb691ce5a87320f5dd7cc0abaaa70ae91a7ef1339aca2af9a62ac8176d3b7"
       },
       "id": "svm-defaults-explicit",
       "input": {
@@ -30,7 +30,7 @@
     {
       "description": "A struct variant.",
       "expect": {
-        "hash": "sha256:b19e1a92249594fa94e6648445b820ccfcc14c99da3be72e57d5c808e172bc02"
+        "hash": "sha256:bfc14e15982c4844186120575799389ba6b342d688b91c4aa6ad4ff755b48f33"
       },
       "id": "svm-rbf",
       "input": {
@@ -197,7 +197,7 @@
         ]
       },
       "expect": {
-        "hash": "sha256:3ab738c3660785361fa4c645c749d0e8aff5576a87312431bbd7207a59dc4099"
+        "hash": "sha256:17be3d9b48cb45790a8fd9a4f6bb69adc2a3090de7f965f3a1b9464764570d28"
       }
     }
   ],
@@ -274,8 +274,7 @@
                   }
                 }
               },
-              "description": "Case weights.",
-              "external": true
+              "description": "Case weights."
             },
             {
               "name": "mtry",
@@ -284,12 +283,12 @@
                 "inner": {
                   "kind": "integer",
                   "min": 1
-                },
-                "resolve": {
-                  "policy": "runtime"
                 }
               },
-              "description": "Variables per split."
+              "description": "Variables per split.",
+              "resolve": {
+                "policy": "context"
+              }
             }
           ],
           "rules": [

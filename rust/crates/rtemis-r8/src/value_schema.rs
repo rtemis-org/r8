@@ -31,7 +31,7 @@ struct Writer<'a> {
     lookup: &'a dyn TypeLookup,
     defs: BTreeMap<String, Value>,
     /// Write a `dyn()` field as the closed list of the registered
-    /// implementors, and a `descendant` field as the struct and its
+    /// implementors, and a `subtype` field as the struct and its
     /// registered descendants.
     implementors: bool,
 }
@@ -208,12 +208,12 @@ impl Writer<'_> {
                 s
             }
             FieldType::Option { inner, .. } => nullable(self.ty(inner)),
-            FieldType::Hashmap { value, keys } => json!({
+            FieldType::BtreeMap { value, keys } => json!({
                 "type": "object",
                 "propertyNames": key_schema(keys),
                 "additionalProperties": self.element(value)
             }),
-            FieldType::OrderedMap { value, keys } => json!({
+            FieldType::IndexMap { value, keys } => json!({
                 "type": "array",
                 "items": {
                     "type": "object",
@@ -221,7 +221,7 @@ impl Writer<'_> {
                     "required": ["name", "value"],
                     "additionalProperties": false
                 },
-                "x-r8": {"ordered_map": true}
+                "x-r8": {"index_map": true}
             }),
             FieldType::Named { name } => {
                 self.define(name);
@@ -249,7 +249,7 @@ impl Writer<'_> {
                 "required": [self.lookup_tag(r#trait)],
                 "x-r8": {"dyn": r#trait.to_string()}
             }),
-            FieldType::Descendant { of } if self.implementors => {
+            FieldType::Subtype { of } if self.implementors => {
                 let mut types = vec![of.clone()];
                 types.extend(self.lookup.descendants_of(of));
                 let alternatives: Vec<Value> = types
@@ -258,13 +258,13 @@ impl Writer<'_> {
                     .collect();
                 json!({
                     "anyOf": alternatives,
-                    "x-r8": {"descendant": of.to_string(), "implementors": "registered"}
+                    "x-r8": {"subtype": of.to_string(), "implementors": "registered"}
                 })
             }
-            FieldType::Descendant { of } => json!({
+            FieldType::Subtype { of } => json!({
                 "type": "object",
                 "required": ["$type"],
-                "x-r8": {"descendant": of.to_string()}
+                "x-r8": {"subtype": of.to_string()}
             }),
         }
     }
@@ -314,7 +314,7 @@ impl Writer<'_> {
         })
     }
 
-    fn column(&mut self, c: &FieldDef) -> Value {
+    fn column(&mut self, c: &FieldDef, unique: bool) -> Value {
         let (inner, optional) = match &c.ty {
             FieldType::Option { inner, .. } => (inner.as_ref(), true),
             other => (other, false),
@@ -325,7 +325,7 @@ impl Writer<'_> {
                 let cell = self.ty(other);
                 let cell = if optional { nullable(cell) } else { cell };
                 let mut s = json!({"type": "array", "items": cell});
-                if c.unique {
+                if unique {
                     s["x-r8"] = json!({"unique": true});
                 }
                 s
@@ -334,14 +334,22 @@ impl Writer<'_> {
         with_description(s, &c.description)
     }
 
-    fn table(&mut self, columns: &[FieldDef], open: bool, rules: &[RuleDef]) -> Value {
+    fn table<C: crate::ir::Column>(
+        &mut self,
+        columns: &[C],
+        open: bool,
+        rules: &[RuleDef],
+    ) -> Value {
         let mut props = Map::new();
         props.insert("$length".into(), json!({"type": "integer", "minimum": 0}));
         let mut required = vec![Value::from("$length")];
         for c in columns {
-            props.insert(c.name.to_string(), self.column(c));
-            if !c.optional {
-                required.push(Value::from(c.name.as_str()));
+            props.insert(
+                c.field().name.to_string(),
+                self.column(c.field(), c.unique()),
+            );
+            if c.required() {
+                required.push(Value::from(c.field().name.as_str()));
             }
         }
         if open {
@@ -503,7 +511,7 @@ pub fn json_schema(ty: &QualifiedName, lookup: &dyn TypeLookup) -> Value {
 
 /// [`json_schema`]; with `implementors`, a `dyn(Trait)` field is the closed
 /// list (`anyOf`) of the trait's registered implementors, each with its type
-/// member as a constant, and a `descendant` field the struct and its
+/// member as a constant, and a `subtype` field the struct and its
 /// registered descendants, each with `"$type"` as a constant.
 pub fn json_schema_with(ty: &QualifiedName, lookup: &dyn TypeLookup, implementors: bool) -> Value {
     let mut w = Writer {

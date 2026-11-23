@@ -411,7 +411,7 @@ classify_generic <- function(g, type_label = "Type") {
   standard <- list(
     list(fn = base::format, trait = "R8::Display", method = "format"),
     list(fn = utils::str, trait = "R8::Debug", method = "str"),
-    list(fn = base::dim, trait = "R8::Dim", method = "dim"),
+    list(fn = base::dim, trait = "R8::Shape", method = "dim"),
     list(fn = base::print, trait = "R8::Print", method = "print")
   )
   for (s in standard) {
@@ -447,7 +447,7 @@ classify_generic <- function(g, type_label = "Type") {
     list(
       fns = list(base::`<`, base::`<=`, base::`>`, base::`>=`),
       reason = paste0(
-        "comparisons use the PartialOrd trait; implement(r8_cmp, ",
+        "comparisons use the PartialOrd trait; implement(r8_partial_cmp, ",
         type_label,
         ") <- function(x, y) ... defines the order"
       )
@@ -531,8 +531,8 @@ classify_generic <- function(g, type_label = "Type") {
 #' - A generic from `generic()`, or a trait method such as `Fit@fit`: an
 #'   impl of its trait.
 #' - `format`, `str`, and `dim`: an impl of the standard trait `Display`,
-#'   `Debug`, or `Dim`; `r8_cmp`: of `PartialOrd`, which `<`, `<=`, `>`, and
-#'   `>=` use.
+#'   `Debug`, or `Shape`; `r8_partial_cmp`: of `PartialOrd`, which `<`,
+#'   `<=`, `>`, and `>=` use.
 #' - `print`: an impl of the standard trait `Print`; `print()` calls the
 #'   function and returns the value invisibly, and `format()` keeps its own
 #'   text. The declaration states this in a message.
@@ -831,7 +831,7 @@ r8_method <- function(generic, ...) {
   }
   type <- types[[1L]]
   if (inherits(generic, "r8_converter")) {
-    source <- if (inherits(type, "r8_type")) attr(type, "r8_name") else type
+    source <- unclass(From(type))[["source"]]
     target <- attr(converter_target(generic), "r8_name")
     fn <- .r8_impls[[paste("R8::From", source, target, sep = "|")]]
     if (is.null(fn)) {

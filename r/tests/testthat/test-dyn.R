@@ -44,14 +44,14 @@ dyn_types <- function(ns) {
       fields = list(
         algo = option(dyn(Algorithm)),
         plain = option(dyn(Plain)),
-        base = option(dyn(Cart))
+        base = option(subtype(Cart))
       )
     )
     environment()
   })
 }
 
-test_that("a dyn() field holds an implementor or a descendant of one", {
+test_that("a dyn() field holds an implementor, and a subtype() field a struct or a descendant", {
   e <- dyn_types("dyn1")
   m <- e$Model(
     algo = e$Glmnet(alpha = 0.5),
@@ -124,9 +124,16 @@ test_that("tag values are names and unique among a trait's implementors", {
   })
 })
 
-test_that("dyn() takes a trait, a generic, or a struct type", {
+test_that("dyn() takes a trait or a generic, and subtype() a struct", {
   e <- dyn_types("dyn4")
   expect_error(dyn(e$Color), "is an enum", class = "r8_declaration_error")
+  expect_error(dyn(e$Cart), "subtype\\(Cart\\)", class = "r8_declaration_error")
+  expect_error(
+    subtype(e$Algorithm),
+    "dyn\\(\\) of the trait",
+    class = "r8_declaration_error"
+  )
+  expect_identical(unclass(subtype(e$Cart))[["kind"]], "subtype")
   expect_error(
     dyn("dyn4::Cart"),
     "takes a trait object",

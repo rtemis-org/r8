@@ -262,7 +262,6 @@ impl<T: Encode> Encode for Option<T> {
     fn field_type() -> FieldType {
         FieldType::Option {
             inner: Box::new(T::field_type()),
-            resolve: Default::default(),
         }
     }
     fn encode(&self) -> Result<Value, String> {
@@ -287,7 +286,7 @@ macro_rules! map {
     ($($m:ident),*) => {$(
         impl<T: Encode> Encode for $m<String, T> {
             fn field_type() -> FieldType {
-                FieldType::Hashmap { value: Box::new(T::field_type()), keys: Default::default() }
+                FieldType::BtreeMap { value: Box::new(T::field_type()), keys: Default::default() }
             }
             fn encode(&self) -> Result<Value, String> {
                 let mut m = serde_json::Map::new();
@@ -362,14 +361,11 @@ fn bound<T: PartialOrd + Copy>(
 
 /// Applies a derived field's constraints to its field type: `min_length`,
 /// `max_length`, and `unique` on the outermost `vec()`, every other
-/// constraint on the innermost scalar, through `option()` and `vec()`; a
+/// constraint on the innermost scalar, through `option()` and `vec()`, and
+/// checks that a field with a fill policy (`filled`) is `option()`; a
 /// constraint that the scalar's type does not take is an error.
 #[doc(hidden)]
-pub fn constrain(
-    mut ft: FieldType,
-    c: Constraints,
-    resolve: Option<crate::ir::Resolve>,
-) -> Result<FieldType, String> {
+pub fn constrain(mut ft: FieldType, c: Constraints, filled: bool) -> Result<FieldType, String> {
     fn outer_vec(ft: &mut FieldType) -> Option<&mut FieldType> {
         match ft {
             FieldType::Vec { .. } => Some(ft),
@@ -451,11 +447,8 @@ pub fn constrain(
             }
         }
     }
-    if let Some(r) = resolve {
-        match &mut ft {
-            FieldType::Option { resolve, .. } => *resolve = r,
-            _ => return Err("resolve applies to an Option field".to_string()),
-        }
+    if filled && !matches!(ft, FieldType::Option { .. }) {
+        return Err("context applies to an Option field".to_string());
     }
     Ok(ft)
 }

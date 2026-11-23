@@ -24,11 +24,11 @@ pub fn number_text(x: f64) -> String {
 pub enum Segment {
     /// A field of a struct or an enum value.
     Field(String),
-    /// A key of a `hashmap()`.
+    /// A key of a `btree_map()`.
     Key(String),
     /// A column of a table.
     Column(String),
-    /// An element of a vector, a table column, or an `ordered_map()`,
+    /// An element of a vector, a table column, or an `index_map()`,
     /// 0-based.
     Element(u64),
     /// A part of a value's JSON form that the host writes another way, such

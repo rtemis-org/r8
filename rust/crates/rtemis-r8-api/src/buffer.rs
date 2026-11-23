@@ -1,4 +1,4 @@
-//! `Buffer<T>`, the field type of a large vector in a Rust-native struct:
+//! `Buffer<T>`, the field type of a large vector in a Rust-stored struct:
 //! immutable, read as `&[T]`, cloned in O(1), and either borrowed from an R
 //! vector, which a [`Token`] keeps alive, or owned by Rust.
 
@@ -163,7 +163,7 @@ enum Backing<T> {
     Owned(Arc<[T]>),
 }
 
-/// An immutable vector of `T` in a Rust-native struct: borrowed from an R
+/// An immutable vector of `T` in a Rust-stored struct: borrowed from an R
 /// vector with a data pointer, or owned by Rust. It reads as `&[T]` on any
 /// thread and clones in O(1).
 pub struct Buffer<T: Element> {

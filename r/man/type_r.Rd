@@ -17,6 +17,6 @@ An R value of a class, held in R only: absent from JSON and from the hash.
 A field of this type is declared inside \code{option()}.
 }
 \examples{
-option(type_r("lm"), resolve = "runtime")
+field(option(type_r("lm")), context = TRUE)
 
 }

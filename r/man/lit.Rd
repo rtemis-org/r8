@@ -13,9 +13,10 @@ lit(x)
 \code{x}.
 }
 \description{
-In a rule, \code{lit(expr)} is the value of the R expression \code{expr}, evaluated
-once, when \code{rule()} runs, in the environment that calls \code{rule()}; a bare
-name in a rule is always a field. The value is stored in the rule as a
+Declaration vocabulary of the rule dialect, without the \code{r8_} prefix of
+operations on values. In a rule, \code{lit(expr)} is the value of the R
+expression \code{expr}, evaluated once, when \code{rule()} runs, in the environment
+that calls \code{rule()}; a bare name in a rule is always a field. The value is stored in the rule as a
 literal: one non-\code{NA} logical, integer, double, or string, or a vector of
 them as the right operand of \code{\%in\%}. In a package, the value is the one
 the expression has when the package is installed.

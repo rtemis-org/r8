@@ -100,9 +100,9 @@ fn a_registered_chain_descends_and_lists_its_ancestors() {
     let (a, b, c) = chain();
     let r = registry_of(vec![a, b, c]);
     let docs = r.snapshot();
-    assert!(docs.descends(&q("ns::C"), &q("ns::A")));
-    assert!(docs.descends(&q("ns::C"), &q("ns::C")));
-    assert!(!docs.descends(&q("ns::A"), &q("ns::C")));
+    assert!(docs.is_subtype(&q("ns::C"), &q("ns::A")));
+    assert!(docs.is_subtype(&q("ns::C"), &q("ns::C")));
+    assert!(!docs.is_subtype(&q("ns::A"), &q("ns::C")));
     assert_eq!(docs.ancestors(&q("ns::C")), [q("ns::B"), q("ns::A")]);
     // A child's record carries its ancestors, which a worker registers.
     let entries = rtemis_r8::record::decode(&r.type_record(&q("ns::C")).unwrap()).unwrap();
@@ -357,8 +357,8 @@ fn every_struct_with_rules_and_defaults_checks_its_defaults() {
     let computed = st(json!({"kind": "struct", "name": "Dose", "version": 1,
         "fields": [
             {"name": "mg", "type": {"kind": "double"}, "default": 250},
-            {"name": "g", "type": {"kind": "option", "inner": {"kind": "double"},
-                "resolve": {"policy": "computed", "expr": {"/": [{"var": "mg"}, 1000]}}}}
+            {"name": "g", "type": {"kind": "option", "inner": {"kind": "double"}},
+                "resolve": {"policy": "computed", "expr": {"/": [{"var": "mg"}, 1000]}}}
         ],
         "rules": [{"id": "SMALL", "invariant": {"<": [{"var": "g"}, 0.1]}}]}));
     let out = r
@@ -371,7 +371,7 @@ fn every_struct_with_rules_and_defaults_checks_its_defaults() {
 fn a_descendant_field_admits_the_struct_and_its_descendants() {
     let (a, b, c) = chain();
     let holder = st(json!({"kind": "struct", "name": "H", "version": 1,
-        "fields": [{"name": "x", "type": {"kind": "descendant", "of": "ns::A"}}]}));
+        "fields": [{"name": "x", "type": {"kind": "subtype", "of": "ns::A"}}]}));
     let other = st(json!({"kind": "struct", "name": "O", "version": 1,
         "fields": [double("a")]}));
     let r = registry_of(vec![a, b, c, holder, other]);
@@ -388,7 +388,7 @@ fn a_descendant_field_admits_the_struct_and_its_descendants() {
     };
     assert_eq!(
         codes(json!({"x": {"$type": "ns::O", "a": 1}})),
-        ["not_descendant"]
+        ["not_subtype"]
     );
     assert_eq!(
         codes(json!({"x": {"$type": "ns::Z", "a": 1}})),

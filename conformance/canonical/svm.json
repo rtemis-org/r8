@@ -36,7 +36,7 @@
       "input": {
         "cost": 2.5,
         "kernel": {
-          "gamma": 1e-7,
+          "gamma": 1e-07,
           "type": "Rbf"
         },
         "weights": [
@@ -121,8 +121,7 @@
                 }
               }
             },
-            "description": "Case weights.",
-            "external": true
+            "description": "Case weights."
           },
           {
             "name": "mtry",
@@ -131,12 +130,12 @@
               "inner": {
                 "kind": "integer",
                 "min": 1
-              },
-              "resolve": {
-                "policy": "runtime"
               }
             },
-            "description": "Variables per split."
+            "description": "Variables per split.",
+            "resolve": {
+              "policy": "context"
+            }
           }
         ],
         "rules": [

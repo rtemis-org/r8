@@ -1,5 +1,5 @@
 //! An [`abi::Reader`] over the compact tree of a document read
-//! ([`crate::tree::Tree`]): the reader R8 lends a Rust-native codec for a
+//! ([`crate::tree::Tree`]): the reader R8 lends a Rust-stored codec for a
 //! document it has read and validated, so that the codec builds its state
 //! from the value in place, with no JSON text and no second tree. A
 //! [`abi::Node`] is a `*const Tree` into the value, valid while the value

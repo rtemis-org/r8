@@ -135,7 +135,7 @@ pub struct CallContext {
     pub seed: u64,
 }
 
-/// `R8TypeVTable`: the codec of a Rust-native type. A package's codecs have
+/// `R8TypeVTable`: the codec of a Rust-stored type. A package's codecs have
 /// one size, `size`, which is the stride of its `types` array.
 #[repr(C)]
 pub struct TypeVTable {
@@ -245,7 +245,7 @@ pub struct Exports {
     pub ir_record: *const u8,
     /// The length of `ir_record` in bytes.
     pub ir_record_len: usize,
-    /// The codecs of the package's Rust-native types.
+    /// The codecs of the package's Rust-stored types.
     pub types: *const TypeVTable,
     /// The number of entries of `types`.
     pub n_types: usize,
@@ -262,10 +262,10 @@ pub struct Api {
     pub abi_version: u32,
     /// The size of this struct in bytes, for appended fields.
     pub size: u32,
-    /// Wraps a Rust-native value of a registered type as an R value.
+    /// Wraps a Rust-stored value of a registered type as an R value.
     pub new_value:
         Option<unsafe extern "C" fn(*const c_char, *mut c_void, *mut Sexp, *mut Error) -> Status>,
-    /// The Rust-native state of an R value of a registered type.
+    /// The Rust-stored state of an R value of a registered type.
     pub value_state:
         Option<unsafe extern "C" fn(Sexp, *const c_char, *mut *const c_void, *mut Error) -> Status>,
     /// Views doubles that `owner` keeps alive as an R vector, without copying.

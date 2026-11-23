@@ -17,7 +17,7 @@ round_trip <- function(ns, types) {
   lines <- unlist(lapply(types, function(t) {
     ir <- R8:::type_ir(t)
     if (ir[["kind"]] == "struct") {
-      R8:::render_struct(ir, ns, native = FALSE)
+      R8:::render_struct(ir, ns, rust_stored = FALSE)
     } else {
       R8:::render_enum(ir, ns)
     }
@@ -75,25 +75,21 @@ test_that("every field type renders as R that declares the same IR", {
           unique = TRUE
         ),
         o = option(type_integer()),
-        o_runtime = option(type_double(), resolve = "runtime"),
-        o_computed = option(
-          type_double(),
-          resolve = "computed",
-          compute = d * 2
-        ),
-        h = hashmap(type_double(), keys = type_character(pattern = "^k")),
-        om = ordered_map(type_character()),
+        o_runtime = field(option(type_double()), context = TRUE),
+        o_computed = field(option(type_double()), compute = d * 2),
+        h = btree_map(type_double(), keys = type_character(pattern = "^k")),
+        om = index_map(type_character()),
         p = P,
         k = K,
         m = type_matrix(option(type_double()), nrow = 2L, ncol = 3L),
-        mp = type_matrix(P),
+        mp = type_matrix(of = P),
         a = type_array(type_integer(), dim = c(2L, 3L, 4L)),
         sm = type_sparse_matrix(type_logical(), nrow = 4L),
         tb = type_table(
           list(
             start = type_integer(),
-            width = field(type_integer(min = 0L), unique = TRUE),
-            label = field(type_character(), optional = TRUE)
+            width = column(type_integer(min = 0L), unique = TRUE),
+            label = column(type_character(), required = FALSE)
           ),
           open = TRUE,
           rules = list(rule(
@@ -102,7 +98,7 @@ test_that("every field type renders as R that declares the same IR", {
             id = "END_FITS"
           ))
         ),
-        tp = type_table(P)
+        tp = type_table(of = P)
       ),
       description = "Every field type."
     )
@@ -135,11 +131,11 @@ test_that("a declaration read back from the registry as R lists declares the sam
         f = type_factor(levels = c("lo", "hi"), ordered = TRUE),
         v = vec(type_double(min = 0), min_length = 1L, unique = TRUE),
         o = option(type_character(pattern = "^[a-z]+$")),
-        h = hashmap(type_integer()),
+        h = btree_map(type_integer()),
         k = field(K, default = K@Linear, description = "A kernel."),
         tb = type_table(list(
           start = type_integer(),
-          label = field(type_character(), optional = TRUE)
+          label = column(type_character(), required = FALSE)
         ))
       ),
       rules = list(rule(
@@ -175,7 +171,7 @@ test_that("field facts, defaults, and rules render as R that declares the same I
         ),
         n = field(type_integer(), default = 2L),
         name = field(type_character(), default = "a \"b\""),
-        w = field(vec(type_double()), default = c(0.1, 1 / 3), external = TRUE),
+        w = field(vec(type_double()), default = c(0.1, 1 / 3)),
         k = field(K, default = K@Poly),
         origin = field(P, default = json_ir('{"x": 0, "y": 0}')),
         tags = field(
@@ -266,11 +262,11 @@ test_that("json_ir() carries JSON into the IR as written", {
   expect_output(print(json_ir("[1, 2]")), "<r8 json_ir> [1, 2]", fixed = TRUE)
 })
 
-test_that("a native type constructs values once its codec is registered", {
+test_that("a Rust-stored type constructs values once its codec is registered", {
   S <- declare_in("gen_native", {
-    new_struct("S", fields = list(x = type_double()), native = TRUE)
+    new_struct("S", fields = list(x = type_double()), storage = "rust")
   })
-  expect_true(attr(S, "r8_native"))
+  expect_identical(attr(S, "r8_storage"), "rust")
   expect_error(S(x = 1), class = "r8_codec_missing")
   expect_error(r8_from_json(S, '{"x": 1}'), class = "r8_codec_missing")
 })
@@ -282,7 +278,7 @@ test_that("registration lists every difference between R declarations and the ex
     codec = c(TRUE, FALSE, TRUE, FALSE)
   )
   err <- expect_error(
-    R8:::check_exports("p", compared, native = c("p::D")),
+    R8:::check_exports("p", compared, rust_stored = c("p::D")),
     class = "r8_declaration_error"
   )
   msg <- conditionMessage(err)
@@ -294,27 +290,27 @@ test_that("registration lists every difference between R declarations and the ex
   expect_match(msg, "The R declaration of `p::B` differs", fixed = TRUE)
   expect_match(
     msg,
-    "`p::C` has a codec in the compiled exports; its R declaration takes native = TRUE.",
+    "`p::C` has a codec in the compiled exports; its R declaration takes storage = \"rust\".",
     fixed = TRUE
   )
   expect_match(
     msg,
-    "`p::D` is declared with native = TRUE; the compiled exports carry no codec for it.",
+    "`p::D` is declared with storage = \"rust\"; the compiled exports carry no codec for it.",
     fixed = TRUE
   )
-  expect_match(msg, "R8::r8_document_native()", fixed = TRUE)
+  expect_match(msg, "R8::r8_document_rust()", fixed = TRUE)
   expect_null(R8:::check_exports(
     "p",
     list(type_name = "p::A", status = "same", codec = TRUE),
-    native = "p::A"
+    rust_stored = "p::A"
   ))
   expect_error(
-    R8:::check_exports("p", NULL, native = "p::A"),
+    R8:::check_exports("p", NULL, rust_stored = "p::A"),
     class = "r8_declaration_error"
   )
 })
 
-test_that("a native enum's variants and unit values wait for its codec", {
+test_that("a Rust-stored enum's variants and unit values wait for its codec", {
   E <- declare_in("gen_native_enum", {
     new_enum(
       "E",
@@ -322,18 +318,18 @@ test_that("a native enum's variants and unit values wait for its codec", {
         A = variant(fields = list(x = type_double())),
         B = variant()
       ),
-      native = TRUE
+      storage = "rust"
     )
   })
-  expect_true(attr(E, "r8_native"))
+  expect_identical(attr(E, "r8_storage"), "rust")
   expect_error(E@A(x = 1), class = "r8_codec_missing")
   expect_error(E@B, class = "r8_codec_missing")
   lines <- R8:::render_enum(
     R8:::type_ir(E),
     "gen_native_enum",
-    native = TRUE
+    rust_stored = TRUE
   )
-  expect_true("  native = TRUE" %in% lines)
+  expect_true("  storage = \"rust\"" %in% lines)
 })
 
 test_that("generated code compares by tokens, so formatting keeps it current", {

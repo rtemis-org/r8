@@ -46,7 +46,7 @@ pub trait TypeLookup {
     fn impl_for(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<&crate::ir::ImplDef> {
         self.impls_of(tr).into_iter().find(|i| {
             i.type_args.is_empty()
-                && matches!(&i.target, crate::ir::ImplTarget::Type { name } if name == ty)
+                && matches!(&i.target, crate::ir::TypeRef::Type { name } if name == ty)
         })
     }
 
@@ -85,9 +85,10 @@ pub trait TypeLookup {
         false
     }
 
-    /// Whether the type `ty` is the struct `base` or descends from it
-    /// through `extends`, as far as the lookup holds the chain.
-    fn descends(&self, ty: &QualifiedName, base: &QualifiedName) -> bool {
+    /// Whether the type `ty` is a subtype of the struct `base`: `base`, or a
+    /// struct that extends a subtype of it, as far as the lookup holds the
+    /// chain.
+    fn is_subtype(&self, ty: &QualifiedName, base: &QualifiedName) -> bool {
         let mut cur = ty;
         // A chain longer than the lookup's types is a cycle.
         for _ in 0..MAX_DEPTH {
@@ -250,7 +251,7 @@ fn tag_values(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<String> {
 pub fn implementors(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<QualifiedName> {
     let mut out: Vec<QualifiedName> = Vec::new();
     for imp in lookup.impls_of(tr) {
-        let crate::ir::ImplTarget::Type { name } = &imp.target else {
+        let crate::ir::TypeRef::Type { name } = &imp.target else {
             continue;
         };
         for t in std::iter::once(name.clone()).chain(
@@ -282,7 +283,7 @@ fn resolve_tag(
         return None;
     }
     for imp in lookup.impls_of(tr) {
-        if let crate::ir::ImplTarget::Type { name } = &imp.target
+        if let crate::ir::TypeRef::Type { name } = &imp.target
             && name.namespace.as_str() == ns
             && imp.tag_value.as_deref() == Some(v)
         {
@@ -339,12 +340,12 @@ pub enum Ty {
     },
     /// A matrix, array, or sparse matrix of the element type.
     Matrix(Box<Ty>),
-    /// A map; `ordered` for `ordered_map()`, whose JSON is an array of
+    /// A map; `ordered` for `index_map()`, whose JSON is an array of
     /// `{"name", "value"}` pairs.
     Map {
         /// The value type.
         value: Box<Ty>,
-        /// An `ordered_map()`.
+        /// An `index_map()`.
         ordered: bool,
     },
     /// A named struct or enum.
@@ -385,7 +386,7 @@ impl Ty {
             }
             FieldType::MatrixOf { .. } => Ty::Matrix(Box::new(Ty::Any)),
             FieldType::Table { columns, open, .. } => Ty::Table {
-                columns: columns.clone(),
+                columns: columns.iter().map(|c| c.field.clone()).collect(),
                 open: *open,
             },
             FieldType::TableOf { .. } => Ty::Table {
@@ -396,16 +397,16 @@ impl Ty {
             FieldType::R { .. } => Ty::Runtime,
             FieldType::Vec { element, .. } => Ty::Array(Box::new(Ty::of(element, unit))),
             FieldType::Option { inner, .. } => Ty::of(inner, unit),
-            FieldType::Hashmap { value, .. } => Ty::Map {
+            FieldType::BtreeMap { value, .. } => Ty::Map {
                 value: Box::new(Ty::of(value, unit)),
                 ordered: false,
             },
-            FieldType::OrderedMap { value, .. } => Ty::Map {
+            FieldType::IndexMap { value, .. } => Ty::Map {
                 value: Box::new(Ty::of(value, unit)),
                 ordered: true,
             },
             FieldType::Named { name } => Ty::Named(name.clone()),
-            FieldType::Dyn { .. } | FieldType::Descendant { .. } => Ty::Any,
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => Ty::Any,
         }
     }
 
@@ -939,16 +940,20 @@ fn reached_into(
             FieldType::Named { name }
             | FieldType::MatrixOf { of: name }
             | FieldType::TableOf { of: name }
-            | FieldType::Descendant { of: name } => reached_into(reg, name, out),
+            | FieldType::Subtype { of: name } => reached_into(reg, name, out),
             FieldType::Matrix { element, .. }
             | FieldType::Array { element, .. }
             | FieldType::SparseMatrix { element, .. }
             | FieldType::Vec { element, .. } => of_type(reg, element, out),
             FieldType::Option { inner, .. } => of_type(reg, inner, out),
-            FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+            FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
                 of_type(reg, value, out)
             }
-            FieldType::Table { columns, .. } => of_fields(reg, columns, out),
+            FieldType::Table { columns, .. } => {
+                for c in columns {
+                    of_type(reg, &c.ty, out);
+                }
+            }
             _ => {}
         }
     }

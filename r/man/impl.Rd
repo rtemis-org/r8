@@ -4,13 +4,14 @@
 \alias{impl}
 \title{Implement a trait for a type}
 \usage{
-impl(trait, type, methods = list(), tag_value = NULL)
+impl(trait, target, methods = list(), tag_value = NULL)
 }
 \arguments{
 \item{trait}{A trait object.}
 
-\item{type}{An R8 type object; for a trait whose methods dispatch on
-several arguments, a list of them, one per dispatched argument the impl
+\item{target}{What the trait is implemented for: an R8 type object or a
+class (\code{\link[=host_class]{host_class()}}); for a trait whose methods dispatch on several
+arguments, a list of them, one per dispatched argument the impl
 specializes, by position or by name, as \code{list(A, B)} or \code{list(y = B)}.}
 
 \item{methods}{Named list: One function per method.}

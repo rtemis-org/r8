@@ -4,18 +4,23 @@
 \alias{host_class}
 \title{A class of another class system in a dispatched position}
 \usage{
-host_class(class, package = "", system = c("s3", "s4"))
+host_class(class, package = "", system = c("s3", "s4", "implicit"))
 }
 \arguments{
 \item{class}{Character: The class name.}
 
 \item{package}{Character: The package that defines the class; \code{""} for an
-S3 class of no package named. An implicit class is of the package
-\code{"base"}.}
+S3 class of no package named and for an implicit class.}
 
-\item{system}{Character: \code{"s3"}, for S3 and implicit classes, or \code{"s4"},
-which requires \code{package}; \code{r8_register()} checks at load that the
-package defines an S4 class of that name.}
+\item{system}{Character: The class system. \code{"s3"}: a name in an object's
+\code{class} attribute. \code{"implicit"}: a name that \code{.class2()} derives from
+an object without a class attribute, from its type and \code{dim} attribute:
+\code{NULL}, \code{integer}, \code{double}, \code{numeric}, \code{character}, \code{logical},
+\code{complex}, \code{raw}, \code{list}, \code{function}, \code{matrix}, \code{array},
+\code{environment}, \code{name}, or \code{call}; a string naming one of these is
+implicit. \code{"s4"}: a class defined with \code{methods::setClass()}, which
+requires \code{package}; \code{r8_register()} checks at load that the package
+defines an S4 class of that name.}
 }
 \value{
 An object of class \code{r8_host_class}.

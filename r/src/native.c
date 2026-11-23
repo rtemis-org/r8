@@ -2,7 +2,7 @@
 // ::R8::
 // 2026- EDG rtemis.org
 
-// Rust-native values: an ALTLIST over a state that a registered codec
+// Rust-stored values: an ALTLIST over a state that a registered codec
 // (R8TypeVTable) owns.
 //
 // data1 is an external pointer whose address is the state, whose tag is the
@@ -316,7 +316,7 @@ static Rboolean native_Inspect(SEXP x, int pre, int deep, int pvec,
   SEXP data1 = R_altrep_data1(x);
   const R8TypeVTable *vt = native_codec(data1);
   SEXP kept = kept_state(data1);
-  Rprintf(" r8 native %s (fields=%lld, state %s)\n",
+  Rprintf(" r8 rust-stored %s (fields=%lld, state %s)\n",
           vt != NULL ? vt->type_name : (kept != R_NilValue ? kept_text(kept, 0) : "?"),
           (long long) XLENGTH(R_altrep_data2(x)),
           R_ExternalPtrAddr(data1) != NULL ? "present" : "absent");
@@ -326,7 +326,7 @@ static Rboolean native_Inspect(SEXP x, int pre, int deep, int pvec,
 void r8_init_native(DllInfo *dll) {
   unfilled = R_MakeExternalPtr(NULL, Rf_install("r8_unfilled"), R_NilValue);
   R_PreserveObject(unfilled);
-  native_class = R_make_altlist_class("r8_native", "R8", dll);
+  native_class = R_make_altlist_class("r8_rust", "R8", dll);
   R_set_altrep_Length_method(native_class, native_Length);
   R_set_altrep_Inspect_method(native_class, native_Inspect);
   R_set_altrep_Duplicate_method(native_class, native_Duplicate);
@@ -339,7 +339,7 @@ void r8_init_native(DllInfo *dll) {
 // A value over `state` with the attributes of `like`, the assembled list of
 // the value's fields, whose names are the field names; the value owns the
 // state once this returns, and the caller owns it when R jumps out. When
-// `from` is a Rust-native value, the new value's cache takes the fields
+// `from` is a Rust-stored value, the new value's cache takes the fields
 // `from` has read, except field `skip`.
 SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
                     R_xlen_t skip) {
@@ -370,7 +370,7 @@ SEXP r8_native_wrap(const R8TypeVTable *vt, void *state, SEXP like, SEXP from,
   return ans;
 }
 
-// The state and codec of a Rust-native value, or NULL for any other object.
+// The state and codec of a Rust-stored value, or NULL for any other object.
 const void *r8_native_state(SEXP x, const R8TypeVTable **vt) {
   if (!ALTREP(x) || !R_altrep_inherits(x, native_class)) {
     return NULL;
@@ -386,7 +386,7 @@ int r8_is_view(SEXP x);
 
 // The state's bytes and the cached fields that are not views, which
 // r8_size() adds up: list(state = <bytes>, fields = <list>); NULL for an
-// object that is not a Rust-native value.
+// object that is not a Rust-stored value.
 SEXP r8_native_parts(SEXP x) {
   if (!ALTREP(x) || !R_altrep_inherits(x, native_class)) {
     return R_NilValue;

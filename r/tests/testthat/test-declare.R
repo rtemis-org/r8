@@ -34,11 +34,11 @@ test_that("Kernel and Svm declared in R produce the IR of the fixture", {
         ),
         weights = field(
           option(vec(type_double(min = 0))),
-          description = "Case weights.",
-          external = TRUE
+          description = "Case weights."
         ),
         mtry = field(
-          option(type_integer(min = 1L), resolve = "runtime"),
+          option(type_integer(min = 1L)),
+          context = TRUE,
           description = "Variables per split."
         )
       ),
@@ -310,7 +310,8 @@ test_that("a computed field compiles its expression", {
       fields = list(
         dose_mg = field(type_double(), unit = "mg"),
         dose_g = field(
-          option(type_double(), resolve = "computed", compute = dose_mg / 1000),
+          option(type_double()),
+          compute = dose_mg / 1000,
           unit = "g"
         )
       )
@@ -325,7 +326,8 @@ test_that("a computed field compiles its expression", {
         fields = list(
           dose_mg = field(type_double(), unit = "mg"),
           dose_g = field(
-            option(type_double(), resolve = "computed", compute = dose_mg + 1),
+            option(type_double()),
+            compute = dose_mg + 1,
             unit = "g"
           )
         )
@@ -394,11 +396,7 @@ test_that("member lists are named and their names are distinct", {
   )
 })
 
-test_that("qualified rule functions compile like bare ones, and is_variant() tests R values", {
-  expect_identical(
-    R8:::r8_logic(quote(R8::is_variant(k, "A"))),
-    R8:::r8_logic(quote(is_variant(k, "A")))
-  )
+test_that("qualified rule functions compile like bare ones, and r8_is_variant() tests R values", {
   expect_identical(
     R8:::r8_logic(quote(base::is.null(a))),
     list(is_null = list(list(var = "a")))
@@ -407,9 +405,14 @@ test_that("qualified rule functions compile like bare ones, and is_variant() tes
     "demo",
     new_enum("Ks", variants = list(A = variant(), B = variant()))
   )
-  expect_true(is_variant(K@A, "A"))
-  expect_false(is_variant(K@A, "B"))
-  expect_error(is_variant(1, "A"), class = "r8_type_error")
+  expect_true(r8_is_variant(K@A, "A"))
+  expect_false(r8_is_variant(K@A, "B"))
+  expect_error(r8_is_variant(1, "A"), class = "r8_type_error")
+  expect_false(exists(
+    "is_variant",
+    envir = asNamespace("R8"),
+    inherits = FALSE
+  ))
 })
 
 test_that("a failed declaration leaves the registry unchanged", {
@@ -563,13 +566,13 @@ test_that("field-type arguments are checked at their call, with the core's messa
   )
   expect_error(vec(1), "A field type is", class = "r8_declaration_error")
   expect_error(
-    hashmap(type_logical(), keys = type_logical()),
+    btree_map(type_logical(), keys = type_logical()),
     "type_character",
     class = "r8_declaration_error"
   )
   expect_error(
-    option(type_logical(), compute = x + 1),
-    "belongs to",
+    field(option(type_logical()), compute = x + 1, context = TRUE),
+    "not both",
     class = "r8_declaration_error"
   )
   expect_identical(
@@ -685,5 +688,61 @@ test_that("variant() refuses parts it would drop", {
       class = "r8_declaration_error"
     )
     expect_s3_class(variant(of = S), "r8_variant")
+  })
+})
+
+test_that("a fill policy is a struct field's, of type option()", {
+  declare_in("fill1", {
+    expect_error(
+      new_struct("A", fields = list(a = field(type_double(), context = TRUE))),
+      "resolve_option",
+      class = "r8_declaration_error"
+    )
+    expect_error(
+      new_struct(
+        "B",
+        fields = list(
+          t = type_table(list(c = field(option(type_double()), context = TRUE)))
+        )
+      ),
+      "resolve_position",
+      class = "r8_declaration_error"
+    )
+    C <- new_struct(
+      "C",
+      fields = list(
+        mg = type_double(),
+        g = field(option(type_double()), compute = mg / 1000)
+      )
+    )
+    expect_identical(r8_resolve(C(mg = 500))$g, 0.5)
+  })
+})
+
+test_that("column() declares a table column's own facts", {
+  declare_in("col1", {
+    Runs <- new_struct(
+      "Runs",
+      fields = list(
+        t = type_table(list(
+          id = column(type_character(), unique = TRUE),
+          note = column(option(type_character()), required = FALSE)
+        ))
+      )
+    )
+    ok <- Runs(t = data.frame(id = c("a", "b")))
+    expect_s3_class(ok, "r8_value")
+    expect_error(
+      Runs(t = data.frame(id = c("a", "a"))),
+      class = "r8_value_error"
+    )
+    expect_error(
+      new_struct("Bad", fields = list(x = column(type_double()))),
+      "column_position",
+      class = "r8_declaration_error"
+    )
+    cols <- R8:::type_ir(Runs)[["fields"]][[1L]][["type"]][["columns"]]
+    expect_true(cols[[1L]][["unique"]])
+    expect_false(cols[[2L]][["required"]])
   })
 })

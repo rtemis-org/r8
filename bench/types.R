@@ -488,7 +488,7 @@ declare_s7 <- function(where = globalenv()) {
 }
 
 # %% R8 ----
-# The R8 declarations. With `native = TRUE`, Wide20 and GBM are the
+# The R8 declarations. With `storage = "rust"`, Wide20 and GBM are the
 # declarations of r8benchR, whose values Rust holds; the declarations here
 # equal them (checked before timing).
 r8_declarations <- function() {
@@ -533,8 +533,8 @@ r8_declarations <- function() {
   )
 }
 
-declare_r8 <- function(where = globalenv(), native = FALSE) {
-  if (native) {
+declare_r8 <- function(where = globalenv(), storage = "r") {
+  if (identical(storage, "rust")) {
     where$Wide20 <- getExportedValue("r8benchR", "Wide20")
     where$GBM <- getExportedValue("r8benchR", "GBM")
     where$complexity <- getExportedValue("r8benchR", "complexity")
@@ -598,8 +598,8 @@ declare_system <- function(system, where = globalenv()) {
     "RC" = declare_rc(where),
     "R6" = declare_r6(where),
     "S7" = declare_s7(where),
-    "R8" = declare_r8(where, native = FALSE),
-    "R8 Rust" = declare_r8(where, native = TRUE),
+    "R8" = declare_r8(where, storage = "r"),
+    "R8 Rust" = declare_r8(where, storage = "rust"),
     stop("unknown system ", system)
   )
 }

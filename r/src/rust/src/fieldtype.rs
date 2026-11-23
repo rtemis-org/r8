@@ -245,7 +245,6 @@ enum Member<'a> {
     Count(u64),
     Counts(&'a [u32]),
     Flag,
-    Resolve(&'a rtemis_r8::ir::Resolve),
     Keys(&'a rtemis_r8::ir::CharacterType),
 }
 
@@ -264,7 +263,6 @@ fn container(kind: &str, members: &[(&str, Option<Member<'_>>)]) -> Robj {
             Some(Member::Count(n)) => b.value(name, n),
             Some(Member::Counts(d)) => b.value(name, d),
             Some(Member::Flag) => b.value(name, &true),
-            Some(Member::Resolve(r)) => b.value(name, *r),
             Some(Member::Keys(k)) => b.value(name, *k),
         };
     }
@@ -284,24 +282,30 @@ fn r8_field(
     description: Robj,
     sensitive: Robj,
     unit: Robj,
-    external: Robj,
-    unique: Robj,
-    optional: Robj,
+    compute: Robj,
+    context: Robj,
     extensions: Robj,
 ) -> Robj {
     let ty = match element(unsafe { r#type.get() }) {
         Ok(t) => t,
         Err(e) => return message(e),
     };
+    let resolve = (|| {
+        let c = unsafe { compute.get() };
+        let expr = if is_null(c) { None } else { Some(logic(c)?) };
+        build::resolve(expr, is_true(unsafe { context.get() }))
+    })();
+    let resolve = match resolve {
+        Ok(r) => r,
+        Err(e) => return message(e),
+    };
     let flag = |x: &Robj| Robj::from(is_true(unsafe { x.get() }));
-    let (s, e, u, o) = (
-        flag(&sensitive),
-        flag(&external),
-        flag(&unique),
-        flag(&optional),
-    );
+    let s = flag(&sensitive);
     let has = Robj::from(has_default);
-    let mut b = crate::irser::Builder::named(10);
+    let mut b = crate::irser::Builder::named(7 + usize::from(resolve.is_some()));
+    if let Some(r) = &resolve {
+        let _ = b.value("resolve", r);
+    }
     unsafe {
         b.object("type", ty.get());
         b.object("default", default.get());
@@ -309,9 +313,6 @@ fn r8_field(
         b.object("description", description.get());
         b.object("sensitive", s.get());
         b.object("unit", unit.get());
-        b.object("external", e.get());
-        b.object("unique", u.get());
-        b.object("optional", o.get());
         b.object("extensions", extensions.get());
     }
     b.finish("r8_field")
@@ -346,32 +347,22 @@ fn r8_ft_vec(r#type: Robj, min_length: Robj, max_length: Robj, unique: Robj) -> 
     built.unwrap_or_else(message)
 }
 
-/// `option()`: `resolve` is matched in R, and `compute` is the unevaluated
-/// expression of a computed field, or `NULL`.
+/// `option()`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_ft_option(r#type: Robj, resolve: &str, compute: Robj) -> Robj {
+fn r8_ft_option(r#type: Robj) -> Robj {
     let built = (|| {
         let inner = element(unsafe { r#type.get() })?;
-        let c = unsafe { compute.get() };
-        let expr = if is_null(c) { None } else { Some(logic(c)?) };
-        let r = build::resolve(resolve, expr)?;
         Ok(container(
             "option",
-            &[
-                ("inner", Some(Member::Object(&inner))),
-                (
-                    "resolve",
-                    (r != rtemis_r8::ir::Resolve::None).then_some(Member::Resolve(&r)),
-                ),
-            ],
+            &[("inner", Some(Member::Object(&inner)))],
         ))
     })();
     built.unwrap_or_else(message)
 }
 
-/// `hashmap()` and, with `ordered = TRUE`, `ordered_map()`.
+/// `btree_map()` and, with `ordered = TRUE`, `index_map()`.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -388,7 +379,7 @@ fn r8_ft_map(r#type: Robj, keys: Robj, ordered: bool) -> Robj {
         };
         let constraints = build::keys(key_type)?;
         Ok(container(
-            if ordered { "ordered_map" } else { "hashmap" },
+            if ordered { "index_map" } else { "btree_map" },
             &[
                 ("value", Some(Member::Object(&value))),
                 (
@@ -689,8 +680,8 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
         return Err(BuildError::RuleOperand { expr: deparsed(x) });
     }
     let mut f = unsafe { CAR(x) };
-    // `R8::is_variant()` and `base::is.null()` name the same functions as
-    // their bare forms.
+    // `base::is.null()` and `R8::` before a dialect word name the same
+    // functions as their bare forms.
     if sexptype(f) == SEXPTYPE::LANGSXP {
         let head = unsafe { CAR(f) };
         let a = args(f);

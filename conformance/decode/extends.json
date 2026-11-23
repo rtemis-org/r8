@@ -160,7 +160,7 @@
           {
             "name": "x",
             "type": {
-              "kind": "descendant",
+              "kind": "subtype",
               "of": "ns::A"
             },
             "description": ""
@@ -231,7 +231,7 @@
       "expect": {
         "errors": [
           {
-            "code": "not_descendant",
+            "code": "not_subtype",
             "path": "/x"
           }
         ]

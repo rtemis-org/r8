@@ -319,7 +319,7 @@ static R8Status view_bytes(SEXP owner, const uint8_t *data, size_t n, SEXP *valu
 }
 
 // The value functions of R8Api, implemented in the Rust code (values of
-// Rust-native types).
+// Rust-stored types).
 R8Status r8_api_new_value(const char *type_name, void *state, SEXP *value, R8Error *err);
 R8Status r8_api_value_state(SEXP value, const char *type_name, const void **state,
                             R8Error *err);

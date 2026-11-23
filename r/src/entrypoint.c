@@ -16,7 +16,7 @@ SEXP r8_attrib_raw(SEXP x, SEXP name);
 SEXP r8_payload(SEXP x);
 void r8_set_attrib_functions(void *count, void *raw, void *payload);
 
-// Rust-native values (native.c) and the views and API table of R8Api
+// Rust-stored values (native.c) and the views and API table of R8Api
 // (view.c).
 void r8_init_native(DllInfo *dll);
 void r8_init_views(DllInfo *dll);

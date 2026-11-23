@@ -237,8 +237,8 @@ impl_tuple <- function(types, dispatch, label) {
 } # /R8::impl_tuple
 
 
-# The implicit classes that `.class2()` reports for objects without a class
-# attribute, which a string names as classes of the package base.
+# The implicit classes: the names that `.class2()` derives from an object
+# without a class attribute, from its type and `dim` attribute.
 IMPLICIT_CLASSES <- c(
   "NULL",
   "integer",
@@ -275,11 +275,16 @@ IMPLICIT_CLASSES <- c(
 #'
 #' @param class Character: The class name.
 #' @param package Character: The package that defines the class; `""` for an
-#'   S3 class of no package named. An implicit class is of the package
-#'   `"base"`.
-#' @param system Character: `"s3"`, for S3 and implicit classes, or `"s4"`,
-#'   which requires `package`; `r8_register()` checks at load that the
-#'   package defines an S4 class of that name.
+#'   S3 class of no package named and for an implicit class.
+#' @param system Character: The class system. `"s3"`: a name in an object's
+#'   `class` attribute. `"implicit"`: a name that `.class2()` derives from
+#'   an object without a class attribute, from its type and `dim` attribute:
+#'   `NULL`, `integer`, `double`, `numeric`, `character`, `logical`,
+#'   `complex`, `raw`, `list`, `function`, `matrix`, `array`,
+#'   `environment`, `name`, or `call`; a string naming one of these is
+#'   implicit. `"s4"`: a class defined with `methods::setClass()`, which
+#'   requires `package`; `r8_register()` checks at load that the package
+#'   defines an S4 class of that name.
 #'
 #' @return An object of class `r8_host_class`.
 #'
@@ -295,7 +300,12 @@ IMPLICIT_CLASSES <- c(
 #' options(op)
 #'
 #' @export
-host_class <- function(class, package = "", system = c("s3", "s4")) {
+host_class <- function(
+  class,
+  package = "",
+  system = c("s3", "s4", "implicit")
+) {
+  given <- !missing(system)
   system <- match.arg(system)
   if (
     !is.character(class) ||
@@ -311,6 +321,15 @@ host_class <- function(class, package = "", system = c("s3", "s4")) {
   if (!is.character(package) || length(package) != 1L || is.na(package)) {
     r8_abort(
       "`package` is a package name, or \"\" for an S3 class of no package.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (grepl("::", class, fixed = TRUE)) {
+    r8_abort(
+      "`",
+      class,
+      "` is written as an R8 type's qualified name; a position or source ",
+      "names an R8 type by its type object, and a class name has no `::`.",
       class = "r8_declaration_error"
     )
   }
@@ -336,16 +355,37 @@ host_class <- function(class, package = "", system = c("s3", "s4")) {
       class = "r8_declaration_error"
     )
   }
-  if (identical(system, "s3") && class %in% IMPLICIT_CLASSES) {
-    if (nzchar(package) && !identical(package, "base")) {
+  if (class %in% IMPLICIT_CLASSES) {
+    if (given && !identical(system, "implicit")) {
       r8_abort(
         "`",
         class,
-        "` is an implicit class of the package base.",
+        "` is an implicit class: host_class(\"",
+        class,
+        "\", system = \"implicit\"), or the string \"",
+        class,
+        "\".",
         class = "r8_declaration_error"
       )
     }
-    package <- "base"
+    system <- "implicit"
+  } else if (identical(system, "implicit")) {
+    r8_abort(
+      "The implicit classes are ",
+      paste(IMPLICIT_CLASSES, collapse = ", "),
+      "; `",
+      class,
+      "` is not one.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (identical(system, "implicit") && nzchar(package)) {
+    r8_abort(
+      "An implicit class belongs to no package; host_class(\"",
+      class,
+      "\") names it.",
+      class = "r8_declaration_error"
+    )
   }
   structure(
     list(class = class, package = package, system = system),
@@ -399,14 +439,6 @@ as_host_class <- function(x) {
     return(host_class(x@className, x@package, "s4"))
   }
   if (is.character(x) && length(x) == 1L && !is.na(x)) {
-    if (grepl("::", x, fixed = TRUE) && r8_is_registered(x)) {
-      r8_abort(
-        "`",
-        x,
-        "` is an R8 type; a dispatched position names it by its type object.",
-        class = "r8_declaration_error"
-      )
-    }
     return(host_class(x))
   }
   NULL

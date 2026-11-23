@@ -8,7 +8,7 @@
 # and implemented in Rust in the test package r8pkgR; any other value
 # declares the same type, with impls of the same results, in R in the
 # namespace `conf`. test-conformance.R runs this directory with the R
-# provider, and test-packages.R with the Rust-native one.
+# provider, and test-packages.R with the Rust-stored one.
 # spec: R8/class-system#conformance-tests
 
 # Evaluates `expr` with the option `r8.namespace` set to `ns`, outside any
@@ -24,7 +24,7 @@ declare_in <- function(ns, expr) {
 }
 
 # `pkgr::Conform` declared in R, in the namespace `conf`: the declaration
-# that r8_document_native() writes for r8pkgR, without `native = TRUE`; and
+# that r8_document_rust() writes for r8pkgR, without `storage = "rust"`; and
 # `conf::Every`, a field of each type that has no Rust field type. Its
 # impls give the results of r8pkgR's Rust impls.
 conformance_r_types <- function() {
@@ -80,14 +80,18 @@ conformance_r_types <- function() {
     impl(
       PartialOrd,
       Conform,
-      methods = list(cmp = function(x, y) {
+      methods = list(partial_cmp = function(x, y) {
         if (!inherits(y, "conf::Conform")) {
-          return(NULL)
+          return(NA_integer_)
         }
         as.integer(sign(x$ratio - y$ratio))
       })
     )
-    impl(Dim, Conform, methods = list(dim = function(x) c(length(x$index), 2L)))
+    impl(
+      Shape,
+      Conform,
+      methods = list(dim = function(x) c(length(x$index), 2L))
+    )
     Every <- new_struct(
       "Every",
       fields = list(
@@ -96,7 +100,7 @@ conformance_r_types <- function() {
         at = type_posixct(),
         m = type_matrix(type_double()),
         tb = type_table(list(id = type_character())),
-        map = hashmap(type_double()),
+        map = btree_map(type_double()),
         doc = type_json()
       )
     )

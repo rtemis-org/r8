@@ -96,14 +96,14 @@ impl FromR for Dots {
     }
 }
 
-/// The receiver `x` of a method of a Rust-native type: the state of a
-/// Rust-native value, borrowed, or a value built from an R-native value of
+/// The receiver `x` of a method of a Rust-stored type: the state of a
+/// Rust-stored value, borrowed, or a value built from an R-stored value of
 /// the type ([`Codec::from_r_native`]), such as `serialize(version = 2)`
 /// reads back.
 pub enum Receiver<'a, T> {
-    /// The state of a Rust-native value.
+    /// The state of a Rust-stored value.
     Borrowed(&'a T),
-    /// A value built from an R-native value's fields.
+    /// A value built from an R-stored value's fields.
     Built(T),
 }
 
@@ -130,7 +130,7 @@ impl<T: Codec> Receiver<'_, T> {
     }
 
     /// The value of the argument `name`, a parameter `&T` of a method:
-    /// borrowed from a Rust-native value, or built from an R-native value of
+    /// borrowed from a Rust-stored value, or built from an R-stored value of
     /// the type; an object of another type returns `type_mismatch`, naming
     /// the argument.
     ///
@@ -167,7 +167,7 @@ impl<T: Codec> Receiver<'_, T> {
     }
 }
 
-/// Whether `x` is an R-native value of `T`: a list whose `r8_type` names
+/// Whether `x` is an R-stored value of `T`: a list whose `r8_type` names
 /// `T`.
 fn is_r_native<T: Codec>(x: SEXP) -> bool {
     unsafe {
@@ -184,7 +184,7 @@ fn is_r_native<T: Codec>(x: SEXP) -> bool {
     }
 }
 
-/// The variant of an R-native enum value `x`, its `r8_variant` attribute.
+/// The variant of an R-stored enum value `x`, its `r8_variant` attribute.
 ///
 /// # Safety
 ///
@@ -234,6 +234,18 @@ impl IntoR for f64 {
 impl IntoR for i32 {
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         alloc(&|| unsafe { sys::Rf_ScalarInteger(self) })
+    }
+}
+
+/// The result of `R8::PartialOrd`'s `partial_cmp()`: `-1L`, `0L`, or `1L`,
+/// and `NA` when the values are not ordered, as the R method returns.
+impl IntoR for Option<std::cmp::Ordering> {
+    fn into_r(self) -> std::result::Result<SEXP, Jumped> {
+        let o = match self {
+            Some(o) => o as i32,
+            None => unsafe { sys::R_NaInt },
+        };
+        alloc(&|| unsafe { sys::Rf_ScalarInteger(o) })
     }
 }
 
@@ -303,7 +315,7 @@ unsafe extern "C" fn drop_buffer<T: Element>(x: SEXP) {
 
 impl<T: Element> IntoR for Vec<T> {
     /// The vector as an owned [`Buffer`], which R reads as a view: the
-    /// result of `R8::Dim`'s `dim()`, among others.
+    /// result of `R8::Shape`'s `dim()`, among others.
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         Buffer::from(self).into_r()
     }
@@ -337,7 +349,7 @@ impl<T: Element> IntoR for Buffer<T> {
     }
 }
 
-/// A Rust-native value returned by an impl function, wrapped by R8.
+/// A Rust-stored value returned by an impl function, wrapped by R8.
 pub struct Value<T: Codec>(pub T);
 
 impl<T: Codec> IntoR for Value<T> {

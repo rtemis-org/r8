@@ -91,6 +91,21 @@ rounding makes it inexact: \code{abs(sum(p) - 1) <= 1e-9} states the
 tolerance.
 }
 
+\section{Words that differ from R}{
+
+The dialect is R syntax with its own meanings; these words differ from
+the R functions of the same name, or exist in rules only:\tabular{ll}{
+   Word \tab In a rule \cr
+   \code{is_variant(x, "V")} \tab The variant of the enum field \code{x} is \code{V}; R tests a value with \code{r8_is_variant()}. \cr
+   \code{all(x, cond)}, \code{any(x, cond)} \tab \code{cond} holds for every or some element \code{.x} of \code{x}. \cr
+   \code{subset(x, y)} \tab Every element of the vector \code{x} is an element of \code{y}. \cr
+   \code{non_decreasing(x)}, \code{non_increasing(x)} \tab The vector \code{x} is in order. \cr
+   \code{&}, \verb{\|} \tab The same as \code{&&} and \verb{\|\|}. \cr
+   \code{==} \tab Strict equality: values of different types are never equal. \cr
+   \code{lit(expr)} \tab The value of the R expression \code{expr}, a constant. \cr
+}
+}
+
 \section{Violations}{
 
 A violation is an \code{r8_value_error} that shows the rule's ID and message,

@@ -25,9 +25,9 @@ package again replaces its declarations.
 A package with compiled exports (\code{R8.h}) registers them after its R
 declarations. Every type of the exports has an R declaration with the same
 declaration hash, the type of every codec is declared with
-\code{native = TRUE}, and every type declared with \code{native = TRUE} has a codec;
+\code{storage = "rust"}, and every type declared with \code{storage = "rust"} has a codec;
 otherwise registration signals \code{r8_declaration_error} and lists each
-difference. \code{r8_document_native()} generates the R declarations of types
+difference. \code{r8_document_rust()} generates the R declarations of types
 declared in Rust. A codec written in C, whose type the exports declare
 only in R, sets the declaration hash of its type (\code{declaration_hash}),
 which registration compares with the hash of the R declaration, since the

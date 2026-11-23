@@ -20,7 +20,7 @@ use crate::text::{Line, Role, Span, Text};
 pub struct LayoutOptions {
     /// The number of items a vector's head shows.
     pub head: usize,
-    /// Text after the top-level header, such as a Rust-native value's size,
+    /// Text after the top-level header, such as a Rust-stored value's size,
     /// as a `summary` span.
     pub summary: Option<String>,
     /// The number of entries a level of a [`Record`] shows.
@@ -392,7 +392,7 @@ fn value<'a, A: Access<'a>>(
         FieldType::Named { name } => {
             return nested(x, name.clone(), lookup, display, line);
         }
-        FieldType::Dyn { .. } | FieldType::Descendant { .. } => {
+        FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
             return match crate::access::concrete(x, ft, lookup).expect("a dynamic field type") {
                 Ok((name, _)) => nested(x, name, lookup, display, line),
                 Err(_) => {
@@ -529,12 +529,12 @@ fn value<'a, A: Access<'a>>(
         FieldType::TableOf { of } => {
             line.push(Span::new(format!("table of {of}"), Role::Summary));
         }
-        FieldType::Hashmap { value: vt, .. } | FieldType::OrderedMap { value: vt, .. } => {
-            let ordered = matches!(ft, FieldType::OrderedMap { .. });
+        FieldType::BtreeMap { value: vt, .. } | FieldType::IndexMap { value: vt, .. } => {
+            let ordered = matches!(ft, FieldType::IndexMap { .. });
             let n = x.map(vt, ordered).unwrap_or(0);
             label(
                 line,
-                if ordered { "ordered_map" } else { "hashmap" },
+                if ordered { "index_map" } else { "btree_map" },
                 Role::TypeOther,
                 format!("[{}]", count(n as u64)),
             );
@@ -604,7 +604,7 @@ fn element_label(ft: &FieldType) -> String {
         FieldType::Json => "json".into(),
         FieldType::Named { name } => name.to_string(),
         FieldType::Dyn { r#trait } => format!("dyn {}", r#trait),
-        FieldType::Descendant { of } => format!("dyn {of}"),
+        FieldType::Subtype { of } => format!("dyn {of}"),
         FieldType::Vec { element, .. } => format!("vec<{}>", element_label(element)),
         _ => "value".into(),
     }

@@ -128,6 +128,12 @@ impl State {
                 if p.is_empty() && s.extends.is_some() {
                     p = inherited_tag_problems(&*docs, &q);
                 }
+                if p.is_empty() {
+                    p = required_problems(
+                        &*docs,
+                        |i| matches!(&i.target, crate::ir::TypeRef::Type { name } if name == &q),
+                    );
+                }
             }
             p
         });
@@ -167,7 +173,17 @@ impl State {
         let docs = Arc::make_mut(&mut self.documents);
         let placed = docs.put_trait(ns, def);
         let (d, index) = (placed.document, placed.index);
-        let checked = guarded(|| check_trait(docs.document(d), index));
+        let tq = QualifiedName {
+            namespace: ns.clone(),
+            name: docs.document(d).traits[index].name.clone(),
+        };
+        let checked = guarded(|| {
+            let mut p = check_trait(docs.document(d), index);
+            if p.is_empty() {
+                p = required_problems(&*docs, |i| i.r#trait == tq);
+            }
+            p
+        });
         match checked {
             Ok(p) if p.is_empty() => {
                 self.changed();
@@ -315,7 +331,7 @@ fn inherited_tag_problems(docs: &DocumentSet, q: &QualifiedName) -> Vec<DeclErro
     let mut traits: Vec<&QualifiedName> = Vec::new();
     for doc in docs.documents() {
         for i in &doc.impls {
-            if let crate::ir::ImplTarget::Type { name } = &i.target
+            if let crate::ir::TypeRef::Type { name } = &i.target
                 && ancestors.contains(name)
                 && !traits.contains(&&i.r#trait)
             {
@@ -579,6 +595,11 @@ impl Registry {
                         .into_iter()
                         .map(|e| (doc.namespace.to_string(), e)),
                 );
+                out.extend(
+                    crate::ir::dispatch::check_required(&*docs, imp, &path)
+                        .into_iter()
+                        .map(|e| (doc.namespace.to_string(), e)),
+                );
             }
         }
         let own = |n: &Name| namespaces.iter().any(|x| x == n.as_str());
@@ -715,4 +736,23 @@ impl Registry {
             _ => Err(RegistryError::Unbalanced),
         }
     }
+}
+
+/// The required-field problems of the registered impls that `which`
+/// selects, each at its namespace's impl path: a declaration that changes a
+/// struct or a trait leaves no impl whose struct lacks a required field.
+fn required_problems(docs: &DocumentSet, which: impl Fn(&ImplDef) -> bool) -> Vec<DeclError> {
+    let mut out = Vec::new();
+    for doc in docs.documents() {
+        for (i, imp) in doc.impls.iter().enumerate() {
+            if which(imp) {
+                out.extend(crate::ir::dispatch::check_required(
+                    docs,
+                    imp,
+                    &format!("{}/impls/{i}", doc.namespace),
+                ));
+            }
+        }
+    }
+    out
 }

@@ -67,6 +67,20 @@
 #' rounding makes it inexact: `abs(sum(p) - 1) <= 1e-9` states the
 #' tolerance.
 #'
+#' @section Words that differ from R:
+#' The dialect is R syntax with its own meanings; these words differ from
+#' the R functions of the same name, or exist in rules only:
+#'
+#' | Word | In a rule |
+#' |:--|:--|
+#' | `is_variant(x, "V")` | The variant of the enum field `x` is `V`; R tests a value with `r8_is_variant()`. |
+#' | `all(x, cond)`, `any(x, cond)` | `cond` holds for every or some element `.x` of `x`. |
+#' | `subset(x, y)` | Every element of the vector `x` is an element of `y`. |
+#' | `non_decreasing(x)`, `non_increasing(x)` | The vector `x` is in order. |
+#' | `&`, `\|` | The same as `&&` and `\|\|`. |
+#' | `==` | Strict equality: values of different types are never equal. |
+#' | `lit(expr)` | The value of the R expression `expr`, a constant. |
+#'
 #' @section Violations:
 #' A violation is an `r8_value_error` that shows the rule's ID and message,
 #' when it has them, the path, the rule in R, and the values it read: the scalar fields, the
@@ -151,9 +165,10 @@ rule <- function(invariant, when = NULL, message = NULL, id = NULL) {
 # %% lit ----
 #' A constant from R in a rule
 #'
-#' In a rule, `lit(expr)` is the value of the R expression `expr`, evaluated
-#' once, when `rule()` runs, in the environment that calls `rule()`; a bare
-#' name in a rule is always a field. The value is stored in the rule as a
+#' Declaration vocabulary of the rule dialect, without the `r8_` prefix of
+#' operations on values. In a rule, `lit(expr)` is the value of the R
+#' expression `expr`, evaluated once, when `rule()` runs, in the environment
+#' that calls `rule()`; a bare name in a rule is always a field. The value is stored in the rule as a
 #' literal: one non-`NA` logical, integer, double, or string, or a vector of
 #' them as the right operand of `%in%`. In a package, the value is the one
 #' the expression has when the package is installed.
@@ -424,12 +439,12 @@ as_rules <- function(rules) {
 } # /R8::as_rules
 
 
-# %% is_variant ----
+# %% r8_is_variant ----
 #' Test an enum value's variant
 #'
-#' `TRUE` when `x` is a value of an R8 enum whose variant is `variant`. In a
-#' rule, `is_variant(kernel, "Rbf")` compiles to the same test over the
-#' value's JSON form.
+#' `TRUE` when `x` is a value of an R8 enum whose variant is `variant`. A
+#' rule tests a field's variant with the rule dialect's `is_variant(kernel,
+#' "Rbf")` ([rule()]).
 #'
 #' @param x An R8 enum value.
 #' @param variant Character: The variant name.
@@ -439,13 +454,13 @@ as_rules <- function(rules) {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Shape <- new_enum("Shape", variants = list(Circle = variant(), Square = variant()))
-#' is_variant(Shape@Circle, "Circle")
+#' r8_is_variant(Shape@Circle, "Circle")
 #' options(op)
 #'
 #' @export
-is_variant <- function(x, variant) {
+r8_is_variant <- function(x, variant) {
   if (!inherits(x, "r8_value") || is.null(attr(x, "r8_variant"))) {
     r8_abort("`x` is an R8 enum value.", class = "r8_type_error")
   }
   identical(attr(x, "r8_variant"), variant)
-} # /R8::is_variant
+} # /R8::r8_is_variant

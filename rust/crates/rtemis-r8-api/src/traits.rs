@@ -17,18 +17,18 @@ pub trait Debug {
     fn str(&self, dots: Dots) -> String;
 }
 
-/// `R8::Dim`: the dimensions of a value, `dim(x)`.
-pub trait Dim {
+/// `R8::Shape`: the dimensions of a value, `dim(x)`.
+pub trait Shape {
     /// The dimensions.
     fn dim(&self) -> Vec<i32>;
 }
 
-/// `R8::PartialOrd`: the order of two values, the trait's method `cmp(x, y)`,
-/// which `r8_cmp()`, `<`, `<=`, `>`, and `>=` call in R: negative, zero, or
-/// positive, or `None` when they are not ordered. The macro calls the method
-/// by its qualified path, so a type that also implements `std::cmp::Ord`
-/// keeps both.
+/// `R8::PartialOrd`: the order of two values, the trait's method
+/// `partial_cmp(x, y)`, which `r8_partial_cmp()`, `<`, `<=`, `>`, and `>=`
+/// call in R, `None` when they are not ordered, which R receives as `NA`.
+/// The macro calls the method by its qualified path, so a type that also
+/// implements `std::cmp::PartialOrd` keeps both.
 pub trait PartialOrd {
     /// The order of `self` and `other`.
-    fn cmp(&self, other: crate::call::Sexp) -> Option<i32>;
+    fn partial_cmp(&self, other: crate::call::Sexp) -> Option<std::cmp::Ordering>;
 }

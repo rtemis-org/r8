@@ -56,8 +56,8 @@ BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
 #' @param fn Function: Its formals are the method's signature; the first
 #'   formal is the value the method dispatches on.
 #' @param description Character: What the method does.
-#' @param default Optional function: A default implementation, used for a
-#'   type whose impl does not define the method.
+#' @param default_impl Optional function: The method's default
+#'   implementation, used for a type whose impl does not define the method.
 #' @param stochastic Logical: The method draws random numbers.
 #' @param dispatch Optional Character: The arguments the method dispatches
 #'   on, by name, at most three and none of them `...`; the first argument
@@ -74,7 +74,7 @@ BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
 trait_method <- function(
   fn,
   description = "",
-  default = NULL,
+  default_impl = NULL,
   stochastic = FALSE,
   dispatch = NULL
 ) {
@@ -84,14 +84,14 @@ trait_method <- function(
       class = "r8_declaration_error"
     )
   }
-  if (!is.null(default)) {
-    check_method_formals(default, names(formals(fn)), "the default")
+  if (!is.null(default_impl)) {
+    check_method_formals(default_impl, names(formals(fn)), "the default")
   }
   structure(
     list(
       fn = fn,
       description = description,
-      default = default,
+      default_impl = default_impl,
       stochastic = isTRUE(stochastic),
       dispatch = dispatch
     ),
@@ -756,8 +756,18 @@ value_type_text <- function(x) {
 #' @param name Character: The trait name.
 #' @param methods Named list: The methods, `trait_method()` calls.
 #' @param description Character: What the trait is.
-#' @param tag Optional Character: The member that names an implementor in
-#'   JSON.
+#' @param tag Optional Character: The member of a `dyn()` value's JSON form
+#'   that holds the implementor's type, by its tag value; without it, the
+#'   member `"$type"` holds the qualified type name. An enum's `tag` is
+#'   another member, which holds a variant's name.
+#' @param requires Named list: The fields every implementor has, each a field
+#'   type, an R8 type object, or `field(type, description = )`. An
+#'   implementor is a struct whose field of each name has a type that fits
+#'   the required one: the same type; `T` or `option(T)` for `option(T)`; a
+#'   subtype of the struct for `subtype()`; an implementor of the trait for
+#'   `dyn()`. A constraint narrows nothing, so a field of
+#'   `type_double(min = 0)` fits `type_double(min = 0)` only. Code that
+#'   receives a `dyn()` value of the trait reads these fields.
 #'
 #' @return The trait object, of class `r8_trait`.
 #'
@@ -768,7 +778,13 @@ value_type_text <- function(x) {
 #' options(op)
 #'
 #' @export
-new_trait <- function(name, methods = list(), description = "", tag = NULL) {
+new_trait <- function(
+  name,
+  methods = list(),
+  description = "",
+  tag = NULL,
+  requires = list()
+) {
   if (!is_name(name)) {
     r8_abort(
       "A trait name is an R8 name, such as \"Fit\"",
@@ -809,7 +825,7 @@ new_trait <- function(name, methods = list(), description = "", tag = NULL) {
     }
   }
   trait <- with_record(
-    build_trait(name, methods, description, tag, namespace, env),
+    build_trait(name, methods, description, tag, namespace, env, requires),
     namespace
   )
   record_declaration(
@@ -830,12 +846,22 @@ new_trait <- function(name, methods = list(), description = "", tag = NULL) {
 #' @param namespace Character: The trait's namespace.
 #' @param env Environment: Where the trait is declared, for existing
 #'   generics.
+#' @param requires Named list: The required fields, as `new_trait()` takes
+#'   them.
 #'
 #' @return The trait object.
 #'
 #' @keywords internal
 #' @noRd
-build_trait <- function(name, methods, description, tag, namespace, env) {
+build_trait <- function(
+  name,
+  methods,
+  description,
+  tag,
+  namespace,
+  env,
+  requires = list()
+) {
   qname <- paste0(namespace, "::", name)
   check_members(methods, "methods", paste0("`", qname, "`"))
   if (
@@ -926,12 +952,16 @@ build_trait <- function(name, methods, description, tag, namespace, env) {
     if (tm[["stochastic"]]) {
       method_ir[["stochastic"]] <- TRUE
     }
-    if (!is.null(tm[["default"]])) {
-      method_ir[["has_default"]] <- TRUE
+    if (!is.null(tm[["default_impl"]])) {
+      method_ir[["has_default_impl"]] <- TRUE
     }
     methods_ir[[length(methods_ir) + 1L]] <- method_ir
   }
   ir <- list(name = name, description = description, methods = methods_ir)
+  if (length(requires) > 0L) {
+    check_members(requires, "requires", paste0("`", qname, "`"))
+    ir[["required_fields"]] <- declared(r8_required_fields(requires))
+  }
   if (!is.null(tag)) {
     ir[["tag"]] <- tag
   }
@@ -942,7 +972,7 @@ build_trait <- function(name, methods, description, tag, namespace, env) {
       generics = generics,
       defaults = Filter(
         Negate(is.null),
-        lapply(methods, function(tm) tm[["default"]])
+        lapply(methods, function(tm) tm[["default_impl"]])
       )
     ),
     class = "r8_trait"
@@ -1011,8 +1041,9 @@ register_trait <- function(trait, namespace) {
 #' an impl that another namespace declares is refused.
 #'
 #' @param trait A trait object.
-#' @param type An R8 type object; for a trait whose methods dispatch on
-#'   several arguments, a list of them, one per dispatched argument the impl
+#' @param target What the trait is implemented for: an R8 type object or a
+#'   class ([host_class()]); for a trait whose methods dispatch on several
+#'   arguments, a list of them, one per dispatched argument the impl
 #'   specializes, by position or by name, as `list(A, B)` or `list(y = B)`.
 #' @param methods Named list: One function per method.
 #' @param tag_value Optional Character: The value of the trait's tag member
@@ -1030,8 +1061,8 @@ register_trait <- function(trait, namespace) {
 #' options(op)
 #'
 #' @export
-impl <- function(trait, type, methods = list(), tag_value = NULL) {
-  impl_declare(trait, type, methods, tag_value, parent.frame())
+impl <- function(trait, target, methods = list(), tag_value = NULL) {
+  impl_declare(trait, target, methods, tag_value, parent.frame())
 } # /R8::impl
 
 
@@ -1094,18 +1125,7 @@ impl_declare <- function(
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
   source <- if (from) t[["source"]] else ""
-  source_ns <- if (grepl("::", source, fixed = TRUE)) {
-    sub("::.*", "", source)
-  }
-  if (!is.null(source_ns) && !r8_is_registered(source)) {
-    r8_abort(
-      "The source of From(\"",
-      source,
-      "\") is not a registered type; a qualified source names a declared ",
-      "type, and a class name has no `::`.",
-      class = "r8_declaration_error"
-    )
-  }
+  source_type <- from && identical(t[["source_ir"]][["kind"]], "type")
   check_members(methods, "methods", "an impl")
   fns <- methods
   methods_ir <- trait_ir(t)[["methods"]]
@@ -1139,11 +1159,11 @@ impl_declare <- function(
     check_method_formals(fns[[m]], params, label)
   }
   for (m in declared) {
-    has_default <- isTRUE(Filter(
+    has_default_impl <- isTRUE(Filter(
       function(x) x[["name"]] == m,
       methods_ir
-    )[[1L]][["has_default"]])
-    if (is.null(fns[[m]]) && !has_default && !m %in% adopted) {
+    )[[1L]][["has_default_impl"]])
+    if (is.null(fns[[m]]) && !has_default_impl && !m %in% adopted) {
       r8_abort(
         "The impl of `",
         t[["name"]],
@@ -1168,28 +1188,17 @@ impl_declare <- function(
     ir[["tag_value"]] <- tag_value
   }
   if (inherits(trait, "r8_from_trait")) {
-    # The source is an R8 type, named with its namespace, or an R class.
-    ir[["type_args"]] <- list(
-      if (!is.null(source_ns)) {
-        list(kind = "type", name = t[["source"]])
-      } else {
-        list(
-          kind = "host_class",
-          host = "r",
-          class = t[["source"]],
-          system = "s3"
-        )
-      }
-    )
-    if (!is.null(source_ns) && type_name %in% ancestry(source)[["ancestors"]]) {
+    # The source is an R8 type or a host class.
+    ir[["type_args"]] <- list(t[["source_ir"]])
+    if (source_type && type_name %in% ancestry(source)[["ancestors"]]) {
       r8_abort(
         "`",
         t[["source"]],
         "` extends `",
         type_name,
-        "`, so r8_convert() upcasts it; an impl of From(\"",
-        t[["source"]],
-        "\") for `",
+        "`, so r8_convert() upcasts it; an impl of From(",
+        sub("^.*::", "", t[["source"]]),
+        ") for `",
         type_name,
         "` is reserved.",
         class = "r8_declaration_error"
@@ -1207,6 +1216,9 @@ impl_declare <- function(
   )
   if (inherits(trait, "r8_from_trait")) {
     entry[["source"]] <- t[["source"]]
+    if (identical(t[["source_ir"]][["system"]], "s4")) {
+      entry[["s4_classes"]] <- list(t[["source_ir"]])
+    }
   }
   if (length(adopted) > 0L) {
     entry[["adopted"]] <- adopted
@@ -1216,7 +1228,7 @@ impl_declare <- function(
     attr(positions, "ir")
   )
   if (length(s4) > 0L) {
-    entry[["s4_classes"]] <- s4
+    entry[["s4_classes"]] <- c(entry[["s4_classes"]], s4)
   }
   register_impl(entry)
   record_declaration(env, entry)
@@ -1240,11 +1252,6 @@ register_impl <- function(entry) {
   # The registry checks the impl first, so a refused impl leaves the R
   # functions of the impls as they were.
   register_records(list(entry[["record"]]))
-  t <- if (!is.null(entry[["source"]])) {
-    unclass(From(entry[["source"]]))
-  } else {
-    unclass(.r8_traits[[entry[["trait_name"]]]])
-  }
   if (!is.null(entry[["source"]])) {
     put_impl(
       "R8::From",
@@ -1254,6 +1261,7 @@ register_impl <- function(entry) {
     )
     return(invisible(NULL))
   }
+  t <- unclass(.r8_traits[[entry[["trait_name"]]]])
   # An impl that defines no method still takes precedence over the impls of
   # the type's ancestors.
   mark_impl(t[["name"]], entry[["type_name"]])

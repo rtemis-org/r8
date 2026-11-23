@@ -9,23 +9,24 @@ r8_resolve(x, context = list())
 \arguments{
 \item{x}{An R8 struct value.}
 
-\item{context}{Named list: Values of runtime fields, by name.}
+\item{context}{Named list: Values of context fields, by name.}
 }
 \value{
 The resolved R8 value.
 }
 \description{
-Fills the absent fields that a type declares with \code{option(T, resolve = )}:
-a \code{"runtime"} field from \code{context}, a \code{"computed"} field from its
+Fills the absent fields of type \code{option()} that a struct declares with a
+fill policy: a field of \code{field(option(T), context = TRUE)} from
+\code{context}, and a field of \code{field(option(T), compute = expr)} from its
 expression over the other fields, in dependency order. The result is a new
-value, validated; \code{x} is unchanged. A runtime field missing from \code{context}
-stays absent.
+value, validated; \code{x} is unchanged. A context field missing from
+\code{context} stays absent.
 }
 \examples{
 op <- options(r8.namespace = "demo")
 Dose <- new_struct("Dose", fields = list(
-  mg = field(option(type_double(), resolve = "runtime"), unit = "mg"),
-  g = field(option(type_double(), resolve = "computed", compute = mg / 1000), unit = "g")
+  mg = field(option(type_double()), context = TRUE, unit = "mg"),
+  g = field(option(type_double()), compute = mg / 1000, unit = "g")
 ))
 r8_resolve(Dose(), context = list(mg = 250))$g
 options(op)

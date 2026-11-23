@@ -56,13 +56,13 @@ r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, valu
 #' @noRd
 r8_type_ancestors <- function(type_name) .Call(wrap__r8_type_ancestors, type_name)
 
-#' The value of the ancestor `parent` that the R-native value `x` of a
+#' The value of the ancestor `parent` that the R-stored value `x` of a
 #' descendant holds: `x`'s first fields, the inherited ones, with the
 #' parent's shared attributes. The elements are the child's, not copies,
 #' and the value is not validated: the child's rules include the parent's,
 #' which read the parent's fields only.
 #'
-#' @param x An R-native struct value.
+#' @param x An R-stored struct value.
 #' @param parent Character: The qualified name of an ancestor of `x`'s type.
 #' @return The parent value.
 #' @keywords internal
@@ -153,7 +153,7 @@ r8_declare_records <- function(records, source, check) .Call(wrap__r8_declare_re
 r8_type_ir <- function(name) .Call(wrap__r8_type_ir, name)
 
 #' The absent fields of a struct value that resolution fills, each named by
-#' its field and holding its policy, `"runtime"` or `"computed"`.
+#' its field and holding its policy, `"context"` or `"computed"`.
 #'
 #' @param x An R8 value.
 #' @return Character: The policies, named by field.
@@ -387,7 +387,7 @@ r8_exports_document <- function(ptr, ns) .Call(wrap__r8_exports_document, ptr, n
 r8_exports_compare <- function(ptr, ns) .Call(wrap__r8_exports_compare, ptr, ns)
 
 #' Registers an exports table: declares the impls its impl entries make and
-#' keeps the codecs of its Rust-native types and its impl functions,
+#' keeps the codecs of its Rust-stored types and its impl functions,
 #' replacing the package's earlier entries. The types are the package's R
 #' declarations, registered before, which `r8_exports_compare()` checks
 #' against the table.
@@ -412,7 +412,7 @@ r8_register_exports <- function(ptr, package, ns) .Call(wrap__r8_register_export
 #' @noRd
 r8_impl_fn <- function(trait_name, type_name, method) .Call(wrap__r8_impl_fn, trait_name, type_name, method)
 
-#' The registered Rust-native types and whether each codec table holds
+#' The registered Rust-stored types and whether each codec table holds
 #' every function.
 #'
 #' @return List: `type_name` and `complete`.
@@ -429,7 +429,7 @@ r8_ft_integer <- function(min, max, exclusive_min, exclusive_max, values) .Call(
 #' object, and the field's facts; `has_default` is `!missing(default)`.
 #' @keywords internal
 #' @noRd
-r8_field <- function(type, default, has_default, description, sensitive, unit, external, unique, optional, extensions) .Call(wrap__r8_field, type, default, has_default, description, sensitive, unit, external, unique, optional, extensions)
+r8_field <- function(type, default, has_default, description, sensitive, unit, compute, context, extensions) .Call(wrap__r8_field, type, default, has_default, description, sensitive, unit, compute, context, extensions)
 
 #' `type_double()`.
 #' @keywords internal
@@ -456,13 +456,12 @@ r8_ft_r <- function(class) .Call(wrap__r8_ft_r, class)
 #' @noRd
 r8_ft_vec <- function(type, min_length, max_length, unique) .Call(wrap__r8_ft_vec, type, min_length, max_length, unique)
 
-#' `option()`: `resolve` is matched in R, and `compute` is the unevaluated
-#' expression of a computed field, or `NULL`.
+#' `option()`.
 #' @keywords internal
 #' @noRd
-r8_ft_option <- function(type, resolve, compute) .Call(wrap__r8_ft_option, type, resolve, compute)
+r8_ft_option <- function(type) .Call(wrap__r8_ft_option, type)
 
-#' `hashmap()` and, with `ordered = TRUE`, `ordered_map()`.
+#' `btree_map()` and, with `ordered = TRUE`, `index_map()`.
 #' @keywords internal
 #' @noRd
 r8_ft_map <- function(type, keys, ordered) .Call(wrap__r8_ft_map, type, keys, ordered)
@@ -491,16 +490,16 @@ r8_logic <- function(expr) .Call(wrap__r8_logic, expr)
 #' @noRd
 r8_rule_operators <- function() .Call(wrap__r8_rule_operators)
 
-#' The parts of a Rust-native value that `r8_size()` adds up: the bytes of
+#' The parts of a Rust-stored value that `r8_size()` adds up: the bytes of
 #' its state and the cached fields that are not views of the state.
 #'
 #' @param x An R8 value.
-#' @return List: `state` and `fields`, or `NULL` for an R-native value.
+#' @return List: `state` and `fields`, or `NULL` for an R-stored value.
 #' @keywords internal
 #' @noRd
 r8_native_parts <- function(x) .Call(wrap__r8_native_parts, x)
 
-#' The bytes of the states of Rust-native values reachable from R, and the
+#' The bytes of the states of Rust-stored values reachable from R, and the
 #' level at which R8 requests a collection.
 #'
 #' @return Double: `c(live, threshold)`.
@@ -525,6 +524,13 @@ r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
 #' @keywords internal
 #' @noRd
 r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
+
+#' The required fields of `new_trait(requires = )`: each a field type, an R8
+#' type object, or `field(type, description = )`; a default, a fill policy,
+#' `sensitive`, a unit, and extensions belong to a struct's field.
+#' @keywords internal
+#' @noRd
+r8_required_fields <- function(requires) .Call(wrap__r8_required_fields, requires)
 
 #' Declares a struct or an enum from the user's objects: claims the
 #' namespace, reads the declaration, checks it, registers it, and writes its
@@ -713,17 +719,17 @@ r8_value_to_document <- function(x) .Call(wrap__r8_value_to_document, x)
 #' @noRd
 r8_value_from_document <- function(text, type_name) .Call(wrap__r8_value_from_document, text, type_name)
 
-#' Version of the rtemis-r8 crate
+#' Version of the R8 runtime
 #'
-#' Returns the version of the `rtemis-r8` Rust crate compiled into R8, which
-#' provenance records alongside the versions of R8 and R.
+#' Returns the version of the runtime compiled into R8, the Rust crate
+#' `rtemis-r8`, which provenance records alongside the versions of R8 and R.
 #'
 #' @return Character: The version, for example `"0.1.0"`.
 #'
 #' @examples
-#' r8_core_version()
+#' r8_runtime_version()
 #'
 #' @export
-r8_core_version <- function() .Call(wrap__r8_core_version)
+r8_runtime_version <- function() .Call(wrap__r8_runtime_version)
 
 # nolint end

@@ -34,11 +34,11 @@ svm_types <- function() {
         ),
         weights = field(
           option(vec(type_double(min = 0))),
-          description = "Case weights.",
-          external = TRUE
+          description = "Case weights."
         ),
         mtry = field(
-          option(type_integer(min = 1L), resolve = "runtime"),
+          option(type_integer(min = 1L)),
+          context = TRUE,
           description = "Variables per split."
         )
       ),
@@ -221,19 +221,19 @@ test_that("every field type has an R form that round trips through JSON", {
         fd = type_factor(),
         m = type_matrix(option(type_double())),
         v = vec(option(type_integer())),
-        hm = hashmap(type_double()),
-        om = ordered_map(type_character()),
+        hm = btree_map(type_double()),
+        om = index_map(type_character()),
         j = type_json(),
         b = type_raw(),
         s = field(Shape),
         tb = type_table(
           list(
-            id = field(type_character(), unique = TRUE),
+            id = column(type_character(), unique = TRUE),
             n = option(type_integer())
           ),
           open = TRUE
         ),
-        model = option(type_r("lm"), resolve = "runtime")
+        model = field(option(type_r("lm")), context = TRUE)
       )
     )
   })
@@ -354,7 +354,7 @@ test_that("a runtime-only field enters equality and the hash by presence", {
       "WithModel",
       fields = list(
         count = type_integer(),
-        model = option(type_r("lm"), resolve = "runtime")
+        model = field(option(type_r("lm")), context = TRUE)
       )
     )
   )
@@ -391,7 +391,7 @@ test_that("matrices compare, hash, and write their dimension names", {
   expect_identical(r8_from_json(M, r8_to_json(vx)), vx)
 })
 
-test_that("sizes print in IEC units, and an R-native value shows none", {
+test_that("sizes print in IEC units, and an R-stored value shows none", {
   f <- R8:::r8_format_size
   expect_identical(f(120), "120 B")
   expect_identical(f(1024), "1.00 KiB")

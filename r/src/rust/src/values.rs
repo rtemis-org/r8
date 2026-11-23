@@ -1,4 +1,4 @@
-//! R-native values: the conversion between an R value and its JSON form, by
+//! R-stored values: the conversion between an R value and its JSON form, by
 //! field type, and the construction, encoding, and decoding of values.
 //!
 //! A value is constructed by encoding the R input to its JSON form, validating
@@ -14,8 +14,8 @@
 //! date is a `Date`, a date-time a `POSIXct`; a factor a `factor`; a matrix or
 //! array an atomic vector with `dim`; a sparse matrix a `dgCMatrix`; a table
 //! a `data.frame` with automatic row names (a tibble or a data.table is
-//! accepted); a `hashmap()` a named atomic vector or a named list; an
-//! `ordered_map()` a named list; `type_json()` nested lists; and a struct or
+//! accepted); a `btree_map()` a named atomic vector or a named list; an
+//! `index_map()` a named list; `type_json()` nested lists; and a struct or
 //! enum value an R8 value of its type.
 
 use extendr_api::prelude::*;
@@ -382,8 +382,8 @@ impl Encoder<'_> {
                     }
                 }
             }
-            FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
-                let ordered = matches!(ft, FieldType::OrderedMap { .. });
+            FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
+                let ordered = matches!(ft, FieldType::IndexMap { .. });
                 // `list()`, a zero-length list without names, is the empty
                 // map; another value without names is not a map.
                 let empty_list = x.is_list() && x.is_empty();
@@ -453,7 +453,7 @@ impl Encoder<'_> {
                 self.table(x, &fields, false, path)
             }
             FieldType::Named { name } => self.named(x, name, path),
-            FieldType::Dyn { .. } | FieldType::Descendant { .. } => self.dynamic(x, ft, path),
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => self.dynamic(x, ft, path),
         }
     }
 
@@ -588,7 +588,13 @@ impl Encoder<'_> {
         serde_json::json!({"shape": ints("Dim"), "indptr": ints("p"), "indices": ints("i"), "data": data})
     }
 
-    fn table(&mut self, x: &Robj, columns: &[FieldDef], open: bool, path: &str) -> Value {
+    fn table<C: rtemis_r8::ir::Column>(
+        &mut self,
+        x: &Robj,
+        columns: &[C],
+        open: bool,
+        path: &str,
+    ) -> Value {
         if !x.inherits("data.frame") {
             return self.err("r_type", path, "expected a data.frame".to_string());
         }
@@ -613,9 +619,9 @@ impl Encoder<'_> {
         let mut extra_types = Map::new();
         for (name, col) in list.iter() {
             let p = format!("{path}/{}", esc(name));
-            let declared = columns.iter().find(|c| c.name.as_str() == name);
+            let declared = columns.iter().find(|c| c.field().name.as_str() == name);
             let ft = match declared {
-                Some(c) => c.ty.clone(),
+                Some(c) => c.field().ty.clone(),
                 None if open => match infer_column(&col) {
                     Some(t) => {
                         extra_types.insert(name.to_string(), serde_json::to_value(&t).unwrap());
@@ -890,7 +896,6 @@ fn infer_column(col: &Robj) -> Option<FieldType> {
     };
     Some(FieldType::Option {
         inner: Box::new(base),
-        resolve: Default::default(),
     })
 }
 
@@ -1031,7 +1036,7 @@ impl Decoder<'_> {
                     Ok(List::from_values(values).into())
                 }
             }
-            FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+            FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
                 let (keys, values): (Vec<String>, Vec<N>) = match v.entries() {
                     Some(mut pairs) => {
                         pairs.sort_by(|a, b| a.0.cmp(b.0));
@@ -1044,7 +1049,7 @@ impl Decoder<'_> {
                         .unzip(),
                 };
                 let (inner, _) = unwrap_option(value);
-                let mut r = if is_scalar(inner) && matches!(ft, FieldType::Hashmap { .. }) {
+                let mut r = if is_scalar(inner) && matches!(ft, FieldType::BtreeMap { .. }) {
                     self.atomic(values.iter().copied(), value)?
                 } else {
                     let out = values
@@ -1091,7 +1096,7 @@ impl Decoder<'_> {
                     .map_err(fail)?;
                 self.named(v, &ty, None)
             }
-            FieldType::Descendant { .. } => {
+            FieldType::Subtype { .. } => {
                 let ty = v
                     .get("$type")
                     .and_then(|t| t.as_str())
@@ -1204,7 +1209,11 @@ impl Decoder<'_> {
             .call(pairlist!(ints("indices"), ints("indptr"), x, ints("shape")))
     }
 
-    fn table<'a, N: Node<'a>>(&self, v: N, columns: &[FieldDef]) -> Result<Robj> {
+    fn table<'a, N: Node<'a>, C: rtemis_r8::ir::Column>(
+        &self,
+        v: N,
+        columns: &[C],
+    ) -> Result<Robj> {
         let n = v.get("$length").and_then(Node::number).unwrap_or(0.0) as i32;
         let extra = v.get("$columns");
         let mut names = Vec::new();
@@ -1215,8 +1224,8 @@ impl Decoder<'_> {
             .into_iter()
             .filter(|(k, _)| !k.starts_with('$'))
         {
-            let ft: FieldType = match columns.iter().find(|c| c.name.as_str() == k) {
-                Some(c) => c.ty.clone(),
+            let ft: FieldType = match columns.iter().find(|c| c.field().name.as_str() == k) {
+                Some(c) => c.field().ty.clone(),
                 None => extra
                     .and_then(|t| t.get(k))
                     .map(|t| t.with_value(|x| <FieldType as serde::Deserialize>::deserialize(x)))
@@ -1733,7 +1742,7 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     };
     let v = rtemis_r8::tree::TreeRef::new(&tree);
     let lookup: &dyn TypeLookup = &*docs;
-    // A Rust-native struct or enum: the codec builds the state from the
+    // A Rust-stored struct or enum: the codec builds the state from the
     // read value through `from_reader` when its table has it, and otherwise
     // from the validated fields as R values, through `from_fields` (a struct)
     // or `from_variant` (an enum); the state's variant is checked against the
@@ -1861,11 +1870,8 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
             .into_iter()
             .map(|k| k.map(|s| s.into_owned()).unwrap_or_default())
             .collect();
-    let computed = |f: &FieldDef| match &f.ty {
-        FieldType::Option {
-            resolve: Resolve::Computed { expr },
-            ..
-        } => Some(expr.clone()),
+    let computed = |f: &FieldDef| match &f.resolve {
+        Some(Resolve::Computed { expr }) => Some(expr.clone()),
         _ => None,
     };
     let mut pending: Vec<&FieldDef> = def

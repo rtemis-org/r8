@@ -25,7 +25,7 @@ const STRUCTURAL: &[&str] = &[
     "above_max",
     "not_integer",
     "out_of_range",
-    "not_in_enum",
+    "not_in_values",
     "pattern_mismatch",
     "not_a_level",
     "factor_form",

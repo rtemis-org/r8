@@ -496,9 +496,9 @@ construct_error <- function(
 #' @param formals List: The constructor's formals, one per field in
 #'   declaration order; a formal without a default is a required field.
 #' @param variant Character: The enum variant, or `""` for a struct.
-#' @param native Logical: The type is Rust-native, whose codec is checked
+#' @param rust_stored Logical: The type is Rust-stored, whose codec is checked
 #'   first.
-#' @param package Character: The package that declares a Rust-native type.
+#' @param package Character: The package that declares a Rust-stored type.
 #' @param required Optional Logical: Which fields are required, one per
 #'   formal; `NULL` reads them from `formals`, where a required field has no
 #'   default argument.
@@ -511,7 +511,7 @@ constructor_body <- function(
   qname,
   formals,
   variant = "",
-  native = FALSE,
+  rust_stored = FALSE,
   package = "",
   required = NULL
 ) {
@@ -547,7 +547,7 @@ constructor_body <- function(
       quote(.r8_value_)
     )
   )
-  if (native) {
+  if (rust_stored) {
     steps <- c(list(call("check_codec", qname, package)), steps)
   }
   as.call(c(list(as.name("{")), steps))
@@ -602,7 +602,7 @@ construct_failed <- function(res, env, fn, qname, variant) {
 
 
 # %% check_codec ----
-#' Check that the codec of a Rust-native type is registered
+#' Check that the codec of a Rust-stored type is registered
 #'
 #' @param qname Character: The qualified type name.
 #'
@@ -616,7 +616,7 @@ check_codec <- function(qname, package = "") {
     r8_abort(
       "`",
       qname,
-      "` is a Rust-native type, whose values the codec in a package's ",
+      "` is a Rust-stored type, whose values the codec in a package's ",
       "compiled exports builds; no codec of it is registered.",
       if (nzchar(package)) {
         paste0(
@@ -919,7 +919,7 @@ r8_from_json <- function(type, json, load = NULL) {
   }
   load_packages(load)
   ensure_registered(type)
-  if (isTRUE(attr(type, "r8_native"))) {
+  if (identical(attr(type, "r8_storage"), "rust")) {
     check_codec(attr(type, "r8_name"), attr(type, "r8_package") %||% "")
   }
   res <- r8_value_from_document(

@@ -12,7 +12,7 @@
 # whenever a declaration changes the registry (`clear_variants()`).
 .r8_variants <- new.env(parent = emptyenv())
 
-# The registered codecs of Rust-native types: qualified name to the package
+# The registered codecs of Rust-stored types: qualified name to the package
 # whose exports carry the codec.
 .r8_codecs <- new.env(parent = emptyenv())
 
@@ -28,11 +28,14 @@
 #' @param description Character: What the field holds.
 #' @param sensitive Logical: Mask the value in printing, events, errors, and
 #'   differences.
-#' @param unit Optional Character: A UCUM unit code, such as `"mg"`.
-#' @param external Logical: `write_json()` writes the value to an Arrow IPC
-#'   file.
-#' @param unique Logical: A table column whose values are distinct.
-#' @param optional Logical: A table column that may be absent.
+#' @param unit Optional Character: A unit code, by convention UCUM, such as
+#'   `"mg"`.
+#' @param compute Optional expression: For a field of type `option()`, its
+#'   value as an expression over the other fields, captured unevaluated and
+#'   written in the rule dialect, which `r8_resolve()` fills.
+#' @param context Logical: For a field of type `option()`, `r8_resolve(x,
+#'   context)` fills the value from `context`. At most one of `compute` and
+#'   `context` is given.
 #' @param extensions Optional named list: Namespaced extensions, such as
 #'   `list("rtemis:tunable" = TRUE)`, which R8 stores and does not interpret.
 #'
@@ -40,6 +43,8 @@
 #'
 #' @examples
 #' field(type_double(exclusive_min = 0), default = 1, description = "Cost.")
+#' field(option(type_double()), compute = dose_mg / 1000)
+#' field(option(type_integer(min = 1L)), context = TRUE)
 #'
 #' @export
 field <- function(
@@ -48,9 +53,8 @@ field <- function(
   description = "",
   sensitive = FALSE,
   unit = NULL,
-  external = FALSE,
-  unique = FALSE,
-  optional = FALSE,
+  compute = NULL,
+  context = FALSE,
   extensions = NULL
 ) {
   declared(r8_field(
@@ -60,22 +64,81 @@ field <- function(
     description,
     sensitive,
     unit,
-    external,
-    unique,
-    optional,
+    substitute(compute),
+    context,
     extensions
   ))
 } # /R8::field
 
 
+# %% column ----
+#' Declare a table column
+#'
+#' The facts of one column of [type_table()]: those of a field, and whether
+#' the column's values are distinct and whether every table holds it. A
+#' column that may be absent differs from a present column with missing
+#' cells, which is `option()`. A bare field type or a [field()] is the short
+#' form of a column that is required and not unique.
+#'
+#' @param type An `r8_field_type`: The column's type, a scalar, a factor, or
+#'   `option()` of one.
+#' @param default Optional: The default value.
+#' @param description Character: What the column holds.
+#' @param sensitive Logical: Mask the values in printing, events, errors,
+#'   and differences.
+#' @param unit Optional Character: A unit code, by convention UCUM, such as
+#'   `"mg"`.
+#' @param unique Logical: The column's values are distinct.
+#' @param required Logical: Every table holds the column.
+#' @param extensions Optional named list: Namespaced extensions, which R8
+#'   stores and does not interpret.
+#'
+#' @return An `r8_column`.
+#'
+#' @examples
+#' type_table(list(
+#'   id = column(type_character(), unique = TRUE),
+#'   note = column(option(type_character()), required = FALSE)
+#' ))
+#'
+#' @export
+column <- function(
+  type,
+  default = NULL,
+  description = "",
+  sensitive = FALSE,
+  unit = NULL,
+  unique = FALSE,
+  required = TRUE,
+  extensions = NULL
+) {
+  f <- declared(r8_field(
+    type,
+    default,
+    !missing(default),
+    description,
+    sensitive,
+    unit,
+    NULL,
+    FALSE,
+    extensions
+  ))
+  structure(
+    c(unclass(f), list(unique = isTRUE(unique), required = isTRUE(required))),
+    class = c("r8_column", "r8_field")
+  )
+} # /R8::column
+
+
 # %% json_ir ----
 #' IR as JSON text
 #'
+#' Declaration vocabulary, without the `r8_` prefix of operations on values:
 #' JSON text that a declaration carries into its IR as written: a rule's
 #' `invariant` or `when` as JSONLogic, or a field's `default` as the value's
 #' JSON form. It holds what the R forms do not express, such as an `and` of
 #' three operands, a default that is an enum variant with fields or a struct,
-#' and a number that a double does not hold exactly. `r8_document_native()`
+#' and a number that a double does not hold exactly. `r8_document_rust()`
 #' writes it where a Rust declaration has no R form.
 #'
 #' @param text Character: One JSON text.
@@ -110,8 +173,9 @@ json_ir <- function(text) {
 # %% int64 ----
 #' An integer beyond R's range
 #'
-#' An integer of more than 2^53 in magnitude, which neither an R integer nor a
-#' double holds exactly, given as its decimal digits: for a rule's constant or
+#' Declaration vocabulary, without the `r8_` prefix of operations on values:
+#' an integer of more than 2^53 in magnitude, which neither an R integer nor a
+#' double holds exactly, given as its decimal digits, for a rule's constant or
 #' a default. R8 writes such an integer of a declaration in this form.
 #'
 #' @param text Character: The decimal digits of one integer, with an optional
@@ -273,7 +337,7 @@ required_formals <- function(formals) {
 #' @param namespace Character: The namespace.
 #' @param class Character: The type object's class.
 #' @param formals List: The constructor's formals.
-#' @param native Logical: A Rust-native type.
+#' @param rust_stored Logical: A Rust-stored type.
 #'
 #' @return The type object.
 #'
@@ -289,7 +353,7 @@ declare <- function(
   rules,
   env,
   class,
-  native = FALSE,
+  rust_stored = FALSE,
   extends = NULL,
   defaults = list()
 ) {
@@ -335,7 +399,7 @@ declare <- function(
       constructor_body(
         qname,
         formals,
-        native = native,
+        rust_stored = rust_stored,
         package = package,
         required = out[["required"]]
       )
@@ -353,7 +417,7 @@ declare <- function(
       record = record,
       namespace = namespace,
       name = qname,
-      native = if (native) TRUE
+      rust_stored = if (rust_stored) TRUE
     )
   )
   type <- structure(
@@ -361,8 +425,8 @@ declare <- function(
     class = c(class, "r8_type", "function"),
     r8_name = qname,
     r8_record = if (!recorded) record,
-    r8_native = if (native) TRUE,
-    r8_package = if (native) package
+    r8_storage = if (rust_stored) "rust",
+    r8_package = if (rust_stored) package
   )
   assign(qname, type, envir = .r8_types)
   type
@@ -577,12 +641,13 @@ type_ir <- function(type) {
 #'   parent apply to them where the child has none.
 #' @param defaults Named list: The child's defaults of inherited fields, by
 #'   field name. `NULL` removes the default of an `option()` field.
-#' @param native Logical: A Rust-native type, whose values the codec in the
-#'   package's compiled exports builds and holds (`R8.h`). Its constructor
+#' @param storage Character \{"r", "rust"\}: Where values hold their fields.
+#'   `"rust"`: a Rust-stored type, whose values the codec in the package's
+#'   compiled exports builds and holds (`R8.h`). Its constructor
 #'   signals `r8_codec_missing` until the codec is registered, and
 #'   `r8_register()` checks that the exports carry the codec. A package whose
 #'   types are declared in Rust generates these declarations with
-#'   `r8_document_native()`.
+#'   `r8_document_rust()`.
 #'
 #' @return The type object, of class `r8_struct_type`.
 #'
@@ -606,8 +671,9 @@ new_struct <- function(
   rules = list(),
   extends = NULL,
   defaults = list(),
-  native = FALSE
+  storage = c("r", "rust")
 ) {
+  rust_stored <- identical(match.arg(storage), "rust")
   if (!is_name(name)) {
     r8_abort(
       "A type name is an R8 name, such as \"Svm\"",
@@ -630,15 +696,16 @@ new_struct <- function(
       )
     }
     ensure_registered(extends)
-    if (!identical(isTRUE(native), isTRUE(attr(extends, "r8_native")))) {
+    parent_rust <- identical(attr(extends, "r8_storage"), "rust")
+    if (!identical(rust_stored, parent_rust)) {
       r8_abort(
         "`",
         name,
         "` and its parent `",
         attr(extends, "r8_name"),
-        "` are both Rust-native or both R-native; set `native = ",
-        isTRUE(attr(extends, "r8_native")),
-        "`.",
+        "` are both Rust-stored or both R-stored; set `storage = \"",
+        if (parent_rust) "rust" else "r",
+        "\"`.",
         class = "r8_declaration_error"
       )
     }
@@ -660,7 +727,7 @@ new_struct <- function(
     as_rules(rules),
     parent.frame(),
     "r8_struct_type",
-    native = isTRUE(native),
+    rust_stored = isTRUE(rust_stored),
     extends = extends,
     defaults = defaults
   )
@@ -752,10 +819,13 @@ variant <- function(
 #' @param name Character: The type name.
 #' @param variants Named list: The variants, `variant()` calls.
 #' @param description Character: What the type is.
-#' @param tag Character: The member that names the variant in JSON.
+#' @param tag Character: The member of an object variant's JSON form that
+#'   holds the variant's name. A trait's `tag` is another member, which holds
+#'   an implementor's type.
 #' @param version Integer: The type's version, from 1.
-#' @param native Logical: A Rust-native type, whose values, unit variants
-#'   included, the codec in the package's compiled exports builds and holds
+#' @param storage Character \{"r", "rust"\}: Where values hold their fields.
+#'   `"rust"`: a Rust-stored type, whose values, unit variants included, the
+#'   codec in the package's compiled exports builds and holds
 #'   (`R8.h`). Its variant constructors and unit variants signal
 #'   `r8_codec_missing` until the codec is registered.
 #'
@@ -778,8 +848,9 @@ new_enum <- function(
   description = "",
   tag = "type",
   version = 1L,
-  native = FALSE
+  storage = c("r", "rust")
 ) {
+  rust_stored <- identical(match.arg(storage), "rust")
   if (!is_name(name)) {
     r8_abort(
       "A type name is an R8 name, such as \"Kernel\"",
@@ -809,7 +880,7 @@ new_enum <- function(
     list(),
     parent.frame(),
     "r8_enum_type",
-    native = isTRUE(native)
+    rust_stored = isTRUE(rust_stored)
   )
 } # /R8::new_enum
 
@@ -846,7 +917,7 @@ new_enum <- function(
     v,
     qname,
     name,
-    isTRUE(attr(object, "r8_native")),
+    identical(attr(object, "r8_storage"), "rust"),
     attr(object, "r8_package") %||% ""
   )
   variants[[name]] <- built
@@ -881,18 +952,18 @@ enum_variants <- function(qname, object) {
 #' @param v The variant's declaration, of class `r8_variant_spec`.
 #' @param qname Character: The enum's qualified name.
 #' @param name Character: The variant's name.
-#' @param native Logical: The enum is Rust-native.
-#' @param package Character: The package that declares a Rust-native enum.
+#' @param rust_stored Logical: The enum is Rust-stored.
+#' @param package Character: The package that declares a Rust-stored enum.
 #'
 #' @return The unit variant's value, or the constructor of a struct or
 #'   newtype variant.
 #'
 #' @keywords internal
 #' @noRd
-build_variant <- function(v, qname, name, native, package = "") {
+build_variant <- function(v, qname, name, rust_stored, package = "") {
   v <- unclass(v)
   if (v[["shape"]] == "unit") {
-    if (native) {
+    if (rust_stored) {
       check_codec(qname, package)
     }
     return(r8_construct(qname, list(), name))
@@ -911,7 +982,7 @@ build_variant <- function(v, qname, name, native, package = "") {
         qname,
         formals,
         name,
-        native = native,
+        rust_stored = rust_stored,
         package = package
       )
     ),

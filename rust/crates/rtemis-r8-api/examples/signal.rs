@@ -1,4 +1,4 @@
-//! A Rust-native struct with impls of an R8 trait declared in R
+//! A Rust-stored struct with impls of an R8 trait declared in R
 //! (`pkgr::Norm`) and of `R8::Display`, as an R package's Rust code writes
 //! them. `cargo check --examples` compiles it; R links it in a package.
 
@@ -8,7 +8,7 @@ use rtemis_r8_api::{Buffer, Dots};
 
 /// A named series of values.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub struct Signal {
     /// The name.
     pub name: String,

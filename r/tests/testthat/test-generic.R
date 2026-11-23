@@ -110,13 +110,13 @@ test_that("a generic shares the namespace's names with types and trait methods",
   )
 })
 
-test_that("implement() lowers format, str, dim, and r8_cmp to standard traits", {
+test_that("implement() lowers format, str, dim, and r8_partial_cmp to standard traits", {
   GBM <- gbm_types("gen5")[["GBM"]]
   declare_in("gen5", {
     implement(format, GBM) <- function(x, ...) paste0("GBM(", x$n_trees, ")")
     implement(str, GBM) <- function(object, ...) cat("GBM str\n")
     implement(dim, GBM) <- function(x) c(x$n_trees, 2L)
-    implement(r8_cmp, GBM) <- function(x, y) x$n_trees - y$n_trees
+    implement(r8_partial_cmp, GBM) <- function(x, y) sign(x$n_trees - y$n_trees)
   })
   g <- GBM(n_trees = 3L)
   expect_identical(format(g), "GBM(3)")
@@ -220,7 +220,7 @@ test_that("implement() refuses the functions R8 owns, operators, and non-generic
   refuse(try_impl(`$`), "reads the fields")
   refuse(try_impl(`[[<-`), "validates every change")
   refuse(try_impl(`==`), "r8_equal")
-  refuse(try_impl(`<`), "implement\\(r8_cmp, GBM\\)")
+  refuse(try_impl(`<`), "implement\\(r8_partial_cmp, GBM\\)")
   refuse(try_impl(`+`), "operators")
   refuse(try_impl(Ops), "operators")
   refuse(try_impl(nrow), "implement\\(dim, GBM\\)")
@@ -272,7 +272,7 @@ test_that("a method has the generic's arguments, and adds its own only after ...
       class = "r8_declaration_error"
     )
     expect_error(
-      trait_method(function(x) NULL, default = function(x, y) NULL),
+      trait_method(function(x) NULL, default_impl = function(x, y) NULL),
       "the default",
       class = "r8_declaration_error"
     )

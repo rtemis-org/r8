@@ -3,7 +3,7 @@
 # 2026- EDG rtemis.org
 
 # Fields of a `Conform` value: construction, reading, defaults, problems,
-# replacement, equality, and r8_conform(), for R-native and Rust-native
+# replacement, equality, and r8_conform(), for R-stored and Rust-stored
 # values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 

@@ -456,9 +456,9 @@ fn trait_impls(
 /// A position as R8's R code keys it: a qualified type name, `any`, or a
 /// host class's name in double quotes, `"data.frame"`, which no type name
 /// and no `any` can equal.
-fn position_string(p: &rtemis_r8::ir::ImplTarget) -> String {
+fn position_string(p: &rtemis_r8::ir::TypeRef) -> String {
     match p {
-        rtemis_r8::ir::ImplTarget::HostClass { class, .. } => format!("\"{class}\""),
+        rtemis_r8::ir::TypeRef::HostClass { class, .. } => format!("\"{class}\""),
         other => other.to_string(),
     }
 }
@@ -540,14 +540,13 @@ fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj)
                 .zip(rtemis_r8::ir::dispatch::positions(impls[b], arity))
                 .map(|(((x, y), px), py)| {
                     let below =
-                        |p: &rtemis_r8::ir::ImplTarget, q: &rtemis_r8::ir::ImplTarget| match (p, q)
-                        {
-                            (rtemis_r8::ir::ImplTarget::Any, _) => false,
-                            (_, rtemis_r8::ir::ImplTarget::Any) => true,
+                        |p: &rtemis_r8::ir::TypeRef, q: &rtemis_r8::ir::TypeRef| match (p, q) {
+                            (rtemis_r8::ir::TypeRef::Any, _) => false,
+                            (_, rtemis_r8::ir::TypeRef::Any) => true,
                             (
-                                rtemis_r8::ir::ImplTarget::Type { name: n },
-                                rtemis_r8::ir::ImplTarget::Type { name: m },
-                            ) => rtemis_r8::rules::TypeLookup::descends(&*docs, n, m),
+                                rtemis_r8::ir::TypeRef::Type { name: n },
+                                rtemis_r8::ir::TypeRef::Type { name: m },
+                            ) => rtemis_r8::rules::TypeLookup::is_subtype(&*docs, n, m),
                             _ => false,
                         };
                     if below(py, px) { y.clone() } else { x.clone() }
@@ -641,7 +640,7 @@ fn r8_type_ir(name: &str) -> Result<Robj> {
 }
 
 /// The absent fields of a struct value that resolution fills, each named by
-/// its field and holding its policy, `"runtime"` or `"computed"`.
+/// its field and holding its policy, `"context"` or `"computed"`.
 ///
 /// @param x An R8 value.
 /// @return Character: The policies, named by field.
@@ -649,7 +648,7 @@ fn r8_type_ir(name: &str) -> Result<Robj> {
 /// @noRd
 #[extendr]
 fn r8_pending_fields(x: Robj) -> Result<Robj> {
-    use rtemis_r8::ir::{FieldType, Resolve};
+    use rtemis_r8::ir::Resolve;
     let xs = unsafe { x.get() };
     let type_name = crate::rview::attr_string(xs, crate::rview::sym_r8_type())
         .ok_or_else(|| fail("not an R8 value"))?;
@@ -658,16 +657,10 @@ fn r8_pending_fields(x: Robj) -> Result<Robj> {
     let (mut names, mut policies) = (Vec::new(), Vec::new());
     if let Some(TypeDef::Struct(s)) = rtemis_r8::rules::TypeLookup::find(&*reg, &q) {
         for (i, f) in s.fields.iter().enumerate() {
-            let policy = match &f.ty {
-                FieldType::Option {
-                    resolve: Resolve::Computed { .. },
-                    ..
-                } => "computed",
-                FieldType::Option {
-                    resolve: Resolve::Runtime,
-                    ..
-                } => "runtime",
-                _ => continue,
+            let policy = match &f.resolve {
+                Some(Resolve::Computed { .. }) => "computed",
+                Some(Resolve::Context) => "context",
+                None => continue,
             };
             let absent = i >= crate::rview::xlen(xs)
                 || crate::rview::is_null(unsafe { extendr_ffi::VECTOR_ELT(xs, i as isize) });

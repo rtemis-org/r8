@@ -2,8 +2,8 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Documents and serialization of a `Conform` value, for R-native and
-# Rust-native values alike (helper-conformance.R).
+# Documents and serialization of a `Conform` value, for R-stored and
+# Rust-stored values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 
 test_that("a document round trips to an equal value", {

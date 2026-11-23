@@ -1,4 +1,4 @@
-//! `Field`: a field type of a Rust-native struct, with its conversions from
+//! `Field`: a field type of a Rust-stored struct, with its conversions from
 //! and to R, its bytes in the codec's state, and the memory Rust owns for
 //! it; and `Encode` for [`Buffer`], its declaration and JSON form.
 
@@ -12,7 +12,7 @@ use crate::reader::{Node, Reader};
 use crate::state::{StateReader, StateWriter};
 use crate::sys::{self, SEXP};
 
-/// A field type of a Rust-native struct. R8 validates a field and converts
+/// A field type of a Rust-stored struct. R8 validates a field and converts
 /// it to its stored form before `from_r` reads it, so `from_r` checks only
 /// what Rust needs.
 pub trait Field: Clone + Send + Sync + 'static {

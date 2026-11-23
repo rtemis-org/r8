@@ -6,7 +6,7 @@
 //! accepted form is converted to the stored form: an integer vector for a
 //! double field, a `Date` stored as integers, a `POSIXct` in another time
 //! zone or below microsecond precision, a factor whose levels differ from
-//! the declared levels, a `hashmap()` in unsorted order, a tibble, and the
+//! the declared levels, a `btree_map()` in unsorted order, a tibble, and the
 //! others. The stored forms are listed in `values.rs`.
 //!
 //! Compiled rules and patterns are kept between constructions in a
@@ -379,7 +379,7 @@ pub(crate) fn normalize(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> Res
         | FieldType::R { .. }
         | FieldType::Named { .. }
         | FieldType::Dyn { .. }
-        | FieldType::Descendant { .. } => None,
+        | FieldType::Subtype { .. } => None,
         FieldType::Vec { element, .. } => {
             let inner = unwrap_option(element);
             if is_scalar(inner) {
@@ -389,8 +389,8 @@ pub(crate) fn normalize(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> Res
             }
         }
         FieldType::Factor { levels, ordered } => factor(x, levels.as_deref(), *ordered),
-        FieldType::Hashmap { value, .. } => map(x, value, false, lookup)?,
-        FieldType::OrderedMap { value, .. } => map(x, value, true, lookup)?,
+        FieldType::BtreeMap { value, .. } => map(x, value, false, lookup)?,
+        FieldType::IndexMap { value, .. } => map(x, value, true, lookup)?,
         FieldType::Json => json(x),
         FieldType::Matrix { element, .. } | FieldType::Array { element, .. } => {
             dense(x, unwrap_option(element))
@@ -492,9 +492,9 @@ fn factor(x: SEXP, declared: Option<&[Box<str>]>, ordered: bool) -> Option<Robj>
     }
 }
 
-/// A `hashmap()` (`ordered = false`), stored with its keys sorted, as a named
+/// A `btree_map()` (`ordered = false`), stored with its keys sorted, as a named
 /// atomic vector for scalar values and a named list otherwise; or an
-/// `ordered_map()`, stored as a named list in its order.
+/// `index_map()`, stored as a named list in its order.
 fn map(x: SEXP, value: &FieldType, ordered: bool, lookup: &dyn TypeLookup) -> Result<Option<Robj>> {
     let names = attr(x, sym_names());
     let keys: Vec<String> = strings(names)
@@ -659,7 +659,7 @@ fn sparse(x: SEXP) -> Result<Option<Robj>> {
 
 /// A table, stored as a `data.frame` with the compact row names
 /// `c(NA, -n)` and its columns in their stored forms.
-fn table(x: SEXP, columns: &[FieldDef]) -> Result<Option<Robj>> {
+fn table<C: rtemis_r8::ir::Column>(x: SEXP, columns: &[C]) -> Result<Option<Robj>> {
     let n = table_rows(x).map_err(|f| fail(f.message))? as i32;
     let names = attr(x, sym_names());
     let k = xlen(x);
@@ -669,9 +669,9 @@ fn table(x: SEXP, columns: &[FieldDef]) -> Result<Option<Robj>> {
         let name = string_elt(names, i);
         let ft = match columns
             .iter()
-            .find(|c| Some(c.name.as_str()) == name.as_deref())
+            .find(|c| Some(c.field().name.as_str()) == name.as_deref())
         {
-            Some(c) => c.ty.clone(),
+            Some(c) => c.field().ty.clone(),
             None => match infer_column(col) {
                 Some(t) => t,
                 None => continue,
@@ -891,7 +891,7 @@ pub(crate) fn assemble(
             out,
             shared_attributes(&qname, version, variant, &field_names),
         );
-        // A Rust-native type's value is the codec's state behind an ALTLIST
+        // A Rust-stored type's value is the codec's state behind an ALTLIST
         // with the same attributes (`native.rs`).
         let r = match (def, crate::exports::codec(&q.to_string())) {
             (TypeDef::Struct(_), Some(vt)) => {
@@ -1055,7 +1055,7 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
             None => vs,
         }
     };
-    // A Rust-native value: the codec builds the new state, and the new value
+    // A Rust-stored value: the codec builds the new state, and the new value
     // reads its fields from it on demand, keeping the fields the old value
     // has read, except the replaced one; the rules then read the fields they
     // name. The old value's fields are not read.
@@ -1209,13 +1209,13 @@ fn r8_type_ancestors(type_name: &str) -> Result<List> {
     ))
 }
 
-/// The value of the ancestor `parent` that the R-native value `x` of a
+/// The value of the ancestor `parent` that the R-stored value `x` of a
 /// descendant holds: `x`'s first fields, the inherited ones, with the
 /// parent's shared attributes. The elements are the child's, not copies,
 /// and the value is not validated: the child's rules include the parent's,
 /// which read the parent's fields only.
 ///
-/// @param x An R-native struct value.
+/// @param x An R-stored struct value.
 /// @param parent Character: The qualified name of an ancestor of `x`'s type.
 /// @return The parent value.
 /// @keywords internal
@@ -1230,7 +1230,7 @@ fn r8_upcast_value(x: Robj, parent: &str) -> Result<Robj> {
     let x = unsafe { x.get() };
     let n = p.fields.len();
     if sexptype(x) != SEXPTYPE::VECSXP || xlen(x) < n {
-        return Err(fail("`x` is an R-native struct value"));
+        return Err(fail("`x` is an R-stored struct value"));
     }
     unsafe {
         let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));

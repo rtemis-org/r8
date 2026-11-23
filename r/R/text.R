@@ -353,7 +353,7 @@ value_text <- function(x, summary = NULL) {
 #' The default layout of an R8 value
 #'
 #' Reads a duplicate of the value, so that the layout fills no field cache
-#' of `x`. The header of a Rust-native value shows the size of its state.
+#' of `x`. The header of a Rust-stored value shows the size of its state.
 #'
 #' @param x An R8 value.
 #' @param summary Character or `NULL`: Text after the header, in place of
@@ -390,7 +390,7 @@ layout_value <- function(x, summary = NULL, head = 8L) {
 #' `Print` impl: a header naming the type, and each field on its own line,
 #' a nested value's fields indented under it. A vector shows its element
 #' type, its length, and its first `head` items; a factor, a matrix, a table,
-#' and a sparse matrix show their shape. The header of a Rust-native value
+#' and a sparse matrix show their shape. The header of a Rust-stored value
 #' shows the size of its state in IEC binary units. A nested value whose
 #' type implements `Display` shows the impl's text. The layout reads no
 #' vector whole.
@@ -825,7 +825,7 @@ with_print_state <- function(resolved, theme, expr) {
 #' text of an R8 value is its type's `Display` impl's, or its default layout
 #' (`r8_layout()`); a `Print` impl replaces the output of `print()`, and a
 #' `Debug` impl the output of `str()`. The default `str()` adds to the size
-#' of a Rust-native value the fields read into R that are not views of its
+#' of a Rust-stored value the fields read into R that are not views of its
 #' state, which together make `r8_size(x)`: `<pkgc::Signal> 7.63 MiB + 112 B
 #' read`.
 #'

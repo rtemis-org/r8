@@ -7,7 +7,7 @@
 trait_method(
   fn,
   description = "",
-  default = NULL,
+  default_impl = NULL,
   stochastic = FALSE,
   dispatch = NULL
 )
@@ -18,8 +18,8 @@ formal is the value the method dispatches on.}
 
 \item{description}{Character: What the method does.}
 
-\item{default}{Optional function: A default implementation, used for a
-type whose impl does not define the method.}
+\item{default_impl}{Optional function: The method's default
+implementation, used for a type whose impl does not define the method.}
 
 \item{stochastic}{Logical: The method draws random numbers.}
 

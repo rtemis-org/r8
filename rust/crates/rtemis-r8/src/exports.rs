@@ -1,13 +1,13 @@
 //! The host-neutral checks of a package's compiled exports (`R8Exports`):
 //! the impl declarations that the impl entries make, the codec of a
-//! Rust-native type against its type's declaration, and the number of an
+//! Rust-stored type against its type's declaration, and the number of an
 //! impl function's parameters against its trait's method.
 //!
 //! A host binding reads the table's pointers and owns the registry; it
 //! passes the rows and the codec tables here.
 
 use crate::abi::TypeVTable;
-use crate::ir::{FieldDef, FieldType, ImplDef, ImplTarget, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, ImplDef, TypeDef, TypeRef, VariantShape};
 use crate::name::{MethodName, QualifiedName};
 use crate::rules::{DocumentSet, TypeLookup};
 
@@ -52,7 +52,7 @@ pub fn impls_from_rows(rows: &[ImplRow], package: &str) -> Result<Vec<ImplDef>, 
                 out.push(ImplDef {
                     r#trait: parse(&r.trait_name, "trait")?,
                     type_args: Vec::new(),
-                    target: ImplTarget::Type {
+                    target: TypeRef::Type {
                         name: parse(&r.type_name, "type")?,
                     },
                     tag_value: None,
@@ -113,7 +113,7 @@ fn has_enum_members(v: &TypeVTable) -> bool {
     v.variant.is_some() || v.from_variant.is_some()
 }
 
-/// Checks the codec of the Rust-native type `name` against the type's
+/// Checks the codec of the Rust-stored type `name` against the type's
 /// declaration in `lookup`: a struct's codec sets `from_fields` and neither
 /// `variant` nor `from_variant`, an enum's sets both and not `from_fields`,
 /// and no field of the type, in any variant, is runtime-only, since the
@@ -162,7 +162,7 @@ pub fn check_codec(
     };
     match found {
         Some(field) => Err(format!(
-            "the Rust-native type `{name}` of `{package}` declares the runtime-only field `{field}`; its codec's state holds every field"
+            "the Rust-stored type `{name}` of `{package}` declares the runtime-only field `{field}`; its codec's state holds every field"
         )),
         None => Ok(()),
     }

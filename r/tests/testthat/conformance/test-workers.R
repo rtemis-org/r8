@@ -3,7 +3,7 @@
 # 2026- EDG rtemis.org
 
 # A `Conform` value crosses to mirai and future workers and back. A worker
-# loads the type's package, so the test runs with the Rust-native provider,
+# loads the type's package, so the test runs with the Rust-stored provider,
 # whose package is installed (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 

@@ -36,11 +36,11 @@ pub enum Step {
     /// A field of a struct or an enum value, or a member of a value of
     /// unknown type.
     Field(String),
-    /// A key of a `hashmap()`.
+    /// A key of a `btree_map()`.
     Key(String),
     /// A column of a table.
     Column(String),
-    /// A key of an `ordered_map()`, whose JSON is an array of `{"name",
+    /// A key of an `index_map()`, whose JSON is an array of `{"name",
     /// "value"}` pairs.
     OrderedKey(String),
 }
@@ -50,11 +50,11 @@ pub enum Step {
 pub enum Collection {
     /// A JSON array (`vec()`).
     Array,
-    /// An array of `{"name", "value"}` pairs (`ordered_map()`); the element
+    /// An array of `{"name", "value"}` pairs (`index_map()`); the element
     /// is the value.
-    OrderedMap,
-    /// A JSON object (`hashmap()`); the element is each member's value.
-    Hashmap,
+    IndexMap,
+    /// A JSON object (`btree_map()`); the element is each member's value.
+    BtreeMap,
     /// Unknown until run time: an array's items or an object's values.
     Dynamic,
 }
@@ -1044,18 +1044,18 @@ impl Compiler<'_> {
             Ty::Map {
                 value,
                 ordered: true,
-            } => (Collection::OrderedMap, (**value).clone()),
+            } => (Collection::IndexMap, (**value).clone()),
             Ty::Map {
                 value,
                 ordered: false,
-            } => (Collection::Hashmap, (**value).clone()),
+            } => (Collection::BtreeMap, (**value).clone()),
             Ty::Any | Ty::Json => (Collection::Dynamic, Ty::Any),
             other => {
                 return self.error(
                     "rule_type",
                     &format!("{path}/0"),
                     format!(
-                        "`{op}` runs over a vec, an ordered map, or a hashmap, found {}",
+                        "`{op}` runs over a vec, an index map, or a btree map, found {}",
                         other.describe()
                     ),
                 );

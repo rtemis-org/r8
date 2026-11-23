@@ -10,7 +10,7 @@ use rtemis_r8_api::Buffer;
 
 // Twenty doubles in [0, 1], each 0.1 by default.
 #[derive(R8, Clone)]
-#[r8(namespace = "bench", version = 1, native)]
+#[r8(namespace = "bench", version = 1, storage = "rust")]
 pub struct Wide20 {
     #[r8(min = 0, max = 1, default = "0.1")]
     pub f1: f64,
@@ -57,7 +57,7 @@ pub struct Wide20 {
 // The settings of a gradient-boosted tree model, with case weights and the
 // indices of the features used.
 #[derive(R8, Clone)]
-#[r8(namespace = "bench", version = 1, native)]
+#[r8(namespace = "bench", version = 1, storage = "rust")]
 #[r8(rule(
     id = "early_stop_below_trees",
     invariant = r#"{"<": [{"var": "early_stopping_rounds"}, {"var": "n_trees"}]}"#,

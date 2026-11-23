@@ -154,9 +154,9 @@ pub(crate) type Evaluated<'l, A> = Result<Result<Val<'l, A>, Absent>, String>;
 pub enum Suffix<'s> {
     /// The element at an index of a vector.
     Index(usize),
-    /// The value at a key of a `hashmap()`.
+    /// The value at a key of a `btree_map()`.
     Key(std::borrow::Cow<'s, str>),
-    /// The value of the item at an index of an `ordered_map()`.
+    /// The value of the item at an index of an `index_map()`.
     Item(usize),
 }
 
@@ -553,7 +553,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
             match s {
                 Step::Field(k) | Step::Key(k) | Step::Column(k) => {
                     let next_ty = match ty.map(unwrap_option) {
-                        Some(FieldType::Hashmap { value, .. }) => Some(value.as_ref()),
+                        Some(FieldType::BtreeMap { value, .. }) => Some(value.as_ref()),
                         _ if at_root || ty.is_some() => self
                             .fields_of(if at_root { None } else { ty }, cur)
                             .and_then(|f| f.iter().find(|f| f.name.as_str() == k.as_str()))
@@ -561,7 +561,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                         _ => None,
                     };
                     cur = match ty.map(unwrap_option) {
-                        Some(FieldType::Hashmap { .. }) => {
+                        Some(FieldType::BtreeMap { .. }) => {
                             let mut found = None;
                             cur.each_entry(|_, e| {
                                 if let Ok((key, x)) = e
@@ -591,7 +591,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                         }
                     });
                     ty = match ty.map(unwrap_option) {
-                        Some(FieldType::OrderedMap { value, .. }) => Some(value.as_ref()),
+                        Some(FieldType::IndexMap { value, .. }) => Some(value.as_ref()),
                         _ => None,
                     };
                     match found {
@@ -933,7 +933,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         };
         let as_array = match (kind, ty) {
             (Collection::Array, _) => true,
-            (Collection::Hashmap | Collection::OrderedMap, _) => false,
+            (Collection::BtreeMap | Collection::IndexMap, _) => false,
             (Collection::Dynamic, Some(FieldType::Vec { .. })) => true,
             (Collection::Dynamic, Some(_)) => false,
             (Collection::Dynamic, None) => a.vec(&UNTYPED).is_ok(),
@@ -954,9 +954,9 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
             return Ok(());
         }
         let ordered =
-            kind == Collection::OrderedMap || matches!(ty, Some(FieldType::OrderedMap { .. }));
+            kind == Collection::IndexMap || matches!(ty, Some(FieldType::IndexMap { .. }));
         let value_ty = match ty {
-            Some(FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. }) => {
+            Some(FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. }) => {
                 Some(value.as_ref())
             }
             _ => None,

@@ -24,10 +24,10 @@ use std::fmt;
 use serde_json::{Map, Number, Value};
 
 use crate::ir::{
-    Bound, CharacterType, ClassSystem, DoubleType, EnumDef, FieldDef, FieldType, ImplDef,
-    ImplTarget, IntegerType, Logic, MethodDef, Migration, MigrationStep, Operator, Param, ParamDef,
-    Resolve, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef, TypeDef, VariantDef,
-    VariantShape,
+    Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, EnumDef, FieldDef, FieldType,
+    ImplDef, IntegerType, Logic, MethodDef, Migration, MigrationStep, Operator, Param, ParamDef,
+    RequiredField, Resolve, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef,
+    TypeDef, TypeRef, VariantDef, VariantShape,
 };
 use crate::name::{MethodName, Name, QualifiedName};
 
@@ -35,7 +35,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 4;
+pub const FORMAT: u32 = 5;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -518,7 +518,7 @@ fn w_type(w: &mut W, t: &FieldType) {
         } => {
             w.u8(12);
             w.u8(u8::from(*open));
-            w.seq(columns, w_field);
+            w.seq(columns, w_column);
             w.seq(rules, w_rule);
         }
         FieldType::TableOf { of } => {
@@ -548,24 +548,16 @@ fn w_type(w: &mut W, t: &FieldType) {
                 w.u64(*n);
             }
         }
-        FieldType::Option { inner, resolve } => {
+        FieldType::Option { inner } => {
             w.u8(17);
             w_type(w, inner);
-            match resolve {
-                Resolve::None => w.u8(0),
-                Resolve::Computed { expr } => {
-                    w.u8(1);
-                    w_logic(w, expr);
-                }
-                Resolve::Runtime => w.u8(2),
-            }
         }
-        FieldType::Hashmap { value, keys } => {
+        FieldType::BtreeMap { value, keys } => {
             w.u8(18);
             w_type(w, value);
             w_character(w, keys);
         }
-        FieldType::OrderedMap { value, keys } => {
+        FieldType::IndexMap { value, keys } => {
             w.u8(19);
             w_type(w, value);
             w_character(w, keys);
@@ -578,7 +570,7 @@ fn w_type(w: &mut W, t: &FieldType) {
             w.u8(21);
             w.qn(r#trait);
         }
-        FieldType::Descendant { of } => {
+        FieldType::Subtype { of } => {
             w.u8(22);
             w.qn(of);
         }
@@ -593,17 +585,13 @@ fn w_field(w: &mut W, f: &FieldDef) {
         description,
         sensitive,
         unit,
-        external,
-        unique,
-        optional,
+        resolve,
         inherited_from,
         extensions,
     } = f;
     w.name(name);
     w.u8(u8::from(*sensitive)
-        | u8::from(*external) << 1
-        | u8::from(*unique) << 2
-        | u8::from(*optional) << 3
+        | u8::from(resolve.is_some()) << 1
         | u8::from(default.is_some()) << 4
         | u8::from(unit.is_some()) << 5
         | u8::from(inherited_from.is_some()) << 6
@@ -616,12 +604,25 @@ fn w_field(w: &mut W, f: &FieldDef) {
     if let Some(u) = unit {
         w.str(u);
     }
+    match resolve {
+        None => {}
+        Some(Resolve::Computed { expr }) => {
+            w.u8(0);
+            w_logic(w, expr);
+        }
+        Some(Resolve::Context) => w.u8(1),
+    }
     if let Some(q) = inherited_from {
         w.qn(q);
     }
     if let Some(e) = extensions {
         w_map(w, e);
     }
+}
+
+fn w_column(w: &mut W, c: &ColumnDef) {
+    w_field(w, &c.field);
+    w.u8(u8::from(c.unique) | u8::from(!c.required) << 1);
 }
 
 fn w_rule(w: &mut W, r: &RuleDef) {
@@ -750,14 +751,12 @@ fn w_struct(w: &mut W, s: &StructDef) {
         rules,
         migrations,
         aliases,
-        provenance,
-        s4,
         extensions,
     } = s;
     w.name(name);
     w.str(description);
     w.u32(*version);
-    w.u8(u8::from(*provenance) | u8::from(*s4) << 1 | u8::from(extends.is_some()) << 2);
+    w.u8(u8::from(extends.is_some()));
     if let Some(q) = extends {
         w.qn(q);
     }
@@ -822,13 +821,13 @@ fn w_type_def(w: &mut W, t: &TypeDef) {
     }
 }
 
-fn w_target(w: &mut W, t: &ImplTarget) {
+fn w_target(w: &mut W, t: &TypeRef) {
     match t {
-        ImplTarget::Type { name } => {
+        TypeRef::Type { name } => {
             w.u8(0);
             w.qn(name);
         }
-        ImplTarget::HostClass {
+        TypeRef::HostClass {
             host,
             package,
             class,
@@ -841,9 +840,10 @@ fn w_target(w: &mut W, t: &ImplTarget) {
             w.u8(match system {
                 ClassSystem::S3 => 0,
                 ClassSystem::S4 => 1,
+                ClassSystem::Implicit => 2,
             });
         }
-        ImplTarget::Any => w.u8(2),
+        TypeRef::Any => w.u8(2),
     }
 }
 
@@ -901,13 +901,13 @@ fn w_trait(w: &mut W, t: &TraitDef) {
             params,
             return_type,
             stochastic,
-            has_default,
+            has_default_impl,
         } = m;
         w.str(name.as_str());
         w.str(description);
         w.seq(params, w_param);
         w.u8(u8::from(*stochastic)
-            | u8::from(*has_default) << 1
+            | u8::from(*has_default_impl) << 1
             | u8::from(return_type.is_some()) << 2);
         match return_type {
             Some(ReturnType::Receiver(_)) => w.u8(0),
@@ -918,7 +918,11 @@ fn w_trait(w: &mut W, t: &TraitDef) {
             None => {}
         }
     });
-    w.seq(required_fields, w_field);
+    w.seq(required_fields, |w, f| {
+        w.name(&f.name);
+        w_type(w, &f.ty);
+        w.str(&f.description);
+    });
     w.seq(supertraits, |w, q| w.qn(q));
 }
 
@@ -1341,7 +1345,7 @@ fn r_type(r: &mut R) -> Res<FieldType> {
             12 => {
                 let open = r.flags(1, "table type")? != 0;
                 FieldType::Table {
-                    columns: r.seq(4, r_field)?.into_boxed_slice(),
+                    columns: r.seq(5, r_column)?.into_boxed_slice(),
                     open,
                     rules: r.seq(5, r_rule)?.into_boxed_slice(),
                 }
@@ -1361,27 +1365,20 @@ fn r_type(r: &mut R) -> Res<FieldType> {
                     unique: f & 4 != 0,
                 }
             }
-            17 => {
-                let inner = Box::new(r_type(r)?);
-                let resolve = match r.u8()? {
-                    0 => Resolve::None,
-                    1 => Resolve::Computed { expr: r_logic(r)? },
-                    2 => Resolve::Runtime,
-                    t => return Err(RecordError::Tag("resolve", t)),
-                };
-                FieldType::Option { inner, resolve }
-            }
-            18 => FieldType::Hashmap {
+            17 => FieldType::Option {
+                inner: Box::new(r_type(r)?),
+            },
+            18 => FieldType::BtreeMap {
                 value: Box::new(r_type(r)?),
                 keys: r_character(r)?,
             },
-            19 => FieldType::OrderedMap {
+            19 => FieldType::IndexMap {
                 value: Box::new(r_type(r)?),
                 keys: r_character(r)?,
             },
             20 => FieldType::Named { name: r.qn()? },
             21 => FieldType::Dyn { r#trait: r.qn()? },
-            22 => FieldType::Descendant { of: r.qn()? },
+            22 => FieldType::Subtype { of: r.qn()? },
             t => return Err(RecordError::Tag("field type", t)),
         })
     })
@@ -1389,7 +1386,7 @@ fn r_type(r: &mut R) -> Res<FieldType> {
 
 fn r_field(r: &mut R) -> Res<FieldDef> {
     let name = r.name()?;
-    let f = r.u8()?;
+    let f = r.flags(0xf3, "field")?;
     let ty = r_type(r)?;
     let description = r.str()?.into();
     Ok(FieldDef {
@@ -1407,9 +1404,15 @@ fn r_field(r: &mut R) -> Res<FieldDef> {
         } else {
             None
         },
-        external: f & 2 != 0,
-        unique: f & 4 != 0,
-        optional: f & 8 != 0,
+        resolve: if f & 2 != 0 {
+            Some(match r.u8()? {
+                0 => Resolve::Computed { expr: r_logic(r)? },
+                1 => Resolve::Context,
+                t => return Err(RecordError::Tag("resolve", t)),
+            })
+        } else {
+            None
+        },
         inherited_from: if f & 64 != 0 {
             Some(Box::new(r.qn()?))
         } else {
@@ -1424,6 +1427,16 @@ fn r_field(r: &mut R) -> Res<FieldDef> {
         } else {
             None
         },
+    })
+}
+
+fn r_column(r: &mut R) -> Res<ColumnDef> {
+    let field = r_field(r)?;
+    let f = r.flags(3, "column")?;
+    Ok(ColumnDef {
+        field,
+        unique: f & 1 != 0,
+        required: f & 2 == 0,
     })
 }
 
@@ -1518,8 +1531,8 @@ fn r_struct(r: &mut R) -> Res<StructDef> {
     let name = r.name()?;
     let description = r.str()?.to_owned();
     let version = r.u32()?;
-    let f = r.flags(0b111, "struct")?;
-    let extends = if f & 4 != 0 { Some(r.qn()?) } else { None };
+    let f = r.flags(1, "struct")?;
+    let extends = if f & 1 != 0 { Some(r.qn()?) } else { None };
     Ok(StructDef {
         name,
         description,
@@ -1529,8 +1542,6 @@ fn r_struct(r: &mut R) -> Res<StructDef> {
         rules: r.seq(5, r_rule)?,
         migrations: r.seq(2, r_migration)?,
         aliases: r.seq(2, R::qn)?,
-        provenance: f & 1 != 0,
-        s4: f & 2 != 0,
         extensions: r_map(r, |r| Ok(r.str()?.to_owned()), String::clone)?,
     })
 }
@@ -1583,20 +1594,21 @@ fn r_method_name(r: &mut R) -> Res<MethodName> {
     MethodName::new(s).map_err(|_| RecordError::Name(s.to_string()))
 }
 
-fn r_target(r: &mut R) -> Res<ImplTarget> {
+fn r_target(r: &mut R) -> Res<TypeRef> {
     Ok(match r.u8()? {
-        0 => ImplTarget::Type { name: r.qn()? },
-        1 => ImplTarget::HostClass {
+        0 => TypeRef::Type { name: r.qn()? },
+        1 => TypeRef::HostClass {
             host: r.str()?.to_owned(),
             package: r.str()?.to_owned(),
             class: r.str()?.to_owned(),
             system: match r.u8()? {
                 0 => ClassSystem::S3,
                 1 => ClassSystem::S4,
+                2 => ClassSystem::Implicit,
                 t => return Err(RecordError::Tag("class system", t)),
             },
         },
-        2 => ImplTarget::Any,
+        2 => TypeRef::Any,
         t => return Err(RecordError::Tag("impl target", t)),
     })
 }
@@ -1654,10 +1666,16 @@ fn r_trait(r: &mut R) -> Res<TraitDef> {
                 params,
                 return_type,
                 stochastic: f & 1 != 0,
-                has_default: f & 2 != 0,
+                has_default_impl: f & 2 != 0,
             })
         })?,
-        required_fields: r.seq(4, r_field)?,
+        required_fields: r.seq(3, |r| {
+            Ok(RequiredField {
+                name: r.name()?,
+                ty: r_type(r)?,
+                description: r.str()?.into(),
+            })
+        })?,
         supertraits: r.seq(2, R::qn)?,
         tag,
         generic: f & 2 != 0,
@@ -1734,7 +1752,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Entry>, RecordError> {
         depth: 0,
     };
     let entries = match format {
-        4 => r_payload(&mut r)?,
+        FORMAT => r_payload(&mut r)?,
         _ => unreachable!("format checked above"),
     };
     if !r.b.is_empty() {

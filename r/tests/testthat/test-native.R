@@ -162,9 +162,9 @@ test_that("factors, maps, and JSON construct identically", {
       fields = list(
         f = type_factor(levels = c("lo", "mid", "hi")),
         fd = type_factor(),
-        h = hashmap(type_double()),
-        hl = hashmap(vec(type_integer())),
-        om = ordered_map(type_character()),
+        h = btree_map(type_double()),
+        hl = btree_map(vec(type_integer())),
+        om = index_map(type_character()),
         j = type_json()
       )
     )
@@ -360,7 +360,7 @@ test_that("r8_equal() compares normalized forms in place", {
       "Eq",
       fields = list(
         d = vec(option(type_double(finite = FALSE))),
-        h = hashmap(type_integer()),
+        h = btree_map(type_integer()),
         n = field(type_double(), default = 1)
       )
     )
@@ -387,8 +387,8 @@ test_that("== compares maps and matrices in place and keeps string literals", {
     new_struct(
       "Pairs",
       fields = list(
-        a = hashmap(type_double()),
-        b = hashmap(type_double()),
+        a = btree_map(type_double()),
+        b = btree_map(type_double()),
         m = type_matrix(type_double()),
         n = type_matrix(type_double()),
         s = type_character()
@@ -432,11 +432,7 @@ test_that("a computed field of a matrix type is the matrix it names", {
       "Computed",
       fields = list(
         m = type_matrix(type_double()),
-        n = option(
-          type_matrix(type_double()),
-          resolve = "computed",
-          compute = m
-        )
+        n = field(option(type_matrix(type_double())), compute = m)
       )
     )
   )

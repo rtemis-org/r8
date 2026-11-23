@@ -63,12 +63,44 @@ r8_equal <- function(x, y) {
 } # /R8::r8_equal
 
 
+# %% ordering ----
+#' The result of a `PartialOrd` impl, checked
+#'
+#' @param o The impl's result.
+#' @param type Character: The values' type, for messages.
+#'
+#' @return Integer: `-1L`, `0L`, `1L`, or `NA_integer_`; any other result
+#'   raises `r8_result_error`.
+#'
+#' @keywords internal
+#' @noRd
+ordering <- function(o, type) {
+  if (
+    (is.integer(o) || is.double(o) || is.logical(o) && is.na(o)) &&
+      length(o) == 1L &&
+      is.null(attributes(o)) &&
+      (is.na(o) || o %in% c(-1, 0, 1))
+  ) {
+    return(as.integer(o))
+  }
+  r8_abort(
+    "Invalid result of `r8_partial_cmp()` from the PartialOrd impl of `",
+    type,
+    "`: it returns -1L, 0L, or 1L, or NA when the values are not ordered; found ",
+    paste(utils::capture.output(utils::str(o)), collapse = " "),
+    " [return_type].",
+    class = c("r8_result_error", "r8_type_error")
+  )
+} # /R8::ordering
+
+
 # %% Ops.r8_value ----
 #' Comparison of R8 values
 #'
 #' `x == y` and `x != y` compare two R8 values with `r8_equal()`, the
 #' `PartialEq` standard trait. `<`, `<=`, `>`, and `>=` use the type's
-#' `PartialOrd` impl. Other operators raise an error.
+#' `PartialOrd` impl, and return `FALSE` for values it does not order. Other
+#' operators raise an error.
 #'
 #' @param e1,e2 R8 values.
 #'
@@ -91,7 +123,10 @@ Ops.r8_value <- function(e1, e2) {
         class = "r8_dispatch_error"
       )
     }
-    o <- r8_cmp(e1, e2)
+    o <- ordering(r8_partial_cmp(e1, e2), attr(e1, "r8_type"))
+    if (is.na(o)) {
+      return(FALSE)
+    }
     return(switch(
       op,
       "<" = o < 0,
@@ -112,10 +147,10 @@ Ops.r8_value <- function(e1, e2) {
 # %% r8_size ----
 #' Size of an R8 value
 #'
-#' The memory an R8 value holds, in bytes. For a value of a Rust-native type,
+#' The memory an R8 value holds, in bytes. For a value of a Rust-stored type,
 #' the bytes its codec reports for the state, plus the size of each field read
 #' so far that is not a view of the state; a view's memory is the state's. For
-#' an R-native value, `utils::object.size()`.
+#' an R-stored value, `utils::object.size()`.
 #'
 #' @param x An R8 value.
 #'

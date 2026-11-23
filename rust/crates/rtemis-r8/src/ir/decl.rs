@@ -22,8 +22,8 @@ fn default_tag() -> Name {
     Name::new("type").expect("`type` is a valid name")
 }
 
-/// A field of a struct, a struct variant, a table, or a trait's required
-/// fields.
+/// A field of a struct, a struct variant, or a trait's required fields, and
+/// the field of a table column.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -48,19 +48,12 @@ pub struct FieldDef {
     #[serde(default, skip_serializing_if = "is_false")]
     /// The value is withheld from logs, prints, and exports.
     pub sensitive: bool,
-    /// A UCUM code.
+    /// A unit code, by convention UCUM, such as `"mg"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<Box<str>>,
-    /// Written to an Arrow IPC file by `write_json()`.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub external: bool,
-    /// A table column whose values are distinct.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub unique: bool,
-    /// A table column that may be absent from the table, as distinct from a
-    /// present column with missing cells, which is `option()`.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub optional: bool,
+    /// Who fills the absent value of a struct field of type `option()`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolve: Option<super::types::Resolve>,
     /// The ancestor that declared the field, for a field that `extends`
     /// flattened into a child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -77,6 +70,170 @@ pub struct FieldDef {
     )]
     #[cfg_attr(feature = "schema", schemars(with = "BTreeMap<String, Value>"))]
     pub extensions: Option<Box<BTreeMap<String, Value>>>,
+}
+
+/// A column of `type_table(columns)`: its field, and the facts a column alone
+/// takes. Its JSON form is the field's members with `unique` and `required`;
+/// a column takes no `resolve` and no `inherited_from`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnDef {
+    /// The column's name, type, default, description, and other facts.
+    pub field: FieldDef,
+    /// The column's values are distinct.
+    pub unique: bool,
+    /// The column is present in every table; `false` for a column that may
+    /// be absent, as distinct from a present column with missing cells,
+    /// which is `option()`.
+    pub required: bool,
+}
+
+/// A table's column as the code that reads tables sees it: a declared
+/// column of `type_table(columns)`, or a struct's field in
+/// `type_table(of = S)`, which is required and not unique.
+pub trait Column {
+    /// The column's field.
+    fn field(&self) -> &FieldDef;
+    /// The column is present in every table.
+    fn required(&self) -> bool {
+        true
+    }
+    /// The column's values are distinct.
+    fn unique(&self) -> bool {
+        false
+    }
+}
+
+impl Column for FieldDef {
+    fn field(&self) -> &FieldDef {
+        self
+    }
+}
+
+impl Column for ColumnDef {
+    fn field(&self) -> &FieldDef {
+        &self.field
+    }
+    fn required(&self) -> bool {
+        self.required
+    }
+    fn unique(&self) -> bool {
+        self.unique
+    }
+}
+
+impl std::ops::Deref for ColumnDef {
+    type Target = FieldDef;
+    fn deref(&self) -> &FieldDef {
+        &self.field
+    }
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// The JSON form of a [`ColumnDef`].
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct ColumnJson {
+    name: Name,
+    #[serde(rename = "type")]
+    ty: FieldType,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::tree::exact_option"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Value>"))]
+    default: Option<Box<crate::tree::Tree>>,
+    #[serde(default)]
+    description: Box<str>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    sensitive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unit: Option<Box<str>>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    unique: bool,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    required: bool,
+    #[allow(clippy::box_collection)]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "extensions_or_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "BTreeMap<String, Value>"))]
+    extensions: Option<Box<BTreeMap<String, Value>>>,
+}
+
+impl Serialize for ColumnDef {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let f = &self.field;
+        ColumnJson {
+            name: f.name.clone(),
+            ty: f.ty.clone(),
+            default: f.default.clone(),
+            description: f.description.clone(),
+            sensitive: f.sensitive,
+            unit: f.unit.clone(),
+            unique: self.unique,
+            required: self.required,
+            extensions: f.extensions.clone(),
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for ColumnDef {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let c = ColumnJson::deserialize(d)?;
+        Ok(ColumnDef {
+            field: FieldDef {
+                name: c.name,
+                ty: c.ty,
+                default: c.default,
+                description: c.description,
+                sensitive: c.sensitive,
+                unit: c.unit,
+                resolve: None,
+                inherited_from: None,
+                extensions: c.extensions,
+            },
+            unique: c.unique,
+            required: c.required,
+        })
+    }
+}
+
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for ColumnDef {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ColumnDef".into()
+    }
+    fn json_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        ColumnJson::json_schema(g)
+    }
+}
+
+/// A field that every implementor of a trait has: a struct field of this
+/// name whose type fits `ty` ([`super::fit::fits`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RequiredField {
+    /// The field's name.
+    pub name: Name,
+    /// The type the implementor's field fits.
+    #[serde(rename = "type")]
+    pub ty: FieldType,
+    /// What the field holds.
+    #[serde(default)]
+    pub description: Box<str>,
 }
 
 /// A field's extensions, or `None` for an empty object.
@@ -254,12 +411,6 @@ pub struct StructDef {
     /// Former qualified names, which readers accept.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<QualifiedName>,
-    /// Values carry a provenance record.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub provenance: bool,
-    /// Registered with `methods::setOldClass()`.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub s4: bool,
     /// Namespaced extensions that R8 stores and exports and does not
     /// interpret.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -439,12 +590,12 @@ pub struct MethodDef {
     /// satisfies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_type: Option<ReturnType>,
-    /// The method receives a seed and records it in provenance.
+    /// The method draws random numbers.
     #[serde(default, skip_serializing_if = "is_false")]
     pub stochastic: bool,
     /// The trait supplies a default implementation.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub has_default: bool,
+    pub has_default_impl: bool,
 }
 
 impl MethodDef {
@@ -481,9 +632,10 @@ pub struct TraitDef {
     pub description: String,
     /// The methods.
     pub methods: Vec<MethodDef>,
-    /// Fields every implementing type has.
+    /// Fields every implementing struct has, each of a type that the
+    /// struct's field fits.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub required_fields: Vec<FieldDef>,
+    pub required_fields: Vec<RequiredField>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// The traits every implementor also implements.
     pub supertraits: Vec<QualifiedName>,
@@ -516,23 +668,27 @@ impl TraitDef {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ClassSystem {
-    /// An S3 class.
+    /// An S3 class: a name in an object's `class` attribute.
     S3,
-    /// An S4 class.
+    /// An S4 class: a class defined with `methods::setClass()`.
     S4,
+    /// An implicit class: a name that `.class2()` derives from an object's
+    /// type and `dim` attribute, such as `"matrix"` or `"NULL"`.
+    Implicit,
 }
 
-/// What an impl implements its trait for.
+/// A type an impl names: its target, or one of its type arguments.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ImplTarget {
+pub enum TypeRef {
     /// An R8 type.
     Type {
         /// The type's qualified name.
         name: QualifiedName,
     },
-    /// A class of another package in a host language, such as `dgCMatrix`.
+    /// A class of another class system of the host language, such as R's
+    /// `data.frame` or `dgCMatrix`.
     HostClass {
         /// The host language, such as `"r"`.
         host: String,
@@ -549,14 +705,14 @@ pub enum ImplTarget {
     Any,
 }
 
-impl std::fmt::Display for ImplTarget {
+impl std::fmt::Display for TypeRef {
     /// The qualified name of an R8 type, the class name of a host class, or
     /// `any`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ImplTarget::Type { name } => write!(f, "{name}"),
-            ImplTarget::HostClass { class, .. } => f.write_str(class),
-            ImplTarget::Any => f.write_str("any"),
+            TypeRef::Type { name } => write!(f, "{name}"),
+            TypeRef::HostClass { class, .. } => f.write_str(class),
+            TypeRef::Any => f.write_str("any"),
         }
     }
 }
@@ -573,9 +729,9 @@ pub struct ImplDef {
     /// as the source of `From(source)`. Rust writes the impl
     /// `impl Trait<B> for A`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub type_args: Vec<ImplTarget>,
+    pub type_args: Vec<TypeRef>,
     /// What the trait is implemented for: its first dispatched position.
-    pub target: ImplTarget,
+    pub target: TypeRef,
     /// The value of the trait's tag member; defaults to the type's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag_value: Option<String>,

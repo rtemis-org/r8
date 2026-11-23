@@ -9,7 +9,7 @@ r8_validate(x, complete = FALSE)
 \arguments{
 \item{x}{An R8 value.}
 
-\item{complete}{Logical: Require every runtime and computed field to be
+\item{complete}{Logical: Require every context and computed field to be
 present.}
 }
 \value{
@@ -18,13 +18,13 @@ present.}
 \description{
 Checks a value against its type again, rules included: a value built by
 its constructor is valid, and an object reassembled from parts may not
-be. With \code{complete = TRUE}, a value whose runtime or computed fields are
+be. With \code{complete = TRUE}, a value whose context or computed fields are
 still absent is an error that names them.
 }
 \examples{
 op <- options(r8.namespace = "demo")
 Fit <- new_struct("FitSettings", fields = list(
-  mtry = option(type_integer(min = 1L), resolve = "runtime")
+  mtry = field(option(type_integer(min = 1L)), context = TRUE)
 ))
 r8_validate(Fit())
 try(r8_validate(Fit(), complete = TRUE))

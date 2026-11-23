@@ -9,8 +9,23 @@ test_that("host_class() records S3, implicit, and S4 classes", {
   expect_s3_class(h, "r8_host_class")
   expect_identical(unclass(h)[["package"]], "")
   expect_identical(unclass(h)[["system"]], "s3")
-  expect_identical(unclass(host_class("NULL"))[["package"]], "base")
-  expect_identical(unclass(host_class("matrix"))[["package"]], "base")
+  expect_identical(unclass(host_class("NULL"))[["system"]], "implicit")
+  expect_identical(unclass(host_class("matrix"))[["package"]], "")
+  expect_error(
+    host_class("matrix", system = "s3"),
+    "is an implicit class",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    host_class("frame", system = "implicit"),
+    "is not one",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    host_class("pkg::A"),
+    "has no `::`",
+    class = "r8_declaration_error"
+  )
   s4 <- host_class("dgCMatrix", package = "Matrix", system = "s4")
   expect_identical(unclass(s4)[["system"]], "s4")
   expect_output(print(s4), "dgCMatrix\" of Matrix, S4")
@@ -27,7 +42,7 @@ test_that("host_class() records S3, implicit, and S4 classes", {
   )
   expect_error(
     host_class("matrix", package = "Matrix"),
-    "implicit class of the package base",
+    "belongs to no package",
     class = "r8_declaration_error"
   )
 })
@@ -60,7 +75,7 @@ test_that("an R8 generic dispatches on S3 and implicit classes", {
       list(kind = "host_class", host = "r", class = "data.frame", system = "s3")
     )
     positions <- R8:::impl_tuple(list("NULL"), "x", "describe")
-    expect_identical(attr(positions, "ir")[[1L]][["package"]], "base")
+    expect_identical(attr(positions, "ir")[[1L]][["system"]], "implicit")
   })
 })
 

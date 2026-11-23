@@ -66,12 +66,8 @@ pub enum BuildError {
     LengthOrder,
     /// Key constraints that are not a character type.
     Keys,
-    /// A computed `option()` without its expression, or an expression
-    /// without `resolve = "computed"`.
-    Compute {
-        /// The expression is given.
-        given: bool,
-    },
+    /// `compute` and `context` given together.
+    ComputeContext,
     /// A rule constant that is not one value or is missing.
     Constant,
     /// An array literal in a rule that holds an operand other than a
@@ -129,6 +125,8 @@ pub enum BuildError {
     /// The default of a field of a named type that is not a value of an R8
     /// enum.
     DefaultNotValue,
+    /// A `column()` outside the columns of `type_table()`.
+    ColumnOutsideTable,
     /// A variant argument of an enum that is not a variant declaration.
     NotVariant {
         /// The variant's name.
@@ -171,19 +169,16 @@ impl fmt::Display for BuildError {
             ),
             BuildError::LengthOrder => f.write_str("`min_length` is at most `max_length`."),
             BuildError::Keys => f.write_str("`keys` is a type_character()."),
-            BuildError::Compute { given: false } => {
-                f.write_str("A computed field gives its value in `compute`.")
-            }
-            BuildError::Compute { given: true } => {
-                f.write_str("`compute` belongs to resolve = \"computed\".")
-            }
+            BuildError::ComputeContext => f.write_str(
+                "A field is filled by `compute` or from the `context` of r8_resolve(), not both.",
+            ),
             BuildError::Constant => f.write_str(
                 "A constant in a rule is one value, not NA; write an array as c(...).",
             ),
             BuildError::ArrayLiteral => f.write_str("c() in a rule holds literal values."),
             BuildError::NotStrings { arg } => write!(f, "`{arg}` is a character vector."),
             BuildError::NotFieldType => f.write_str(
-                "A field type is a type_*(), vec(), option(), hashmap(), or ordered_map() call, or an R8 type.",
+                "A field type is a type_*(), vec(), option(), btree_map(), or index_map() call, or an R8 type.",
             ),
             BuildError::RuleId => f.write_str("A rule's `id` is an R8 name, such as \"COST_MAX\"."),
             BuildError::RuleMessage => f.write_str("A rule's `message` is one non-empty string."),
@@ -221,6 +216,9 @@ impl fmt::Display for BuildError {
             BuildError::DefaultNotValue => {
                 f.write_str("The default of a field of an R8 type is a value of that type.")
             }
+            BuildError::ColumnOutsideTable => f.write_str(
+                "column() declares a column of type_table(); a field of a struct or variant is field().",
+            ),
             BuildError::NotVariant { name } => write!(f, "Variant `{name}` is a variant() call."),
             BuildError::Int64 => {
                 f.write_str("int64() in a rule holds the decimal digits of one integer.")
@@ -426,28 +424,26 @@ pub fn lengths(
     Ok((min_length.map(u64::from), max_length.map(u64::from)))
 }
 
-/// `option(inner, resolve, compute)`: `policy` is `"none"`, `"runtime"`, or
-/// `"computed"`, with `compute` its expression.
-pub fn option(inner: FieldType, policy: &str, compute: Option<Logic>) -> Built<FieldType> {
+/// `option(inner)`.
+pub fn option(inner: FieldType) -> Built<FieldType> {
     Ok(FieldType::Option {
         inner: Box::new(inner),
-        resolve: resolve(policy, compute)?,
     })
 }
 
-/// Who fills an absent `option()` value: `policy` is `"none"`,
-/// `"runtime"`, or `"computed"`, with `compute` its expression.
-pub fn resolve(policy: &str, compute: Option<Logic>) -> Built<Resolve> {
-    Ok(match (policy, compute) {
-        ("computed", Some(expr)) => Resolve::Computed { expr },
-        ("computed", None) => return Err(BuildError::Compute { given: false }),
-        (_, Some(_)) => return Err(BuildError::Compute { given: true }),
-        ("runtime", None) => Resolve::Runtime,
-        _ => Resolve::None,
+/// A field's fill policy from `field(compute = , context = )`: `compute`,
+/// the expression of a computed field, or `context`, a field that
+/// `r8_resolve(x, context)` fills; at most one.
+pub fn resolve(compute: Option<Logic>, context: bool) -> Built<Option<Resolve>> {
+    Ok(match (compute, context) {
+        (Some(_), true) => return Err(BuildError::ComputeContext),
+        (Some(expr), false) => Some(Resolve::Computed { expr }),
+        (None, true) => Some(Resolve::Context),
+        (None, false) => None,
     })
 }
 
-/// The key constraints of `hashmap()` and `ordered_map()`, from a character
+/// The key constraints of `btree_map()` and `index_map()`, from a character
 /// type or none.
 pub fn keys(keys: Option<FieldType>) -> Built<CharacterType> {
     match keys {
@@ -457,17 +453,17 @@ pub fn keys(keys: Option<FieldType>) -> Built<CharacterType> {
     }
 }
 
-/// `hashmap(value, keys)`.
-pub fn hashmap(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
-    Ok(FieldType::Hashmap {
+/// `btree_map(value, keys)`.
+pub fn btree_map(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
+    Ok(FieldType::BtreeMap {
         value: Box::new(value),
         keys: keys(key_type)?,
     })
 }
 
-/// `ordered_map(value, keys)`.
-pub fn ordered_map(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
-    Ok(FieldType::OrderedMap {
+/// `index_map(value, keys)`.
+pub fn index_map(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
+    Ok(FieldType::IndexMap {
         value: Box::new(value),
         keys: keys(key_type)?,
     })
@@ -689,16 +685,12 @@ mod tests {
             BuildError::NotCount { arg: "min_length" }
         );
         assert_eq!(
-            hashmap(logical(), Some(logical())).unwrap_err(),
+            btree_map(logical(), Some(logical())).unwrap_err(),
             BuildError::Keys
         );
         assert_eq!(
-            option(logical(), "computed", None).unwrap_err(),
-            BuildError::Compute { given: false }
-        );
-        assert_eq!(
-            option(logical(), "none", Some(var("x"))).unwrap_err(),
-            BuildError::Compute { given: true }
+            resolve(Some(var("x")), true).unwrap_err(),
+            BuildError::ComputeContext
         );
     }
 

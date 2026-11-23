@@ -3,11 +3,11 @@
 # 2026- EDG rtemis.org
 
 # Runs the conformance tests (tests/testthat/conformance) against `Conform`
-# declared in R. test-packages.R runs them against the Rust-native
+# declared in R. test-packages.R runs them against the Rust-stored
 # `pkgr::Conform` of r8pkgR.
 # spec: R8/class-system#conformance-tests
 
-test_that("the conformance tests pass against an R-native type", {
+test_that("the conformance tests pass against an R-stored type", {
   res <- as.data.frame(testthat::test_dir(
     test_path("conformance"),
     reporter = "silent",
@@ -16,7 +16,7 @@ test_that("the conformance tests pass against an R-native type", {
   ))
   failed <- res[["test"]][res[["failed"]] > 0L | res[["error"]]]
   expect_identical(failed, character(), info = paste(failed, collapse = "\n"))
-  # Workers load the type's package, which an R-native type declared here
+  # Workers load the type's package, which an R-stored type declared here
   # has none of.
   expect_identical(
     res[["test"]][res[["skipped"]]],

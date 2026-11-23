@@ -111,10 +111,10 @@
                   "kind": "option",
                   "inner": {
                     "kind": "logical"
-                  },
-                  "resolve": {
-                    "policy": "later"
                   }
+                },
+                "resolve": {
+                  "policy": "later"
                 }
               }
             ]
@@ -123,7 +123,8 @@
       },
       "expect": {
         "parse_error": true
-      }
+      },
+      "description": "A fill policy outside the IR's policies does not read."
     },
     {
       "id": "version-zero",
@@ -277,10 +278,10 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               }
             ]
@@ -768,7 +769,7 @@
     },
     {
       "id": "unique-on-struct-field",
-      "description": "unique applies to a table column.",
+      "description": "A struct field does not take a column's `unique`.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -792,17 +793,12 @@
         ]
       },
       "expect": {
-        "errors": [
-          {
-            "code": "column_only",
-            "path": "/types/0/fields/0/unique"
-          }
-        ]
+        "parse_error": true
       }
     },
     {
-      "id": "optional-on-struct-field",
-      "description": "optional applies to a table column.",
+      "id": "required-on-struct-field",
+      "description": "A struct field does not take a column's `required`.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -819,19 +815,14 @@
                 "type": {
                   "kind": "character"
                 },
-                "optional": true
+                "required": false
               }
             ]
           }
         ]
       },
       "expect": {
-        "errors": [
-          {
-            "code": "column_only",
-            "path": "/types/0/fields/0/optional"
-          }
-        ]
+        "parse_error": true
       }
     },
     {
@@ -868,7 +859,7 @@
                           "kind": "double"
                         }
                       },
-                      "optional": true
+                      "required": false
                     }
                   ]
                 }
@@ -1032,7 +1023,7 @@
               {
                 "name": "m",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "double"
                   }
@@ -1063,7 +1054,7 @@
               {
                 "name": "m",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "r",
                     "class": "lm"
@@ -1684,11 +1675,11 @@
                   "inner": {
                     "kind": "r",
                     "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": 1
                   }
+                },
+                "resolve": {
+                  "policy": "computed",
+                  "expr": 1
                 }
               }
             ]
@@ -1699,7 +1690,7 @@
         "errors": [
           {
             "code": "r_resolve",
-            "path": "/types/0/fields/0/type/resolve"
+            "path": "/types/0/fields/0/resolve"
           }
         ]
       }

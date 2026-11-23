@@ -270,7 +270,7 @@ test_that("impls in C register through R8.h and dispatch", {
   expect_true("unloaded TRUE " %in% out, info = info)
 })
 
-test_that("Rust-native values read, change, persist, and cross workers", {
+test_that("Rust-stored values read, change, persist, and cross workers", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
     "set R8_PACKAGE_TESTS to install the test packages"
@@ -285,7 +285,7 @@ test_that("Rust-native values read, change, persist, and cross workers", {
       "suppressPackageStartupMessages(library(r8pkgC))",
       "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
       "s <- Signal(name = 'a', values = c(1.5, 2, 3))",
-      "cat('native', grepl('r8 native pkgc::Signal', inspect(s)), '\\n')",
+      "cat('native', grepl('r8 rust-stored pkgc::Signal', inspect(s)), '\\n')",
       "v <- s$values",
       "cat('view', grepl('r8 view', inspect(v)), grepl('in place', inspect(v)), v, '\\n')",
       "w <- v; w[1] <- 99",
@@ -293,7 +293,7 @@ test_that("Rust-native values read, change, persist, and cross workers", {
       "cat('equal', R8::r8_equal(s, Signal(name = 'a', values = c(1.5, 2, 3))), '\\n')",
       "cat('hash', R8::r8_hash(s) == R8::r8_hash(Signal(name = 'a', values = c(1.5, 2, 3))), '\\n')",
       "r <- R8::r8_from_json(Signal, R8::r8_to_json(s))",
-      "cat('json', grepl('r8 native', inspect(r)), R8::r8_equal(r, s), '\\n')",
+      "cat('json', grepl('r8 rust-stored', inspect(r)), R8::r8_equal(r, s), '\\n')",
       "t <- s; t$name <- 'b'",
       "cat('set', t$name, s$name, t$values, '\\n')",
       "e <- tryCatch({u <- s; u$values <- 'x'}, error = function(e) 'r_type')",
@@ -302,7 +302,7 @@ test_that("Rust-native values read, change, persist, and cross workers", {
       "m <- signal_make('made', 3)",
       "cat('made', m$name, m$values, '\\n')",
       "x <- unserialize(serialize(s, NULL))",
-      "cat('serialize', grepl('r8 native', inspect(x)), R8::r8_equal(x, s), '\\n')",
+      "cat('serialize', grepl('r8 rust-stored', inspect(x)), R8::r8_equal(x, s), '\\n')",
       sprintf("saveRDS(s, %s)", deparse(rds)),
       "cat('size', R8::r8_size(s) > 3 * 8, '\\n')",
       "y <- Signal(name = 'm', values = as.numeric(seq_len(1e6)))",
@@ -378,7 +378,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
       "x <- c(3, 4)",
       "s <- Signal(name = 'a', values = x)",
-      "cat('native', grepl('r8 native pkgr::Signal', inspect(s)), isTRUE(attr(Signal, 'r8_native')), '\\n')",
+      "cat('native', grepl('r8 rust-stored pkgr::Signal', inspect(s)), identical(attr(Signal, 'r8_storage'), 'rust'), '\\n')",
       "cat('fields', s$name, s$values, '\\n')",
       "cat('magnitude', magnitude(s), '\\n')",
       "cat('ratio', ratio(s, 2), '\\n')",
@@ -410,7 +410,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   expect_true("ratio 1.5 " %in% out, info = info)
   expect_true("error TRUE " %in% out, info = info)
   expect_true("display Signal a (2 values) " %in% out, info = info)
-  # A `&Signal` parameter takes a Rust-native value or an R-native one.
+  # A `&Signal` parameter takes a Rust-stored value or an R-stored one.
   expect_true("distance 5 5 TRUE " %in% out, info = info)
   expect_true("json TRUE " %in% out, info = info)
   expect_true("serialize TRUE " %in% out, info = info)
@@ -422,7 +422,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   out <- run_r(
     lib,
     sprintf(
-      "R8::r8_document_native(%s, check = TRUE); cat('current\\n')",
+      "R8::r8_document_rust(%s, check = TRUE); cat('current\\n')",
       deparse(normalizePath(pkg))
     )
   )
@@ -434,16 +434,16 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   file.copy(file.path(pkg, "src", "r8pkgR.so"), file.path(copy, "src"))
   generated <- readLines(file.path(pkg, "R", "r8-types.R"))
   writeLines(
-    sub("native = TRUE", "native = FALSE", generated),
+    sub("storage = \"rust\"", "storage = \"r\"", generated),
     file.path(copy, "R", "r8-types.R")
   )
   out <- run_r(
     lib,
     c(
       sprintf("p <- %s", deparse(copy)),
-      "e <- tryCatch(R8::r8_document_native(p, check = TRUE), error = function(e) conditionMessage(e))",
+      "e <- tryCatch(R8::r8_document_rust(p, check = TRUE), error = function(e) conditionMessage(e))",
       "cat('stale', grepl('differs from the declarations', e), '\\n')",
-      "R8::r8_document_native(p)",
+      "R8::r8_document_rust(p)",
       "cat('written\\n')"
     )
   )
@@ -454,7 +454,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   ))
 })
 
-test_that("Rust-native enums construct, read, change, persist, and cross workers", {
+test_that("Rust-stored enums construct, read, change, persist, and cross workers", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
     "set R8_PACKAGE_TESTS to install the test packages"
@@ -468,24 +468,24 @@ test_that("Rust-native enums construct, read, change, persist, and cross workers
     c(
       "suppressPackageStartupMessages(library(r8pkgR))",
       "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
-      "native <- function(x) grepl('r8 native pkgr::Resampler', inspect(x))",
+      "rust_stored <- function(x) grepl('r8 rust-stored pkgr::Resampler', inspect(x))",
       "k <- Resampler@KFold(k = 5L, seed = 1L)",
-      "cat('kfold', native(k), attr(k, 'r8_variant'), names(k), k$k, format(k), '\\n')",
+      "cat('kfold', rust_stored(k), attr(k, 'r8_variant'), names(k), k$k, format(k), '\\n')",
       "idx <- as.integer(c(2, 4, 6))",
       "f <- Resampler@Fixed(train = idx)",
-      "cat('fixed', native(f), identical(f$train, idx), format(f), '\\n')",
+      "cat('fixed', rust_stored(f), identical(f$train, idx), format(f), '\\n')",
       "l <- Resampler@Loocv",
-      "cat('unit', native(l), length(l), attr(l, 'r8_variant'), format(l), '\\n')",
+      "cat('unit', rust_stored(l), length(l), attr(l, 'r8_variant'), format(l), '\\n')",
       "c1 <- Resampler@Custom(train = c(1L, 2L), test = 3L)",
-      "cat('newtype', native(c1), names(c1), c1$test, format(c1), '\\n')",
+      "cat('newtype', rust_stored(c1), names(c1), c1$test, format(c1), '\\n')",
       "k2 <- k; k2$k <- 10L",
-      "cat('set', native(k2), k2$k, k$k, attr(k2, 'r8_variant'), '\\n')",
+      "cat('set', rust_stored(k2), k2$k, k$k, attr(k2, 'r8_variant'), '\\n')",
       "e <- tryCatch(k$train, error = function(e) 'no_field')",
       "cat('variant_field', e, '\\n')",
       "r <- R8::r8_from_json(Resampler, R8::r8_to_json(c1))",
-      "cat('json', native(r), R8::r8_equal(r, c1), '\\n')",
+      "cat('json', rust_stored(r), R8::r8_equal(r, c1), '\\n')",
       "u <- unserialize(serialize(f, NULL)); v <- unserialize(serialize(l, NULL))",
-      "cat('serialize', native(u), R8::r8_equal(u, f), native(v), attr(v, 'r8_variant'), '\\n')",
+      "cat('serialize', rust_stored(u), R8::r8_equal(u, f), rust_stored(v), attr(v, 'r8_variant'), '\\n')",
       "cat('hash', R8::r8_hash(k) == R8::r8_hash(Resampler@KFold(k = 5L, seed = 1L)), '\\n')",
       "e <- tryCatch(Resampler@KFold(k = 'a', seed = 1L), error = function(e) 'r_type')",
       "cat('invalid', e, '\\n')",
@@ -550,16 +550,16 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
     c(
       "suppressPackageStartupMessages(library(r8pkgC))",
       "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
-      "native <- function(x) grepl('r8 native pkgc::Resampler', inspect(x))",
+      "rust_stored <- function(x) grepl('r8 rust-stored pkgc::Resampler', inspect(x))",
       "k <- Resampler@KFold(k = 3L)",
       "k2 <- k; k2$k <- 7L",
-      "cat('kfold', native(k), k$k, native(k2), k2$k, '\\n')",
+      "cat('kfold', rust_stored(k), k$k, rust_stored(k2), k2$k, '\\n')",
       "l <- Resampler@Loocv",
-      "cat('unit', native(l), length(l), attr(l, 'r8_variant'), '\\n')",
+      "cat('unit', rust_stored(l), length(l), attr(l, 'r8_variant'), '\\n')",
       "r <- R8::r8_from_json(Resampler, R8::r8_to_json(k))",
-      "cat('json', native(r), R8::r8_equal(r, k), '\\n')",
+      "cat('json', rust_stored(r), R8::r8_equal(r, k), '\\n')",
       "u <- unserialize(serialize(l, NULL))",
-      "cat('serialize', native(u), attr(u, 'r8_variant'), '\\n')",
+      "cat('serialize', rust_stored(u), attr(u, 'r8_variant'), '\\n')",
       "e <- tryCatch(R8:::r8_register_exports(r8pkgC:::bad_exports(1), 'r8pkgC', 'pkgc'), error = function(e) conditionMessage(e))",
       "cat('misshaped', grepl('does not match its type', e), '\\n')",
       "st <- function(k) R8:::r8_exports_compare(r8pkgC:::bad_exports(k), 'pkgc')$status",
@@ -571,7 +571,7 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
       "ri <- function(k) tryCatch(R8:::r8_register_exports(r8pkgC:::bad_impls(k), 'r8pkgC', 'pkgc'), error = function(e) conditionMessage(e))",
       "cat('impls', grepl('two impl functions `magnitude`', ri(1)), grepl('`ratio` of `pkgc::Norm` for `pkgc::Point` is NULL', ri(2)), '\\n')",
       "s <- Signal(name = 'a', values = 1)",
-      "cat('after', grepl('r8 native pkgc::Signal', inspect(s)), '\\n')"
+      "cat('after', grepl('r8 rust-stored pkgc::Signal', inspect(s)), '\\n')"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -611,7 +611,7 @@ test_that("the generator names a type of another namespace by its package's expo
       "Fit <- R8::new_struct('Fit', fields = list(shape = r8pkgA::Shape))",
       "options(op)",
       "ir <- R8:::type_ir(Fit)",
-      "lines <- R8:::render_struct(ir, 'model', native = FALSE)",
+      "lines <- R8:::render_struct(ir, 'model', rust_stored = FALSE)",
       "cat('rendered', any(grepl('shape = r8pkgA::Shape', lines, fixed = TRUE)), '\\n')",
       "desc('R8')",
       "e <- tryCatch(R8:::foreign_refs(doc, p), error = function(e) conditionMessage(e))",
@@ -882,7 +882,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
 })
 
 
-test_that("the conformance tests pass against the Rust-native pkgr::Conform", {
+test_that("the conformance tests pass against the Rust-stored pkgr::Conform", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
     "set R8_PACKAGE_TESTS to install the test packages"

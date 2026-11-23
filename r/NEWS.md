@@ -1,18 +1,18 @@
 # R8 0.4.0.9000
 
-- The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "descendant", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
-- The declaration record has format 4; a package installed with an earlier R8 is reinstalled.
+- The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "subtype", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
+- The declaration record has format 5; a package installed with an earlier R8 is reinstalled.
 - `new_struct(extends = Parent)` declares a child that holds the parent's fields and rules, then its own; `defaults =` changes the defaults of inherited fields. A child's values carry the parent's class after their own, and a field typed as a struct admits that struct only.
 - A struct whose fields all have defaults that violate its rules is a declaration error (`default_violates_rule`).
 - Declaring a parent again leaves the children that extend its earlier declaration stale: they construct and read no values until they are declared again, and the declaration warns (`r8_stale_warning`). A package built against an earlier declaration of another package's parent is refused at load.
 - A package's declaration records declare only into the namespaces it owns; a declaration of another package's type in them is skipped.
 - `to_json()` is `r8_to_json()`: a function a declaration is written with takes no prefix, and an operation on values, types, or packages takes `r8_` (`?R8`, section "Names").
-- `generic(name, args)` takes `args` as given and no longer appends `...`. A method of a generic without `...` has exactly the generic's arguments; a method of a generic with `...` takes them first and may add named arguments. `impl()` checks its methods' arguments as `implement()` does, and `trait_method(default =)` checks its default's.
+- `generic(name, args)` takes `args` as given. A method of a generic without `...` has exactly the generic's arguments; a method of a generic with `...` takes them first and may add named arguments. `impl()` checks its methods' arguments as `implement()` does, and `trait_method(default_impl =)` checks its default's.
 - Print headers name R8 and the object's kind: `<r8 generic ns::f>`, `<r8 struct ns::P v1>`, `<r8 enum ns::E v1>`, `<r8 trait ns::T>`, `<r8 int64>`, `<r8 field type>`.
 - `?R8` lists R8's condition classes, `r8_codec_missing` among them.
 - A generic or trait method called on a child runs the impl of the nearest type in its chain of parents that implements the trait, on the child's value. `r8_next_impl()` calls the impl the running one takes precedence over.
 - `r8_upcast(x, Parent)` returns the value of an ancestor that a child's value holds, and `r8_convert(x, Parent)` calls it; `r8_ancestors()` lists a struct's ancestors. An impl of `From()` from a child to its ancestor is a declaration error.
-- `dyn(Trait)` declares a field of any implementor of a trait, or of a type that extends one; `dyn(Struct)` a field of a struct or any struct that extends it. A value of another type is refused (`not_implementor`), and its JSON names its type by the trait's tag member, or by `"$type"`.
+- `dyn(Trait)` declares a field of any implementor of a trait, or of a type that extends one, and `subtype(Struct)` a field of a struct or any struct that extends it; `dyn()` takes traits only. A value of another type is refused (`not_implementor`, `not_subtype`), and its JSON names its type by the trait's tag member, or by `"$type"`.
 - A tag value is a name, unique among a trait's implementors (`duplicate_tag`); a descendant without its own impl writes its type name. Inside `dyn()`, a unit-only enum is written as an object of the type member and its tag.
 - `r8_from_json(load =)` loads packages before the read; a document that names unregistered types raises `r8_unresolved_type`, which names the installed packages that declare each namespace.
 - `r8_schema(type, implementors = FALSE)` writes the JSON Schema of a type's values; with `implementors = TRUE`, a `dyn()` field lists the registered implementors.
@@ -22,27 +22,38 @@
 - `new_trait()` refuses the methods `names<-`, `length<-`, `dim<-`, `levels<-`, and `[<-`, as `implement()` does.
 - `r8_convert()` uses the `From` impl of a value's nearest ancestor when its own type has none, and passes the value unchanged.
 - A converter from `r8_converter(Target)` is the generic of the conversions to `Target`: `implement(as_target, Source) <- function(x) ...` and `implement(as_target, "character") <- function(x) ...` declare them, and the roclet `r8_rd()` documents them. `Enum@from` converts to an enum, and `from` is a reserved variant name.
-- `From("ns::Source")` names a registered type, and the source's namespace may declare the impl.
-- The IR's method parameters may carry a dispatch mark, a type, a default, and a description, and a method a return type; an impl's `type_args` are typed positions, an R8 type, a host class, or any.
+- `From(Source)` names an R8 type by its type object, and the source's namespace may declare the impl; `From()` takes a class as a dispatched position does.
+- The IR's method parameters may carry a dispatch mark, a type, a default, and a description, and a method a return type; an impl's `type_args` are typed positions (`TypeRef`), an R8 type, a host class, or any.
 - An impl of a trait and type tuple that another namespace declares is refused (`duplicate_impl`), and an impl outside its trait's namespace names a type of its own namespace (`impl_orphan`).
 - `generic(dispatch = c("x", "y"))` and `trait_method(dispatch =)` dispatch on several arguments: `implement(f, A, B) <- fn`, `implement(f, y = B) <- fn`, and `impl(Trait, list(A, B), ...)` declare methods for tuples of types, and a position a method does not name matches any value. The most specific method in every position runs; a call that two methods make ambiguous raises `r8_dispatch_error` naming the method to declare, and `r8_ambiguities()` lists such pairs. A package whose methods make a call ambiguous with those of a package it imports is refused at load.
 - `r8_method(f, A, B)` returns the method of a tuple, and `r8_next_impl(A, B)` continues to the method it names.
 - A value without a class attribute, such as a number or a matrix, keeps its resolved method in the dispatch cache.
-- R8 generics and traits take methods for classes of other class systems in every dispatched position: a string names an S3 or implicit class (`implement(f, "data.frame") <- fn`, `"matrix"`, `"NULL"`), and `host_class(class, package, system = "s4")` or an S4 class object names an S4 class. The class nearer the front of an object's `.class2()` vector is more specific.
+- R8 generics and traits take methods for classes of other class systems in every dispatched position: a string names an S3 or implicit class (`implement(f, "data.frame") <- fn`, `"matrix"`, `"NULL"`), and `host_class(class, package, system = "s4")` or an S4 class object names an S4 class; `host_class(system =)` is `"s3"`, `"s4"`, or `"implicit"`. The class nearer the front of an object's `.class2()` vector is more specific.
 - An impl on a class that already has a method of a mapped S3 generic takes that method; supplying one is refused (`host_method_exists`). `r8_next_impl()` from an impl on a class continues to the next S3 method.
 - `dyn(generic)` declares a field of any R8 type with a method of a generic of one dispatched argument; a `dyn()` field holds R8 values only.
 - `r8_convert()` reads an object's classes with `.class2()`, so `From("numeric")` converts integers and doubles, and an impl on an S4 superclass converts its subclasses.
 - `r8_clear_dispatch()` clears the dispatch cache.
+- `btree_map()` and `index_map()` replace `hashmap()` and `ordered_map()`: string keys in code-point order, equal by key, and string keys in insertion order, part of the value.
+- `option(T)` declares that a value may be absent; a struct field's fill policy is `field(option(T), compute = expr)` or `field(option(T), context = TRUE)`, which `r8_resolve()` fills.
+- `column(type, ..., unique, required)` declares a table column; `field()` takes no `unique` or `optional`.
+- `new_struct(storage = "rust")` and `new_enum(storage = "rust")` replace `native = TRUE`; `r8_document_rust()` replaces `r8_document_native()`, and `#[r8(storage = "rust")]` replaces `#[r8(native)]`.
+- The standard trait `PartialOrd`'s method is `partial_cmp`, called by `r8_partial_cmp()`, which returns `-1L`, `0L`, `1L`, or `NA` for values that are not ordered; `<`, `<=`, `>`, and `>=` return `FALSE` for those, and any other result raises `r8_result_error`.
+- The standard trait `Dim` is `Shape`.
+- `r8_is_variant()` tests an enum value's variant; `is_variant()` is a word of the rule dialect only.
+- `trait_method(default_impl =)` gives a method's default implementation.
+- `impl(trait, target, ...)`, `type_table(of = Struct)`, `type_matrix(of = Struct)`, and `r8_runtime_version()` replace `impl(trait, type, ...)`, `type_table(Struct)`, `type_matrix(Struct)`, and `r8_core_version()`.
+- `new_trait(requires = list(...))` declares the fields every implementor has; an impl for a struct without a required field, or with one of a type that does not fit, is refused (`required_field_missing`, `required_field_type`).
+- `field(external =)` is removed; the error codes of `values =` and `type_posixct()` are `not_in_values` and `invalid_posixct`.
 
 # R8 0.4.0
 
-- Rust-native enums: `#[derive(R8)]` with `#[r8(native)]` on an enum of unit, struct, and newtype variants keeps every value, unit variants included, in compiled code. `new_enum(native = TRUE)` declares one in R, and `r8_document_native()` writes it.
+- Rust-stored enums: `#[derive(R8)]` with `#[r8(native)]` on an enum of unit, struct, and newtype variants keeps every value, unit variants included, in compiled code. `new_enum(native = TRUE)` declares one in R, and `r8_document_native()` writes it.
 - `R8.h`: an enum's codec sets the new members `variant` and `from_variant` of `R8TypeVTable`.
 - `r8_register()` refuses a codec whose shape does not match its type, and a codec whose enum declares a runtime-only field in any variant.
 - `R8.h`: an exports table carries the declarations of its types in Rust only, and R8 builds each impl declaration from the impl entries; a table written in C declares its types in R and carries no IR (`ir_json` is removed). A codec written in C sets `declaration_hash`, the hash of its type's R declaration, which `r8_register()` checks, reporting the current hash when the two differ.
 - `r8::exports!` declares every type of the package's namespace that its listed types reach, such as the struct of a newtype variant.
-- `print()` and `str()` of a Rust-native value show its size in the header, in IEC units (`<pkgc::Signal> 7.63 MiB`); `str()` adds the fields read into R (`+ 112 B read`).
-- A method of `#[r8::methods]` takes another value of a Rust-native type as `&T`, borrowed from its state, or built from an R-native value of the type.
+- `print()` and `str()` of a Rust-stored value show its size in the header, in IEC units (`<pkgc::Signal> 7.63 MiB`); `str()` adds the fields read into R (`+ 112 B read`).
+- A method of `#[r8::methods]` takes another value of a Rust-stored type as `&T`, borrowed from its state, or built from an R-stored value of the type.
 - `r8_document_native()` writes a field whose type belongs to another package's namespace as that package's exported type object (`r8resample::Resampler`); the package lists it in `Imports`.
 - The roclet `r8_rd()` documents the methods a package implements in compiled code, as it documents `implement()` calls.
 - Text output: the Rust core lays out and encodes values as plain text, ANSI color, HTML, or markdown. `print()` chooses the output type for the console, document, or notebook (`r8_output_type()`), and `format()` returns plain text unless asked. The default layout shows each vector's type, length, and first items, colors the names of base types after rtemislive, and indents nested values.
@@ -71,8 +82,8 @@
 - Rule errors at declaration write the fix: a one-argument `all()` gives the two-argument form, a name that is not a field names the nearest field and the `lit()` form, an unknown function names the nearest one, and an error shows the R expression at its path.
 - `?rule` and the user guide's chapter "Rules" cover rules on one field and across fields, conditions, vectors, constants, and violations.
 - `int64(text)` gives an integer beyond 2^53 as its decimal digits, for a rule's constant or a default; R8 writes such an integer of a declaration in this form, and an integer outside R's integer range but within 2^53 as a whole double.
-- `r8_from_json()` reads a document into a compact tree that holds an array of numbers as one run of doubles, then converts it to R or to a Rust-native value in place. Reading a value with fields of 10^7 elements (99 MB) takes 343 ms and 191 MB beyond the session, against 851 ms and 2.1 GB; a value with fields of 10^6 elements, 31 ms against 183 ms. R8 writes numbers without intermediate strings, and `to_json()` takes about a third of its time.
-- `R8.h`: the codec table gains `from_reader`, which builds a state through an `R8Reader`, the table of functions over the value R8 has read from a document. Codecs generated by `rtemis-r8-api` set it, and the member `decode` is removed; R8 reads a Rust-native document through `from_reader`, 10% to 13% faster than a read into R values, and builds a state through `from_fields` or `from_variant` for a codec without it. The ABI version stays 1. The exports table gains `ir_record`, the package's declarations as a declaration record; tables generated by `rtemis-r8-api` carry it and set `ir_json` to NULL, and R8 reads `ir_json` from tables without it.
+- `r8_from_json()` reads a document into a compact tree that holds an array of numbers as one run of doubles, then converts it to R or to a Rust-stored value in place. Reading a value with fields of 10^7 elements (99 MB) takes 343 ms and 191 MB beyond the session, against 851 ms and 2.1 GB; a value with fields of 10^6 elements, 31 ms against 183 ms. R8 writes numbers without intermediate strings, and `to_json()` takes about a third of its time.
+- `R8.h`: the codec table gains `from_reader`, which builds a state through an `R8Reader`, the table of functions over the value R8 has read from a document. Codecs generated by `rtemis-r8-api` set it, and the member `decode` is removed; R8 reads a Rust-stored document through `from_reader`, 10% to 13% faster than a read into R values, and builds a state through `from_fields` or `from_variant` for a codec without it. The ABI version stays 1. The exports table gains `ir_record`, the package's declarations as a declaration record; tables generated by `rtemis-r8-api` carry it and set `ir_json` to NULL, and R8 reads `ir_json` from tables without it.
 - A type and a trait of one name in a namespace are an error at the later declaration, in either order.
 - `r8_register()` checks each namespace a package owns once, after its declarations, and refuses a package whose declarations disagree, such as a rule that reads a field of a type declared again without that field.
 - `rtemis-r8-api`: the method of the `R8::PartialOrd` trait is `cmp`, the name of the trait's method in R; an `R8::Dim` impl's `Vec<i32>` converts to R.
@@ -80,10 +91,10 @@
 
 # R8 0.3.0
 
-- Rust-native types: a struct whose codec is in a package's compiled exports keeps its values in compiled code. Field reads return views without copying, `x$name <- v` replaces a field, and values persist with `saveRDS()` and cross to mirai and future workers.
-- `r8_size()` reports the memory a value holds. R8 collects garbage when the memory of Rust-native values grows.
-- The crate `rtemis-r8-api` and the macros `#[r8::methods]` and `r8::exports!` implement R8 traits and declare Rust-native types in a package's Rust code; `R8.h` gives C and C++ code the same services (`R8Api`), and a package registers its exports with `R_RegisterCCallable()`.
-- `new_struct(native = TRUE)` declares a Rust-native type; `r8_document_native()` writes the R declarations of the types a package declares in Rust, and `r8_register()` checks that they match the compiled exports.
+- Rust-stored types: a struct whose codec is in a package's compiled exports keeps its values in compiled code. Field reads return views without copying, `x$name <- v` replaces a field, and values persist with `saveRDS()` and cross to mirai and future workers.
+- `r8_size()` reports the memory a value holds. R8 collects garbage when the memory of Rust-stored values grows.
+- The crate `rtemis-r8-api` and the macros `#[r8::methods]` and `r8::exports!` implement R8 traits and declare Rust-stored types in a package's Rust code; `R8.h` gives C and C++ code the same services (`R8Api`), and a package registers its exports with `R_RegisterCCallable()`.
+- `new_struct(native = TRUE)` declares a Rust-stored type; `r8_document_native()` writes the R declarations of the types a package declares in Rust, and `r8_register()` checks that they match the compiled exports.
 - `json_ir()` gives a rule or a default as JSON text, for the JSONLogic and defaults that the R forms do not express.
 - Compact sequences, factor codes, and sparse matrix indices are read in place, without expansion, by construction, rules, hashing, validation, equality, and documents.
 - The package builds against `rtemis-r8` 0.3.0.

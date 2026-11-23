@@ -1,4 +1,4 @@
-//! `Native` and `NativeEnum`: a Rust-native struct or enum, whose values R8
+//! `RustStored` and `RustStoredEnum`: a Rust-stored struct or enum, whose values R8
 //! holds as the codec's state; `codec::<T>()` and `enum_codec::<T>()`, the
 //! codec tables R8 calls; `Codec`, which both kinds implement; and the
 //! `extern "C"` functions behind them.
@@ -15,9 +15,9 @@ use crate::state::{StateReader, StateWriter};
 use crate::sys::SEXP;
 
 /// A struct whose values R8 holds in Rust. `#[derive(R8)]` with
-/// `#[r8(native)]` implements it from the struct's fields, each a
+/// `#[r8(storage = "rust")]` implements it from the struct's fields, each a
 /// [`Field`](crate::Field).
-pub trait Native: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
+pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The qualified type name, NUL-terminated.
     const TYPE_NAME: &'static CStr;
 
@@ -56,10 +56,10 @@ pub trait Native: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
 }
 
 /// An enum whose values, unit variants included, R8 holds in Rust.
-/// `#[derive(R8)]` with `#[r8(native)]` implements it from the enum's
+/// `#[derive(R8)]` with `#[r8(storage = "rust")]` implements it from the enum's
 /// variants: a struct variant's fields are each a [`Field`](crate::Field),
-/// and a newtype variant's struct implements [`Native`].
-pub trait NativeEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
+/// and a newtype variant's struct implements [`RustStored`].
+pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The qualified type name, NUL-terminated.
     const TYPE_NAME: &'static CStr;
 
@@ -104,9 +104,9 @@ pub trait NativeEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     fn owned_bytes(&self) -> usize;
 }
 
-/// A Rust-native type of either kind: its name, its codec table, and its
-/// value from an R-native value of the type. `#[derive(R8)]` with
-/// `#[r8(native)]` implements it; `#[r8::methods]`, [`Value`](crate::Value),
+/// A Rust-stored type of either kind: its name, its codec table, and its
+/// value from an R-stored value of the type. `#[derive(R8)]` with
+/// `#[r8(storage = "rust")]` implements it; `#[r8::methods]`, [`Value`](crate::Value),
 /// and `r8::exports!` take it.
 pub trait Codec: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The qualified type name, NUL-terminated.
@@ -115,7 +115,7 @@ pub trait Codec: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The codec table: [`codec`] for a struct, [`enum_codec`] for an enum.
     const TABLE: Shared<abi::TypeVTable>;
 
-    /// The value from an R-native value `x` of the type, whose fields are
+    /// The value from an R-stored value `x` of the type, whose fields are
     /// `fields`, as `serialize(version = 2)` reads one back.
     ///
     /// # Safety
@@ -132,7 +132,7 @@ pub struct Shared<T>(pub T);
 unsafe impl<T> Sync for Shared<T> {}
 
 /// The codec table of the struct `T`.
-pub const fn codec<T: Native>() -> Shared<abi::TypeVTable> {
+pub const fn codec<T: RustStored>() -> Shared<abi::TypeVTable> {
     Shared(abi::TypeVTable {
         size: std::mem::size_of::<abi::TypeVTable>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
@@ -152,7 +152,7 @@ pub const fn codec<T: Native>() -> Shared<abi::TypeVTable> {
 }
 
 /// The codec table of the enum `T`.
-pub const fn enum_codec<T: NativeEnum>() -> Shared<abi::TypeVTable> {
+pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::TypeVTable> {
     Shared(abi::TypeVTable {
         size: std::mem::size_of::<abi::TypeVTable>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
@@ -201,7 +201,7 @@ fn state<'a, T>(p: *const c_void) -> &'a T {
     unsafe { &*p.cast::<T>() }
 }
 
-unsafe extern "C" fn from_fields<T: Native>(
+unsafe extern "C" fn from_fields<T: RustStored>(
     fields: *const abi::Sexp,
     n: usize,
     out: *mut *mut c_void,
@@ -219,7 +219,7 @@ unsafe extern "C" fn from_fields<T: Native>(
     })
 }
 
-unsafe extern "C" fn struct_from_reader<T: Native>(
+unsafe extern "C" fn struct_from_reader<T: RustStored>(
     r: *const abi::Reader,
     root: abi::Node,
     out: *mut *mut c_void,
@@ -233,7 +233,7 @@ unsafe extern "C" fn struct_from_reader<T: Native>(
     })
 }
 
-unsafe extern "C" fn enum_from_reader<T: NativeEnum>(
+unsafe extern "C" fn enum_from_reader<T: RustStoredEnum>(
     r: *const abi::Reader,
     root: abi::Node,
     out: *mut *mut c_void,
@@ -363,14 +363,14 @@ macro_rules! shared_fns {
     };
 }
 
-shared_fns!(struct_fns, Native);
-shared_fns!(enum_fns, NativeEnum);
+shared_fns!(struct_fns, RustStored);
+shared_fns!(enum_fns, RustStoredEnum);
 
-unsafe extern "C" fn variant<T: NativeEnum>(s: *const c_void) -> *const c_char {
+unsafe extern "C" fn variant<T: RustStoredEnum>(s: *const c_void) -> *const c_char {
     catch_unwind(AssertUnwindSafe(|| state::<T>(s).variant().as_ptr())).unwrap_or(std::ptr::null())
 }
 
-unsafe extern "C" fn from_variant<T: NativeEnum>(
+unsafe extern "C" fn from_variant<T: RustStoredEnum>(
     variant: *const c_char,
     fields: *const abi::Sexp,
     n: usize,

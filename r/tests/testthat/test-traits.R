@@ -11,9 +11,12 @@ test_that("a trait method dispatches on the type of its first argument", {
           function(shape, ...) NULL,
           description = "The area."
         ),
-        label = trait_method(function(shape) NULL, default = function(shape) {
-          "a shape"
-        })
+        label = trait_method(
+          function(shape) NULL,
+          default_impl = function(shape) {
+            "a shape"
+          }
+        )
       )
     )
     Square <- new_struct("Square", fields = list(side = type_double(min = 0)))
@@ -172,7 +175,9 @@ test_that("dispatch follows impls changed after a call, and serves defaults and 
     Size <- new_trait(
       "Size",
       methods = list(
-        size = trait_method(function(x) NULL, default = function(x) "default")
+        size = trait_method(function(x) NULL, default_impl = function(x) {
+          "default"
+        })
       )
     )
     Box <- new_struct("Box", fields = list(w = type_double()))
@@ -202,4 +207,60 @@ test_that("dispatch follows impls changed after a call, and serves defaults and 
   bound <- all.names(body(size))
   expect_true(all(c(".r8_c_find", ".r8_dispatch") %in% bound))
   expect_false(any(vapply(as.list(body(size)), is.environment, logical(1))))
+})
+
+test_that("a trait's required fields are checked against each implementor", {
+  declare_in("req1", {
+    Measured <- new_trait(
+      "Measured",
+      methods = list(span = trait_method(function(x) NULL)),
+      requires = list(
+        lo = type_double(),
+        hi = field(option(type_double()), description = "The upper end.")
+      )
+    )
+    Range <- new_struct(
+      "Range",
+      fields = list(lo = type_double(), hi = type_double())
+    )
+    impl(Measured, Range, methods = list(span = function(x) x$hi - x$lo))
+    Window <- new_struct(
+      "Window",
+      fields = list(label = type_character()),
+      extends = Range
+    )
+    Report <- new_struct("Report", fields = list(m = dyn(Measured)))
+    r <- Report(m = Window(lo = 1, hi = 3, label = "w"))
+    expect_identical(Measured@span(r$m), 2)
+    Point <- new_struct("Point", fields = list(x = type_double()))
+    expect_error(
+      impl(Measured, Point, methods = list(span = function(x) 0)),
+      "required_field_missing",
+      class = "r8_declaration_error"
+    )
+    Ints <- new_struct(
+      "Ints",
+      fields = list(lo = type_integer(), hi = type_double())
+    )
+    expect_error(
+      impl(Measured, Ints, methods = list(span = function(x) 0)),
+      "required_field_type",
+      class = "r8_declaration_error"
+    )
+    expect_error(
+      new_trait(
+        "Bad",
+        methods = list(f = trait_method(function(x) NULL)),
+        requires = list(a = field(type_double(), default = 1))
+      ),
+      "required_field_form",
+      class = "r8_declaration_error"
+    )
+    # A redeclared struct keeps the required fields of its impls.
+    expect_error(
+      new_struct("Range", fields = list(hi = type_double())),
+      "required_field_missing",
+      class = "r8_declaration_error"
+    )
+  })
 })

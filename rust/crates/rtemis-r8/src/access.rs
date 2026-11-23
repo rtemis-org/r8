@@ -16,14 +16,14 @@
 //! reports [`Access::is_absent`].
 //!
 //! The trait is public so that host bindings can implement it; its shape is
-//! unstable until the Rust-native values of M3.
+//! unstable until the Rust-stored values of M3.
 
 use std::borrow::Cow;
 
 use serde_json::{Map, Value};
 
 use crate::codec::{date_days, datetime_micros};
-use crate::ir::{EnumDef, FieldDef, FieldType, VariantShape};
+use crate::ir::{EnumDef, FieldType, VariantShape};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -597,7 +597,7 @@ pub trait Access<'a>: Copy + 'a {
         }
     }
 
-    /// A `hashmap()` (`ordered = false`) or an `ordered_map()` of `value`:
+    /// A `btree_map()` (`ordered = false`) or an `index_map()` of `value`:
     /// the number of entries.
     fn map(self, value: &FieldType, ordered: bool) -> Read<usize>;
     /// Each entry of a map, in the host's order: its key and its value. A
@@ -612,7 +612,7 @@ pub trait Access<'a>: Copy + 'a {
     /// A sparse matrix of `element`.
     fn sparse(self, element: &FieldType) -> Read<Sparse<Self>>;
     /// A table whose type declares `columns`; `open` admits other columns.
-    fn table(self, columns: &[FieldDef], open: bool) -> Read<Table<'a, Self>>;
+    fn table<C: crate::ir::Column>(self, columns: &[C], open: bool) -> Read<Table<'a, Self>>;
     /// The type of a column of an open table that the declaration does not
     /// list, from the host form.
     fn extra_column_type(self, name: &str) -> Read<FieldType>;
@@ -669,7 +669,7 @@ pub fn concrete<'a, A: Access<'a>>(
 ) -> Option<Result<(QualifiedName, Option<String>), String>> {
     match ft {
         FieldType::Dyn { r#trait } => Some(v.implementor(r#trait, lookup)),
-        FieldType::Descendant { .. } => Some(v.named_type()),
+        FieldType::Subtype { .. } => Some(v.named_type()),
         _ => None,
     }
 }
@@ -1124,7 +1124,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
             Ok(datetime_micros(s))
         } else {
             Err(Form::new(
-                "invalid_datetime",
+                "invalid_posixct",
                 format!(
                     "`{s}` is not a date-time of the form YYYY-MM-DDTHH:MM:SS.ffffffZ from {POSIXCT_MIN} to {POSIXCT_MAX}"
                 ),
@@ -1443,7 +1443,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         })
     }
 
-    fn table(self, columns: &[FieldDef], open: bool) -> Read<Table<'a, Self>> {
+    fn table<C: crate::ir::Column>(self, columns: &[C], open: bool) -> Read<Table<'a, Self>> {
         let m = self
             .val()
             .filter(|v| v.object_len().is_some())
@@ -1462,7 +1462,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
                     .at("/$columns"),
                 ),
                 Some(listed) => {
-                    let declared = |k: &str| columns.iter().any(|c| c.name.as_str() == k);
+                    let declared = |k: &str| columns.iter().any(|c| c.field().name.as_str() == k);
                     for (k, _) in listed
                         .into_iter()
                         .filter(|(k, _)| m.get(k).is_none() || declared(k))

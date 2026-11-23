@@ -16,19 +16,20 @@
 //! when = "<JSONLogic>", message = "...")`, repeated per rule. On a field:
 //! `min`, `max`, `exclusive_min`, `exclusive_max`, `pattern`, `finite`,
 //! `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
-//! `sensitive`, `external`, and `resolve = "runtime"`. Doc comments are
+//! `sensitive`, and `context`, for a field of type `Option<T>` that
+//! `r8_resolve(x, context)` fills. Doc comments are
 //! descriptions.
 //!
 //! The derive builds the declaration as `rtemis_r8::ir` values. A rule's
 //! JSONLogic and a field's default are parsed when the crate compiles, so a
 //! text that does not read is a compile error at its attribute.
 //!
-//! `#[r8(native)]` on a struct also implements `rtemis_r8_api::Native`, and
-//! on an enum `rtemis_r8_api::NativeEnum`; on both, `rtemis_r8_api::Codec`, so
+//! `#[r8(storage = "rust")]` on a struct also implements `rtemis_r8_api::RustStored`, and
+//! on an enum `rtemis_r8_api::RustStoredEnum`; on both, `rtemis_r8_api::Codec`, so
 //! R8 holds the type's values in Rust: each field's type implements
 //! `rtemis_r8_api::Field`, a `vec()` field of numbers, logicals, or bytes is
 //! a `rtemis_r8_api::Buffer`, and a newtype variant's struct implements
-//! `rtemis_r8_api::Native`. `#[r8::methods]` and `r8::exports!`
+//! `rtemis_r8_api::RustStored`. `#[r8::methods]` and `r8::exports!`
 //! register the struct and its impls with R8.
 
 use proc_macro::TokenStream;
@@ -231,7 +232,7 @@ struct TypeAttrs {
     version: Option<u32>,
     tag: Option<String>,
     rules: Vec<Tokens>,
-    native: bool,
+    rust_stored: bool,
 }
 
 /// One `rule(invariant = ..., when = ..., message = ..., id = ...)`, as the
@@ -315,8 +316,17 @@ fn type_attrs(attrs: &[Attribute]) -> Result<TypeAttrs> {
                     out.tag = Some(s.value());
                 }
                 Some("rule") => out.rules.push(parse_rule(&meta)?),
-                Some("native") => out.native = true,
-                _ => return Err(meta.error("expected namespace, version, tag, rule, or native")),
+                Some("storage") => {
+                    let s: syn::LitStr = meta.value()?.parse()?;
+                    match s.value().as_str() {
+                        "rust" => out.rust_stored = true,
+                        "r" => {}
+                        _ => {
+                            return Err(Error::new_spanned(&s, "storage is \"r\" or \"rust\""));
+                        }
+                    }
+                }
+                _ => return Err(meta.error("expected namespace, version, tag, rule, or storage")),
             }
             Ok(())
         })?;
@@ -343,13 +353,17 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
     }
     let ty = &field.ty;
     let mut constraints: Vec<Tokens> = Vec::new();
-    let (mut sensitive, mut external) = (false, false);
+    let mut sensitive = false;
     let mut unit = quote! { ::std::option::Option::None };
     let mut default = quote! { ::std::option::Option::None };
-    let mut resolve = quote! { ::std::option::Option::None };
+    let mut resolve = quote! { ::std::option::Option::<::rtemis_r8::ir::Resolve>::None };
     for a in field.attrs.iter().filter(|a| a.path().is_ident("r8")) {
         a.parse_nested_meta(|meta| {
-            let key = meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default();
+            let key = meta
+                .path
+                .get_ident()
+                .map(|i| i.to_string())
+                .unwrap_or_default();
             match key.as_str() {
                 "min" | "max" | "exclusive_min" | "exclusive_max" => {
                     let e: Expr = meta.value()?.parse()?;
@@ -374,25 +388,21 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
                 }
                 "unique" => constraints.push(quote! { unique: true }),
                 "sensitive" => sensitive = true,
-                "external" => external = true,
                 "unit" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
                     unit = quote! { ::std::option::Option::Some(#s.into()) };
                 }
                 "default" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
-                    let v: serde_json::Value = serde_json::from_str(&s.value())
-                        .map_err(|e| Error::new_spanned(&s, format!("a default is JSON text: {e}")))?;
+                    let v: serde_json::Value = serde_json::from_str(&s.value()).map_err(|e| {
+                        Error::new_spanned(&s, format!("a default is JSON text: {e}"))
+                    })?;
                     let v = tree_tokens(&v);
                     default = quote! { ::std::option::Option::Some(::std::boxed::Box::new(#v)) };
                 }
-                "resolve" => {
-                    let s: syn::LitStr = meta.value()?.parse()?;
-                    resolve = match s.value().as_str() {
-                        "none" => quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::None) },
-                        "runtime" => quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::Runtime) },
-                        _ => return Err(Error::new_spanned(&s, "resolve is \"none\" or \"runtime\"; a computed field is declared in R")),
-                    };
+                "context" => {
+                    resolve =
+                        quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::Context) };
                 }
                 _ => return Err(meta.error("unknown R8 field attribute")),
             }
@@ -410,16 +420,14 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
                     #(#constraints,)*
                     ..::std::default::Default::default()
                 },
-                #resolve,
+                #resolve.is_some(),
             )
             .unwrap_or_else(|e| panic!("field `{}`: {}", #field_name, e)),
             default: #default,
             description: #desc.into(),
             sensitive: #sensitive,
             unit: #unit,
-            external: #external,
-            unique: false,
-            optional: false,
+            resolve: #resolve,
             inherited_from: ::std::option::Option::None,
             extensions: ::std::option::Option::None,
         }
@@ -495,8 +503,6 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                         rules: ::std::vec![#(#rules),*],
                         migrations: ::std::vec::Vec::new(),
                         aliases: ::std::vec::Vec::new(),
-                        provenance: false,
-                        s4: false,
                         extensions: ::std::collections::BTreeMap::new(),
                     })
                 },
@@ -646,7 +652,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             ));
         }
     };
-    let native = if attrs.native {
+    let native = if attrs.rust_stored {
         match &input.data {
             Data::Struct(st) => native_impl(ident, &qualified, &fields_of(&st.fields)?)?,
             Data::Enum(e) => {
@@ -655,7 +661,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             Data::Union(_) => {
                 return Err(Error::new(
                     Span::call_site(),
-                    "#[r8(native)] applies to a struct or an enum",
+                    "#[r8(storage = \"rust\")] applies to a struct or an enum",
                 ));
             }
         }
@@ -689,9 +695,9 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     })
 }
 
-/// `impl rtemis_r8_api::NativeEnum` and `impl rtemis_r8_api::Codec` for an
-/// enum of `#[r8(native)]`: unit variants, struct variants whose fields are
-/// each a `Field`, and newtype variants whose struct implements `Native`.
+/// `impl rtemis_r8_api::RustStoredEnum` and `impl rtemis_r8_api::Codec` for an
+/// enum of `#[r8(storage = "rust")]`: unit variants, struct variants whose fields are
+/// each a `Field`, and newtype variants whose struct implements `RustStored`.
 /// The state's bytes are the variant's declaration index, a `u32`, then its
 /// fields.
 fn native_enum_impl(
@@ -828,27 +834,27 @@ fn native_enum_impl(
             Fields::Unnamed(u) if u.unnamed.len() == 1 => {
                 let inner = &u.unnamed[0].ty;
                 from.push(quote! {
-                    #vname => Ok(Self::#vid(unsafe { <#inner as #api::Native>::from_fields(fields) }?))
+                    #vname => Ok(Self::#vid(unsafe { <#inner as #api::RustStored>::from_fields(fields) }?))
                 });
                 from_node.push(quote! {
-                    #vname => Ok(Self::#vid(<#inner as #api::Native>::from_reader(r, root)?))
+                    #vname => Ok(Self::#vid(<#inner as #api::RustStored>::from_reader(r, root)?))
                 });
                 variant.push(quote! { Self::#vid(_) => #vname_c });
-                get.push(quote! { Self::#vid(inner) => <#inner as #api::Native>::get_field(inner, owner, name) });
+                get.push(quote! { Self::#vid(inner) => <#inner as #api::RustStored>::get_field(inner, owner, name) });
                 with.push(quote! {
-                    Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::Native>::with_field(inner, name, value) }?))
+                    Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::RustStored>::with_field(inner, name, value) }?))
                 });
                 write.push(quote! {
                     Self::#vid(inner) => {
                         out.write(&#idx.to_le_bytes())?;
-                        <#inner as #api::Native>::write_state(inner, out)
+                        <#inner as #api::RustStored>::write_state(inner, out)
                     }
                 });
                 read.push(
-                    quote! { #idx => Ok(Self::#vid(<#inner as #api::Native>::read_state(input)?)) },
+                    quote! { #idx => Ok(Self::#vid(<#inner as #api::RustStored>::read_state(input)?)) },
                 );
                 bytes.push(
-                    quote! { Self::#vid(inner) => <#inner as #api::Native>::owned_bytes(inner) },
+                    quote! { Self::#vid(inner) => <#inner as #api::RustStored>::owned_bytes(inner) },
                 );
             }
             Fields::Unnamed(u) => {
@@ -865,11 +871,11 @@ fn native_enum_impl(
             const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::enum_codec::<Self>();
             unsafe fn from_r_native(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 let variant = unsafe { #api::call::r_variant(x) }?;
-                unsafe { <Self as #api::NativeEnum>::from_variant(&variant, fields) }
+                unsafe { <Self as #api::RustStoredEnum>::from_variant(&variant, fields) }
             }
         }
         #[allow(unused_variables)]
-        impl #api::NativeEnum for #ident {
+        impl #api::RustStoredEnum for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             unsafe fn from_variant(variant: &str, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 match variant {
@@ -915,7 +921,7 @@ fn c_str(s: &str) -> Tokens {
     format!("c{s:?}").parse().expect("a C string literal")
 }
 
-/// `impl rtemis_r8_api::Native` for a struct of `#[r8(native)]`.
+/// `impl rtemis_r8_api::RustStored` for a struct of `#[r8(storage = "rust")]`.
 fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> Result<Tokens> {
     let type_c = c_str(qualified);
     let n = fields.len();
@@ -973,10 +979,10 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::codec::<Self>();
             unsafe fn from_r_native(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
-                unsafe { <Self as #api::Native>::from_fields(fields) }
+                unsafe { <Self as #api::RustStored>::from_fields(fields) }
             }
         }
-        impl #api::Native for #ident {
+        impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             unsafe fn from_fields(fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 if fields.len() != #n {
@@ -1017,11 +1023,11 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
 }
 
 /// `#[r8::methods(trait = "pkg::Trait")]` on an impl of a Rust trait for a
-/// Rust-native struct: keeps the impl, and generates one function per
+/// Rust-stored struct: keeps the impl, and generates one function per
 /// method that R8 calls (`R8MethodFn`), and the constant
 /// `__R8_IMPL_<Type>_<Trait>` that `r8::exports!` lists. A method takes
 /// `&self` and arguments that implement `rtemis_r8_api::FromR` or are `&T`
-/// of a Rust-native type `T` (`rtemis_r8_api::Receiver`), and returns
+/// of a Rust-stored type `T` (`rtemis_r8_api::Receiver`), and returns
 /// a type that implements `rtemis_r8_api::IntoR`; the trait is declared in
 /// R, whose method has `x` and the other parameters by the same names.
 #[proc_macro_attribute]
@@ -1113,14 +1119,14 @@ fn methods_impl(trait_name: Option<syn::LitStr>, item: &syn::ItemImpl) -> Result
             let ty = &pt.ty;
             let index = k + 1;
             match &**ty {
-                // `&T`: a value of a Rust-native type, borrowed from its
-                // state, or built from an R-native value of the type.
+                // `&T`: a value of a Rust-stored type, borrowed from its
+                // state, or built from an R-stored value of the type.
                 syn::Type::Reference(r) => {
                     let is_str = matches!(&*r.elem, syn::Type::Path(p) if p.path.is_ident("str"));
                     if r.mutability.is_some() || is_str {
                         return Err(Error::new_spanned(
                             ty,
-                            "a reference parameter is `&T` of a Rust-native type `T`; a string is `String`",
+                            "a reference parameter is `&T` of a Rust-stored type `T`; a string is `String`",
                         ));
                     }
                     let inner = &r.elem;

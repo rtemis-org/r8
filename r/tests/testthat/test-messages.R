@@ -21,7 +21,7 @@ test_that("a constraint names the field in R, the requirement, and the value fou
         x = type_double(max = 0),
         s = type_character(values = c("linear", "rbf")),
         w = vec(type_double(min = 0)),
-        m = hashmap(type_integer(min = 0L)),
+        m = btree_map(type_integer(min = 0L)),
         k = K
       )
     )
@@ -44,7 +44,7 @@ test_that("a constraint names the field in R, the requirement, and the value fou
     )
     expect_match(
       m,
-      "- `s` must be one of \"linear\" or \"rbf\"; found \"rbff\"; the nearest value is \"rbf\". [not_in_enum]",
+      "- `s` must be one of \"linear\" or \"rbf\"; found \"rbff\"; the nearest value is \"rbf\". [not_in_values]",
       fixed = TRUE
     )
     expect_match(
@@ -211,7 +211,7 @@ test_that("a rule violation in a map names the key or the item in R", {
   declare_in("msgmappaths", {
     H <- new_struct(
       "H",
-      fields = list(m = hashmap(type_double())),
+      fields = list(m = btree_map(type_double())),
       rules = rule(all(m, .x > 0), id = "POS")
     )
     e <- tryCatch(H(m = list(a = 1, `2` = -1, `a/b` = -2)), error = identity)
@@ -220,7 +220,7 @@ test_that("a rule violation in a map names the key or the item in R", {
     expect_match(conditionMessage(e), '.x = -1 at m[["2"]]', fixed = TRUE)
     O <- new_struct(
       "O",
-      fields = list(om = ordered_map(type_double())),
+      fields = list(om = index_map(type_double())),
       rules = rule(all(om, .x > 0), id = "POS")
     )
     e <- tryCatch(O(om = list(a = 1, b = -1)), error = identity)
@@ -235,9 +235,9 @@ test_that("list() is the empty map, and NULL stays absent", {
     M <- new_struct(
       "M",
       fields = list(
-        h = hashmap(type_double()),
-        o = ordered_map(type_character()),
-        oh = option(hashmap(type_double()))
+        h = btree_map(type_double()),
+        o = index_map(type_character()),
+        oh = option(btree_map(type_double()))
       )
     )
     v <- M(h = list(), o = list())

@@ -50,6 +50,17 @@ pub fn report(qname: &str, errors: &[DeclError]) -> String {
     out
 }
 
+/// Where a list of fields stands, which decides the members a field takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldsAt {
+    /// The fields of a struct.
+    Struct,
+    /// The fields of an enum's struct variant.
+    Variant,
+    /// The columns of a table.
+    Column,
+}
+
 struct Checker<'a> {
     doc: &'a IrDocument,
     errors: Vec<DeclError>,
@@ -155,18 +166,13 @@ impl Checker<'_> {
         }
     }
 
-    /// Checks fields; `columns` is `true` for the columns of a table, the one
-    /// position that admits `unique` and `optional`.
     /// Reports a cycle among computed fields, which no order can resolve.
     fn computed_cycles(&mut self, fields: &[FieldDef], path: &str) {
         let computed: Vec<(usize, Vec<String>)> = fields
             .iter()
             .enumerate()
-            .filter_map(|(i, f)| match &f.ty {
-                FieldType::Option {
-                    resolve: Resolve::Computed { expr },
-                    ..
-                } => Some((i, crate::rules::reads(expr))),
+            .filter_map(|(i, f)| match &f.resolve {
+                Some(Resolve::Computed { expr }) => Some((i, crate::rules::reads(expr))),
                 _ => None,
             })
             .collect();
@@ -202,7 +208,7 @@ impl Checker<'_> {
             if reaches(names[k], names[k], &computed, &names, &mut Vec::new()) {
                 self.report(
                     "computed_cycle",
-                    &format!("{path}/{i}/type/resolve/expr"),
+                    &format!("{path}/{i}/resolve/expr"),
                     format!(
                         "computed field `{}` depends on itself through other computed fields",
                         names[k]
@@ -212,7 +218,9 @@ impl Checker<'_> {
         }
     }
 
-    fn fields(&mut self, fields: &[FieldDef], path: &str, columns: bool) {
+    /// Checks fields at `at`: the fields of a struct or a struct variant admit
+    /// a fill policy.
+    fn fields(&mut self, fields: &[FieldDef], path: &str, at: FieldsAt) {
         self.computed_cycles(fields, path);
         self.unique(
             fields
@@ -225,20 +233,6 @@ impl Checker<'_> {
         for (i, f) in fields.iter().enumerate() {
             let fpath = format!("{path}/{i}");
             self.field_type(&f.ty, &format!("{fpath}/type"), true);
-            if !columns {
-                for (flag, set) in [("unique", f.unique), ("optional", f.optional)] {
-                    if set {
-                        self.report(
-                            "column_only",
-                            &format!("{fpath}/{flag}"),
-                            format!(
-                                "`{flag}` applies to a table column; field `{}` is not one",
-                                f.name
-                            ),
-                        );
-                    }
-                }
-            }
             self.extensions(
                 f.extensions.iter().flat_map(|m| m.keys()),
                 &format!("{fpath}/extensions"),
@@ -262,18 +256,45 @@ impl Checker<'_> {
                     );
                 }
             }
-            if let FieldType::Option {
-                resolve: Resolve::Computed { expr },
-                ..
-            } = &f.ty
-                && let Err(errors) = check_computed(expr, fields, self.doc, f)
-            {
-                for e in errors {
+            if let Some(r) = &f.resolve {
+                if !matches!(at, FieldsAt::Struct | FieldsAt::Variant) {
                     self.report(
-                        e.code,
-                        &format!("{fpath}/type/resolve/expr{}", e.path),
-                        e.message,
+                        "resolve_position",
+                        &format!("{fpath}/resolve"),
+                        format!(
+                            "field `{}` has a fill policy, which the fields of a struct or a struct variant take",
+                            f.name
+                        ),
                     );
+                } else if !matches!(f.ty, FieldType::Option { .. }) {
+                    self.report(
+                        "resolve_option",
+                        &format!("{fpath}/resolve"),
+                        format!(
+                            "field `{}` has a fill policy, which applies to an absent value: declare it option()",
+                            f.name
+                        ),
+                    );
+                } else if let Resolve::Computed { expr } = r {
+                    if matches!(&f.ty, FieldType::Option { inner } if matches!(**inner, FieldType::R { .. }))
+                    {
+                        self.report(
+                            "r_resolve",
+                            &format!("{fpath}/resolve"),
+                            format!(
+                                "field `{}` holds an R value, which is filled from a context; use context = TRUE or none",
+                                f.name
+                            ),
+                        );
+                    } else if let Err(errors) = check_computed(expr, fields, self.doc, f) {
+                        for e in errors {
+                            self.report(
+                                e.code,
+                                &format!("{fpath}/resolve/expr{}", e.path),
+                                e.message,
+                            );
+                        }
+                    }
                 }
             }
             if let Some(unit) = &f.unit
@@ -424,8 +445,9 @@ impl Checker<'_> {
                 }
             }
             FieldType::Table { columns, rules, .. } => {
-                self.fields(columns, &format!("{path}/columns"), true);
-                self.rules(rules, columns, &format!("{path}/rules"));
+                let fields: Vec<FieldDef> = columns.iter().map(|c| c.field.clone()).collect();
+                self.fields(&fields, &format!("{path}/columns"), FieldsAt::Column);
+                self.rules(rules, &fields, &format!("{path}/rules"));
                 for (i, c) in columns.iter().enumerate() {
                     if !is_column_type(&c.ty) {
                         self.report(
@@ -465,7 +487,7 @@ impl Checker<'_> {
                 }
                 self.field_type(element, &format!("{path}/element"), false);
             }
-            FieldType::Option { inner, resolve } => {
+            FieldType::Option { inner } => {
                 match inner.as_ref() {
                     FieldType::Option { .. } => self.report(
                         "option_option",
@@ -479,16 +501,7 @@ impl Checker<'_> {
                         "`option(type_json())` cannot tell an absent value from JSON `null`"
                             .to_string(),
                     ),
-                    FieldType::R { .. } if at_field => {
-                        if !matches!(resolve, Resolve::None | Resolve::Runtime) {
-                            self.report(
-                                "r_resolve",
-                                &format!("{path}/resolve"),
-                                "an R value is filled at run time; use `resolve = \"runtime\"` or none".to_string(),
-                            );
-                        }
-                        return;
-                    }
+                    FieldType::R { .. } if at_field => return,
                     _ => {}
                 }
                 self.field_type(inner, &format!("{path}/inner"), false);
@@ -502,11 +515,11 @@ impl Checker<'_> {
                     );
                 }
             }
-            FieldType::OrderedMap { value, keys } => {
+            FieldType::IndexMap { value, keys } => {
                 self.pattern(keys.pattern.as_deref(), &format!("{path}/keys"));
                 self.field_type(value, &format!("{path}/value"), false);
             }
-            FieldType::Hashmap { value, keys } => {
+            FieldType::BtreeMap { value, keys } => {
                 self.pattern(keys.pattern.as_deref(), &format!("{path}/keys"));
                 self.field_type(value, &format!("{path}/value"), false);
             }
@@ -518,7 +531,7 @@ impl Checker<'_> {
             | FieldType::TableOf { .. }
             | FieldType::Json
             | FieldType::Named { .. }
-            | FieldType::Descendant { .. } => {}
+            | FieldType::Subtype { .. } => {}
             FieldType::Dyn { r#trait } => {
                 // A trait of another document is checked by the registry.
                 if let Some(t) = crate::rules::TypeLookup::trait_of(self.doc, r#trait)
@@ -675,7 +688,7 @@ impl Checker<'_> {
         let before = self.errors.len();
         self.class_name(&s.name, "type", &format!("{path}/name"));
         self.version(s.version, &format!("{path}/version"));
-        self.fields(&s.fields, &format!("{path}/fields"), false);
+        self.fields(&s.fields, &format!("{path}/fields"), FieldsAt::Struct);
         self.extensions(s.extensions.keys(), &format!("{path}/extensions"));
         self.rules(&s.rules, &s.fields, &format!("{path}/rules"));
         self.errors.extend(super::lower::check_order(s, path));
@@ -801,11 +814,17 @@ impl Checker<'_> {
         for (i, m) in t.methods.iter().enumerate() {
             self.method(m, &format!("{path}/methods/{i}"));
         }
-        self.fields(
-            &t.required_fields,
-            &format!("{path}/required_fields"),
-            false,
+        self.unique(
+            t.required_fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (f.name.as_str(), format!("{path}/required_fields/{i}/name"))),
+            "field",
+            "duplicate_field",
         );
+        for (i, f) in t.required_fields.iter().enumerate() {
+            self.field_type(&f.ty, &format!("{path}/required_fields/{i}/type"), true);
+        }
         if let Some(tag) = &t.tag
             && let Some(i) = t.required_fields.iter().position(|f| &f.name == tag)
         {
@@ -1034,7 +1053,7 @@ impl Checker<'_> {
                         c.newtype(doc, of, &e.tag, &format!("{vpath}/of"), &mut wrapped);
                     }
                     if let VariantShape::Struct { fields, rules } = &v.shape {
-                        c.fields(fields, &format!("{vpath}/fields"), false);
+                        c.fields(fields, &format!("{vpath}/fields"), FieldsAt::Variant);
                         c.rules(rules, fields, &format!("{vpath}/rules"));
                         if let Some(k) = fields.iter().position(|f| f.name == e.tag) {
                             c.report(

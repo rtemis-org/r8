@@ -4,15 +4,18 @@
 \alias{type_table}
 \title{Table field type}
 \usage{
-type_table(columns = list(), open = FALSE, rules = list())
+type_table(columns = list(), open = FALSE, rules = list(), of = NULL)
 }
 \arguments{
-\item{columns}{Named list of fields or field types, or an R8 struct type.}
+\item{columns}{Named list of fields or field types.}
 
 \item{open}{Logical: Accept columns the declaration does not name.}
 
 \item{rules}{A \code{rule()}, or a list of \code{rule()} calls, over a row's
 columns.}
+
+\item{of}{Optional R8 struct type: The struct whose fields are the columns,
+in place of \code{columns}, \code{open}, and \code{rules}.}
 }
 \value{
 An \code{r8_field_type}.
@@ -21,8 +24,8 @@ An \code{r8_field_type}.
 A \code{data.frame} of equal-length columns, each a scalar type, a factor, or
 \code{option()} of one, with automatic row names. An open table also accepts
 columns its declaration does not name. A table's rules run once per row
-and read the row's columns by name. Given an R8 struct type, a table whose
-columns are the struct's fields.
+and read the row's columns by name. With \code{of}, a table whose columns are
+the fields of a struct.
 }
 \examples{
 type_table(
