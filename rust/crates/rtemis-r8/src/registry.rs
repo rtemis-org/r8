@@ -205,6 +205,13 @@ impl State {
             return Ok(Outcome::default());
         }
         let tr = def.r#trait.clone();
+        let mut found = crate::ir::dispatch::check_impl(&*self.documents, ns, &def, "");
+        found.extend(crate::ir::dispatch::duplicate_impls(
+            &self.documents,
+            ns,
+            &def,
+            "",
+        ));
         let docs = Arc::make_mut(&mut self.documents);
         let d = docs.document_position(ns);
         let impls = docs.impls_mut(d);
@@ -218,7 +225,11 @@ impl State {
             !same
         });
         impls.push(def);
-        let checked = guarded(|| check_tags(&*docs, &tr, &|_| String::new()));
+        let checked = guarded(|| {
+            let mut p = check_tags(&*docs, &tr, &|_| String::new());
+            p.extend(found);
+            p
+        });
         match checked {
             Ok(p) if p.is_empty() => {
                 self.changed();
@@ -454,11 +465,7 @@ impl Registry {
                     (name, state.put_trait(&ns, t)?)
                 }
                 Declaration::Impl(i) => {
-                    let target = match &i.target {
-                        crate::ir::ImplTarget::Type { name } => name.to_string(),
-                        crate::ir::ImplTarget::HostClass { class, .. } => class.clone(),
-                    };
-                    let name = format!("impl {} for {target}", i.r#trait);
+                    let name = format!("impl {} for {}", i.r#trait, i.target);
                     (name, state.put_impl_checked(&ns, i)?)
                 }
             };
@@ -481,6 +488,23 @@ impl Registry {
     /// namespace that the parent's declaration leaves stale is not a problem
     /// of these namespaces; [`Registry::stale_types`] lists it.
     pub fn check_namespaces(&self, namespaces: &[String]) -> Vec<(String, DeclError)> {
+        self.check_namespaces_with(namespaces, &[])
+    }
+
+    /// [`Registry::check_namespaces`], with the impls of these namespaces
+    /// also checked against the registry: an impl of a trait of another
+    /// namespace against the trait (`impl_arity`), an impl of the same tuple
+    /// in another namespace (`duplicate_impl`), and two impls of one trait
+    /// that are each more specific in a position, with no impl at their meet
+    /// (`dispatch_ambiguous`), for pairs of impls of these namespaces or of
+    /// one of them and one of `imports`, the namespaces of the packages a
+    /// package imports. An ambiguity between impls of unrelated packages is
+    /// reported where a call meets it.
+    pub fn check_namespaces_with(
+        &self,
+        namespaces: &[String],
+        imports: &[String],
+    ) -> Vec<(String, DeclError)> {
         let docs = self.snapshot();
         let mut out = Vec::new();
         for n in namespaces {
@@ -538,6 +562,52 @@ impl Registry {
                         .into_iter()
                         .map(|e| (doc.namespace.to_string(), e)),
                 );
+            }
+            for (i, imp) in doc.impls.iter().enumerate() {
+                let path = format!("/impls/{i}");
+                // `check_document_records()` checks an impl of a trait of
+                // the impl's own document.
+                if imp.r#trait.namespace != doc.namespace {
+                    out.extend(
+                        crate::ir::dispatch::check_impl_arity(&*docs, imp, &path)
+                            .into_iter()
+                            .map(|e| (doc.namespace.to_string(), e)),
+                    );
+                }
+                out.extend(
+                    crate::ir::dispatch::duplicate_impls(&docs, &doc.namespace, imp, &path)
+                        .into_iter()
+                        .map(|e| (doc.namespace.to_string(), e)),
+                );
+            }
+        }
+        let own = |n: &Name| namespaces.iter().any(|x| x == n.as_str());
+        let known = |n: &Name| own(n) || imports.iter().any(|x| x == n.as_str());
+        for (_, t) in &traits {
+            let Some(tr) = docs.trait_of(t) else { continue };
+            let found = crate::ir::dispatch::impls_by_namespace(&docs, t);
+            let impls: Vec<&ImplDef> = found.iter().map(|(_, i)| *i).collect();
+            let pair = |a: usize, b: usize| {
+                let (na, nb) = (found[a].0, found[b].0);
+                (own(na) && known(nb)) || (own(nb) && known(na))
+            };
+            for mut a in
+                crate::ir::dispatch::ambiguities(&*docs, &impls, tr.dispatch_arity(), &pair)
+            {
+                // The problem belongs to the checked namespace's impl.
+                if !own(found[a.first].0) {
+                    std::mem::swap(&mut a.first, &mut a.second);
+                }
+                let ns = found[a.first].0;
+                let index = docs
+                    .namespace(ns)
+                    .and_then(|d| d.impls.iter().position(|i| i == impls[a.first]))
+                    .unwrap_or(0);
+                let path_of = |_: &ImplDef| format!("/impls/{index}");
+                out.push((
+                    ns.to_string(),
+                    crate::ir::ambiguity_error(&impls, &a, &path_of),
+                ));
             }
         }
         out

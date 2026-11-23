@@ -33,6 +33,7 @@ A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compa
 | `decode` | a value's JSON document | the qualified type | `{"valid": true}`, or `{"errors": [...]}` |
 | `canonical` | a value's JSON document | the qualified type | `{"json": "<exact text>"}`: the RFC 8785 canonical form, compared byte for byte |
 | `hash` | a value's JSON document | the qualified type | `{"hash": "sha256:<hex>"}`; `options.hash_key` selects HMAC |
+| `dispatch` | the types of a call's dispatched arguments, in order: a qualified type name, `{"classes": [...]}` for an object of a host class, or `null` for a value no type names | the qualified trait | `{"impl": [...]}`, the dispatched positions of the providing impl (a qualified type, a class, or `any`); `{"default": true}` when no impl applies; `{"ambiguous": [[...], [...]]}`, the two most specific applicable impls; `{"stale": "ns::T"}` for a stale argument type |
 
 An error is `{"code": "...", "path": "...", "rule": "..."}`: the stable code, a JSON Pointer into `input`, and, for a rule violation, the rule ID, or `"rule_index"`, the rule's 0-based position among its scope's rules, for a rule without an ID. Messages are not compared. A host reports every error, and a runner compares the reported and expected lists as multisets, after sorting both by path, then code, then rule; an empty list means the input passes.
 

@@ -1,7 +1,7 @@
 # R8 0.4.0.9000
 
 - The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "descendant", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
-- The declaration record has format 3; a package installed with R8 0.4.0 is reinstalled.
+- The declaration record has format 4; a package installed with an earlier R8 is reinstalled.
 - `new_struct(extends = Parent)` declares a child that holds the parent's fields and rules, then its own; `defaults =` changes the defaults of inherited fields. A child's values carry the parent's class after their own, and a field typed as a struct admits that struct only.
 - A struct whose fields all have defaults that violate its rules is a declaration error (`default_violates_rule`).
 - Declaring a parent again leaves the children that extend its earlier declaration stale: they construct and read no values until they are declared again, and the declaration warns (`r8_stale_warning`). A package built against an earlier declaration of another package's parent is refused at load.
@@ -23,6 +23,8 @@
 - `r8_convert()` uses the `From` impl of a value's nearest ancestor when its own type has none, and passes the value unchanged.
 - A converter from `r8_converter(Target)` is the generic of the conversions to `Target`: `implement(as_target, Source) <- function(x) ...` and `implement(as_target, "character") <- function(x) ...` declare them, and the roclet `r8_rd()` documents them. `Enum@from` converts to an enum, and `from` is a reserved variant name.
 - `From("ns::Source")` names a registered type, and the source's namespace may declare the impl.
+- The IR's method parameters may carry a dispatch mark, a type, a default, and a description, and a method a return type; an impl's `type_args` are typed positions, an R8 type, a host class, or any.
+- An impl of a trait and type tuple that another namespace declares is refused (`duplicate_impl`), and an impl outside its trait's namespace names a type of its own namespace (`impl_orphan`).
 
 # R8 0.4.0
 

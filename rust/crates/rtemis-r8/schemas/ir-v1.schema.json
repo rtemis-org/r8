@@ -1514,6 +1514,13 @@
         "generic": {
           "type": "boolean",
           "description": "The trait of a generic declared by `generic()`: one method, named as\nthe trait."
+        },
+        "type_params": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "The number of type parameters the trait declares beside its\ndispatched positions, which an impl gives after the dispatched types\nin `type_args`: 1 for the standard trait `From(source)`."
         }
       },
       "required": [
@@ -1538,9 +1545,20 @@
         "params": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/ParamDef"
           },
-          "description": "The formal argument names, in order; `...` is allowed."
+          "description": "The formal arguments, in order; `...` is allowed. Without a\ndispatch mark on any parameter, the method dispatches on its first."
+        },
+        "return_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReturnType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The type of the value the method returns, which every call\nsatisfies."
         },
         "stochastic": {
           "type": "boolean",
@@ -1572,6 +1590,78 @@
         "pattern": "^(if|else|repeat|while|function|for|in|next|break|TRUE|FALSE|NULL|Inf|NaN|NA|NA_integer_|NA_real_|NA_character_|NA_complex_)(<-)?$"
       }
     },
+    "ParamDef": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "An untyped parameter that is not marked as dispatched."
+        },
+        {
+          "$ref": "#/$defs/Param",
+          "description": "A parameter with any of a dispatch mark, a type, a default, and a\ndescription; the check refuses this form with the name alone."
+        }
+      ],
+      "description": "A trait method's parameter: its name, or an object that also gives\nwhether the method dispatches on it, its type, its default, or its\ndescription."
+    },
+    "Param": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The parameter's name, a syntactic R argument name or `...`."
+        },
+        "dispatch": {
+          "type": "boolean",
+          "description": "The method dispatches on the argument's type."
+        },
+        "type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The argument's type, which every call satisfies."
+        },
+        "default": {
+          "description": "The argument's default in its JSON form, for a typed parameter."
+        },
+        "description": {
+          "type": "string",
+          "description": "The parameter's description."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "description": "The object form of a [`ParamDef`]."
+    },
+    "ReturnType": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SelfType",
+          "description": "`\"Self\"`."
+        },
+        {
+          "$ref": "#/$defs/FieldType",
+          "description": "A field type."
+        }
+      ],
+      "description": "The value a method returns: a field type, or `Self`, the type of the\nmethod's first dispatched argument."
+    },
+    "SelfType": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "Self",
+          "description": "The type of the method's first dispatched argument."
+        }
+      ],
+      "description": "The marker of [`ReturnType::Receiver`], written `\"Self\"`."
+    },
     "ImplDef": {
       "type": "object",
       "additionalProperties": false,
@@ -1583,13 +1673,13 @@
         "type_args": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/ImplTarget"
           },
-          "description": "The trait's type arguments, for a standard trait with a type\nparameter, such as `From(source)`: `[\"data.frame\"]`."
+          "description": "The types of the trait's positions after the first: its dispatched\npositions after the first, in order, then its type parameters, such\nas the source of `From(source)`. Rust writes the impl\n`impl Trait<B> for A`."
         },
         "target": {
           "$ref": "#/$defs/ImplTarget",
-          "description": "What the trait is implemented for."
+          "description": "What the trait is implemented for: its first dispatched position."
         },
         "tag_value": {
           "type": [
@@ -1652,7 +1742,7 @@
             },
             "package": {
               "type": "string",
-              "description": "The package that defines the class."
+              "description": "The package that defines the class, when the declaration names\none."
             },
             "class": {
               "type": "string",
@@ -1666,11 +1756,24 @@
           "required": [
             "kind",
             "host",
-            "package",
             "class",
             "system"
           ],
           "description": "A class of another package in a host language, such as `dgCMatrix`."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "any"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "description": "Any value: a dispatched position that an impl does not specialize."
         }
       ],
       "description": "What an impl implements its trait for."

@@ -25,8 +25,9 @@ use serde_json::{Map, Number, Value};
 
 use crate::ir::{
     Bound, CharacterType, ClassSystem, DoubleType, EnumDef, FieldDef, FieldType, ImplDef,
-    ImplTarget, IntegerType, Logic, MethodDef, Migration, MigrationStep, Operator, Resolve,
-    RuleDef, SplitTarget, StructDef, TraitDef, TypeDef, VariantDef, VariantShape,
+    ImplTarget, IntegerType, Logic, MethodDef, Migration, MigrationStep, Operator, Param, ParamDef,
+    Resolve, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef, TypeDef, VariantDef,
+    VariantShape,
 };
 use crate::name::{MethodName, Name, QualifiedName};
 
@@ -34,7 +35,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 3;
+pub const FORMAT: u32 = 4;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -821,51 +822,8 @@ fn w_type_def(w: &mut W, t: &TypeDef) {
     }
 }
 
-fn w_trait(w: &mut W, t: &TraitDef) {
-    let TraitDef {
-        name,
-        description,
-        methods,
-        required_fields,
-        supertraits,
-        tag,
-        generic,
-    } = t;
-    w.name(name);
-    w.str(description);
-    w.u8(u8::from(tag.is_some()) | u8::from(*generic) << 1);
-    if let Some(t) = tag {
-        w.name(t);
-    }
-    w.seq(methods, |w, m| {
-        let MethodDef {
-            name,
-            description,
-            params,
-            stochastic,
-            has_default,
-        } = m;
-        w.str(name.as_str());
-        w.str(description);
-        w_strs(w, params);
-        w.u8(u8::from(*stochastic) | u8::from(*has_default) << 1);
-    });
-    w.seq(required_fields, w_field);
-    w.seq(supertraits, |w, q| w.qn(q));
-}
-
-fn w_impl(w: &mut W, i: &ImplDef) {
-    let ImplDef {
-        r#trait,
-        type_args,
-        target,
-        tag_value,
-        methods,
-        codec,
-    } = i;
-    w.qn(r#trait);
-    w_strs(w, type_args);
-    match target {
+fn w_target(w: &mut W, t: &ImplTarget) {
+    match t {
         ImplTarget::Type { name } => {
             w.u8(0);
             w.qn(name);
@@ -885,7 +843,97 @@ fn w_impl(w: &mut W, i: &ImplDef) {
                 ClassSystem::S4 => 1,
             });
         }
+        ImplTarget::Any => w.u8(2),
     }
+}
+
+fn w_param(w: &mut W, p: &ParamDef) {
+    match p {
+        ParamDef::Name(n) => {
+            w.u8(0);
+            w.str(n);
+        }
+        ParamDef::Full(Param {
+            name,
+            dispatch,
+            ty,
+            default,
+            description,
+        }) => {
+            w.u8(1);
+            w.str(name);
+            w.u8(u8::from(*dispatch)
+                | u8::from(ty.is_some()) << 1
+                | u8::from(default.is_some()) << 2);
+            if let Some(t) = ty {
+                w_type(w, t);
+            }
+            if let Some(d) = default {
+                w_tree(w, d);
+            }
+            w.str(description);
+        }
+    }
+}
+
+fn w_trait(w: &mut W, t: &TraitDef) {
+    let TraitDef {
+        name,
+        description,
+        methods,
+        required_fields,
+        supertraits,
+        tag,
+        generic,
+        type_params,
+    } = t;
+    w.name(name);
+    w.str(description);
+    w.u8(u8::from(tag.is_some()) | u8::from(*generic) << 1);
+    if let Some(t) = tag {
+        w.name(t);
+    }
+    w.u8(*type_params);
+    w.seq(methods, |w, m| {
+        let MethodDef {
+            name,
+            description,
+            params,
+            return_type,
+            stochastic,
+            has_default,
+        } = m;
+        w.str(name.as_str());
+        w.str(description);
+        w.seq(params, w_param);
+        w.u8(u8::from(*stochastic)
+            | u8::from(*has_default) << 1
+            | u8::from(return_type.is_some()) << 2);
+        match return_type {
+            Some(ReturnType::Receiver(_)) => w.u8(0),
+            Some(ReturnType::Type(t)) => {
+                w.u8(1);
+                w_type(w, t);
+            }
+            None => {}
+        }
+    });
+    w.seq(required_fields, w_field);
+    w.seq(supertraits, |w, q| w.qn(q));
+}
+
+fn w_impl(w: &mut W, i: &ImplDef) {
+    let ImplDef {
+        r#trait,
+        type_args,
+        target,
+        tag_value,
+        methods,
+        codec,
+    } = i;
+    w.qn(r#trait);
+    w.seq(type_args, w_target);
+    w_target(w, target);
     w.u8(u8::from(tag_value.is_some()) | u8::from(*codec) << 1);
     if let Some(t) = tag_value {
         w.str(t);
@@ -1166,10 +1214,6 @@ fn r_map<'a, K: Ord>(
         m.insert(k, v);
     }
     Ok(m)
-}
-
-fn r_strings(r: &mut R) -> Res<Vec<String>> {
-    r.seq(1, |r| Ok(r.str()?.to_owned()))
 }
 
 fn r_boxed_strs(r: &mut R) -> Res<Box<[Box<str>]>> {
@@ -1539,38 +1583,8 @@ fn r_method_name(r: &mut R) -> Res<MethodName> {
     MethodName::new(s).map_err(|_| RecordError::Name(s.to_string()))
 }
 
-fn r_trait(r: &mut R) -> Res<TraitDef> {
-    let name = r.name()?;
-    let description = r.str()?.to_owned();
-    let f = r.flags(0b11, "trait")?;
-    let tag = if f & 1 != 0 { Some(r.name()?) } else { None };
-    Ok(TraitDef {
-        name,
-        description,
-        methods: r.seq(3, |r| {
-            let name = r_method_name(r)?;
-            let description = r.str()?.to_owned();
-            let params = r_strings(r)?;
-            let f = r.flags(0b11, "method")?;
-            Ok(MethodDef {
-                name,
-                description,
-                params,
-                stochastic: f & 1 != 0,
-                has_default: f & 2 != 0,
-            })
-        })?,
-        required_fields: r.seq(4, r_field)?,
-        supertraits: r.seq(2, R::qn)?,
-        tag,
-        generic: f & 2 != 0,
-    })
-}
-
-fn r_impl(r: &mut R) -> Res<ImplDef> {
-    let r#trait = r.qn()?;
-    let type_args = r_strings(r)?;
-    let target = match r.u8()? {
+fn r_target(r: &mut R) -> Res<ImplTarget> {
+    Ok(match r.u8()? {
         0 => ImplTarget::Type { name: r.qn()? },
         1 => ImplTarget::HostClass {
             host: r.str()?.to_owned(),
@@ -1582,8 +1596,79 @@ fn r_impl(r: &mut R) -> Res<ImplDef> {
                 t => return Err(RecordError::Tag("class system", t)),
             },
         },
+        2 => ImplTarget::Any,
         t => return Err(RecordError::Tag("impl target", t)),
-    };
+    })
+}
+
+fn r_param(r: &mut R) -> Res<ParamDef> {
+    Ok(match r.u8()? {
+        0 => ParamDef::Name(r.str()?.to_owned()),
+        1 => {
+            let name = r.str()?.to_owned();
+            let f = r.flags(0b111, "parameter")?;
+            let ty = if f & 2 != 0 { Some(r_type(r)?) } else { None };
+            let default = if f & 4 != 0 {
+                Some(Box::new(r_tree(r)?))
+            } else {
+                None
+            };
+            ParamDef::Full(Param {
+                name,
+                dispatch: f & 1 != 0,
+                ty,
+                default,
+                description: r.str()?.into(),
+            })
+        }
+        t => return Err(RecordError::Tag("parameter", t)),
+    })
+}
+
+fn r_trait(r: &mut R) -> Res<TraitDef> {
+    let name = r.name()?;
+    let description = r.str()?.to_owned();
+    let f = r.flags(0b11, "trait")?;
+    let tag = if f & 1 != 0 { Some(r.name()?) } else { None };
+    let type_params = r.u8()?;
+    Ok(TraitDef {
+        name,
+        description,
+        methods: r.seq(4, |r| {
+            let name = r_method_name(r)?;
+            let description = r.str()?.to_owned();
+            let params = r.seq(2, r_param)?;
+            let f = r.flags(0b111, "method")?;
+            let return_type = if f & 4 != 0 {
+                Some(match r.u8()? {
+                    0 => ReturnType::Receiver(SelfType::SelfType),
+                    1 => ReturnType::Type(Box::new(r_type(r)?)),
+                    t => return Err(RecordError::Tag("return type", t)),
+                })
+            } else {
+                None
+            };
+            Ok(MethodDef {
+                name,
+                description,
+                params,
+                return_type,
+                stochastic: f & 1 != 0,
+                has_default: f & 2 != 0,
+            })
+        })?,
+        required_fields: r.seq(4, r_field)?,
+        supertraits: r.seq(2, R::qn)?,
+        tag,
+        generic: f & 2 != 0,
+        type_params,
+    })
+}
+
+fn r_impl(r: &mut R) -> Res<ImplDef> {
+    let r#trait = r.qn()?;
+    let type_args = r.seq(1, r_target)?;
+    let target = r_target(r)?;
     let f = r.flags(0b11, "impl")?;
     let tag_value = if f & 1 != 0 {
         Some(r.str()?.to_owned())
@@ -1600,8 +1685,8 @@ fn r_impl(r: &mut R) -> Res<ImplDef> {
     })
 }
 
-/// Reads the payload of format 3.
-fn r_payload_v3(r: &mut R) -> Res<Vec<Entry>> {
+/// Reads the payload of format 4.
+fn r_payload(r: &mut R) -> Res<Vec<Entry>> {
     r.seq(2, |r| {
         let namespace = r.name()?;
         let declaration = match r.u8()? {
@@ -1649,7 +1734,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Entry>, RecordError> {
         depth: 0,
     };
     let entries = match format {
-        3 => r_payload_v3(&mut r)?,
+        4 => r_payload(&mut r)?,
         _ => unreachable!("format checked above"),
     };
     if !r.b.is_empty() {

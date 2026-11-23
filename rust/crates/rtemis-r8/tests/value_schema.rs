@@ -93,7 +93,11 @@ fn exported_schemas_agree_with_validation() {
             one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
+        // Value cases; a `dispatch` case names a trait.
         for case in suite["cases"].as_array().unwrap() {
+            if case["op"] == "dispatch" {
+                continue;
+            }
             let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
             let schema = json_schema(&ty, &docs);
             let validator = jsonschema::validator_for(&schema)
@@ -176,7 +180,11 @@ fn closed_schemas_list_the_registered_implementors() {
             one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
+        // Value cases; a `dispatch` case names a trait.
         for case in suite["cases"].as_array().unwrap() {
+            if case["op"] == "dispatch" {
+                continue;
+            }
             let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
             let validator = jsonschema::validator_for(&json_schema_with(&ty, &docs, true))
                 .unwrap_or_else(|e| {

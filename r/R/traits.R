@@ -1004,7 +1004,19 @@ impl_declare <- function(trait, type, methods, tag_value, env) {
     ir[["tag_value"]] <- tag_value
   }
   if (inherits(trait, "r8_from_trait")) {
-    ir[["type_args"]] <- list(t[["source"]])
+    # The source is an R8 type, named with its namespace, or an R class.
+    ir[["type_args"]] <- list(
+      if (grepl("::", t[["source"]], fixed = TRUE)) {
+        list(kind = "type", name = t[["source"]])
+      } else {
+        list(
+          kind = "host_class",
+          host = "r",
+          class = t[["source"]],
+          system = "s3"
+        )
+      }
+    )
     if (type_name %in% ancestry(t[["source"]])[["ancestors"]]) {
       r8_abort(
         "`",

@@ -133,6 +133,7 @@ r8_cmp <- unclass(PartialOrd)[["generics"]][["cmp"]]
 FROM_IR <- list(
   name = "From",
   description = "Conversion from a source class or type.",
+  type_params = 1L,
   methods = list(list(
     name = "from",
     description = "Converts x to the implementing type.",

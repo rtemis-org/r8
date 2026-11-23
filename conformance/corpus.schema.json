@@ -108,7 +108,8 @@
             "declare",
             "decode",
             "canonical",
-            "hash"
+            "hash",
+            "dispatch"
           ]
         },
         "type": {
@@ -238,6 +239,107 @@
                   "pattern": "^(sha256|sha256-partial):[0-9a-f]{64}$|^hmac-sha256:[0-9a-f]{8}:[0-9a-f]{64}$"
                 }
               }
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "dispatch"
+            },
+            "input": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/qualified"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "classes"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "classes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "impl"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "impl": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "default"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "default": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "ambiguous"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "ambiguous": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "stale"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "stale": {
+                      "$ref": "#/$defs/qualified"
+                    }
+                  }
+                }
+              ]
             }
           }
         }

@@ -8,6 +8,7 @@
 pub mod build;
 mod check;
 mod decl;
+pub mod dispatch;
 mod document;
 mod logic;
 mod lower;
@@ -15,13 +16,15 @@ mod number;
 mod tags;
 mod types;
 
+pub use check::ambiguity_error;
 pub use check::{
     DeclError, check_document, check_document_records, check_trait, check_type, is_column_type,
     report,
 };
 pub use decl::{
     ClassSystem, EnumDef, FieldDef, ImplDef, ImplTarget, MethodDef, Migration, MigrationStep,
-    RuleDef, SplitTarget, StructDef, TraitDef, VariantDef, VariantShape,
+    Param, ParamDef, ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef, VariantDef,
+    VariantShape,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use logic::{Logic, Operator};

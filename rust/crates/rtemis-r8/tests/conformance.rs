@@ -116,6 +116,65 @@ fn run_declare(input: &Value, expect: &Value) -> Option<String> {
     }
 }
 
+/// Runs one `dispatch` case: resolves a call of the trait `type`, whose
+/// arguments' types are `input`, among the impls of the suite's IR.
+fn run_dispatch(
+    ir: Option<&DocumentSet>,
+    trait_name: &Value,
+    input: &Value,
+    expect: &Value,
+) -> Option<String> {
+    use rtemis_r8::ir::dispatch::{Arg, Resolution, impls_by_namespace, positions, resolve};
+    use rtemis_r8::rules::TypeLookup;
+    let Some(docs) = ir else {
+        return Some("a `dispatch` case needs the suite's `ir`".into());
+    };
+    let tr = QualifiedName::parse(trait_name.as_str()?).ok()?;
+    let Some(t) = docs.trait_of(&tr) else {
+        return Some(format!("`{tr}` is not declared in the suite's `ir`"));
+    };
+    let arity = t.dispatch_arity();
+    let args: Vec<Arg> = input
+        .as_array()?
+        .iter()
+        .map(|a| match a {
+            Value::String(s) => Arg::Type(QualifiedName::parse(s).unwrap()),
+            Value::Object(o) => Arg::Classes(
+                o["classes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| c.as_str().unwrap().to_string())
+                    .collect(),
+            ),
+            _ => Arg::Other,
+        })
+        .collect();
+    let found = impls_by_namespace(docs, &tr);
+    let impls: Vec<&rtemis_r8::ir::ImplDef> = found.iter().map(|(_, i)| *i).collect();
+    let tuple = |k: usize| -> Value {
+        positions(impls[k], arity)
+            .iter()
+            .map(|p| Value::String(p.to_string()))
+            .collect()
+    };
+    let got = match resolve(docs, &impls, arity, &args, None) {
+        Resolution::Impl(k) => serde_json::json!({ "impl": tuple(k) }),
+        Resolution::Default => serde_json::json!({ "default": true }),
+        Resolution::Ambiguous(a, b) => {
+            let mut pair = vec![tuple(a), tuple(b)];
+            pair.sort_by_key(ToString::to_string);
+            serde_json::json!({ "ambiguous": pair })
+        }
+        Resolution::Stale(q) => serde_json::json!({ "stale": q.to_string() }),
+    };
+    let mut want = expect.clone();
+    if let Some(Value::Array(pair)) = want.get_mut("ambiguous") {
+        pair.sort_by_key(ToString::to_string);
+    }
+    (got != want).then(|| format!("resolved {got}, expected {want}"))
+}
+
 /// Runs one `decode` case against the suite's IR document.
 fn run_decode(
     ir: Option<&DocumentSet>,
@@ -256,6 +315,9 @@ fn conformance_corpus() {
             let outcome = match case["op"].as_str().unwrap() {
                 "declare" => run_declare(&case["input"], &case["expect"]),
                 "decode" => run_decode(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
+                "dispatch" => {
+                    run_dispatch(ir.as_ref(), &case["type"], &case["input"], &case["expect"])
+                }
                 op @ ("canonical" | "hash") => run_codec(
                     op,
                     ir.as_ref(),

@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use rtemis_r8::codec::declaration_hash;
 use rtemis_r8::ir::{
     Bound, CharacterType, ClassSystem, DoubleType, FieldDef, FieldType, ImplDef, ImplTarget,
-    IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep, Resolve, RuleDef,
-    SplitTarget, StructDef, TraitDef, TypeDef,
+    IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep, Param, ParamDef, Resolve,
+    ReturnType, RuleDef, SelfType, SplitTarget, StructDef, TraitDef, TypeDef,
 };
 use rtemis_r8::name::{MethodName, Name, QualifiedName};
 use rtemis_r8::record::{self, Declaration, DeclarationRef, Entry, RecordError};
@@ -438,7 +438,35 @@ fn sample_trait() -> TraitDef {
             MethodDef {
                 name: MethodName::new("apply").unwrap(),
                 description: "Applies it.".into(),
-                params: vec!["x".into(), "...".into()],
+                params: vec![
+                    ParamDef::Full(Param {
+                        name: "x".into(),
+                        dispatch: true,
+                        ty: None,
+                        default: None,
+                        description: "".into(),
+                    }),
+                    ParamDef::Full(Param {
+                        name: "y".into(),
+                        dispatch: true,
+                        ty: None,
+                        default: None,
+                        description: "The other.".into(),
+                    }),
+                    ParamDef::Full(Param {
+                        name: "scale".into(),
+                        dispatch: false,
+                        ty: Some(FieldType::Double(DoubleType::default())),
+                        default: Some(Box::new(rtemis_r8::tree::Tree::from_value(
+                            &serde_json::json!(1.5),
+                        ))),
+                        description: "".into(),
+                    }),
+                    "...".into(),
+                ],
+                return_type: Some(ReturnType::Type(Box::new(FieldType::Double(
+                    DoubleType::default(),
+                )))),
                 stochastic: true,
                 has_default: true,
             },
@@ -446,6 +474,7 @@ fn sample_trait() -> TraitDef {
                 name: MethodName::new("[").unwrap(),
                 description: String::new(),
                 params: vec![],
+                return_type: Some(ReturnType::Receiver(SelfType::SelfType)),
                 stochastic: false,
                 has_default: false,
             },
@@ -457,6 +486,7 @@ fn sample_trait() -> TraitDef {
         supertraits: vec![q("R8::Display")],
         tag: Some(name("kind")),
         generic: true,
+        type_params: 2,
     }
 }
 
@@ -474,7 +504,18 @@ fn sample_impls() -> Vec<ImplDef> {
         },
         ImplDef {
             r#trait: q("R8::From"),
-            type_args: vec!["data.frame".into()],
+            type_args: vec![
+                ImplTarget::Type {
+                    name: q("ns::Sample"),
+                },
+                ImplTarget::HostClass {
+                    host: "r".into(),
+                    package: String::new(),
+                    class: "data.frame".into(),
+                    system: ClassSystem::S3,
+                },
+                ImplTarget::Any,
+            ],
             target: ImplTarget::HostClass {
                 host: "r".into(),
                 package: "Matrix".into(),
@@ -538,11 +579,11 @@ fn samples_of_every_member_round_trip() {
     );
 }
 
-/// The golden record of format 3: `tests/fixtures/sample.r8d` holds the
-/// samples as format 3 wrote them, and `sample.r8d.json` their IR. With
+/// The golden record of format 4: `tests/fixtures/sample.r8d` holds the
+/// samples as format 4 wrote them, and `sample.r8d.json` their IR. With
 /// `R8_UPDATE_RECORD=1`, the test writes both files.
 #[test]
-fn the_golden_record_of_format_3_reads_and_writes_back() {
+fn the_golden_record_of_format_4_reads_and_writes_back() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let (_, entries) = sample_record();
     let bytes = encode_entries(&entries);
@@ -560,7 +601,7 @@ fn the_golden_record_of_format_3_reads_and_writes_back() {
     // The header names the writer; the payload from the checksum on is the
     // format's bytes, which the current encoder reproduces.
     let (format, _) = record::header(&golden).unwrap();
-    assert_eq!(format, 3);
+    assert_eq!(format, 4);
     let payload = |b: &[u8]| {
         let (_, writer) = record::header(b).unwrap();
         b[4 + 1 + 1 + writer.len()..].to_vec()
@@ -613,7 +654,7 @@ fn damaged_and_hostile_records_return_errors() {
     magic[0] = b'X';
     assert_eq!(record::decode(&magic), Err(RecordError::Magic));
     // A format other than the current one is refused.
-    for other in [2u8, 4] {
+    for other in [3u8, 5] {
         let mut b = bytes.clone();
         b[4] = other;
         assert!(matches!(

@@ -8,7 +8,9 @@
 
 use std::collections::HashSet;
 
-use super::decl::{FieldDef, MethodDef, RuleDef, StructDef, TraitDef, VariantShape};
+use super::decl::{
+    FieldDef, MethodDef, ParamDef, ReturnType, RuleDef, StructDef, TraitDef, VariantShape,
+};
 use super::document::{IrDocument, TypeDef};
 use super::types::{FieldType, Resolve};
 use crate::name::{Name, QualifiedName, is_host_keyword, is_syntactic_r_name};
@@ -101,6 +103,10 @@ impl crate::rules::TypeLookup for Indexed<'_> {
 
     fn impls_of(&self, tr: &QualifiedName) -> Vec<&super::decl::ImplDef> {
         self.doc.impls_of(tr)
+    }
+
+    fn trait_of(&self, tr: &QualifiedName) -> Option<&TraitDef> {
+        self.doc.trait_of(tr)
     }
 }
 
@@ -512,8 +518,22 @@ impl Checker<'_> {
             | FieldType::TableOf { .. }
             | FieldType::Json
             | FieldType::Named { .. }
-            | FieldType::Dyn { .. }
             | FieldType::Descendant { .. } => {}
+            FieldType::Dyn { r#trait } => {
+                // A trait of another document is checked by the registry.
+                if let Some(t) = crate::rules::TypeLookup::trait_of(self.doc, r#trait)
+                    && t.dispatch_arity() > 1
+                {
+                    self.report(
+                        "dyn_dispatch",
+                        path,
+                        format!(
+                            "`{trait}` dispatches on {} arguments; `dyn()` takes a trait that dispatches on one",
+                            t.dispatch_arity()
+                        ),
+                    );
+                }
+            }
         }
     }
 
@@ -534,27 +554,120 @@ impl Checker<'_> {
         let mut seen = HashSet::new();
         for (i, p) in m.params.iter().enumerate() {
             let ppath = format!("{path}/params/{i}");
-            if p != "..." && !is_syntactic_r_name(p) {
+            let name = p.name();
+            if name != "..." && !is_syntactic_r_name(name) {
                 self.report(
                     "param_name",
                     &ppath,
-                    format!("`{p}` is not a syntactic R argument name"),
+                    format!("`{name}` is not a syntactic R argument name"),
                 );
             }
-            if !seen.insert(p.as_str()) {
+            if !seen.insert(name) {
                 self.report(
                     "duplicate_param",
                     &ppath,
-                    format!("duplicate argument `{p}`"),
+                    format!("duplicate argument `{name}`"),
                 );
             }
+            if let ParamDef::Full(q) = p {
+                self.param(q, &ppath);
+            }
         }
-        if m.name.is_replacement() && m.params.last().map(String::as_str) != Some("value") {
+        let marked: Vec<usize> = (0..m.params.len())
+            .filter(|&i| m.params[i].is_dispatch())
+            .collect();
+        if marked == [0] {
+            self.report(
+                "dispatch_implicit",
+                &format!("{path}/params/0/dispatch"),
+                format!(
+                    "method `{}` dispatches on its first argument alone, which is written without a dispatch mark",
+                    m.name
+                ),
+            );
+        }
+        if m.dispatched().is_empty() {
+            self.report(
+                "dispatch_none",
+                &format!("{path}/params"),
+                format!(
+                    "method `{}` dispatches on at least one argument, its first unless others are marked",
+                    m.name
+                ),
+            );
+        }
+        if m.name.is_replacement() && m.params.last().map(ParamDef::name) != Some("value") {
             self.report(
                 "replacement_value",
                 &format!("{path}/params"),
                 format!("replacement method `{}` takes `value` as its last argument, as R passes it by that name", m.name),
             );
+        }
+        if m.name.is_replacement() && m.dispatched().len() > 1 {
+            self.report(
+                "dispatch_replacement",
+                &format!("{path}/params"),
+                format!(
+                    "replacement method `{}` dispatches on its first argument only",
+                    m.name
+                ),
+            );
+        }
+        if let Some(ReturnType::Type(t)) = &m.return_type {
+            self.field_type(t, &format!("{path}/return_type"), true);
+        }
+    }
+
+    /// The object form of a parameter: a dispatch mark on a named argument,
+    /// a type checked as a field type, and a default that satisfies it.
+    fn param(&mut self, q: &super::decl::Param, path: &str) {
+        if !q.dispatch && q.ty.is_none() && q.default.is_none() && q.description.is_empty() {
+            self.report(
+                "param_form",
+                path,
+                format!(
+                    "parameter `{}` has its name only, which is written as a string",
+                    q.name
+                ),
+            );
+        }
+        if q.dispatch && q.name == "..." {
+            self.report(
+                "dispatch_dots",
+                &format!("{path}/dispatch"),
+                "a method dispatches on named arguments, not on `...`".to_string(),
+            );
+        }
+        if let Some(t) = &q.ty {
+            self.field_type(t, &format!("{path}/type"), true);
+        }
+        match (&q.ty, &q.default) {
+            (None, Some(_)) => self.report(
+                "param_default",
+                &format!("{path}/default"),
+                format!(
+                    "the default of parameter `{}` is given with its type",
+                    q.name
+                ),
+            ),
+            (Some(t), Some(d)) => {
+                for e in crate::validate::validate_field_access(
+                    crate::access::JsonOf::of(crate::tree::TreeRef::new(d)),
+                    t,
+                    self.doc,
+                    &mut crate::validate::RuleCache::new(),
+                )
+                .into_iter()
+                .filter(|e| e.code != "unresolved_type")
+                {
+                    self.report(
+                        "default_invalid",
+                        &format!("{path}/default{}", e.path),
+                        format!("the default of `{}` is invalid: {}", q.name, e.message),
+                    );
+                }
+            }
+            _ => {}
         }
     }
 
@@ -660,6 +773,30 @@ impl Checker<'_> {
                     ),
                 );
             }
+        }
+        let arity = t.dispatch_arity();
+        for (i, m) in t.methods.iter().enumerate() {
+            let n = m.dispatched().len();
+            if n != 0 && n != arity {
+                self.report(
+                    "dispatch_arity",
+                    &format!("{path}/methods/{i}/params"),
+                    format!(
+                        "method `{}` dispatches on {n} arguments and `{}` on {arity}; the methods of a trait dispatch on the same number of arguments",
+                        m.name, t.methods[0].name
+                    ),
+                );
+            }
+        }
+        if arity > 1 && t.tag.is_some() {
+            self.report(
+                "dispatch_tag",
+                &format!("{path}/tag"),
+                format!(
+                    "trait `{}` dispatches on {arity} arguments and has no tag member; a `dyn()` value implements a trait of one",
+                    t.name
+                ),
+            );
         }
         for (i, m) in t.methods.iter().enumerate() {
             self.method(m, &format!("{path}/methods/{i}"));
@@ -981,8 +1118,46 @@ fn check_whole(doc: &IrDocument, defaults: bool) -> Vec<DeclError> {
                 .map_or_else(String::new, |i| format!("/impls/{i}"))
         };
         c.errors.extend(super::tags::check_tags(doc, &q, &path_of));
+        let impls: Vec<&super::decl::ImplDef> =
+            doc.impls.iter().filter(|i| i.r#trait == q).collect();
+        let arity = t.dispatch_arity();
+        for a in super::dispatch::ambiguities(doc, &impls, arity, &|_, _| true) {
+            c.errors.push(ambiguity_error(&impls, &a, &path_of));
+        }
+    }
+    for (i, imp) in doc.impls.iter().enumerate() {
+        c.errors.extend(super::dispatch::check_impl(
+            doc,
+            &doc.namespace,
+            imp,
+            &format!("/impls/{i}"),
+        ));
     }
     c.errors
+}
+
+/// The problem of an ambiguous pair of impls, at the path of the first.
+pub fn ambiguity_error(
+    impls: &[&super::decl::ImplDef],
+    a: &super::dispatch::Ambiguity,
+    path_of: &dyn Fn(&super::decl::ImplDef) -> String,
+) -> DeclError {
+    use super::dispatch::tuple_text;
+    let (x, y) = (impls[a.first], impls[a.second]);
+    let arity = a.meet.len();
+    DeclError {
+        code: "dispatch_ambiguous",
+        path: path_of(x),
+        message: format!(
+            "the impls of `{}` for ({}) and for ({}) are each more specific in one position, so a call on ({}) is ambiguous; implement `{}` for ({})",
+            x.r#trait,
+            tuple_text(super::dispatch::positions(x, arity)),
+            tuple_text(super::dispatch::positions(y, arity)),
+            tuple_text(&a.meet),
+            x.r#trait,
+            tuple_text(&a.meet)
+        ),
+    }
 }
 
 /// The problems of the trait at `index` of `doc`: those that

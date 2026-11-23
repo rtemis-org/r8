@@ -30,17 +30,24 @@ pub trait TypeLookup {
         Vec::new()
     }
 
+    /// The declaration of the trait `tr`, if the lookup holds it.
+    fn trait_of(&self, _tr: &QualifiedName) -> Option<&crate::ir::TraitDef> {
+        None
+    }
+
     /// The structs that descend from `ty` through `extends`, as far as the
     /// lookup holds them, every parent before its children.
     fn descendants_of(&self, _ty: &QualifiedName) -> Vec<QualifiedName> {
         Vec::new()
     }
 
-    /// The impl of the trait `tr` for the type `ty` itself.
+    /// The impl of the trait `tr` for the type `ty` itself, with no other
+    /// position: an impl of one dispatched position and no type parameter.
     fn impl_for(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<&crate::ir::ImplDef> {
-        self.impls_of(tr)
-            .into_iter()
-            .find(|i| matches!(&i.target, crate::ir::ImplTarget::Type { name } if name == ty))
+        self.impls_of(tr).into_iter().find(|i| {
+            i.type_args.is_empty()
+                && matches!(&i.target, crate::ir::ImplTarget::Type { name } if name == ty)
+        })
     }
 
     /// The type whose impl of the trait `tr` applies to the type `ty`: `ty`,
@@ -151,6 +158,12 @@ impl TypeLookup for crate::ir::IrDocument {
 
     fn impls_of(&self, tr: &QualifiedName) -> Vec<&crate::ir::ImplDef> {
         self.impls.iter().filter(|i| &i.r#trait == tr).collect()
+    }
+
+    fn trait_of(&self, tr: &QualifiedName) -> Option<&crate::ir::TraitDef> {
+        (tr.namespace == self.namespace)
+            .then(|| self.traits.iter().find(|t| t.name == tr.name))
+            .flatten()
     }
 
     /// The document's structs that descend from `ty`.
@@ -900,6 +913,11 @@ impl TypeLookup for DocumentSet {
             .flat_map(|d| d.impls.iter())
             .filter(|i| &i.r#trait == tr)
             .collect()
+    }
+
+    fn trait_of(&self, tr: &QualifiedName) -> Option<&crate::ir::TraitDef> {
+        self.namespace(&tr.namespace)
+            .and_then(|d| d.traits.iter().find(|t| t.name == tr.name))
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {

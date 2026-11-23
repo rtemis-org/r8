@@ -10,6 +10,10 @@ use super::logic::Logic;
 use super::types::FieldType;
 use crate::name::{MethodName, Name, QualifiedName};
 
+fn is_zero(n: &u8) -> bool {
+    *n == 0
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }
@@ -328,6 +332,96 @@ pub struct EnumDef {
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// A trait method's parameter: its name, or an object that also gives
+/// whether the method dispatches on it, its type, its default, or its
+/// description.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum ParamDef {
+    /// An untyped parameter that is not marked as dispatched.
+    Name(String),
+    /// A parameter with any of a dispatch mark, a type, a default, and a
+    /// description; the check refuses this form with the name alone.
+    Full(Param),
+}
+
+/// The object form of a [`ParamDef`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Param {
+    /// The parameter's name, a syntactic R argument name or `...`.
+    pub name: String,
+    /// The method dispatches on the argument's type.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dispatch: bool,
+    /// The argument's type, which every call satisfies.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub ty: Option<FieldType>,
+    /// The argument's default in its JSON form, for a typed parameter.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::tree::exact_option"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Value>"))]
+    pub default: Option<Box<crate::tree::Tree>>,
+    /// The parameter's description.
+    #[serde(default, skip_serializing_if = "str::is_empty")]
+    pub description: Box<str>,
+}
+
+impl ParamDef {
+    /// The parameter's name.
+    pub fn name(&self) -> &str {
+        match self {
+            ParamDef::Name(n) => n,
+            ParamDef::Full(p) => &p.name,
+        }
+    }
+
+    /// `true` for a parameter marked as dispatched.
+    pub fn is_dispatch(&self) -> bool {
+        matches!(self, ParamDef::Full(p) if p.dispatch)
+    }
+
+    /// The parameter's type, when it has one.
+    pub fn ty(&self) -> Option<&FieldType> {
+        match self {
+            ParamDef::Name(_) => None,
+            ParamDef::Full(p) => p.ty.as_ref(),
+        }
+    }
+}
+
+impl From<&str> for ParamDef {
+    fn from(name: &str) -> Self {
+        ParamDef::Name(name.to_string())
+    }
+}
+
+/// The value a method returns: a field type, or `Self`, the type of the
+/// method's first dispatched argument.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum ReturnType {
+    /// `"Self"`.
+    Receiver(SelfType),
+    /// A field type.
+    Type(Box<FieldType>),
+}
+
+/// The marker of [`ReturnType::Receiver`], written `"Self"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum SelfType {
+    /// The type of the method's first dispatched argument.
+    #[serde(rename = "Self")]
+    SelfType,
+}
+
 /// A trait method's signature.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -338,14 +432,41 @@ pub struct MethodDef {
     #[serde(default)]
     /// The method's description.
     pub description: String,
-    /// The formal argument names, in order; `...` is allowed.
-    pub params: Vec<String>,
+    /// The formal arguments, in order; `...` is allowed. Without a
+    /// dispatch mark on any parameter, the method dispatches on its first.
+    pub params: Vec<ParamDef>,
+    /// The type of the value the method returns, which every call
+    /// satisfies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_type: Option<ReturnType>,
     /// The method receives a seed and records it in provenance.
     #[serde(default, skip_serializing_if = "is_false")]
     pub stochastic: bool,
     /// The trait supplies a default implementation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub has_default: bool,
+}
+
+impl MethodDef {
+    /// The positions of the parameters the method dispatches on: those
+    /// marked, or else the first parameter.
+    pub fn dispatched(&self) -> Vec<usize> {
+        let marked: Vec<usize> = (0..self.params.len())
+            .filter(|&i| self.params[i].is_dispatch())
+            .collect();
+        if !marked.is_empty() {
+            return marked;
+        }
+        match self.params.first() {
+            Some(p) if p.name() != "..." => vec![0],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The parameters' names, in order.
+    pub fn param_names(&self) -> impl Iterator<Item = &str> {
+        self.params.iter().map(ParamDef::name)
+    }
 }
 
 /// `new_trait()`: behavior that types implement.
@@ -373,6 +494,21 @@ pub struct TraitDef {
     /// the trait.
     #[serde(default, skip_serializing_if = "is_false")]
     pub generic: bool,
+    /// The number of type parameters the trait declares beside its
+    /// dispatched positions, which an impl gives after the dispatched types
+    /// in `type_args`: 1 for the standard trait `From(source)`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub type_params: u8,
+}
+
+impl TraitDef {
+    /// The number of positions the trait's methods dispatch on: that of its
+    /// first method, which the check requires of every method.
+    pub fn dispatch_arity(&self) -> usize {
+        self.methods
+            .first()
+            .map_or(1, |m| m.dispatched().len().max(1))
+    }
 }
 
 /// The class system of a host class.
@@ -400,13 +536,29 @@ pub enum ImplTarget {
     HostClass {
         /// The host language, such as `"r"`.
         host: String,
-        /// The package that defines the class.
+        /// The package that defines the class, when the declaration names
+        /// one.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         package: String,
         /// The class name.
         class: String,
         /// The class system.
         system: ClassSystem,
     },
+    /// Any value: a dispatched position that an impl does not specialize.
+    Any,
+}
+
+impl std::fmt::Display for ImplTarget {
+    /// The qualified name of an R8 type, the class name of a host class, or
+    /// `any`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImplTarget::Type { name } => write!(f, "{name}"),
+            ImplTarget::HostClass { class, .. } => f.write_str(class),
+            ImplTarget::Any => f.write_str("any"),
+        }
+    }
 }
 
 /// `impl()`: a trait implemented for a type.
@@ -416,11 +568,13 @@ pub enum ImplTarget {
 pub struct ImplDef {
     /// The implemented trait.
     pub r#trait: QualifiedName,
-    /// The trait's type arguments, for a standard trait with a type
-    /// parameter, such as `From(source)`: `["data.frame"]`.
+    /// The types of the trait's positions after the first: its dispatched
+    /// positions after the first, in order, then its type parameters, such
+    /// as the source of `From(source)`. Rust writes the impl
+    /// `impl Trait<B> for A`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub type_args: Vec<String>,
-    /// What the trait is implemented for.
+    pub type_args: Vec<ImplTarget>,
+    /// What the trait is implemented for: its first dispatched position.
     pub target: ImplTarget,
     /// The value of the trait's tag member; defaults to the type's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
