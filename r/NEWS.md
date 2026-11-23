@@ -1,7 +1,7 @@
 # R8 0.4.0.9000
 
 - The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "subtype", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
-- The declaration record has format 6; a package installed with an earlier R8 is reinstalled.
+- The declaration record has format 7; a package installed with an earlier R8 is reinstalled.
 - `new_struct(extends = Parent)` declares a child that holds the parent's fields and rules, then its own; `defaults =` changes the defaults of inherited fields. A child's values carry the parent's class after their own, and a field typed as a struct admits that struct only.
 - A struct whose fields all have defaults that violate its rules is a declaration error (`default_violates_rule`).
 - Declaring a parent again leaves the children that extend its earlier declaration stale: they construct and read no values until they are declared again, and the declaration warns (`r8_stale_warning`). A package built against an earlier declaration of another package's parent is refused at load.
@@ -48,6 +48,7 @@
 - The condition classes `r8_codec_missing_error` and `r8_unknown_type_error` end in `_error`; the validation code of a type that no registered type has is `unknown_type`.
 - The IR: the member of `values =` is `values`; a variant's form is its `kind`; an R8 type in a field or an impl is `{"kind": "named", "name": ...}`, and a host class `{"kind": "host_class", "host", "package", "class", "system"}`; a trait's type parameters beyond `Self` are `extra_type_params`; an impl has no `codec`. A document's envelope is `"$type"` and `"$types"`.
 - `R8.h`: the codec of a Rust-stored type is `R8Codec`, whose member `owned_bytes` reports the bytes a state owns; the reader's member function is `R8Reader.member`; an impl function receives `R8CallInputs`, with `R8_CALL_HAS_SEED`. In the crate `rtemis-r8-api`, `RustStoredStruct` and `RustStoredEnum` are the two kinds of Rust-stored type and `RustStored` either.
+- The IR: a parameter's `host_default` is a default written in a host's language (`default_host_both` with a JSON default); an impl's `methods` take `{"name", "return_type"}`, a return type that fits the trait method's (`return_type_unfit`); a dispatched parameter's type is an R8 type, `subtype()`, `dyn()`, or `host_class()`, and admits only the impl positions it names (`dispatch_param_type`).
 - `field(external =)` is removed; the error codes of `values =` and `type_posixct()` are `not_in_values` and `invalid_posixct`.
 
 # R8 0.4.0
