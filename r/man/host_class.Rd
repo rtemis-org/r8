@@ -35,12 +35,14 @@ An impl on a host class is declared by the package of the generic or
 trait, or by the package that \code{package} names.
 }
 \examples{
-op <- options(r8.namespace = "demo")
-describe <- generic("describe", "x")
-implement(describe, "data.frame") <- function(x) paste(nrow(x), "rows")
-implement(describe, host_class("matrix")) <- function(x) paste(nrow(x), "by", ncol(x))
-describe(data.frame(a = 1:3))
-describe(diag(2))
+op <- options(r8.namespace = "hosts")
+shape_text <- generic("shape_text", "x")
+implement(shape_text, "data.frame") <- function(x) paste(nrow(x), "rows")
+implement(shape_text, host_class("matrix")) <- function(x) {
+  paste(nrow(x), "by", ncol(x))
+}
+shape_text(data.frame(a = 1:3))
+shape_text(diag(2))
 options(op)
 
 }
