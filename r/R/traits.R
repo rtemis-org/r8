@@ -378,25 +378,29 @@ check_base_names <- function(env, method) {
 #' @param fn Function: The method.
 #' @param params Character: The generic's parameters.
 #' @param label Character: The generic's or trait method's name.
+#' @param typed Character: The parameters with a type.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @keywords internal
 #' @noRd
-check_method_defaults <- function(fn, params, label) {
+check_method_defaults <- function(fn, params, label, typed) {
   fmls <- formals(fn)
   for (p in setdiff(params, "...")) {
     if (!identical(fmls[[p]], quote(expr = ))) {
-      fixed <- ifelse(params == "...", "\"...\"", params)
-      fixed[params == p] <- paste0(p, " = ", deparse1(fmls[[p]]))
+      default <- deparse1(fmls[[p]])
       r8_abort(
         "The method of `",
         label,
         "` gives `",
         p,
-        "` a default, which belongs to the generic: params(",
-        paste(fixed, collapse = ", "),
-        ") [method_default].",
+        "` a default, which belongs to the generic: ",
+        if (p %in% typed) {
+          paste0("`default = ", default, "` in the type of `", p, "`")
+        } else {
+          paste0("`", p, " = ", default, "`")
+        },
+        " in its params() [method_default].",
         class = "r8_declaration_error"
       )
     }
@@ -1074,7 +1078,8 @@ build_trait <- function(
         check_method_defaults(
           tm[["default_impl"]],
           p[["names"]],
-          paste0(qname, "@", m)
+          paste0(qname, "@", m),
+          p[["names"]][!vapply(p[["types"]], is.null, NA)]
         )
       }
     }
@@ -1402,7 +1407,8 @@ impl_declare <- function(
     adopted <- host_methods(t, host_key_class(positions[[1L]]), fns)
   }
   for (m in names(fns)) {
-    params <- param_names(methods_ir[[match(m, declared)]][["params"]])
+    params_ir <- methods_ir[[match(m, declared)]][["params"]]
+    params <- param_names(params_ir)
     label <- if (isTRUE(trait_ir(t)[["generic"]])) {
       m
     } else {
@@ -1413,7 +1419,12 @@ impl_declare <- function(
     # the method's own defaults.
     mapped <- t[["generics"]][[m]]
     if (is.null(mapped) || inherits(mapped, "r8_generic")) {
-      check_method_defaults(fns[[m]], params, label)
+      typed <- vapply(
+        params_ir,
+        function(p) is.list(p) && !is.null(p[["type"]]),
+        NA
+      )
+      check_method_defaults(fns[[m]], params, label, params[typed])
     }
   }
   for (m in declared) {

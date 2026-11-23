@@ -549,7 +549,7 @@ test_that("a method gives no default to a parameter of its R8 generic", {
     describe <- generic("describe", params(x, verbosity, "..."))
     expect_error(
       implement(describe, A) <- function(x, verbosity = 1L, ...) verbosity,
-      "params\\(x, verbosity = 1L, \"...\"\\) \\[method_default\\]",
+      "`verbosity = 1L` in its params\\(\\) \\[method_default\\]",
       class = "r8_declaration_error"
     )
     # Its own arguments after the dots have defaults.
@@ -574,6 +574,31 @@ test_that("a method gives no default to a parameter of its R8 generic", {
       ),
       "`par13::Sized@size` gives `n` a default",
       class = "r8_declaration_error"
+    )
+    # The default, in the generic's params(), beside the parameter's type.
+    sized <- generic(
+      "sized",
+      params(x, k = length(x), n, m = arg_integer(min = 1L))
+    )
+    e <- expect_error(
+      implement(sized, A) <- function(x, k, n = 2, m) n,
+      class = "r8_declaration_error"
+    )
+    expect_identical(
+      conditionMessage(e),
+      paste0(
+        "The method of `sized` gives `n` a default, which belongs to the ",
+        "generic: `n = 2` in its params() [method_default]."
+      )
+    )
+    e <- expect_error(
+      implement(sized, A) <- function(x, k, n, m = 1L) n,
+      class = "r8_declaration_error"
+    )
+    expect_match(
+      conditionMessage(e),
+      "`default = 1L` in the type of `m` in its params()",
+      fixed = TRUE
     )
     # R applies the defaults of a method of an S3 generic.
     impl(

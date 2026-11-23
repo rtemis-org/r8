@@ -463,8 +463,10 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "cat('fields', s$name, s$values, '\\n')",
       "cat('magnitude', magnitude(s), '\\n')",
       "cat('ratio', ratio(s, 2), '\\n')",
-      "e <- tryCatch(ratio(s, 0), error = function(e) conditionMessage(e))",
-      "cat('error', grepl('[zero_divisor]', e, fixed = TRUE), '\\n')",
+      "e <- tryCatch(ratio(s, 0), error = identity)",
+      "cat('error', grepl('[zero_divisor]', conditionMessage(e), fixed = TRUE), deparse1(conditionCall(e)), '\\n')",
+      "e <- tryCatch(sapply(list(s), ratio, by = 0), error = identity)",
+      "cat('call', deparse1(conditionCall(e)), '\\n')",
       "cat('display', format(s), '\\n')",
       "a <- Signal(name = 'a', values = c(0, 0)); b <- Signal(name = 'b', values = c(3, 4))",
       "rn <- unserialize(serialize(b, NULL, version = 2))",
@@ -493,7 +495,9 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   expect_true("fields a 3 4 " %in% out, info = info)
   expect_true("magnitude 5 " %in% out, info = info)
   expect_true("ratio 1.5 " %in% out, info = info)
-  expect_true("error TRUE " %in% out, info = info)
+  # The error of a compiled method reports the generic's call.
+  expect_true("error TRUE ratio(s, 0) " %in% out, info = info)
+  expect_true("call FUN(X[[i]], ...) " %in% out, info = info)
   expect_true("display Signal a (2 values) " %in% out, info = info)
   # The fields of a Rust-stored value, as an ordinary list.
   expect_true("as_list TRUE TRUE TRUE TRUE 1 2 " %in% out, info = info)

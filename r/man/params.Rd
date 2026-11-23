@@ -2,18 +2,13 @@
 % Please edit documentation in R/params.R
 \name{params}
 \alias{params}
-\alias{print.r8_params}
 \title{Declare the parameters of a generic or trait method}
 \usage{
 params(...)
-
-\method{print}{r8_params}(x, ...)
 }
 \arguments{
 \item{...}{The parameters. The first is a name, the value that the generic
 or method dispatches on.}
-
-\item{x}{An \code{r8_params}.}
 }
 \value{
 An \code{r8_params}, for \code{\link[=generic]{generic()}} and \code{\link[=trait_method]{trait_method()}}.

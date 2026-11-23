@@ -232,14 +232,14 @@ test_that("implement() refuses the functions R8 owns, operators, and non-generic
 })
 
 
-test_that("a method has the generic's arguments, and adds its own only after ...", {
+test_that("a method has the generic's parameters, and adds its own only after ...", {
   ty <- gbm_types("gen9")
   GBM <- ty[["GBM"]]
   declare_in("gen9", {
     exact <- generic("exact", params(x))
     expect_error(
       implement(exact, GBM) <- function(x, ...) NULL,
-      "takes exactly the generic's arguments: function(x)",
+      "takes exactly the generic's parameters: function(x)",
       fixed = TRUE,
       class = "r8_declaration_error"
     )

@@ -911,29 +911,3 @@ as_params <- function(x, fn) {
     class = "r8_declaration_error"
   )
 } # /R8::as_params
-
-
-# %% print.r8_params ----
-#' @rdname params
-#' @param x An `r8_params`.
-#' @export
-print.r8_params <- function(x, ...) {
-  cat("<r8 params>\n")
-  p <- unclass(x)
-  for (i in seq_along(p[["names"]])) {
-    type <- p[["types"]][[i]]
-    cat(
-      "  ",
-      p[["names"]][[i]],
-      if (inherits(type, "r8_type")) {
-        paste0(": ", attr(type, "r8_name"))
-      } else if (!is.null(type)) {
-        paste0(": ", r8_ir_json(unclass(type)))
-      },
-      if (nzchar(p[["texts"]][[i]])) paste0(" = ", p[["texts"]][[i]]),
-      "\n",
-      sep = ""
-    )
-  }
-  invisible(x)
-} # /R8::print.r8_params

@@ -149,9 +149,9 @@ check_method_formals <- function(fn, gen_args, label) {
       "The method of `",
       label,
       if (dots) {
-        "` takes the generic's arguments first, `...` included, and may add named arguments: function("
+        "` takes the generic's parameters first, `...` included, and may add named ones: function("
       } else {
-        "` takes exactly the generic's arguments: function("
+        "` takes exactly the generic's parameters: function("
       },
       paste(gen_args, collapse = ", "),
       ").",

@@ -54,6 +54,8 @@
 - `new_struct(storage = "rust")` and `new_enum(storage = "rust")` replace `native = TRUE`; `r8_document_rust()` replaces `r8_document_native()`, and `#[r8(storage = "rust")]` replaces `#[r8(native)]`.
 - The standard trait `PartialOrd`'s method is `partial_cmp`, called by `r8_partial_cmp()`, which returns `-1L`, `0L`, `1L`, or `NA` for values that are not ordered; `<`, `<=`, `>`, and `>=` return `FALSE` for those, and any other result raises `r8_result_error`.
 - The standard trait `Dim` is `Shape`.
+- Type objects and the objects a declaration is written with (`rule()`, `field()`, `column()`, `variant()`, `trait_method()`, `params()`, `impl_method()`, and the field types) print in one notation, with their defaults, descriptions, and rules: `<r8 field> integer [1, Inf) = 10L`, `<r8 rule ORDER> lo <= hi`. `format()` gives the lines, of a type object too.
+- An error of a compiled method reports the call of the generic, `ratio(s, 0)`.
 - `x[c("a", "b")] <- list(v, w)` replaces several fields of a value: each is checked, then the rules that read any of them, once. `replace(x, c("a", "b"), list(v, w))` is the form in an expression.
 - `as.list(x)` gives a value's fields as a plain named list, so `lapply()` and `vapply()` take a value. `x[c("a", "b")]` reads fields by name; a name that is not a field, and an index that is not a name, are errors. `inherits(x, Type)` tests for a value of a type or of a struct that extends it.
 - An impl of a trait that is not registered, in R or compiled, is an `r8_declaration_error` that names the package to import from in `NAMESPACE`.

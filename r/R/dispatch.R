@@ -418,24 +418,6 @@ host_class <- function(
 } # /R8::host_class
 
 
-# %% print.r8_host_class ----
-#' @export
-print.r8_host_class <- function(x, ...) {
-  h <- unclass(x)
-  cat(
-    "<R8 host class \"",
-    h[["class"]],
-    "\"",
-    if (nzchar(h[["package"]])) paste0(" of ", h[["package"]]),
-    ", ",
-    toupper(h[["system"]]),
-    ">\n",
-    sep = ""
-  )
-  invisible(x)
-} # /R8::print.r8_host_class
-
-
 # %% as_host_class ----
 #' The host class that a string or an S4 class object names
 #'

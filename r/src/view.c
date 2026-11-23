@@ -388,10 +388,22 @@ static SEXP r8_upcast(SEXP x, SEXP type) {
   return out;
 }
 
+// The call of the generic whose method's frame is running: R's
+// `sys.call(sys.parent())` in that frame.
+static SEXP generic_call(void) {
+  SEXP parent = PROTECT(Rf_lang1(Rf_install("sys.parent")));
+  SEXP call = PROTECT(Rf_lang2(Rf_install("sys.call"), parent));
+  SEXP env = PROTECT(R_GetCurrentEnv());
+  int failed = 0;
+  SEXP out = R_tryEvalSilent(call, env, &failed);
+  UNPROTECT(3);
+  return failed || TYPEOF(out) != LANGSXP ? R_NilValue : out;
+}
+
 // Calls the impl function at the address of `fn` with the elements of the
-// list `args`; R8_ERROR raises an R error of the impl's message and code,
-// and R8_UNWIND continues the jump that R8Api.protect caught. R calls it
-// through `.Call()` on the native symbol of r8_invoke_symbol(), so the jump
+// list `args`; R8_ERROR raises an R error of the impl's message and code, from
+// the generic's call, and R8_UNWIND continues the jump that R8Api.protect
+// caught. R calls it through `.Call()` on a native symbol, so the jump
 // continues from a C frame.
 static SEXP r8_invoke(SEXP fn, SEXP args) {
   R8MethodFn call = (R8MethodFn) R_ExternalPtrAddrFn(fn);
@@ -414,7 +426,7 @@ static SEXP r8_invoke(SEXP fn, SEXP args) {
     R_ContinueUnwind(continuation);
   }
   if (status == R8_ERROR) {
-    Rf_error("%s [%s]", err.message, err.code);
+    Rf_errorcall(PROTECT(generic_call()), "%s [%s]", err.message, err.code);
   }
   Rf_error("the impl function returned the status %d, none of R8_OK, R8_ERROR, and R8_UNWIND",
            (int) status);

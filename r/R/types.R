@@ -424,21 +424,6 @@ index_map <- function(type, keys = NULL) {
 } # /R8::index_map
 
 
-# %% print.r8_field_type ----
-#' Print a field type
-#'
-#' @param x An `r8_field_type`.
-#' @param ... Not used.
-#'
-#' @return `x`, invisibly.
-#'
-#' @export
-print.r8_field_type <- function(x, ...) {
-  cat("<r8 field type>", r8_ir_json(unclass(x)), "\n")
-  invisible(x)
-} # /R8::print.r8_field_type
-
-
 # %% type_matrix ----
 #' Matrix field type
 #'

@@ -45,6 +45,7 @@ Collate:
     'dispatch.R'
     'extendr-wrappers.R'
     'extends.R'
+    'format.R'
     'generate.R'
     'generic.R'
     'identity.R'
