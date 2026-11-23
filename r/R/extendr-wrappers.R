@@ -56,19 +56,6 @@ r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, valu
 #' @noRd
 r8_type_ancestors <- function(type_name) .Call(wrap__r8_type_ancestors, type_name)
 
-#' The value of the ancestor `parent` that the R-stored value `x` of a
-#' descendant holds: `x`'s first fields, the inherited ones, with the
-#' parent's shared attributes. The elements are the child's, not copies,
-#' and the value is not validated: the child's rules include the parent's,
-#' which read the parent's fields only.
-#'
-#' @param x An R-stored struct value.
-#' @param parent Character: The qualified name of an ancestor of `x`'s type.
-#' @return The parent value.
-#' @keywords internal
-#' @noRd
-r8_upcast_value <- function(x, parent) .Call(wrap__r8_upcast_value, x, parent)
-
 #' Saves the registry's documents and namespace owners, which
 #' `r8_registry_restore()` brings back and `r8_registry_release()`
 #' discards; saves nest.
@@ -369,7 +356,8 @@ r8_clear_external_ptrs <- function(ptrs) .Call(wrap__r8_clear_external_ptrs, ptr
 r8_exports_document <- function(ptr, ns) .Call(wrap__r8_exports_document, ptr, ns)
 
 #' Compares the types of an exports table with the registered declarations.
-#' A type of the record compares by declaration hash: the Rust hash reads
+#' A type of the record compares by declaration hash and by its parent,
+#' which the hash excludes: the Rust hash reads
 #' the registry with the record's types in place of its namespace's types
 #' of the same names, and the R hash reads the registry alone. A codec whose
 #' type has no declaration in the record compares the hash it pins
@@ -512,11 +500,11 @@ r8_rust_stored_memory <- function() .Call(wrap__r8_rust_stored_memory)
 #' @noRd
 r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
 
-#' The native symbols of R8's C routines that R calls through `.Call()`:
-#' `invoke`, which calls an impl function, and `exports`, which fetches a
-#' package's exports table (`src/view.c`).
+#' The native symbols of R8's C routines that R calls through `.Call()`
+#' (`r8_native_symbols()` in `src/view.c`).
 #'
-#' @return List: `invoke` and `exports`.
+#' @return List: The symbols by name, such as `invoke`, which calls an impl
+#'   function, and `exports`, which fetches a package's exports table.
 #' @keywords internal
 #' @noRd
 r8_native_symbols <- function() .Call(wrap__r8_native_symbols)

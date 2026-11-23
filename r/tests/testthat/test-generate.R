@@ -112,6 +112,74 @@ test_that("every field type renders as R that declares the same IR", {
   )
 })
 
+test_that("a struct that extends another renders with its own members", {
+  types <- declare_in("gen_extends", {
+    Range <- new_struct(
+      "Range",
+      fields = list(
+        lo = field(type_double(), description = "The lower end."),
+        hi = field(type_double(), default = 10),
+        unit = option(type_character())
+      ),
+      rules = rule(lo <= hi, id = "ordered")
+    )
+    Window <- new_struct(
+      "Window",
+      fields = list(label = type_character()),
+      rules = rule(label != "", id = "labeled"),
+      extends = Range,
+      defaults = list(lo = 0, unit = "s")
+    )
+    Pane <- new_struct(
+      "Pane",
+      fields = list(
+        within = subtype(Range),
+        around = option(vec(subtype(Window)))
+      ),
+      extends = Window,
+      defaults = list(unit = NULL)
+    )
+    Plain <- new_struct("Plain", extends = Range)
+    list(Range, Window, Pane, Plain)
+  })
+  rt <- round_trip("gen_extends", types)
+  expect_identical(
+    rt[["after"]],
+    rt[["before"]],
+    info = paste(rt[["text"]], collapse = "\n")
+  )
+  text <- paste(rt[["text"]], collapse = "\n")
+  expect_match(text, "extends = Range,\n  defaults = list(lo = 0", fixed = TRUE)
+  expect_match(text, "defaults = list(unit = NULL)", fixed = TRUE)
+  expect_match(text, "R8::subtype(Range)", fixed = TRUE)
+  # The roxygen block documents the inherited arguments of the constructor.
+  expect_match(text, "#' @param lo The lower end.\n#' @param hi", fixed = TRUE)
+  # A type is declared after its parent and the structs whose subtypes it
+  # holds.
+  irs <- lapply(types, R8:::type_ir)
+  order <- vapply(
+    R8:::type_order(rev(irs), "gen_extends"),
+    function(t) t[["name"]],
+    ""
+  )
+  expect_identical(order, c("Range", "Plain", "Window", "Pane"))
+})
+
+test_that("a change to an inherited field without an R form is refused", {
+  ir <- declare_in("gen_changed", {
+    Range <- new_struct("Range", fields = list(lo = type_double()))
+    Window <- new_struct("Window", extends = Range)
+    R8:::type_ir(Window)
+  })
+  ir[["fields"]][[1L]][["sensitive"]] <- TRUE
+  ir[["fields"]][[1L]][["description"]] <- "The lower end."
+  expect_error(
+    R8:::render_struct(ir, "gen_changed", rust_stored = FALSE),
+    "`gen_changed::Window` changes `sensitive` and `description` of the inherited field `lo`",
+    class = "r8_declaration_error"
+  )
+})
+
 test_that("a declaration read back from the registry as R lists declares the same type", {
   types <- declare_in("ir_lists", {
     K <- new_enum(

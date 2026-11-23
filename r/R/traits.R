@@ -781,26 +781,9 @@ impl_in_chain <- function(trait_name, method, type, r8 = TRUE, after = NULL) {
         inherits = FALSE
       )
     ) {
-      fn <- .r8_impls[[paste(trait_name, method, t, sep = "|")]] %||% default
-      if (!identical(t, type) && is_compiled_impl(fn)) {
-        r8_abort(
-          "The compiled impl of `",
-          trait_name,
-          "` for `",
-          t,
-          "` takes a value of `",
-          t,
-          "`, not of its descendant `",
-          type,
-          "`; implement `",
-          trait_name,
-          "` for `",
-          type,
-          "`.",
-          class = "r8_dispatch_error"
-        )
-      }
-      return(fn)
+      return(
+        .r8_impls[[paste(trait_name, method, t, sep = "|")]] %||% default
+      )
     }
   }
   # After the running impl, the default follows unless it is running.
@@ -809,23 +792,6 @@ impl_in_chain <- function(trait_name, method, type, r8 = TRUE, after = NULL) {
   }
   default
 } # /R8::impl_in_chain
-
-
-# %% is_compiled_impl ----
-#' Whether an impl calls a compiled method
-#'
-#' @param fn Function: The impl.
-#'
-#' @return Logical.
-#'
-#' @keywords internal
-#' @noRd
-is_compiled_impl <- function(fn) {
-  b <- body(fn)
-  is.call(b) &&
-    identical(b[[1L]], quote(.Call)) &&
-    identical(b[[2L]], quote(.r8_c_invoke))
-} # /R8::is_compiled_impl
 
 
 # %% r8_find_impl ----

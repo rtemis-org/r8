@@ -29,7 +29,9 @@ pub use call::{Dots, FromR, IntoR, Receiver, Sexp, Value};
 pub use exports::{ImplSet, MethodRow};
 pub use field::Field;
 pub use reader::{Node, Reader};
-pub use rust_stored::{RustStored, RustStoredEnum, RustStoredStruct, Shared, codec, enum_codec};
+pub use rust_stored::{
+    RustStored, RustStoredEnum, RustStoredStruct, Shared, codec, enum_codec, module,
+};
 pub use state::{StateReader, StateWriter};
 pub use traits::{Debug, Display, PartialOrd, Shape};
 

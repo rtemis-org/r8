@@ -12,13 +12,24 @@
 //! what the Rust type does not state.
 //!
 //! On the type: `#[r8(namespace = "rtemis", version = 1)]` (both required),
-//! `tag = "type"` on an enum, and `rule(id = "...", invariant = "<JSONLogic>",
+//! `tag = "type"` on an enum, `extensible` on a struct that others extend,
+//! and `rule(id = "...", invariant = "<JSONLogic>",
 //! when = "<JSONLogic>", message = "...")`, repeated per rule. On a field:
 //! `min`, `max`, `exclusive_min`, `exclusive_max`, `pattern`, `finite`,
 //! `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
 //! `sensitive`, and `context`, for a field of type `Option<T>` that
 //! `r8_resolve(x, context)` fills. Doc comments are
 //! descriptions.
+//!
+//! A struct extends another by embedding it: its first field, marked
+//! `#[r8(extends)]`, holds the parent, a struct of `#[r8(extensible)]`, and
+//! the R8 type has the parent's fields and rules, then its own.
+//! `inherited(name(default = "<JSON>", sensitive, description = "..."))`
+//! beside the mark changes an inherited field; the default `null` removes
+//! the inherited one. The derive implements `rtemis_r8::derive::Subtype` for
+//! the struct, and for an extensible struct `P` the trait `PLike`: an
+//! accessor per field and `to_p()`, implemented for `P` and every struct
+//! that extends it.
 //!
 //! The derive builds the declaration as `rtemis_r8::ir` values. A rule's
 //! JSONLogic and a field's default are parsed when the crate compiles, so a
@@ -31,6 +42,8 @@
 //! a `rtemis_r8_api::Buffer`, and a newtype variant's struct implements
 //! `rtemis_r8_api::RustStoredStruct`. `#[r8::methods]` and `r8::exports!`
 //! register the struct and its impls with R8.
+
+mod extends;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
@@ -66,6 +79,24 @@ fn valid_name(s: &str) -> bool {
     let mut c = s.chars();
     c.next().is_some_and(|f| f.is_ascii_alphabetic())
         && c.all(|x| x.is_ascii_alphanumeric() || x == '_')
+}
+
+/// The R8 name of a field's identifier.
+fn field_name(ident: &syn::Ident) -> String {
+    ident.to_string().trim_start_matches("r#").to_string()
+}
+
+/// The identifier that generated code binds a field to, which no parameter
+/// and no other variable of the generated code has.
+fn bound(ident: &syn::Ident) -> syn::Ident {
+    format_ident!("__r8_field_{}", field_name(ident))
+}
+
+/// The construction of the tree of a default, JSON text; `None` for `null`.
+fn default_tree(s: &syn::LitStr) -> Result<Option<Tokens>> {
+    let v: serde_json::Value = serde_json::from_str(&s.value())
+        .map_err(|e| Error::new_spanned(s, format!("a default is JSON text: {e}")))?;
+    Ok((!v.is_null()).then(|| tree_tokens(&v)))
 }
 
 /// A literal attribute value as JSON text: numbers (a leading `-` allowed),
@@ -233,6 +264,7 @@ struct TypeAttrs {
     tag: Option<String>,
     rules: Vec<Tokens>,
     rust_stored: bool,
+    extensible: bool,
 }
 
 /// One `rule(invariant = ..., when = ..., message = ..., id = ...)`, as the
@@ -316,6 +348,7 @@ fn type_attrs(attrs: &[Attribute]) -> Result<TypeAttrs> {
                     out.tag = Some(s.value());
                 }
                 Some("rule") => out.rules.push(parse_rule(&meta)?),
+                Some("extensible") => out.extensible = true,
                 Some("storage") => {
                     let s: syn::LitStr = meta.value()?.parse()?;
                     match s.value().as_str() {
@@ -326,7 +359,10 @@ fn type_attrs(attrs: &[Attribute]) -> Result<TypeAttrs> {
                         }
                     }
                 }
-                _ => return Err(meta.error("expected namespace, version, tag, rule, or storage")),
+                _ => {
+                    return Err(meta
+                        .error("expected namespace, version, tag, extensible, rule, or storage"));
+                }
             }
             Ok(())
         })?;
@@ -344,7 +380,7 @@ fn number_attr(e: &Expr) -> Result<f64> {
 /// The construction of one field's `rtemis_r8::ir::FieldDef`.
 fn field_def(field: &syn::Field) -> Result<Tokens> {
     let ident = field.ident.as_ref().expect("named fields");
-    let name = ident.to_string().trim_start_matches("r#").to_string();
+    let name = field_name(ident);
     if !valid_name(&name) {
         return Err(Error::new_spanned(
             ident,
@@ -394,10 +430,8 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
                 }
                 "default" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
-                    let v: serde_json::Value = serde_json::from_str(&s.value()).map_err(|e| {
-                        Error::new_spanned(&s, format!("a default is JSON text: {e}"))
-                    })?;
-                    let v = tree_tokens(&v);
+                    let v =
+                        default_tree(&s)?.unwrap_or_else(|| tree_tokens(&serde_json::Value::Null));
                     default = quote! { ::std::option::Option::Some(::std::boxed::Box::new(#v)) };
                 }
                 "context" => {
@@ -410,7 +444,6 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
         })?;
     }
     let desc = description(&field.attrs);
-    let field_name = name.clone();
     Ok(quote! {
         ::rtemis_r8::ir::FieldDef {
             name: ::rtemis_r8::derive::name(#name),
@@ -422,7 +455,7 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
                 },
                 #resolve.is_some(),
             )
-            .unwrap_or_else(|e| panic!("field `{}`: {}", #field_name, e)),
+            .unwrap_or_else(|e| panic!("field `{}`: {}", #name, e)),
             default: #default,
             description: #desc.into(),
             sensitive: #sensitive,
@@ -442,8 +475,9 @@ fn fields_of(fields: &Fields) -> Result<Vec<&syn::Field>> {
     }
 }
 
-/// Encoding, decoding, and registration of named fields, reading and
-/// writing `m`, the object of the JSON form.
+/// Encoding, decoding, and registration of named fields: each field bound
+/// to its `bound()` identifier is written into `__r8_m`, the object of the
+/// JSON form, and read from `v`.
 fn field_json(fields: &[&syn::Field]) -> (Vec<Tokens>, Vec<Tokens>, Vec<Tokens>) {
     let mut encode = Vec::new();
     let mut decode = Vec::new();
@@ -451,9 +485,10 @@ fn field_json(fields: &[&syn::Field]) -> (Vec<Tokens>, Vec<Tokens>, Vec<Tokens>)
     for f in fields {
         let ident = f.ident.as_ref().unwrap();
         let ty = &f.ty;
-        let name = ident.to_string().trim_start_matches("r#").to_string();
+        let name = field_name(ident);
+        let var = bound(ident);
         encode.push(quote! {
-            m.insert(#name.to_string(), ::rtemis_r8::derive::Encode::encode(#ident).map_err(|e| format!("{}: {}", #name, e))?);
+            __r8_m.insert(#name.to_string(), ::rtemis_r8::derive::Encode::encode(#var).map_err(|e| format!("{}: {}", #name, e))?);
         });
         decode.push(quote! {
             #ident: ::rtemis_r8::derive::Encode::decode(v.get(#name).unwrap_or(&::rtemis_r8::derive::serde_json::Value::Null))
@@ -485,36 +520,64 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     }
     let (def, encode, decode, register) = match &input.data {
         Data::Struct(s) => {
-            let fields = fields_of(&s.fields)?;
+            let (parent, fields) = extends::split(&fields_of(&s.fields)?)?;
             let defs = fields
                 .iter()
                 .map(|f| field_def(f))
                 .collect::<Result<Vec<_>>>()?;
             let (enc, dec, reg) = field_json(&fields);
-            let names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-            (
-                quote! {
-                    ::rtemis_r8::ir::TypeDef::Struct(::rtemis_r8::ir::StructDef {
-                        name: ::rtemis_r8::derive::name(#type_name),
-                        description: #desc.to_string(),
-                        version: #version,
-                        fields: ::std::vec![#(#defs),*],
-                        extends: ::std::option::Option::None,
-                        rules: ::std::vec![#(#rules),*],
-                        migrations: ::std::vec::Vec::new(),
-                        aliases: ::std::vec::Vec::new(),
-                        extensions: ::std::collections::BTreeMap::new(),
-                    })
-                },
-                quote! {
-                    let Self { #(#names),* } = self;
-                    let mut m = ::rtemis_r8::derive::serde_json::Map::new();
-                    #(#enc)*
-                    Ok(::rtemis_r8::derive::serde_json::Value::Object(m))
-                },
-                quote! { Ok(Self { #(#dec),* }) },
-                quote! { #(#reg)* },
-            )
+            let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+            let vars: Vec<_> = idents.iter().map(|i| bound(i)).collect();
+            let def = quote! {
+                ::rtemis_r8::ir::StructDef {
+                    name: ::rtemis_r8::derive::name(#type_name),
+                    description: #desc.to_string(),
+                    version: #version,
+                    fields: ::std::vec![#(#defs),*],
+                    extends: ::std::option::Option::None,
+                    rules: ::std::vec![#(#rules),*],
+                    migrations: ::std::vec::Vec::new(),
+                    aliases: ::std::vec::Vec::new(),
+                    extensions: ::std::collections::BTreeMap::new(),
+                }
+            };
+            match &parent {
+                None => (
+                    quote! { ::rtemis_r8::ir::TypeDef::Struct(#def) },
+                    quote! {
+                        let Self { #(#idents: #vars),* } = self;
+                        let mut __r8_m = ::rtemis_r8::derive::serde_json::Map::new();
+                        #(#enc)*
+                        Ok(::rtemis_r8::derive::serde_json::Value::Object(__r8_m))
+                    },
+                    quote! { Ok(Self { #(#dec),* }) },
+                    quote! { #(#reg)* },
+                ),
+                Some(p) => {
+                    let (base, ty, changes) = (p.ident, p.ty, &p.changes);
+                    (
+                        quote! {
+                            ::rtemis_r8::derive::extended::<#ty>(#def, &[#(#changes),*])
+                        },
+                        quote! {
+                            let Self { #base: __r8_base, #(#idents: #vars),* } = self;
+                            let mut __r8_m = ::rtemis_r8::derive::inherited_members(__r8_base)?;
+                            #(#enc)*
+                            Ok(::rtemis_r8::derive::serde_json::Value::Object(__r8_m))
+                        },
+                        quote! {
+                            Ok(Self {
+                                #base: <#ty as ::rtemis_r8::derive::Encode>::decode(v)?,
+                                #(#dec),*
+                            })
+                        },
+                        quote! {
+                            <#ty as ::rtemis_r8::derive::Encode>::register(set);
+                            #(#reg)*
+                        },
+                    )
+                }
+            }
         }
         Data::Enum(e) => {
             let tag = attrs.tag.clone().unwrap_or_else(|| "type".to_string());
@@ -547,13 +610,15 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                     }
                     Fields::Named(_) => {
                         let fields = fields_of(&v.fields)?;
+                        extends::none(&fields)?;
                         let defs = fields
                             .iter()
                             .map(|f| field_def(f))
                             .collect::<Result<Vec<_>>>()?;
                         let (enc, dec, r) = field_json(&fields);
-                        let names: Vec<_> =
+                        let idents: Vec<_> =
                             fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+                        let vars: Vec<_> = idents.iter().map(|i| bound(i)).collect();
                         variant_defs.push(quote! {
                             ::rtemis_r8::ir::VariantDef {
                                 name: ::rtemis_r8::derive::name(#vname),
@@ -565,11 +630,11 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                             }
                         });
                         enc_arms.push(quote! {
-                            Self::#vid { #(#names),* } => {
-                                let mut m = ::rtemis_r8::derive::serde_json::Map::new();
+                            Self::#vid { #(#idents: #vars),* } => {
+                                let mut __r8_m = ::rtemis_r8::derive::serde_json::Map::new();
                                 #(#enc)*
-                                m.insert(#tag.to_string(), #vname.into());
-                                Ok(::rtemis_r8::derive::serde_json::Value::Object(m))
+                                __r8_m.insert(#tag.to_string(), #vname.into());
+                                Ok(::rtemis_r8::derive::serde_json::Value::Object(__r8_m))
                             }
                         });
                         dec_arms.push(quote! { Some(#vname) => Ok(Self::#vid { #(#dec),* }) });
@@ -654,7 +719,10 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     };
     let rust_stored = if attrs.rust_stored {
         match &input.data {
-            Data::Struct(st) => rust_stored_impl(ident, &qualified, &fields_of(&st.fields)?)?,
+            Data::Struct(st) => {
+                let (parent, fields) = extends::split(&fields_of(&st.fields)?)?;
+                rust_stored_impl(ident, &qualified, parent.as_ref(), &fields)?
+            }
             Data::Enum(e) => {
                 rust_stored_enum_impl(ident, &qualified, e, attrs.tag.as_deref().unwrap_or("type"))?
             }
@@ -668,8 +736,27 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     } else {
         quote! {}
     };
+    let inheritance = match &input.data {
+        Data::Struct(st) => {
+            let (parent, own) = extends::split(&fields_of(&st.fields)?)?;
+            let of_parent = parent.as_ref().map(|p| {
+                let required = extends::parent_is_extensible(p);
+                let subtype = extends::subtype_of_parent(ident, p);
+                quote! { #required #subtype }
+            });
+            let interface = if attrs.extensible {
+                extends::interface(ident, &input.vis, parent.as_ref(), &own)?
+            } else {
+                quote! {}
+            };
+            quote! { #of_parent #interface }
+        }
+        _ if attrs.extensible => return Err(extends::enum_is_closed()),
+        _ => quote! {},
+    };
     Ok(quote! {
         #rust_stored
+        #inheritance
         impl ::rtemis_r8::derive::Encode for #ident {
             fn field_type() -> ::rtemis_r8::ir::FieldType {
                 ::rtemis_r8::derive::named(#qualified)
@@ -748,10 +835,8 @@ fn rust_stored_enum_impl(
                 let fields = fields_of(&v.fields)?;
                 let n = fields.len();
                 let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-                let names: Vec<String> = idents
-                    .iter()
-                    .map(|i| i.to_string().trim_start_matches("r#").to_string())
-                    .collect();
+                let vars: Vec<_> = idents.iter().map(|i| bound(i)).collect();
+                let names: Vec<String> = idents.iter().map(|i| field_name(i)).collect();
                 let tys: Vec<_> = fields.iter().map(|f| &f.ty).collect();
                 let conv: Vec<Tokens> = idents
                     .iter()
@@ -788,8 +873,8 @@ fn rust_stored_enum_impl(
                 from_node.push(quote! { #vname => Ok(Self::#vid { #(#node_conv),* }) });
                 variant.push(quote! { Self::#vid { .. } => #vname_c });
                 get.push(quote! {
-                    Self::#vid { #(#idents),* } => match name {
-                        #(#names => #api::Field::to_r(#idents, owner),)*
+                    Self::#vid { #(#idents: #vars),* } => match name {
+                        #(#names => #api::Field::to_r(#vars, owner),)*
                         _ => #unknown_field,
                     }
                 });
@@ -800,8 +885,9 @@ fn rust_stored_enum_impl(
                     .map(|((i, t), name)| {
                         let others: Vec<Tokens> = idents
                             .iter()
-                            .filter(|o| *o != i)
-                            .map(|o| quote! { #o: ::std::clone::Clone::clone(#o) })
+                            .zip(&vars)
+                            .filter(|(o, _)| *o != i)
+                            .map(|(o, var)| quote! { #o: ::std::clone::Clone::clone(#var) })
                             .collect();
                         quote! {
                             #name => Ok(Self::#vid {
@@ -812,15 +898,15 @@ fn rust_stored_enum_impl(
                     })
                     .collect();
                 with.push(quote! {
-                    Self::#vid { #(#idents),* } => match name {
+                    Self::#vid { #(#idents: #vars),* } => match name {
                         #(#with_arms,)*
                         _ => #unknown_field,
                     }
                 });
                 write.push(quote! {
-                    Self::#vid { #(#idents),* } => {
+                    Self::#vid { #(#idents: #vars),* } => {
                         out.write(&#idx.to_le_bytes())?;
-                        #(#api::Field::write(#idents, out)?;)*
+                        #(#api::Field::write(#vars, out)?;)*
                         Ok(())
                     }
                 });
@@ -828,7 +914,7 @@ fn rust_stored_enum_impl(
                     #idx => Ok(Self::#vid { #(#idents: <#tys as #api::Field>::read(input)?),* })
                 });
                 bytes.push(quote! {
-                    Self::#vid { #(#idents),* } => 0 #(+ #api::Field::owned_bytes(#idents))*
+                    Self::#vid { #(#idents: #vars),* } => 0 #(+ #api::Field::owned_bytes(#vars))*
                 });
             }
             Fields::Unnamed(u) if u.unnamed.len() == 1 => {
@@ -869,7 +955,7 @@ fn rust_stored_enum_impl(
         impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::enum_codec::<Self>();
-            unsafe fn from_r_stored(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+            unsafe fn from_value(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 let variant = unsafe { #api::call::r_variant(x) }?;
                 unsafe { <Self as #api::RustStoredEnum>::from_variant(&variant, fields) }
             }
@@ -921,17 +1007,25 @@ fn c_str(s: &str) -> Tokens {
     format!("c{s:?}").parse().expect("a C string literal")
 }
 
-/// `impl rtemis_r8_api::RustStoredStruct` for a struct of `#[r8(storage = "rust")]`.
-fn rust_stored_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> Result<Tokens> {
+/// `impl rtemis_r8_api::RustStoredStruct` for a struct of
+/// `#[r8(storage = "rust")]`. A struct with an embedded parent delegates the
+/// inherited fields, which precede its own in the fields R8 passes and in
+/// the state's bytes, to the parent's implementation.
+fn rust_stored_impl(
+    ident: &syn::Ident,
+    qualified: &str,
+    parent: Option<&extends::Parent>,
+    fields: &[&syn::Field],
+) -> Result<Tokens> {
     let type_c = c_str(qualified);
     let n = fields.len();
     let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-    let names: Vec<String> = idents
-        .iter()
-        .map(|i| i.to_string().trim_start_matches("r#").to_string())
-        .collect();
+    let names: Vec<String> = idents.iter().map(|i| field_name(i)).collect();
     let tys: Vec<_> = fields.iter().map(|f| &f.ty).collect();
     let api = quote! { ::rtemis_r8_api };
+    let base_ident = parent.map(|p| p.ident);
+    let base: Vec<_> = parent.map(|p| p.ident).into_iter().collect();
+    let base_ty: Vec<_> = parent.map(|p| p.ty).into_iter().collect();
     let from: Vec<Tokens> = idents
         .iter()
         .zip(&tys)
@@ -939,7 +1033,7 @@ fn rust_stored_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field])
         .enumerate()
         .map(|(k, ((i, t), name))| {
             quote! {
-                #i: unsafe { <#t as #api::Field>::from_r(fields[#k]) }
+                #i: unsafe { <#t as #api::Field>::from_r(__r8_own[#k]) }
                     .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
             }
         })
@@ -961,9 +1055,10 @@ fn rust_stored_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field])
         .zip(&tys)
         .zip(&names)
         .map(|((i, t), name)| {
-            let others: Vec<Tokens> = idents
+            let others: Vec<Tokens> = base_ident
                 .iter()
-                .filter(|o| *o != i)
+                .copied()
+                .chain(idents.iter().copied().filter(|o| o != i))
                 .map(|o| quote! { #o: ::std::clone::Clone::clone(&self.#o) })
                 .collect();
             quote! {
@@ -974,50 +1069,100 @@ fn rust_stored_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field])
             }
         })
         .collect();
+    let unknown = quote! {
+        Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name)))
+    };
+    let (get_rest, with_rest) = match parent {
+        None => (unknown.clone(), unknown),
+        Some(p) => {
+            let (b, t) = (p.ident, p.ty);
+            (
+                quote! { <#t as #api::RustStoredStruct>::get_field(&self.#b, owner, name) },
+                quote! {
+                    Ok(Self {
+                        #b: unsafe { <#t as #api::RustStoredStruct>::with_field(&self.#b, name, value) }?,
+                        #(#idents: ::std::clone::Clone::clone(&self.#idents)),*
+                    })
+                },
+            )
+        }
+    };
+    let inherited = match parent {
+        None => quote! { 0 },
+        Some(p) => {
+            let t = p.ty;
+            quote! { <#t as #api::RustStoredStruct>::N_FIELDS }
+        }
+    };
     Ok(quote! {
         impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::codec::<Self>();
-            unsafe fn from_r_stored(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
-                unsafe { <Self as #api::RustStoredStruct>::from_fields(fields) }
+            unsafe fn from_value(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+                let n = <Self as #api::RustStoredStruct>::N_FIELDS.min(fields.len());
+                unsafe { <Self as #api::RustStoredStruct>::from_fields(&fields[..n]) }
             }
         }
         impl #api::RustStoredStruct for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
+            const N_FIELDS: usize = #inherited + #n;
             unsafe fn from_fields(fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
-                if fields.len() != #n {
+                let expected = <Self as #api::RustStoredStruct>::N_FIELDS;
+                if fields.len() != expected {
                     return Err(#api::Error::new(
                         "arity",
-                        format!("`{}` has {} fields, and R8 passed {}", #qualified, #n, fields.len()),
+                        format!("`{}` has {} fields, and R8 passed {}", #qualified, expected, fields.len()),
                     ));
                 }
-                Ok(Self { #(#from),* })
+                let (__r8_inherited, __r8_own) = fields.split_at(expected - #n);
+                Ok(Self {
+                    #(#base: unsafe { <#base_ty as #api::RustStoredStruct>::from_fields(__r8_inherited) }?,)*
+                    #(#from),*
+                })
             }
             fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
-                Ok(Self { #(#from_node),* })
+                Ok(Self {
+                    #(#base: <#base_ty as #api::RustStoredStruct>::from_reader(r, root)?,)*
+                    #(#from_node),*
+                })
             }
             fn get_field(&self, owner: #api::sys::SEXP, name: &str) -> #api::Result<#api::sys::SEXP> {
                 match name {
                     #(#names => #api::Field::to_r(&self.#idents, owner),)*
-                    _ => Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name))),
+                    _ => #get_rest,
                 }
             }
             unsafe fn with_field(&self, name: &str, value: #api::sys::SEXP) -> #api::Result<Self> {
                 match name {
                     #(#with_arms,)*
-                    _ => Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name))),
+                    _ => #with_rest,
                 }
             }
             fn write_state(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
+                #(<#base_ty as #api::RustStoredStruct>::write_state(&self.#base, out)?;)*
                 #(#api::Field::write(&self.#idents, out)?;)*
                 Ok(())
             }
             fn read_state(input: &mut #api::StateReader) -> #api::Result<Self> {
-                Ok(Self { #(#idents: <#tys as #api::Field>::read(input)?),* })
+                Ok(Self {
+                    #(#base: <#base_ty as #api::RustStoredStruct>::read_state(input)?,)*
+                    #(#idents: <#tys as #api::Field>::read(input)?),*
+                })
             }
             fn owned_bytes(&self) -> usize {
-                0 #(+ #api::Field::owned_bytes(&self.#idents))*
+                0
+                #(+ <#base_ty as #api::RustStoredStruct>::owned_bytes(&self.#base))*
+                #(+ #api::Field::owned_bytes(&self.#idents))*
             }
+            #(
+                fn upcast(&self, type_name: &::core::ffi::CStr) -> *const ::core::ffi::c_void {
+                    if type_name == <#base_ty as #api::RustStoredStruct>::TYPE_NAME {
+                        ::core::ptr::from_ref(&self.#base).cast()
+                    } else {
+                        <#base_ty as #api::RustStoredStruct>::upcast(&self.#base, type_name)
+                    }
+                }
+            )*
         }
     })
 }

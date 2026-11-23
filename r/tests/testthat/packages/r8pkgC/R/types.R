@@ -54,9 +54,18 @@ Resampler <- R8::new_enum(
 )
 
 # Exports tables that registration refuses: a codec of Signal that sets the
-# enum members (1), pins another declaration hash (2), or pins none (3).
+# enum members (1), pins another declaration hash (2), pins none (3), or names
+# no module (4).
 bad_exports <- function(kind = 1L) .Call(pkgc_bad_exports, as.integer(kind))
 
 # Exports tables whose impl entries registration refuses: a repeated method
 # (1) or a NULL function (2).
 bad_impls <- function(kind) .Call(pkgc_bad_impls, as.integer(kind))
+
+# The code that R8Api.value_state, or upcast_state with `upcast`, reports for
+# this package's read of `x` as a value of `type`; "" when it lends the state.
+lend <- function(x, type, upcast = FALSE) .Call(pkgc_lend, x, type, upcast)
+
+# The code that R8Api.new_value reports for a state of this package wrapped
+# as a value of `type`.
+wrap <- function(type) .Call(pkgc_wrap, type)

@@ -143,6 +143,11 @@ pub struct Codec {
     pub size: u32,
     /// The qualified type name, NUL-terminated.
     pub type_name: *const c_char,
+    /// The compiled code that builds and reads the codec's states: the
+    /// address of an object of the package's shared object, the same in
+    /// each of its codecs. A state crosses to compiled code that names the
+    /// same module only, since its layout is that code's.
+    pub module: *const c_void,
     /// Builds a state from the type's fields, R values in declaration order
     /// that R8 has validated and converted to their stored forms.
     pub from_fields:
@@ -206,6 +211,11 @@ pub struct Codec {
     /// the type's R declaration, since `from_fields` and `from_variant`
     /// read fields by position.
     pub declaration_hash: *const c_char,
+    /// The state of the ancestor named, NUL-terminated, that the state
+    /// embeds, which lives as long as the state; NULL when it embeds none of
+    /// that name. `None` in the codec of a type whose states embed no
+    /// ancestor.
+    pub upcast: Option<unsafe extern "C" fn(*const c_void, *const c_char) -> *const c_void>,
 }
 
 /// `R8MethodFn`: an impl function.
@@ -262,12 +272,15 @@ pub struct Api {
     pub abi_version: u32,
     /// The size of this struct in bytes, for appended fields.
     pub size: u32,
-    /// Wraps a Rust-stored value of a registered type as an R value.
-    pub new_value:
-        Option<unsafe extern "C" fn(*const c_char, *mut c_void, *mut Sexp, *mut Error) -> Status>,
-    /// The Rust-stored state of an R value of a registered type.
-    pub value_state:
-        Option<unsafe extern "C" fn(Sexp, *const c_char, *mut *const c_void, *mut Error) -> Status>,
+    /// Wraps a state of a registered Rust-stored type, which the caller's
+    /// module built, as an R value. R8 owns the state once it returns
+    /// [`OK`]; on an error the state stays the caller's.
+    pub new_value: Option<NewValueFn>,
+    /// Lends the state of a value of the named type to the caller's module.
+    pub value_state: Option<StateFn>,
+    /// Lends the state of a value of the named type, or, for a value of a
+    /// struct that extends it, the state that the value's state embeds.
+    pub upcast_state: Option<StateFn>,
     /// Views doubles that `owner` keeps alive as an R vector, without copying.
     pub view_doubles: Option<ViewFn<f64>>,
     /// Views integers that `owner` keeps alive as an R vector.
@@ -292,6 +305,26 @@ pub struct Api {
 /// `R8ExportsFn`: the function a package registers as `"r8_exports"`.
 pub type ExportsFn = unsafe extern "C" fn() -> *const Exports;
 
+/// `new_value` of [`Api`]: the type name, the caller's module, the state, the
+/// value, and the error report.
+pub type NewValueFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_void,
+    *mut c_void,
+    *mut Sexp,
+    *mut Error,
+) -> Status;
+
+/// `value_state` and `upcast_state` of [`Api`]: the value, the type name, the
+/// caller's module, the state, and the error report.
+pub type StateFn = unsafe extern "C" fn(
+    Sexp,
+    *const c_char,
+    *const c_void,
+    *mut *const c_void,
+    *mut Error,
+) -> Status;
+
 /// A view function of [`Api`]: the owner, the elements, their number, the
 /// view, and the error report.
 pub type ViewFn<T> = unsafe extern "C" fn(Sexp, *const T, usize, *mut Sexp, *mut Error) -> Status;
@@ -311,6 +344,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8CallInputs.seed", offset_of!(CallInputs, seed)),
         ("R8Codec", size_of::<Codec>()),
         ("R8Codec.type_name", offset_of!(Codec, type_name)),
+        ("R8Codec.module", offset_of!(Codec, module)),
         ("R8Codec.from_fields", offset_of!(Codec, from_fields)),
         ("R8Codec.encode", offset_of!(Codec, encode)),
         ("R8Codec.write_state", offset_of!(Codec, write_state)),
@@ -326,6 +360,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
             "R8Codec.declaration_hash",
             offset_of!(Codec, declaration_hash),
         ),
+        ("R8Codec.upcast", offset_of!(Codec, upcast)),
         ("R8Reader", size_of::<Reader>()),
         ("R8Reader.context", offset_of!(Reader, context)),
         ("R8Reader.kind", offset_of!(Reader, kind)),
@@ -359,6 +394,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Api.size", offset_of!(Api, size)),
         ("R8Api.new_value", offset_of!(Api, new_value)),
         ("R8Api.value_state", offset_of!(Api, value_state)),
+        ("R8Api.upcast_state", offset_of!(Api, upcast_state)),
         ("R8Api.view_doubles", offset_of!(Api, view_doubles)),
         ("R8Api.view_integers", offset_of!(Api, view_integers)),
         ("R8Api.view_logicals", offset_of!(Api, view_logicals)),

@@ -13,6 +13,8 @@
 //! [`RuleCache`], cleared when a declaration changes the registry.
 
 use std::collections::HashMap;
+use std::ffi::{CStr, c_char, c_int};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -1230,39 +1232,81 @@ fn r8_type_ancestors(type_name: &str) -> Result<List> {
     ))
 }
 
-/// The value of the ancestor `parent` that the R-stored value `x` of a
-/// descendant holds: `x`'s first fields, the inherited ones, with the
-/// parent's shared attributes. The elements are the child's, not copies,
-/// and the value is not validated: the child's rules include the parent's,
-/// which read the parent's fields only.
+/// The number of fields of the struct `ancestor` when the registered type
+/// `type_name` is a subtype of it and not stale; -1 otherwise. The fields
+/// are the first of a value of `type_name`, which R8's C routine `upcast`
+/// (`src/view.c`) reads.
 ///
-/// @param x An R-stored struct value.
-/// @param parent Character: The qualified name of an ancestor of `x`'s type.
-/// @return The parent value.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_upcast_value(x: Robj, parent: &str) -> Result<Robj> {
-    let q = QualifiedName::parse(parent).map_err(|e| fail(e.to_string()))?;
-    let docs = registry().snapshot();
-    let Some(TypeDef::Struct(p)) = docs.find(&q) else {
-        return Err(fail(format!("`{q}` is not a registered struct")));
-    };
-    let x = unsafe { x.get() };
-    let n = p.fields.len();
-    if sexptype(x) != SEXPTYPE::VECSXP || xlen(x) < n {
-        return Err(fail("`x` is an R-stored struct value"));
-    }
-    unsafe {
-        let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
-        for k in 0..n {
-            SET_VECTOR_ELT(out, k as R_xlen_t, VECTOR_ELT(x, k as R_xlen_t));
+/// # Safety
+///
+/// Both names are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_inherited_fields(
+    type_name: *const c_char,
+    ancestor: *const c_char,
+) -> c_int {
+    catch_unwind(AssertUnwindSafe(|| {
+        let name = |p| QualifiedName::parse(unsafe { CStr::from_ptr(p) }.to_str().ok()?).ok();
+        let (ty, base) = (name(type_name)?, name(ancestor)?);
+        let docs = registry().snapshot();
+        let lookup: &dyn TypeLookup = &*docs;
+        match lookup.find(&base) {
+            Some(TypeDef::Struct(s)) if lookup.is_subtype(&ty, &base) && !lookup.is_stale(&ty) => {
+                c_int::try_from(s.fields.len()).ok()
+            }
+            _ => None,
         }
-        let names: Vec<&str> = p.fields.iter().map(|f| f.name.as_str()).collect();
-        set_value_attributes(out, shared_attributes(parent, p.version, None, &names));
-        let r = own(out);
-        Rf_unprotect(1);
-        Ok(r)
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(-1)
+}
+
+/// The value of the struct `type_name` over `fields`, a list of its fields
+/// in declaration order and in their stored forms, which is not validated:
+/// the list itself with the type's shared attributes, or, for a type whose
+/// codec is registered, a Rust-stored value of the state that the codec
+/// builds from them. NULL, with `err` filled, when there is none.
+///
+/// # Safety
+///
+/// `type_name` is NUL-terminated, `fields` is a protected list that nothing
+/// else refers to, and `err` is writable; called on R's main thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_value_of_fields(
+    type_name: *const c_char,
+    fields: SEXP,
+    err: *mut rtemis_r8::abi::Error,
+) -> SEXP {
+    let result = catch_unwind(AssertUnwindSafe(|| -> std::result::Result<SEXP, String> {
+        let name = unsafe { CStr::from_ptr(type_name) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let q = QualifiedName::parse(name).map_err(|e| e.to_string())?;
+        let docs = registry().snapshot();
+        let Some(TypeDef::Struct(s)) = docs.find(&q) else {
+            return Err(format!("`{q}` is not a registered struct [unknown_type]"));
+        };
+        let names: Vec<&str> = s.fields.iter().map(|f| f.name.as_str()).collect();
+        unsafe { set_value_attributes(fields, shared_attributes(name, s.version, None, &names)) };
+        match crate::exports::codec(name) {
+            Some(vt) => {
+                let state = crate::rust_stored::from_fields(vt, fields)?;
+                Ok(crate::rust_stored::wrap(vt, state, fields))
+            }
+            None => Ok(fields),
+        }
+    }));
+    match result {
+        Ok(Ok(v)) => v,
+        Ok(Err(message)) => {
+            crate::rust_stored::set_error(err, "upcast", &message);
+            std::ptr::null_mut()
+        }
+        Err(_) => {
+            crate::rust_stored::set_error(err, "panic", "R8 panicked while upcasting a value");
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -1271,5 +1315,4 @@ extendr_module! {
     fn r8_new_value;
     fn r8_set_field;
     fn r8_type_ancestors;
-    fn r8_upcast_value;
 }

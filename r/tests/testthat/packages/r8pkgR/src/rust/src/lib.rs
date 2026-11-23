@@ -1,9 +1,13 @@
 //! The Rust code of r8pkgR: a Rust-stored struct, `pkgr::Signal`, with
 //! impls of `pkgr::Norm`, declared in R, and of `R8::Display`; and a
 //! Rust-stored enum, `pkgr::Resampler`, of every variant shape, with an impl
-//! of `R8::Display`; and `pkgr::Probe`, a field of every Rust field type,
-//! against which the conformance tests of `tests/testthat/conformance` run.
+//! of `R8::Display`; `pkgr::Probe`, a field of every Rust field type,
+//! against which the conformance tests of `tests/testthat/conformance` run;
+//! and structs that extend one another (`interval`).
 
+mod interval;
+
+use interval::*;
 use rtemis_r8::R8;
 use rtemis_r8_api as r8;
 use rtemis_r8_api::{Buffer, Dots, Logical};
@@ -177,7 +181,7 @@ impl r8::Display for Resampler {
 r8::exports! {
     package = "r8pkgR",
     namespace = "pkgr",
-    types = [Signal, Resampler, Probe],
+    types = [Signal, Resampler, Probe, Interval, Band, Strip],
     impls = [
         Signal: Norm,
         Signal: Display,
@@ -185,5 +189,11 @@ r8::exports! {
         Probe: Display,
         Probe: PartialOrd,
         Probe: Shape,
+        Interval: Width,
+        Interval: Shifted,
+        Interval: Overlap,
+        Interval: Display,
+        Band: Total,
+        Strip: Shares,
     ],
 }

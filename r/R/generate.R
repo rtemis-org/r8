@@ -101,7 +101,21 @@ r8_document_rust <- function(path = ".", check = FALSE) {
   }
   doc <- r8_exports_document(ptr, namespace)
   .r8_render_refs[["map"]] <- foreign_refs(doc, path)
-  on.exit(.r8_render_refs[["map"]] <- NULL, add = TRUE)
+  .r8_render_refs[["types"]] <- stats::setNames(
+    doc[["types"]],
+    vapply(
+      doc[["types"]],
+      function(t) paste0(namespace, "::", t[["name"]]),
+      character(1)
+    )
+  )
+  on.exit(
+    {
+      .r8_render_refs[["map"]] <- NULL
+      .r8_render_refs[["types"]] <- NULL
+    },
+    add = TRUE
+  )
   codecs <- r8_exports_compare(ptr, namespace)
   codecs <- codecs[["type_name"]][codecs[["codec"]]]
   lines <- render_document(doc, pkg, codecs)
@@ -127,8 +141,9 @@ r8_document_rust <- function(path = ".", check = FALSE) {
 } # /R8::r8_document_rust
 
 
-# The R objects of the types of other namespaces that the rendered file
-# names, by qualified name, while r8_document_rust() renders.
+# While r8_document_rust() renders: `map`, the R objects of the types of
+# other namespaces that the rendered file names, and `types`, the IR of the
+# document's types, both by qualified name.
 .r8_render_refs <- new.env(parent = emptyenv())
 
 
@@ -365,13 +380,20 @@ named_refs <- function(x) {
   if (!is.list(x)) {
     return(character())
   }
-  own <- character()
   kind <- x[["kind"]]
-  if (is.character(kind) && kind %in% c("named", "matrix_of", "table_of")) {
-    own <- if (kind == "named") x[["name"]] else x[["of"]]
-  }
-  if (identical(x[["kind"]], "newtype")) {
-    own <- x[["of"]]
+  own <- if (!is.character(kind)) {
+    character()
+  } else {
+    switch(
+      kind,
+      named = x[["name"]],
+      matrix_of = ,
+      table_of = ,
+      subtype = ,
+      newtype = x[["of"]],
+      struct = x[["extends"]],
+      character()
+    )
   }
   c(own, unlist(lapply(unname(x), named_refs)))
 } # /R8::named_refs
@@ -425,12 +447,16 @@ render_struct <- function(t, ns, rust_stored) {
   qname <- paste0(ns, "::", t[["name"]])
   check_renderable(
     t,
-    c("extends", "migrations", "aliases", "extensions"),
+    c("migrations", "aliases", "extensions"),
     paste0("`", qname, "`")
   )
-  fields <- t[["fields"]]
+  # A child's declaration lists the fields and rules it adds; its constructor
+  # takes the inherited fields too.
+  own <- function(x) Filter(function(m) is.null(m[["inherited_from"]]), x)
+  fields <- own(t[["fields"]])
+  rules <- own(t[["rules"]])
   params <- vapply(
-    fields,
+    t[["fields"]],
     function(f) {
       d <- f[["description"]]
       paste0(
@@ -453,9 +479,10 @@ render_struct <- function(t, ns, rust_stored) {
       paste0("description = ", deparse_string(t[["description"]]))
     },
     paste0("version = ", t[["version"]], "L"),
-    if (length(t[["rules"]]) > 0L) {
-      paste0("rules = ", render_rules(t[["rules"]], "  "))
+    if (length(rules) > 0L) {
+      paste0("rules = ", render_rules(rules, "  "))
     },
+    render_extends(t, ns),
     if (rust_stored) "storage = \"rust\""
   )
   c(
@@ -468,6 +495,77 @@ render_struct <- function(t, ns, rust_stored) {
     ")"
   )
 } # /R8::render_struct
+
+
+# %% render_extends ----
+#' The arguments `extends` and `defaults` of a child's declaration
+#'
+#' @param t List: The IR declaration.
+#' @param ns Character: The namespace.
+#'
+#' @return Character: The arguments; none for a struct without a parent.
+#'
+#' @keywords internal
+#' @noRd
+render_extends <- function(t, ns) {
+  if (is.null(t[["extends"]])) {
+    return(character())
+  }
+  parent <- .r8_render_refs[["types"]][[t[["extends"]]]] %||%
+    r8_type_ir(t[["extends"]])
+  of_parent <- stats::setNames(
+    parent[["fields"]],
+    vapply(parent[["fields"]], function(f) f[["name"]], character(1))
+  )
+  default_ir <- function(f) {
+    if (is.null(f[["default"]])) "" else canonical_ir(f[["default"]])
+  }
+  defaults <- character()
+  for (f in t[["fields"]]) {
+    if (is.null(f[["inherited_from"]])) {
+      next
+    }
+    p <- of_parent[[f[["name"]]]]
+    changed <- c(
+      if (!identical(f[["sensitive"]], p[["sensitive"]])) "sensitive",
+      if (!identical(f[["description"]], p[["description"]])) "description"
+    )
+    if (length(changed) > 0L) {
+      r8_abort(
+        "`",
+        ns,
+        "::",
+        t[["name"]],
+        "` changes `",
+        paste(changed, collapse = "` and `"),
+        "` of the inherited field `",
+        f[["name"]],
+        "`; an R declaration changes an inherited field's default only.",
+        class = "r8_declaration_error"
+      )
+    }
+    if (!identical(default_ir(f), default_ir(p))) {
+      defaults <- c(
+        defaults,
+        paste0(
+          backtick(f[["name"]]),
+          " = ",
+          if (is.null(f[["default"]])) {
+            "NULL"
+          } else {
+            render_default(f[["default"]], f[["type"]], ns)
+          }
+        )
+      )
+    }
+  }
+  c(
+    paste0("extends = ", type_ref(t[["extends"]], ns)),
+    if (length(defaults) > 0L) {
+      paste0("defaults = list(", paste(defaults, collapse = ", "), ")")
+    }
+  )
+} # /R8::render_extends
 
 
 # %% render_enum ----
@@ -774,6 +872,7 @@ render_type <- function(t, ns) {
       }
     ),
     named = type_ref(t[["name"]], ns),
+    subtype = call("subtype", type_ref(t[["of"]], ns)),
     matrix = call(
       "type_matrix",
       render_type(t[["element"]], ns),

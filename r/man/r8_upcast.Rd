@@ -17,9 +17,11 @@ A value of \code{type}; \code{x} itself when \code{type} is its type.
 \description{
 A child holds its ancestors' fields first, so the value of an ancestor is
 those fields with the ancestor's type. The fields are the child's own
-objects, not copies. The result is valid: the child's rules include the
+objects, not copies, and a Rust-stored ancestor's codec builds its state
+from them. The result is valid: the child's rules include the
 ancestor's, which read the ancestor's fields only. \code{r8_convert(x, Parent)}
-returns the same value.
+returns the same value, and an impl of the ancestor in compiled code
+receives it.
 }
 \examples{
 op <- options(r8.namespace = "demo")

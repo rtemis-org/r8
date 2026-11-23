@@ -11,14 +11,15 @@
 //! A derived type validates and encodes through the same checks as a type
 //! declared in R: [`R8::to_document`] validates the encoded value, rules
 //! included, and writes a document; [`R8::from_document`] reads and validates
-//! a document, then decodes it.
+//! a document, then decodes it. A struct extends another by embedding it
+//! ([`Extensible`], [`Subtype`]).
 
 use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 
 use crate::canonical::{read_document, to_document};
-use crate::ir::{FieldType, TypeDef};
+use crate::ir::{FieldType, InheritedChange, StructDef, TypeDef};
 use crate::name::{Name, QualifiedName};
 use crate::rules::DocumentSet;
 use crate::validate::ValueError;
@@ -69,6 +70,194 @@ pub trait R8: Encode {
     fn from_document(text: &str) -> Result<Self, Vec<ValueError>> {
         let v = read_document(text, &Self::qualified_name(), &Self::declarations())?;
         Self::decode(&v).map_err(|e| vec![encode_error(e)])
+    }
+}
+
+/// A subtype of the struct `P`: `P` itself, or a struct that extends a
+/// subtype of `P`.
+///
+/// The derive implements it for a struct of `#[r8(extensible)]`, as a
+/// subtype of itself, and for a struct with a field of `#[r8(extends)]`, as
+/// a subtype of each type that the field's type is a subtype of, whichever
+/// crates declare them. The interface trait `PLike` of an extensible struct
+/// `P` is implemented for every `Subtype<P>`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a subtype of `{P}`",
+    note = "a struct extends another with a field of `#[r8(extends)]`, whose type is declared with `#[r8(extensible)]`"
+)]
+pub trait Subtype<P> {
+    /// The value of `P` that the value holds: the value itself, or its
+    /// embedded ancestor.
+    fn upcast(&self) -> &P;
+}
+
+/// A struct that other structs extend, declared with `#[r8(extensible)]`.
+/// Its `Clone` gives the parent value of a child's value.
+///
+/// A child embeds its parent as its first field, marked `#[r8(extends)]`.
+/// The derive writes the interface trait of an extensible struct, named with
+/// `Like` after the struct: an accessor per field, and the struct's value.
+///
+#[cfg_attr(
+    feature = "macros",
+    doc = r##"
+```
+use rtemis_r8::R8;
+use rtemis_r8::derive::{R8 as _, Subtype};
+
+/// A numeric range.
+#[derive(R8, Clone)]
+#[r8(namespace = "demo", version = 1, extensible)]
+pub struct Range {
+    pub lo: f64,
+    pub hi: f64,
+}
+
+/// A labeled range, whose `lo` is 0 by default.
+#[derive(R8, Clone)]
+#[r8(namespace = "demo", version = 1)]
+pub struct Window {
+    #[r8(extends, inherited(lo(default = "0")))]
+    pub base: Range,
+    pub label: String,
+}
+
+// A function for `Range` and every struct that extends it.
+fn width(x: &impl RangeLike) -> f64 {
+    x.hi() - x.lo()
+}
+
+let w = Window::from_document(
+    r#"{"$type": "demo::Window", "$types": {"demo::Window": 1}, "hi": 4, "label": "w"}"#,
+)
+.unwrap();
+assert_eq!(width(&w), 4.0);
+let range: &Range = w.upcast();
+assert_eq!(range.hi, w.to_range().hi);
+```
+"##
+)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not extensible",
+    label = "the parent of `#[r8(extends)]`",
+    note = "a struct that others extend is declared with `#[r8(extensible)]`"
+)]
+pub trait Extensible: R8 + Clone + Subtype<Self> {}
+
+/// Declarations that the derive refuses when the crate compiles.
+///
+/// A parent that is not extensible:
+///
+/// ```compile_fail,E0277
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends)] base: Range, label: String }
+/// ```
+///
+/// An extensible struct without `Clone`:
+///
+/// ```compile_fail,E0277
+/// use rtemis_r8::R8;
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// ```
+///
+/// A parent that is not the first field:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { label: String, #[r8(extends)] base: Range }
+/// ```
+///
+/// A constraint beside `extends`, and a change that changes nothing:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends, min = 0)] base: Range }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends, inherited(lo()))] base: Range }
+/// ```
+///
+/// `extensible` on an enum, and `extends` in a variant:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// enum Kernel { Linear, Rbf { gamma: f64 } }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// enum Figure { Flat { #[r8(extends)] base: Range, n: i32 } }
+/// ```
+#[cfg(all(doctest, feature = "macros"))]
+struct RefusedByTheDerive;
+
+/// The declaration of `child`, which holds the fields and rules it adds,
+/// lowered onto its parent `P` with the changes to inherited fields.
+///
+/// # Panics
+///
+/// When the declaration cannot extend `P`, such as a field of a name that
+/// `P` holds; the message lists each problem.
+#[doc(hidden)]
+pub fn extended<P: Extensible>(mut child: StructDef, changes: &[InheritedChange]) -> TypeDef {
+    let parent = P::qualified_name();
+    let TypeDef::Struct(def) = P::type_def() else {
+        unreachable!("the derive implements `Extensible` for structs only");
+    };
+    if let Err(errors) = crate::ir::extend(&mut child, &parent, &def, changes) {
+        let lines: Vec<String> = errors
+            .iter()
+            .map(|e| format!("{} [{}]", e.message, e.code))
+            .collect();
+        panic!(
+            "`{}` does not extend `{parent}`: {}",
+            child.name,
+            lines.join("; ")
+        );
+    }
+    TypeDef::Struct(child)
+}
+
+/// The members of the JSON form of an embedded parent, which the child's
+/// object continues.
+#[doc(hidden)]
+pub fn inherited_members<P: Extensible>(
+    base: &P,
+) -> Result<serde_json::Map<String, Value>, String> {
+    match base.encode()? {
+        Value::Object(m) => Ok(m),
+        _ => Err(format!("`{}` is not an object", P::NAME)),
     }
 }
 

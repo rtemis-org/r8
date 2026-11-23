@@ -31,8 +31,9 @@
  * - An `SEXP` returned through an out-parameter is unprotected; the caller
  *   protects it before the next allocation.
  * - Each side frees only what it allocated. A type's `state` is freed only by
- *   that type's `drop`; encoded JSON passes through an `R8Writer` supplied by
- *   the caller; error text is written into the fixed buffers of `R8Error`.
+ *   that type's `drop`, and only code of the codec's `module` reads it;
+ *   encoded JSON passes through an `R8Writer` supplied by the caller; error
+ *   text is written into the fixed buffers of `R8Error`.
  * - Strings are UTF-8 and NUL-terminated.
  * - Everything an `R8Exports` points to is static: it stays valid while the
  *   package's shared object is loaded. R8 reads the declaration record and
@@ -154,6 +155,11 @@ typedef struct R8Codec {
   uint32_t size;
   /* Qualified name, "namespace::Type". */
   const char *type_name;
+  /* The compiled code that builds and reads the codec's states: the address
+   * of an object of the package's shared object, the same in each of its
+   * codecs. A state crosses to compiled code that names the same module
+   * only, since its layout is that code's. */
+  const void *module;
   /* Builds a state from the type's fields, `n` R values in declaration
    * order, which R8 has validated and converted to their stored forms. */
   R8Status (*from_fields)(const SEXP *fields, size_t n, void **state, R8Error *err);
@@ -204,6 +210,10 @@ typedef struct R8Codec {
    * `from_fields` and `from_variant` read fields by position; a mismatch
    * reports the declaration's current hash. */
   const char *declaration_hash;
+  /* The state of the ancestor named `type_name` that the state embeds, which
+   * lives as long as the state; NULL when it embeds none of that name. NULL
+   * in the codec of a type whose states embed no ancestor. */
+  const void *(*upcast)(const void *state, const char *type_name);
 } R8Codec;
 
 /* An impl function: a trait method implemented in compiled code. `args`
@@ -250,12 +260,25 @@ typedef const R8Exports *(*R8ExportsFn)(void);
 typedef struct R8Api {
   uint32_t abi_version;
   uint32_t size;
-  /* Wraps a state of a registered Rust-stored type as an R8 value. Takes
-   * ownership of `state`, also on error. */
-  R8Status (*new_value)(const char *type_name, void *state, SEXP *value, R8Error *err);
-  /* Borrows the state of a value of the given type; the state stays valid
-   * while `value` is protected. */
-  R8Status (*value_state)(SEXP value, const char *type_name, const void **state, R8Error *err);
+  /* Wraps a state of a registered Rust-stored type, which the caller's
+   * module built, as an R8 value. R8 owns the state once it returns R8_OK;
+   * on an error the state stays the caller's. The code `other_module`
+   * reports a type whose codec has another module. */
+  R8Status (*new_value)(const char *type_name, const void *module, void *state, SEXP *value,
+                        R8Error *err);
+  /* Lends the state of a value of the named type to the caller's module; the
+   * state stays valid while `value` is protected. The code `not_lent` reports
+   * a value of the type whose state the module does not read: an R-stored
+   * value, or one whose codec has another module, whose fields the caller
+   * reads as R values instead; `type_mismatch` reports any other object. */
+  R8Status (*value_state)(SEXP value, const char *type_name, const void *module,
+                          const void **state, R8Error *err);
+  /* `value_state`, and for a value of a struct that extends the named type,
+   * the state of that type which the value's state embeds
+   * (`R8Codec.upcast`). An impl function reads its receiver through it, since
+   * an impl for a struct applies to the structs that extend it. */
+  R8Status (*upcast_state)(SEXP value, const char *type_name, const void *module,
+                           const void **state, R8Error *err);
   /* Views `n` elements at `data`, memory that `owner` keeps alive, as an R
    * vector, without copying. A write to the vector goes to a copy that R
    * makes; the memory is only read. */

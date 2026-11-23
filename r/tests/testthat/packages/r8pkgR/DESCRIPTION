@@ -1,5 +1,5 @@
 Package: r8pkgR
-Title: Test Package with a Rust-Native Type and Impls in Rust
+Title: Test Package with Rust-Stored Types and Impls in Rust
 Version: 0.0.1
 Authors@R: person("E.D.", "Gennatas", role = c("aut", "cre"), email = "gennatas@gmail.com")
 Description: Declares an R8 trait in R and implements it, and R8's Display,
@@ -11,3 +11,8 @@ Imports:
     R8 (>= 0.4.0)
 SystemRequirements: Cargo (Rust's package manager), rustc
 Config/R8/namespace: pkgr
+Collate: 
+    'r8-types.R'
+    'interval.R'
+    'norm.R'
+    'zzz.R'

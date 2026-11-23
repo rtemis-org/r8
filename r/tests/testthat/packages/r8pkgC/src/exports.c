@@ -90,6 +90,8 @@ SEXP pkgc_bad_exports(SEXP kind);
 SEXP pkgc_live_signals(void);
 SEXP pkgc_signal_peek(SEXP x);
 SEXP pkgc_signal_make(SEXP name, SEXP n);
+SEXP pkgc_lend(SEXP x, SEXP type, SEXP upcast);
+SEXP pkgc_wrap(SEXP type);
 
 // Impl entries that registration refuses, by `kind`: 1 repeats a method,
 // and 2 has a NULL function.
@@ -141,6 +143,8 @@ static const R_CallMethodDef call_methods[] = {
     {"pkgc_live_signals", (DL_FUNC) &pkgc_live_signals, 0},
     {"pkgc_signal_peek", (DL_FUNC) &pkgc_signal_peek, 1},
     {"pkgc_signal_make", (DL_FUNC) &pkgc_signal_make, 2},
+    {"pkgc_lend", (DL_FUNC) &pkgc_lend, 3},
+    {"pkgc_wrap", (DL_FUNC) &pkgc_wrap, 1},
     {"pkgc_protect_status", (DL_FUNC) &pkgc_protect_status, 0},
     {"pkgc_bad_exports", (DL_FUNC) &pkgc_bad_exports, 1},
     {"pkgc_bad_impls", (DL_FUNC) &pkgc_bad_impls, 1},

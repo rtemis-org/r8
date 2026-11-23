@@ -676,32 +676,10 @@ select_tuple <- function(trait_name, method, args, above = NULL) {
   r <- r8_dispatch_select(trait_name, types, chains, above_positions)
   if (is.character(r)) {
     key <- if (length(r) == 1L) r else tuple_key(r)
-    fn <- .r8_impls[[paste(trait_name, method, key, sep = "|")]] %||%
-      .r8_impls[[paste(trait_name, method, "", sep = "|")]]
-    if (
-      length(args) == 1L &&
-        r8[[1L]] &&
-        !identical(key, types[[1L]]) &&
-        is_compiled_impl(fn)
-    ) {
-      r8_abort(
-        "The compiled impl of `",
-        trait_name,
-        "` for `",
-        key,
-        "` takes a value of `",
-        key,
-        "`, not of its descendant `",
-        types[[1L]],
-        "`; implement `",
-        trait_name,
-        "` for `",
-        types[[1L]],
-        "`.",
-        class = "r8_dispatch_error"
-      )
-    }
-    return(fn)
+    return(
+      .r8_impls[[paste(trait_name, method, key, sep = "|")]] %||%
+        .r8_impls[[paste(trait_name, method, "", sep = "|")]]
+    )
   }
   if (is.null(r)) {
     return(

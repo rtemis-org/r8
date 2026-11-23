@@ -254,8 +254,17 @@ fn r8_exports_document(ptr: Robj, ns: &str) -> Result<Robj> {
     crate::irser::to_r(&doc).map_err(|e| fail(e.to_string()))
 }
 
+/// The parent that a declaration extends.
+fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
+    match t {
+        TypeDef::Struct(s) => s.extends.as_ref(),
+        TypeDef::Enum(_) => None,
+    }
+}
+
 /// Compares the types of an exports table with the registered declarations.
-/// A type of the record compares by declaration hash: the Rust hash reads
+/// A type of the record compares by declaration hash and by its parent,
+/// which the hash excludes: the Rust hash reads
 /// the registry with the record's types in place of its namespace's types
 /// of the same names, and the R hash reads the registry alone. A codec whose
 /// type has no declaration in the record compares the hash it pins
@@ -309,7 +318,12 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
         let h = hash_r(&q);
         let s = match &h {
             None => "missing",
-            Some(h) if *h == rtemis_r8::canonical::declaration_hash(&q, lookup_rust) => "same",
+            Some(h)
+                if *h == rtemis_r8::canonical::declaration_hash(&q, lookup_rust)
+                    && lookup_r.find(&q).and_then(parent_of) == parent_of(t) =>
+            {
+                "same"
+            }
             Some(_) => "differs",
         };
         codec.push(codecs.iter().any(|(n, _)| *n == name));

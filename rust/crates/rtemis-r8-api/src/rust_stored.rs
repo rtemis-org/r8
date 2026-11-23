@@ -21,6 +21,9 @@ pub trait RustStoredStruct: rtemis_r8::derive::R8 + Send + Sync + Sized + 'stati
     /// The qualified type name, NUL-terminated.
     const TYPE_NAME: &'static CStr;
 
+    /// The number of the struct's fields, those it inherits included.
+    const N_FIELDS: usize;
+
     /// The value from its fields, R values in declaration order that R8 has
     /// validated and converted to their stored forms.
     ///
@@ -53,6 +56,12 @@ pub trait RustStoredStruct: rtemis_r8::derive::R8 + Send + Sync + Sized + 'stati
 
     /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
+
+    /// The state of the ancestor `type_name` that the value embeds; NULL when
+    /// it embeds none of that name.
+    fn upcast(&self, _type_name: &CStr) -> *const c_void {
+        std::ptr::null()
+    }
 }
 
 /// An enum whose values, unit variants included, R8 holds in Rust.
@@ -105,7 +114,7 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
 }
 
 /// A Rust-stored type of either kind: its name, its codec table, and its
-/// value from an R-stored value of the type. `#[derive(R8)]` with
+/// value from the fields of a value whose state is not lent. `#[derive(R8)]` with
 /// `#[r8(storage = "rust")]` implements it; `#[r8::methods]`, [`Value`](crate::Value),
 /// and `r8::exports!` take it.
 pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
@@ -115,13 +124,27 @@ pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The codec table: [`codec`] for a struct, [`enum_codec`] for an enum.
     const TABLE: Shared<abi::Codec>;
 
-    /// The value from an R-stored value `x` of the type, whose fields are
-    /// `fields`, as `serialize(version = 2)` reads one back.
+    /// The value from the fields of `x`, a value of the type whose state
+    /// R8 does not lend to this module: an R-stored one, as
+    /// `serialize(version = 2)` reads one back, or one of another package's
+    /// codec. `x` may be a value of a struct that extends the type, whose
+    /// first fields are the type's.
     ///
     /// # Safety
     ///
     /// On R's main thread, with valid R objects.
-    unsafe fn from_r_stored(x: SEXP, fields: &[SEXP]) -> Result<Self>;
+    unsafe fn from_value(x: SEXP, fields: &[SEXP]) -> Result<Self>;
+}
+
+/// Identifies this shared object to R8 (`R8Codec.module`): each package
+/// links its own copy of the crate, and so has its own address. R8 lends a
+/// state to the shared object whose code built it, since the layout of a Rust
+/// type is fixed within one compilation only.
+static MODULE: u8 = 0;
+
+/// The address that identifies this shared object to R8.
+pub const fn module() -> *const c_void {
+    (&raw const MODULE).cast()
 }
 
 /// A table R8 reads through a pointer: static data without interior
@@ -136,6 +159,7 @@ pub const fn codec<T: RustStoredStruct>() -> Shared<abi::Codec> {
     Shared(abi::Codec {
         size: std::mem::size_of::<abi::Codec>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
+        module: module(),
         from_fields: Some(from_fields::<T>),
         encode: Some(struct_fns::encode::<T>),
         write_state: Some(struct_fns::write_state::<T>),
@@ -148,6 +172,7 @@ pub const fn codec<T: RustStoredStruct>() -> Shared<abi::Codec> {
         from_variant: None,
         from_reader: Some(struct_from_reader::<T>),
         declaration_hash: std::ptr::null(),
+        upcast: Some(upcast::<T>),
     })
 }
 
@@ -156,6 +181,7 @@ pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::Codec> {
     Shared(abi::Codec {
         size: std::mem::size_of::<abi::Codec>() as u32,
         type_name: T::TYPE_NAME.as_ptr(),
+        module: module(),
         from_fields: None,
         encode: Some(enum_fns::encode::<T>),
         write_state: Some(enum_fns::write_state::<T>),
@@ -168,6 +194,7 @@ pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::Codec> {
         from_variant: Some(from_variant::<T>),
         from_reader: Some(enum_from_reader::<T>),
         declaration_hash: std::ptr::null(),
+        upcast: None,
     })
 }
 
@@ -365,6 +392,16 @@ macro_rules! shared_fns {
 
 shared_fns!(struct_fns, RustStoredStruct);
 shared_fns!(enum_fns, RustStoredEnum);
+
+unsafe extern "C" fn upcast<T: RustStoredStruct>(
+    s: *const c_void,
+    type_name: *const c_char,
+) -> *const c_void {
+    catch_unwind(AssertUnwindSafe(|| {
+        state::<T>(s).upcast(unsafe { CStr::from_ptr(type_name) })
+    }))
+    .unwrap_or(std::ptr::null())
+}
 
 unsafe extern "C" fn variant<T: RustStoredEnum>(s: *const c_void) -> *const c_char {
     catch_unwind(AssertUnwindSafe(|| state::<T>(s).variant().as_ptr())).unwrap_or(std::ptr::null())

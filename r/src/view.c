@@ -320,13 +320,17 @@ static R8Status view_bytes(SEXP owner, const uint8_t *data, size_t n, SEXP *valu
 
 // The value functions of R8Api, implemented in the Rust code (values of
 // Rust-stored types).
-R8Status r8_api_new_value(const char *type_name, void *state, SEXP *value, R8Error *err);
-R8Status r8_api_value_state(SEXP value, const char *type_name, const void **state,
-                            R8Error *err);
+R8Status r8_api_new_value(const char *type_name, const void *module, void *state, SEXP *value,
+                          R8Error *err);
+R8Status r8_api_value_state(SEXP value, const char *type_name, const void *module,
+                            const void **state, R8Error *err);
+R8Status r8_api_upcast_state(SEXP value, const char *type_name, const void *module,
+                             const void **state, R8Error *err);
 
 static const R8Api api = {
-    R8_ABI_VERSION, sizeof(R8Api), r8_api_new_value, r8_api_value_state, view_doubles,
-    view_integers,  view_logicals, view_bytes,       api_protect,
+    R8_ABI_VERSION,      sizeof(R8Api), r8_api_new_value, r8_api_value_state,
+    r8_api_upcast_state, view_doubles,  view_integers,    view_logicals,
+    view_bytes,          api_protect,
 };
 
 static const R8Api *r8_api(uint32_t abi_version) {
@@ -343,6 +347,45 @@ void r8_register_api(void) {
 // R8_UNWIND into R8_ERROR, since R8's API functions never jump.
 R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err) {
   return api_protect(fn, data, value, err);
+}
+
+// The number of the fields of `ancestor` when the registered type
+// `type_name` is a subtype of it, and -1 otherwise; and the value of a struct
+// over the list of its fields (construct.rs).
+int r8_inherited_fields(const char *type_name, const char *ancestor);
+SEXP r8_value_of_fields(const char *type_name, SEXP fields, R8Error *err);
+
+// `r8_upcast()` for the value `x` of a descendant of the struct `type`, a
+// qualified name: a value over `x`'s first fields, which precede those that
+// its descendants add, read here, in a C frame, since a Rust-stored value's
+// field read may raise an R error. The fields are `x`'s own objects and are
+// not validated: the rules of a subtype include those of `type`, which read
+// its fields only.
+// spec: R8/class-system#inheritance
+static SEXP r8_upcast(SEXP x, SEXP type) {
+  static SEXP type_sym = NULL;
+  if (type_sym == NULL) {
+    type_sym = Rf_install("r8_type");
+  }
+  const char *target = CHAR(STRING_ELT(type, 0));
+  SEXP own = Rf_getAttrib(x, type_sym);
+  int n = TYPEOF(own) == STRSXP && XLENGTH(own) == 1 && TYPEOF(x) == VECSXP
+              ? r8_inherited_fields(CHAR(STRING_ELT(own, 0)), target)
+              : -1;
+  if (n < 0 || XLENGTH(x) < n) {
+    Rf_error("`x` is not a value of a subtype of `%s`", target);
+  }
+  SEXP fields = PROTECT(Rf_allocVector(VECSXP, n));
+  for (int i = 0; i < n; i++) {
+    SET_VECTOR_ELT(fields, i, VECTOR_ELT(x, i));
+  }
+  R8Error err = {{0}, {0}};
+  SEXP out = r8_value_of_fields(target, fields, &err);
+  if (out == NULL) {
+    Rf_error("%s", err.message);
+  }
+  UNPROTECT(1);
+  return out;
 }
 
 // Calls the impl function at the address of `fn` with the elements of the
@@ -838,11 +881,11 @@ static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
 
 // The C routines that R calls through `.Call()` on a native symbol:
 // list(invoke, exports, construct, find, replaced, find2, find3, call,
-// result). R8's `.Call` routines are the Rust code's, registered by extendr;
-// these continue a jump, call R_GetCCallable(), or evaluate R code from C
-// frames.
+// result, upcast). R8's `.Call` routines are the Rust code's, registered by
+// extendr; these continue a jump, call R_GetCCallable(), evaluate R code, or
+// read the fields of Rust-stored values from C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 9));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 10));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
@@ -852,7 +895,8 @@ SEXP r8_native_symbols(void) {
   SET_VECTOR_ELT(out, 6, native_symbol((DL_FUNC) r8_find3));
   SET_VECTOR_ELT(out, 7, native_symbol((DL_FUNC) r8_call));
   SET_VECTOR_ELT(out, 8, native_symbol((DL_FUNC) r8_result));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 9));
+  SET_VECTOR_ELT(out, 9, native_symbol((DL_FUNC) r8_upcast));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 10));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
@@ -862,6 +906,7 @@ SEXP r8_native_symbols(void) {
   SET_STRING_ELT(names, 6, Rf_mkChar("find3"));
   SET_STRING_ELT(names, 7, Rf_mkChar("call"));
   SET_STRING_ELT(names, 8, Rf_mkChar("result"));
+  SET_STRING_ELT(names, 9, Rf_mkChar("upcast"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

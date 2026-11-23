@@ -13,7 +13,7 @@ use crate::api::{self, Error, Jumped, Result};
 use crate::buffer::{Buffer, Element};
 use crate::field::Field;
 use crate::keep;
-use crate::rust_stored::{RustStored, panic_text};
+use crate::rust_stored::{RustStored, module, panic_text};
 use crate::sys::{self, SEXP};
 
 /// An argument of an impl function, converted from its R value.
@@ -96,14 +96,15 @@ impl FromR for Dots {
     }
 }
 
-/// The receiver `x` of a method of a Rust-stored type: the state of a
-/// Rust-stored value, borrowed, or a value built from an R-stored value of
-/// the type ([`RustStored::from_r_stored`]), such as `serialize(version = 2)`
-/// reads back.
+/// The receiver `x` of a method of a Rust-stored type, or the value of a
+/// parameter `&T`: the state of a Rust-stored value, borrowed, or a value
+/// built from the fields of one whose state R8 does not lend
+/// ([`RustStored::from_value`]).
 pub enum Receiver<'a, T> {
-    /// The state of a Rust-stored value.
+    /// The state of a Rust-stored value, or the ancestor's state that it
+    /// embeds.
     Borrowed(&'a T),
-    /// A value built from an R-stored value's fields.
+    /// A value built from a value's fields.
     Built(T),
 }
 
@@ -118,7 +119,8 @@ impl<T> Deref for Receiver<'_, T> {
 }
 
 impl<T: RustStored> Receiver<'_, T> {
-    /// The receiver from `x`; an object of another type returns
+    /// The receiver from `x`, a value of `T` or of a struct that extends it,
+    /// to which the method for `T` applies; an object of another type returns
     /// `type_mismatch`.
     ///
     /// # Safety
@@ -126,61 +128,50 @@ impl<T: RustStored> Receiver<'_, T> {
     /// On R's main thread, with a valid `x` that stays protected while the
     /// receiver lives.
     pub unsafe fn from_arg(x: SEXP) -> Result<Self> {
-        unsafe { Self::from_named_arg(x, "x") }
+        unsafe { Self::lent(x, "x", api::api()?.upcast_state) }
     }
 
-    /// The value of the argument `name`, a parameter `&T` of a method:
-    /// borrowed from a Rust-stored value, or built from an R-stored value of
-    /// the type; an object of another type returns `type_mismatch`, naming
-    /// the argument.
+    /// The value of the argument `name`, a parameter `&T` of a method: a
+    /// value of `T` exactly; an object of another type returns
+    /// `type_mismatch`, naming the argument.
     ///
     /// # Safety
     ///
     /// On R's main thread, with a valid `x` that stays protected while the
     /// value lives.
     pub unsafe fn from_named_arg(x: SEXP, name: &str) -> Result<Self> {
-        let a = api::api()?;
+        unsafe { Self::lent(x, name, api::api()?.value_state) }
+    }
+
+    /// The value of `T` in `x` through `lend`, which lends its state or
+    /// reports a value whose fields are read instead.
+    unsafe fn lent(x: SEXP, name: &str, lend: Option<abi::StateFn>) -> Result<Self> {
         let mut state: *const c_void = std::ptr::null();
         let mut err = abi::Error {
             code: [0; 64],
             message: [0; 1024],
         };
-        let status = match a.value_state {
-            Some(f) => unsafe { f(x, T::TYPE_NAME.as_ptr(), &mut state, &mut err) },
+        let status = match lend {
+            Some(f) => unsafe { f(x, T::TYPE_NAME.as_ptr(), module(), &mut state, &mut err) },
             None => ERROR,
         };
         if status == OK {
             return Ok(Receiver::Borrowed(unsafe { &*state.cast::<T>() }));
         }
-        let e = Error::from_abi(&err);
-        if e.code != "not_rust_stored" || !is_r_stored::<T>(x) {
+        if Error::from_abi(&err).code != "not_lent" {
             return Err(Error::new(
                 "type_mismatch",
                 format!("`{name}` is not a `{}`", T::NAME),
             ));
         }
-        let n = unsafe { sys::Rf_xlength(x) } as usize;
-        let fields: Vec<SEXP> = (0..n)
-            .map(|i| unsafe { sys::VECTOR_ELT(x, i as isize) })
-            .collect();
-        unsafe { T::from_r_stored(x, &fields) }.map(Receiver::Built)
-    }
-}
-
-/// Whether `x` is an R-stored value of `T`: a list whose `r8_type` names
-/// `T`.
-fn is_r_stored<T: RustStored>(x: SEXP) -> bool {
-    unsafe {
-        if sys::TYPEOF(x) != sys::VECSXP {
-            return false;
-        }
-        let ty = api::protect(&|| sys::Rf_getAttrib(x, symbol_r8_type()));
-        let Ok(ty) = ty else { return false };
-        if sys::TYPEOF(ty) != sys::STRSXP || sys::Rf_xlength(ty) != 1 {
-            return false;
-        }
-        let p = sys::Rf_translateCharUTF8(sys::STRING_ELT(ty, 0));
-        std::ffi::CStr::from_ptr(p).to_bytes() == T::NAME.as_bytes()
+        // A field read of a value of another package's codec may raise an R
+        // error.
+        let n = unsafe { sys::Rf_xlength(x) };
+        let fields = (0..n)
+            .map(|i| api::protect(&|| unsafe { sys::VECTOR_ELT(x, i) }))
+            .collect::<std::result::Result<Vec<SEXP>, Jumped>>()
+            .map_err(Jumped::into_error)?;
+        unsafe { T::from_value(x, &fields) }.map(Receiver::Built)
     }
 }
 
@@ -206,13 +197,6 @@ pub unsafe fn r_variant(x: SEXP) -> Result<String> {
         let p = sys::Rf_translateCharUTF8(sys::STRING_ELT(v, 0));
         Ok(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
     }
-}
-
-fn symbol_r8_type() -> SEXP {
-    unsafe extern "C" {
-        fn Rf_install(name: *const std::ffi::c_char) -> SEXP;
-    }
-    unsafe { Rf_install(c"r8_type".as_ptr()) }
 }
 
 /// A result of an impl function, converted to its R value.
@@ -349,7 +333,8 @@ impl<T: Element> IntoR for Buffer<T> {
     }
 }
 
-/// A Rust-stored value returned by an impl function, wrapped by R8.
+/// A Rust-stored value returned by an impl function, wrapped by R8, of a type
+/// whose codec this package's exports hold.
 pub struct Value<T: RustStored>(pub T);
 
 impl<T: RustStored> IntoR for Value<T> {
@@ -366,9 +351,19 @@ impl<T: RustStored> IntoR for Value<T> {
             code: [0; 64],
             message: [0; 1024],
         };
-        // R8 takes the state, also on error.
         let state = Box::into_raw(Box::new(self.0));
-        if unsafe { f(T::TYPE_NAME.as_ptr(), state.cast(), &mut value, &mut err) } != OK {
+        let status = unsafe {
+            f(
+                T::TYPE_NAME.as_ptr(),
+                module(),
+                state.cast(),
+                &mut value,
+                &mut err,
+            )
+        };
+        if status != OK {
+            // R8 owns the state only once it has wrapped it.
+            drop(unsafe { Box::from_raw(state) });
             return Err(Jumped::Error(Error::from_abi(&err)));
         }
         Ok(value)

@@ -172,9 +172,13 @@ static size_t signal_owned_bytes(const void *state) {
   return sizeof(Signal) + strlen(s->name) + 1 + s->n * sizeof(double);
 }
 
+// The address that identifies this shared object to R8, in each codec.
+const char pkgc_module = 0;
+
 const R8Codec pkgc_signal_codec = {
     .size = sizeof(R8Codec),
     .type_name = "pkgc::Signal",
+    .module = &pkgc_module,
     .from_fields = signal_from_fields,
     .write_state = signal_write_state,
     .read_state = signal_read_state,
@@ -198,7 +202,7 @@ SEXP pkgc_signal_peek(SEXP x) {
   const R8Api *api = R8_api();
   const void *state = NULL;
   R8Error err = {{0}, {0}};
-  if (api->value_state(x, "pkgc::Signal", &state, &err) != R8_OK) {
+  if (api->value_state(x, "pkgc::Signal", &pkgc_module, &state, &err) != R8_OK) {
     Rf_error("%s [%s]", err.message, err.code);
   }
   const Signal *s = state;
@@ -207,6 +211,34 @@ SEXP pkgc_signal_peek(SEXP x) {
   SET_VECTOR_ELT(out, 1, Rf_ScalarReal(s->n > 0 ? s->values[0] : NA_REAL));
   UNPROTECT(1);
   return out;
+}
+
+// The code that `value_state`, or `upcast_state` with `upcast`, reports for
+// this module's read of `x` as a value of `type`; "" when it lends the state.
+SEXP pkgc_lend(SEXP x, SEXP type, SEXP upcast) {
+  const R8Api *api = R8_api();
+  const void *state = NULL;
+  R8Error err = {{0}, {0}};
+  const char *name = CHAR(STRING_ELT(type, 0));
+  R8Status status = Rf_asLogical(upcast) == 1
+                        ? api->upcast_state(x, name, &pkgc_module, &state, &err)
+                        : api->value_state(x, name, &pkgc_module, &state, &err);
+  return Rf_mkString(status == R8_OK ? "" : err.code);
+}
+
+// The code that `new_value` reports for a state of this module wrapped as a
+// value of `type`.
+SEXP pkgc_wrap(SEXP type) {
+  Signal *s = signal_new("a", NULL, 0);
+  SEXP value = R_NilValue;
+  R8Error err = {{0}, {0}};
+  R8Status status =
+      R8_api()->new_value(CHAR(STRING_ELT(type, 0)), &pkgc_module, s, &value, &err);
+  // On an error the state stays the caller's.
+  if (status != R8_OK) {
+    signal_drop(s);
+  }
+  return Rf_mkString(status == R8_OK ? "" : err.code);
 }
 
 // A Signal built in C and wrapped through R8Api.new_value.
@@ -221,7 +253,8 @@ SEXP pkgc_signal_make(SEXP name, SEXP n) {
   free(values);
   SEXP value = R_NilValue;
   R8Error err = {{0}, {0}};
-  if (api->new_value("pkgc::Signal", s, &value, &err) != R8_OK) {
+  if (api->new_value("pkgc::Signal", &pkgc_module, s, &value, &err) != R8_OK) {
+    signal_drop(s);
     Rf_error("%s [%s]", err.message, err.code);
   }
   return value;

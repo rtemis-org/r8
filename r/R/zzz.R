@@ -245,24 +245,6 @@ r8_convert <- function(x, type) {
   for (s in sources) {
     fn <- .r8_impls[[paste("R8::From", s, target, sep = "|")]]
     if (!is.null(fn)) {
-      if (r8 && !identical(s, attr(x, "r8_type")) && is_compiled_impl(fn)) {
-        r8_abort(
-          "The compiled From(",
-          from_text(s),
-          ") impl of `",
-          target,
-          "` takes a value of `",
-          s,
-          "`, not of its descendant `",
-          attr(x, "r8_type"),
-          "`; convert r8_upcast(x, ",
-          sub("^.*::", "", s),
-          "), or declare From(",
-          from_text(attr(x, "r8_type")),
-          ").",
-          class = "r8_dispatch_error"
-        )
-      }
       out <- fn(x)
       if (
         !inherits(out, "r8_value") || !identical(attr(out, "r8_type"), target)

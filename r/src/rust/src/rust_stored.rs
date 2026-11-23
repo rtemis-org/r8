@@ -18,7 +18,7 @@ use rtemis_r8::rules::TypeLookup;
 
 use crate::construct::mkchar;
 use crate::declare::registry;
-use crate::rview::xlen;
+use crate::rview::{attr_string, sym_r8_type, xlen};
 
 static WRAP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static STATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -80,11 +80,11 @@ fn r8_rust_stored_memory() -> Robj {
     unsafe { Robj::from_sexp(f()) }
 }
 
-/// The native symbols of R8's C routines that R calls through `.Call()`:
-/// `invoke`, which calls an impl function, and `exports`, which fetches a
-/// package's exports table (`src/view.c`).
+/// The native symbols of R8's C routines that R calls through `.Call()`
+/// (`r8_native_symbols()` in `src/view.c`).
 ///
-/// @return List: `invoke` and `exports`.
+/// @return List: The symbols by name, such as `invoke`, which calls an impl
+///   function, and `exports`, which fetches a package's exports table.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -222,7 +222,7 @@ pub(crate) fn from_fields(vt: *const Codec, fields: SEXP) -> Result<*mut c_void,
 }
 
 /// Fills `err` with `code` and `message`, truncated to fit.
-fn set_error(err: *mut Error, code: &str, message: &str) {
+pub(crate) fn set_error(err: *mut Error, code: &str, message: &str) {
     if err.is_null() {
         return;
     }
@@ -382,29 +382,44 @@ fn def_version(def: &TypeDef) -> u32 {
 }
 
 /// `R8Api.new_value`: wraps a state of a registered Rust-stored struct or
-/// enum as an R8 value, taking ownership of the state, also on error; an
-/// enum value takes the variant that the codec's `variant` names.
+/// enum, which the caller's module built, as an R8 value. R8 owns the state
+/// once it returns `OK`; an enum value takes the variant that the codec's
+/// `variant` names.
 ///
 /// # Safety
 ///
-/// `type_name` is NUL-terminated or NULL; `state` was built by the type's
-/// codec; `value` and `err` are writable or NULL.
+/// `type_name` is NUL-terminated or NULL; `state` was built by `module`;
+/// `value` and `err` are writable or NULL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_api_new_value(
     type_name: *const c_char,
+    module: *const c_void,
     state: *mut c_void,
     value: *mut Sexp,
     err: *mut Error,
 ) -> Status {
-    let result = catch_unwind(AssertUnwindSafe(|| new_value(type_name, state, value)));
-    match result {
+    report(
+        err,
+        "R8 panicked while wrapping the state",
+        AssertUnwindSafe(|| new_value(type_name, module, state, value)),
+    )
+}
+
+/// Runs an API function: an error fills `err`, as does a panic, with the
+/// code `panic` and the message `on_panic`.
+fn report(
+    err: *mut Error,
+    on_panic: &str,
+    f: impl FnOnce() -> Result<(), (&'static str, String)> + std::panic::UnwindSafe,
+) -> Status {
+    match catch_unwind(f) {
         Ok(Ok(())) => OK,
         Ok(Err((code, message))) => {
             set_error(err, code, &message);
             ERROR
         }
         Err(_) => {
-            set_error(err, "panic", "R8 panicked while wrapping the state");
+            set_error(err, "panic", on_panic);
             ERROR
         }
     }
@@ -412,46 +427,36 @@ pub unsafe extern "C" fn r8_api_new_value(
 
 fn new_value(
     type_name: *const c_char,
+    module: *const c_void,
     state: *mut c_void,
     value: *mut Sexp,
 ) -> Result<(), (&'static str, String)> {
-    let name = c_text(type_name);
-    let vt = name.as_deref().and_then(crate::exports::codec);
-    let Some(vt) = vt else {
-        // The state is unowned without a codec; nothing can drop it.
-        return Err((
-            "unknown_type",
-            format!(
-                "`{}` is not a registered Rust-stored type",
-                name.unwrap_or_default()
-            ),
-        ));
-    };
-    let drop_state = || {
-        if let Some(d) = unsafe { (*vt).drop } {
-            unsafe { d(state) };
-        }
-    };
     if value.is_null() || state.is_null() {
-        drop_state();
         return Err(("invalid_argument", "`state` or `value` is NULL".to_string()));
     }
-    let q = match QualifiedName::parse(name.as_deref().unwrap_or_default()) {
-        Ok(q) => q,
-        Err(e) => {
-            drop_state();
-            return Err(("unknown_type", e.to_string()));
-        }
+    let name = c_text(type_name).unwrap_or_default();
+    let Some(vt) = crate::exports::codec(&name) else {
+        return Err((
+            "unknown_type",
+            format!("`{name}` is not a registered Rust-stored type"),
+        ));
     };
+    if unsafe { (*vt).module } != module {
+        return Err((
+            "other_module",
+            format!(
+                "the codec of `{name}` is in the compiled code of another package, which builds its states"
+            ),
+        ));
+    }
+    let q = QualifiedName::parse(&name).map_err(|e| ("unknown_type", e.to_string()))?;
     let docs = registry().snapshot();
     let lookup: &dyn TypeLookup = &*docs;
     let Some(def) = lookup.find(&q) else {
-        drop_state();
         return Err(("unknown_type", format!("`{q}` is not a registered type")));
     };
     let variant = state_variant(vt, state);
     let Some((names, version)) = value_fields(def, variant.as_deref(), lookup) else {
-        drop_state();
         return Err((
             "codec_variant",
             format!(
@@ -483,9 +488,8 @@ fn new_value(
         &mut out,
         &mut err,
     );
+    // The value takes the state only when the build returns.
     if status != OK {
-        // The value takes the state only when the build returns.
-        drop_state();
         return Err(("r_error", "R could not allocate the value".to_string()));
     }
     unsafe { *value = out.cast() };
@@ -558,52 +562,112 @@ pub(crate) unsafe fn template(
     }
 }
 
-/// `R8Api.value_state`: borrows the state of a value of the type
-/// `type_name`.
+/// `R8Api.value_state`: lends the state of a value of the type `type_name` to
+/// the caller's module.
 ///
 /// # Safety
 ///
 /// `type_name` is NUL-terminated or NULL; `state` and `err` are writable or
-/// NULL.
+/// NULL; called on R's main thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_api_value_state(
     value: Sexp,
     type_name: *const c_char,
+    module: *const c_void,
     state: *mut *const c_void,
     err: *mut Error,
 ) -> Status {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let name = c_text(type_name).unwrap_or_default();
-        let Some((s, vt)) = state_of(value.cast()) else {
-            return Err((
-                "not_rust_stored",
-                format!("the value is not a Rust-stored `{name}`"),
-            ));
-        };
-        let held = c_text(unsafe { (*vt).type_name }).unwrap_or_default();
-        if held != name {
-            return Err((
-                "type_mismatch",
-                format!("the value is a `{held}`, not a `{name}`"),
-            ));
-        }
-        if state.is_null() {
-            return Err(("invalid_argument", "`state` is NULL".to_string()));
-        }
-        unsafe { *state = s };
-        Ok(())
-    }));
-    match result {
-        Ok(Ok(())) => OK,
-        Ok(Err((code, message))) => {
-            set_error(err, code, &message);
-            ERROR
-        }
-        Err(_) => {
-            set_error(err, "panic", "R8 panicked while reading the state");
-            ERROR
+    report(
+        err,
+        "R8 panicked while reading the state",
+        AssertUnwindSafe(|| lend(value, type_name, module, state, false)),
+    )
+}
+
+/// `R8Api.upcast_state`: lends the state of a value of the type `type_name`,
+/// or, for a value of a struct that extends it, the state that its state
+/// embeds.
+///
+/// # Safety
+///
+/// As for [`r8_api_value_state`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_api_upcast_state(
+    value: Sexp,
+    type_name: *const c_char,
+    module: *const c_void,
+    state: *mut *const c_void,
+    err: *mut Error,
+) -> Status {
+    report(
+        err,
+        "R8 panicked while reading the state",
+        AssertUnwindSafe(|| lend(value, type_name, module, state, true)),
+    )
+}
+
+/// Lends the state of `value`, a value of the type `type_name` or, with
+/// `upcast`, of a struct that extends it, to `module`: the codec of the
+/// value has the same module and, for another type, embeds the state of
+/// `type_name`. `not_lent` reports any other value of the type, or of a
+/// registered subtype with `upcast`; `type_mismatch` any other object.
+fn lend(
+    value: Sexp,
+    type_name: *const c_char,
+    module: *const c_void,
+    state: *mut *const c_void,
+    upcast: bool,
+) -> Result<(), (&'static str, String)> {
+    if state.is_null() || type_name.is_null() {
+        return Err((
+            "invalid_argument",
+            "`type_name` or `state` is NULL".to_string(),
+        ));
+    }
+    let x: SEXP = value.cast();
+    let name = unsafe { CStr::from_ptr(type_name) };
+    if let Some((s, vt)) = state_of(x) {
+        let codec = unsafe { &*vt };
+        if codec.module == module && !module.is_null() {
+            let lent = if unsafe { CStr::from_ptr(codec.type_name) } == name {
+                s
+            } else {
+                match codec.upcast {
+                    Some(f) if upcast => unsafe { f(s, type_name) },
+                    _ => std::ptr::null(),
+                }
+            };
+            if !lent.is_null() {
+                unsafe { *state = lent };
+                return Ok(());
+            }
         }
     }
+    let name = name.to_string_lossy();
+    let held = attr_string(x, sym_r8_type()).unwrap_or_default();
+    let is_one = held == name
+        || (upcast
+            && match (QualifiedName::parse(&held), QualifiedName::parse(&name)) {
+                (Ok(h), Ok(n)) => {
+                    let docs = registry().snapshot();
+                    let lookup: &dyn TypeLookup = &*docs;
+                    lookup.is_subtype(&h, &n) && !lookup.is_stale(&h)
+                }
+                _ => false,
+            });
+    Err(if is_one {
+        (
+            "not_lent",
+            format!("the state of the `{held}` is not this module's to read"),
+        )
+    } else if held.is_empty() {
+        ("type_mismatch", format!("the object is not a `{name}`"))
+    } else {
+        (
+            "type_mismatch",
+            format!("the value is a `{held}`, not a `{name}`"),
+        )
+    })
 }
 
 /// The version, declaration hash, and registering package of the

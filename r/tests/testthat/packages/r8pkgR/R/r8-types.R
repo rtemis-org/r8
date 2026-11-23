@@ -160,3 +160,98 @@ Probe <- R8::new_struct(
   ),
   storage = "rust"
 )
+
+#' Interval
+#'
+#' A numeric interval.
+#'
+#' The struct `pkgr::Interval`, declared in Rust.
+#'
+#' @param lo The lower end.
+#' @param hi The upper end.
+#' @param unit The unit of the ends.
+#' @return A `pkgr::Interval` value.
+#' @export
+Interval <- R8::new_struct(
+  "Interval",
+  fields = list(
+    lo = R8::field(R8::type_double(), description = "The lower end."),
+    hi = R8::field(
+      R8::type_double(),
+      default = 1,
+      description = "The upper end."
+    ),
+    unit = R8::field(
+      R8::option(R8::type_character()),
+      description = "The unit of the ends."
+    )
+  ),
+  description = "A numeric interval.",
+  version = 1L,
+  rules = list(
+    R8::rule(lo <= hi, id = "ordered")
+  ),
+  storage = "rust"
+)
+
+#' Band
+#'
+#' A labeled interval with weights.
+#'
+#' The struct `pkgr::Band`, declared in Rust.
+#'
+#' @param lo The lower end.
+#' @param hi The upper end.
+#' @param unit The unit of the ends.
+#' @param label The label.
+#' @param weights The weights.
+#' @return A `pkgr::Band` value.
+#' @export
+Band <- R8::new_struct(
+  "Band",
+  fields = list(
+    label = R8::field(R8::type_character(), description = "The label."),
+    weights = R8::field(
+      R8::vec(R8::type_double()),
+      description = "The weights."
+    )
+  ),
+  description = "A labeled interval with weights.",
+  version = 1L,
+  rules = list(
+    R8::rule(label != "", id = "labeled")
+  ),
+  extends = Interval,
+  defaults = list(lo = 0, unit = "cm"),
+  storage = "rust"
+)
+
+#' Strip
+#'
+#' A numbered band without a default unit.
+#'
+#' The struct `pkgr::Strip`, declared in Rust.
+#'
+#' @param lo The lower end.
+#' @param hi The upper end.
+#' @param unit The unit of the ends.
+#' @param label The label.
+#' @param weights The weights.
+#' @param number The number.
+#' @return A `pkgr::Strip` value.
+#' @export
+Strip <- R8::new_struct(
+  "Strip",
+  fields = list(
+    number = R8::field(
+      R8::type_integer(min = 1L),
+      default = 1L,
+      description = "The number."
+    )
+  ),
+  description = "A numbered band without a default unit.",
+  version = 1L,
+  extends = Band,
+  defaults = list(unit = NULL),
+  storage = "rust"
+)

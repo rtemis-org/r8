@@ -123,10 +123,14 @@ static size_t resampler_owned_bytes(const void *state) {
   return sizeof(Resampler);
 }
 
+// The address that identifies this shared object to R8 (signal.c).
+extern const char pkgc_module;
+
 // An enum's codec: `variant` and `from_variant`, and no `from_fields`.
 const R8Codec pkgc_resampler_codec = {
     .size = sizeof(R8Codec),
     .type_name = "pkgc::Resampler",
+    .module = &pkgc_module,
     .from_fields = NULL,
     .encode = NULL,
     .write_state = resampler_write_state,
@@ -143,7 +147,8 @@ const R8Codec pkgc_resampler_codec = {
 };
 
 // Codecs of pkgc::Signal that registration refuses, by `kind`: 1 sets the
-// enum members, 2 pins another declaration hash, and 3 pins none.
+// enum members, 2 pins another declaration hash, 3 pins none, and 4 names no
+// module.
 extern const R8Codec pkgc_signal_codec;
 static R8Codec misshaped;
 static R8Exports bad_exports;
@@ -160,6 +165,9 @@ SEXP pkgc_bad_exports(SEXP kind) {
       break;
     case 2:
       misshaped.declaration_hash = "sha256:00";
+      break;
+    case 4:
+      misshaped.module = NULL;
       break;
     default:
       misshaped.declaration_hash = NULL;

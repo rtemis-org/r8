@@ -113,7 +113,7 @@ fn has_enum_members(v: &Codec) -> bool {
 }
 
 /// Checks the codec of the Rust-stored type `name` against the type's
-/// declaration in `lookup`: a struct's codec sets `from_fields` and neither
+/// declaration in `lookup`: the codec names its module, a struct's codec sets `from_fields` and neither
 /// `variant` nor `from_variant`, an enum's sets both and not `from_fields`,
 /// and no field of the type, in any variant, is host-only, since the
 /// codec's state holds every field.
@@ -128,6 +128,11 @@ pub fn check_codec(
             "the codec of `{name}` of `{package}` has no declaration of its type"
         ));
     };
+    if v.module.is_null() {
+        return Err(format!(
+            "the codec of `{name}` of `{package}` sets no `module`, the address that identifies the code whose states it holds"
+        ));
+    }
     let shape_ok = match def {
         TypeDef::Struct(_) => v.from_fields.is_some() && !has_enum_members(v),
         TypeDef::Enum(_) => {

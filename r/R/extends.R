@@ -64,9 +64,11 @@ type_name_of <- function(type) {
 #'
 #' A child holds its ancestors' fields first, so the value of an ancestor is
 #' those fields with the ancestor's type. The fields are the child's own
-#' objects, not copies. The result is valid: the child's rules include the
+#' objects, not copies, and a Rust-stored ancestor's codec builds its state
+#' from them. The result is valid: the child's rules include the
 #' ancestor's, which read the ancestor's fields only. `r8_convert(x, Parent)`
-#' returns the same value.
+#' returns the same value, and an impl of the ancestor in compiled code
+#' receives it.
 #'
 #' @param x A value of a struct with `extends`.
 #' @param type An R8 struct type object: `x`'s type or one of its ancestors.
@@ -115,16 +117,9 @@ r8_upcast <- function(x, type) {
     )
   }
   if (identical(attr(type, "r8_storage"), "rust")) {
-    r8_abort(
-      "`",
-      source,
-      "` is Rust-stored; its value of `",
-      target,
-      "` is the embedded parent that `#[r8(extends)]` declares in Rust.",
-      class = "r8_type_error"
-    )
+    check_codec(target, attr(type, "r8_package") %||% "")
   }
-  r8_upcast_value(x, target)
+  .Call(.r8_native[["upcast"]], x, target)
 } # /R8::r8_upcast
 
 
