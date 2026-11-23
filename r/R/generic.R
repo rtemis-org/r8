@@ -123,7 +123,21 @@ check_method_formals <- function(fn, gen_args, label) {
       class = "r8_declaration_error"
     )
   }
-  own <- names(formals(fn)) %||% character()
+  fmls <- formals(fn)
+  own <- names(fmls) %||% character()
+  for (a in own) {
+    if (is.call(fmls[[a]]) && calls_arg(fmls[[a]], environment(fn))) {
+      r8_abort(
+        "The method of `",
+        label,
+        "` declares `",
+        a,
+        "` with arg(); a parameter's type belongs to the generic or trait ",
+        "method, in params().",
+        class = "r8_declaration_error"
+      )
+    }
+  }
   dots <- "..." %in% gen_args
   fits <- if (dots) {
     identical(own[seq_along(gen_args)], gen_args)
@@ -157,7 +171,7 @@ check_method_formals <- function(fn, gen_args, label) {
 #' exports it. The generic is a trait with one method named as the generic,
 #' `ns::describe`, which Rust and the C interface implement as any trait.
 #'
-#' A replacement generic, `generic("labels<-", c("x", "value"))`, is called
+#' A replacement generic, `generic("labels<-", params(x, value))`, is called
 #' as `labels(x) <- value`, which rebinds `x` to the method's result; the
 #' original value is unchanged. Its last argument is `value`, and each
 #' method returns a value of the type of `x`: for a child type, the child,
@@ -169,11 +183,11 @@ check_method_formals <- function(fn, gen_args, label) {
 #'   `"describe"`: a letter, then letters, digits, or underscores; or such a
 #'   name followed by `<-` for a replacement generic, such as `"labels<-"`.
 #'   It is the name the generic is assigned to.
-#' @param args Character: The formal argument names, in order. The first is
-#'   the value dispatched on. A generic with `...` lets each method add named
+#' @param params The generic's parameters, from [params()]. The first is the
+#'   value dispatched on. A generic with `"..."` lets each method add named
 #'   arguments after the generic's; a generic without it calls its methods
 #'   with exactly its arguments, and a call with another argument is an
-#'   error. Removing `...` from a generic breaks the methods that add
+#'   error. Removing `"..."` from a generic breaks the methods that add
 #'   arguments.
 #' @param description Character: What the generic does.
 #' @param dispatch Optional Character: The arguments the generic dispatches
@@ -187,21 +201,31 @@ check_method_formals <- function(fn, gen_args, label) {
 #'   specific in one position make a call on both ambiguous, an
 #'   `r8_dispatch_error` that names the method to declare, and
 #'   [r8_ambiguities()] lists such pairs.
+#' @param return_type Optional: The type of the value that every method
+#'   returns, an `r8_field_type`, an R8 type, or `"Self"`, the type of the
+#'   first argument. A method may declare a type that fits it
+#'   ([implement<-]). A replacement generic returns a value of its argument's
+#'   type and declares none.
 #'
 #' @return `generic()`: The generic, a function of class `r8_generic`. `print()`: `x`, invisibly.
 #'
-#' @seealso [implement<-] declares a method; [r8_method()] returns one.
+#' @seealso [params()] declares the parameters; [implement<-] declares a
+#'   method; [r8_method()] returns one.
 #'
 #' @examples
 #' op <- options(r8.namespace = "models")
 #' GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
-#' describe <- generic("describe", "x")
-#' implement(describe, GBM) <- function(x) {
-#'   paste("Gradient boosting,", x$n_trees, "trees")
+#' describe <- generic(
+#'   "describe",
+#'   params(x, digits = arg_integer(min = 0L, default = 3L)),
+#'   return_type = type_character()
+#' )
+#' implement(describe, GBM) <- function(x, digits) {
+#'   paste("Gradient boosting,", format(x$n_trees, digits = digits), "trees")
 #' }
 #' describe(GBM(n_trees = 100L))
 #'
-#' `n_trees<-` <- generic("n_trees<-", c("x", "value"))
+#' `n_trees<-` <- generic("n_trees<-", params(x, value))
 #' implement(`n_trees<-`, GBM) <- function(x, value) {
 #'   x$n_trees <- value
 #'   x
@@ -212,7 +236,13 @@ check_method_formals <- function(fn, gen_args, label) {
 #' options(op)
 #'
 #' @export
-generic <- function(name, args = "x", description = "", dispatch = NULL) {
+generic <- function(
+  name,
+  params,
+  description = "",
+  dispatch = NULL,
+  return_type = NULL
+) {
   replacement <- is.character(name) &&
     length(name) == 1L &&
     !is.na(name) &&
@@ -228,34 +258,17 @@ generic <- function(name, args = "x", description = "", dispatch = NULL) {
       class = "r8_declaration_error"
     )
   }
-  if (
-    !is.character(args) ||
-      length(args) == 0L ||
-      anyNA(args) ||
-      anyDuplicated(args) > 0L ||
-      !all(args == "..." | make.names(args) == args)
-  ) {
-    r8_abort(
-      "`args` are the generic's formal argument names, distinct syntactic ",
-      "names such as c(\"x\", \"data\").",
-      class = "r8_declaration_error"
-    )
-  }
-  if (identical(args[[1L]], "...")) {
-    r8_abort(
-      "The first argument of a generic is the value it dispatches on, a name.",
-      class = "r8_declaration_error"
-    )
-  }
+  p <- as_params(params, "generic()")
+  args <- p[["names"]]
   if (
     replacement &&
       (length(args) < 2L || !identical(args[[length(args)]], "value"))
   ) {
     r8_abort(
       "A replacement generic takes the value it replaces in and the ",
-      "replacement, the last argument `value`: generic(\"",
+      "replacement, the last parameter `value`: generic(\"",
       name,
-      "\", c(\"x\", \"value\")).",
+      "\", params(x, value)).",
       class = "r8_declaration_error"
     )
   }
@@ -301,16 +314,17 @@ generic <- function(name, args = "x", description = "", dispatch = NULL) {
   trait_name <- if (replacement) paste0("with_", base) else name
   qname <- paste0(namespace, "::", trait_name)
   check_generic_trait(qname, name)
-  formals <- stats::setNames(rep(list(quote(expr = )), length(args)), args)
-  g <- make_generic(qname, name, as.function(c(formals, list(NULL))), dispatch)
+  g <- make_generic(qname, name, p, dispatch)
+  method <- list(
+    name = name,
+    description = description,
+    params = params_ir(p, dispatch)
+  )
+  method[["return_type"]] <- return_type_ir(return_type, self = TRUE)
   ir <- list(
     name = trait_name,
     description = description,
-    methods = list(list(
-      name = name,
-      description = description,
-      params = dispatch_params(args, dispatch)
-    )),
+    methods = list(method),
     generic = TRUE
   )
   trait <- with_record(
@@ -513,7 +527,7 @@ classify_generic <- function(g, type_label = "Type") {
   }
   r8_abort(
     "This function is not a generic; declare one with generic(), such as ",
-    "describe <- generic(\"describe\", \"x\").",
+    "describe <- generic(\"describe\", params(x)).",
     class = "r8_declaration_error"
   )
 } # /R8::classify_generic
@@ -524,7 +538,7 @@ classify_generic <- function(g, type_label = "Type") {
 #'
 #' `implement(generic, Type) <- function(x) ...` declares the method that
 #' `generic` calls for values of `Type`, and returns `generic` unchanged.
-#' `generic` is written as its name. The function has exactly the generic's
+#' The generic is written as its name. The function has exactly the generic's
 #' arguments, or, for a generic with `...`, the generic's arguments first,
 #' `...` included, then any named arguments of its own. By the generic:
 #'
@@ -553,15 +567,18 @@ classify_generic <- function(g, type_label = "Type") {
 #'
 #' In a package, `r8_rd()` documents the method in the generic's Rd file.
 #'
-#' @param generic A generic, written as its name.
-#' @param ... The types of the method: one R8 type object, or for a generic
-#'   that dispatches on several arguments, one per dispatched argument it
+#' @param ... The generic, written as its name and without an argument name,
+#'   then the types of the method: one R8 type object, or for a generic that
+#'   dispatches on several arguments, one per dispatched argument it
 #'   specializes, matched by position or by name, as
 #'   `implement(combine, A, B)` or `implement(combine, y = B)`; a converter
 #'   from [r8_converter()] takes an R8 type object or a class name.
+#' @param return_type Optional: The type of the value this method returns, an
+#'   `r8_field_type` or an R8 type, which fits the return type that the
+#'   generic declares, as [impl_method()] states.
 #' @param value Function: The method.
 #'
-#' @return `generic`, unchanged.
+#' @return The generic, unchanged.
 #'
 #' @seealso [generic()], [r8_method()].
 #'
@@ -584,9 +601,30 @@ classify_generic <- function(g, type_label = "Type") {
 #'
 #' @name implement
 #' @export
-`implement<-` <- function(generic, ..., value) {
+`implement<-` <- function(..., return_type = NULL, value) {
+  # The dots come first, so that R matches an argument named by a prefix of
+  # another formal, such as `g`, as a position.
   types <- list(...)
+  if (length(types) == 0L) {
+    classify_generic(NULL)
+  }
+  generic <- types[[1L]]
+  types <- types[-1L]
+  if (!any(nzchar(names(types)))) {
+    names(types) <- NULL
+  }
   env <- parent.frame()
+  if (!is.null(return_type) && !inherits(generic, "r8_generic")) {
+    r8_abort(
+      "A method's return type fits the one its R8 generic declares; ",
+      if (inherits(generic, "r8_converter")) {
+        "a conversion returns a value of the converter's target."
+      } else {
+        "this generic declares none."
+      },
+      class = "r8_declaration_error"
+    )
+  }
   if (inherits(generic, "r8_converter")) {
     if (length(types) != 1L) {
       r8_abort(
@@ -647,6 +685,9 @@ classify_generic <- function(g, type_label = "Type") {
     function(d) identical(d[["name"]], m),
     trait_ir(t)[["methods"]]
   )
+  if (!is.null(return_type)) {
+    value <- impl_method(value, return_type)
+  }
   impl_declare(
     target[["trait"]],
     type,
@@ -779,9 +820,9 @@ register_s3_method <- function(entry) {
 #' or for a tuple of types of a generic that dispatches on several
 #' arguments, for tests and inspection.
 #'
-#' @param generic A generic, as `implement()` takes it.
-#' @param ... The types, as `implement()` takes them: one R8 type object, or
-#'   one per dispatched argument, by position or by name.
+#' @param ... The generic, without an argument name, then the types, as
+#'   `implement()` takes them: one R8 type object, or one per dispatched
+#'   argument, by position or by name.
 #'
 #' @return Function. A generic without a method for the types raises
 #'   `r8_dispatch_error`.
@@ -789,14 +830,30 @@ register_s3_method <- function(entry) {
 #' @examples
 #' op <- options(r8.namespace = "models")
 #' GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
-#' describe <- generic("describe", "x")
+#' describe <- generic("describe", params(x))
 #' implement(describe, GBM) <- function(x) "Gradient boosting"
 #' r8_method(describe, GBM)
 #' options(op)
 #'
 #' @export
-r8_method <- function(generic, ...) {
+r8_method <- function(...) {
   types <- list(...)
+  if (
+    length(types) < 2L ||
+      (!is.null(names(types)) && nzchar(names(types)[[1L]])) ||
+      !is.function(types[[1L]])
+  ) {
+    r8_abort(
+      "r8_method() takes a generic, without an argument name, then the types ",
+      "of one of its methods: r8_method(describe, GBM).",
+      class = "r8_dispatch_error"
+    )
+  }
+  generic <- types[[1L]]
+  types <- types[-1L]
+  if (!any(nzchar(names(types)))) {
+    names(types) <- NULL
+  }
   if (
     inherits(generic, "r8_generic") &&
       (length(attr(generic, "r8_dispatch")) > 1L ||

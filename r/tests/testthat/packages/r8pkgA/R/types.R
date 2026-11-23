@@ -27,7 +27,7 @@ Rect <- R8::new_struct(
 
 Area <- R8::new_trait(
   "Area",
-  methods = list(area = R8::trait_method(function(x, ...) NULL))
+  methods = list(area = R8::trait_method(R8::params(x, "...")))
 )
 area <- Area@area
 

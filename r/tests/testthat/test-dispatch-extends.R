@@ -19,8 +19,8 @@ test_that("a parent's impl runs on the child, and generics in it dispatch on the
   B <- ty[["B"]]
   C <- ty[["C"]]
   declare_in("dx1", {
-    label <- generic("label", "x")
-    describe <- generic("describe", "x")
+    label <- generic("label", params(x))
+    describe <- generic("describe", params(x))
     implement(label, A) <- function(x) "an A"
     implement(label, C) <- function(x) "a C"
     implement(describe, A) <- function(x) {
@@ -47,8 +47,8 @@ test_that("an impl is the unit of precedence through extends", {
     Profile <- new_trait(
       "Profile",
       methods = list(
-        name = trait_method(function(x) NULL),
-        size = trait_method(function(x) NULL, default_impl = function(x) {
+        name = trait_method(params(x)),
+        size = trait_method(params(x), default_impl = function(x) {
           "default size"
         })
       )
@@ -72,7 +72,7 @@ test_that("r8_next_impl() continues from the provider, level by level", {
   B <- ty[["B"]]
   C <- ty[["C"]]
   declare_in("dx3", {
-    path <- generic("path", c("x", "sep"))
+    path <- generic("path", params(x, sep))
     implement(path, A) <- function(x, sep) "A"
     implement(path, B) <- function(x, sep) paste("B", r8_next_impl(), sep = sep)
     implement(path, C) <- function(x, sep) paste("C", r8_next_impl(), sep = sep)
@@ -122,7 +122,7 @@ test_that("a stale child refuses ancestors, upcast, and forwarded dispatch", {
   declare_in("dx5", {
     A <- new_struct("A", fields = list(a = type_double()))
     B <- new_struct("B", fields = list(b = type_double()), extends = A)
-    label <- generic("label", "x")
+    label <- generic("label", params(x))
     implement(label, A) <- function(x) "an A"
     b <- B(a = 1, b = 2)
     expect_warning(

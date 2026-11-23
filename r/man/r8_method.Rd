@@ -4,13 +4,12 @@
 \alias{r8_method}
 \title{The method of a generic for a type}
 \usage{
-r8_method(generic, ...)
+r8_method(...)
 }
 \arguments{
-\item{generic}{A generic, as \code{implement()} takes it.}
-
-\item{...}{The types, as \code{implement()} takes them: one R8 type object, or
-one per dispatched argument, by position or by name.}
+\item{...}{The generic, without an argument name, then the types, as
+\code{implement()} takes them: one R8 type object, or one per dispatched
+argument, by position or by name.}
 }
 \value{
 Function. A generic without a method for the types raises
@@ -24,7 +23,7 @@ arguments, for tests and inspection.
 \examples{
 op <- options(r8.namespace = "models")
 GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
-describe <- generic("describe", "x")
+describe <- generic("describe", params(x))
 implement(describe, GBM) <- function(x) "Gradient boosting"
 r8_method(describe, GBM)
 options(op)

@@ -44,7 +44,7 @@ trait, or by the package that \code{package} names.
 }
 \examples{
 op <- options(r8.namespace = "hosts")
-shape_text <- generic("shape_text", "x")
+shape_text <- generic("shape_text", params(x))
 implement(shape_text, "data.frame") <- function(x) paste(nrow(x), "rows")
 implement(shape_text, host_class("matrix")) <- function(x) {
   paste(nrow(x), "by", ncol(x))

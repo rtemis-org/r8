@@ -367,7 +367,7 @@ test_that("every valid name can be a field, a variant, or a method", {
   expect_identical(attr(E@description, "r8_variant"), "description")
   Tr <- declare_in(
     "demo",
-    new_trait("Named", methods = list(type = trait_method(function(x) NULL)))
+    new_trait("Named", methods = list(type = trait_method(params(x))))
   )
   expect_s3_class(Tr@type, "r8_generic")
 })
@@ -470,7 +470,7 @@ test_that("a failed declaration leaves the registry unchanged", {
 test_that("a type and a trait of one name are refused in either order", {
   declare_in(
     "collide",
-    new_trait("Size", methods = list(total = trait_method(function(x) NULL)))
+    new_trait("Size", methods = list(total = trait_method(params(x))))
   )
   expect_error(
     declare_in("collide", new_struct("Size", fields = list(a = type_double()))),
@@ -481,7 +481,7 @@ test_that("a type and a trait of one name are refused in either order", {
   expect_error(
     declare_in(
       "collide",
-      new_trait("Figure", methods = list(area = trait_method(function(x) NULL)))
+      new_trait("Figure", methods = list(area = trait_method(params(x))))
     ),
     "duplicate_type"
   )
@@ -648,6 +648,84 @@ test_that("a default of an R8 type takes a value with fields, in construction an
   expect_identical(r$kernel$gamma, 0.1)
   expect_identical(r$origin$x, 1)
   expect_identical(r$cost, 3)
+})
+
+test_that("a default is an R value of its type, written in its JSON form", {
+  Defaults <- declare_in(
+    "dftr",
+    new_struct(
+      "Defaults",
+      fields = list(
+        day = field(type_date(), default = as.Date("2026-01-02")),
+        at = field(
+          type_posixct(),
+          default = as.POSIXct("2026-01-02", tz = "UTC")
+        ),
+        limit = field(type_double(finite = FALSE), default = Inf),
+        bytes = field(type_raw(), default = as.raw(1:3)),
+        cells = field(vec(option(type_double())), default = c(1, NA)),
+        weights = field(btree_map(type_double()), default = c(a = 1, b = 2)),
+        steps = field(index_map(type_double()), default = list(b = 1, a = 2)),
+        group = field(
+          type_factor(levels = c("a", "b")),
+          default = factor("b", levels = c("a", "b"))
+        ),
+        m = field(type_matrix(type_double()), default = diag(2)),
+        rows = field(
+          type_table(list(k = type_integer())),
+          default = data.frame(k = 1:2)
+        )
+      )
+    )
+  )
+  x <- Defaults()
+  expect_identical(x$day, as.Date("2026-01-02"))
+  expect_identical(x$limit, Inf)
+  expect_identical(x$bytes, as.raw(1:3))
+  expect_identical(x$cells, c(1, NA))
+  expect_identical(names(x$steps), c("b", "a"))
+  expect_identical(x$m, diag(2))
+  # A document without the members takes the same defaults.
+  r <- r8_from_json(
+    Defaults,
+    '{"$type": "dftr::Defaults", "$types": {"dftr::Defaults": 1}}'
+  )
+  expect_true(r8_equal(r, x))
+  expect_identical(r8_hash(r), r8_hash(x))
+})
+
+test_that("a default outside its type in R is a declaration error", {
+  refused <- function(type, default, message = "default_invalid") {
+    expect_error(
+      declare_in(
+        "dftx",
+        new_struct("Bad", fields = list(v = field(type, default = default)))
+      ),
+      message,
+      class = "r8_declaration_error"
+    )
+  }
+  # The JSON form of a date, a raw vector, or a factor is not its R form.
+  refused(type_date(), "2026-01-02", "default of `v` is invalid.*Date")
+  refused(type_raw(), "aGk=")
+  refused(type_factor(levels = "a"), "a")
+  refused(type_integer(), NA)
+  refused(type_double(), c(a = 1))
+  Point <- declare_in(
+    "dftx",
+    new_struct("Point", fields = list(x = type_double()))
+  )
+  Spot <- declare_in(
+    "dftx",
+    new_struct("Spot", fields = list(x = type_double()))
+  )
+  refused(Point, Spot(x = 1))
+  refused(Point, list(x = 1), "a value of that type")
+  refused(
+    option(host_class("lm")),
+    structure(list(), class = "lm"),
+    "no JSON form"
+  )
 })
 
 test_that("a rule's number beyond 2^53 is a declaration error", {

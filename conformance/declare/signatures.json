@@ -208,6 +208,300 @@
       }
     },
     {
+      "id": "param-default-null",
+      "description": "A null default of a parameter of type option(), which a call may omit; without the member, the parameter is required.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Other",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "o",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "option",
+                      "inner": {
+                        "kind": "integer"
+                      }
+                    },
+                    "default": null
+                  },
+                  {
+                    "name": "m",
+                    "type": {
+                      "kind": "option",
+                      "inner": {
+                        "kind": "integer"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": []
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "param-default-null-type",
+      "description": "A null default of a parameter whose type is not option().",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Other",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "o",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "integer"
+                    },
+                    "default": null
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": []
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_invalid",
+            "path": "/traits/0/methods/0/params/1/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "param-dots-typed",
+      "description": "A type on the dots.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Other",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "o",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "...",
+                    "type": {
+                      "kind": "double"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": []
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "param_dots",
+            "path": "/traits/0/methods/0/params/1"
+          }
+        ]
+      }
+    },
+    {
       "id": "dispatch-param-constraint-type",
       "description": "A dispatched parameter typed by a base type, which names no type of a value.",
       "op": "declare",
@@ -290,6 +584,101 @@
                     "name": "y",
                     "dispatch": true
                   }
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": []
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_param_type",
+            "path": "/traits/0/methods/0/params/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-param-constraint-type-first",
+      "description": "The first parameter of a method without dispatch marks, typed by a base type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Other",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "o",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "type": {
+                      "kind": "double"
+                    }
+                  },
+                  "y"
                 ]
               }
             ]
@@ -1095,6 +1484,97 @@
           {
             "code": "return_type_unfit",
             "path": "/impls/0/methods/0/return_type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "return-type-replacement",
+      "description": "A return type on a replacement method, which returns a value of its first argument's type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Other",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "o",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit<-",
+                "description": "",
+                "params": [
+                  "x",
+                  "value"
+                ],
+                "return_type": "Self"
+              }
+            ]
+          }
+        ],
+        "impls": []
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "return_type_replacement",
+            "path": "/traits/0/methods/0/return_type"
           }
         ]
       }

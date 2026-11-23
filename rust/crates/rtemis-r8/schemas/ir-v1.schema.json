@@ -1675,7 +1675,7 @@
           "description": "The parameter's type, which every argument satisfies."
         },
         "default": {
-          "description": "The parameter's default in its JSON form, for a typed parameter."
+          "description": "The parameter's default in its JSON form, for a typed parameter. A\n`null` is the default of a parameter of type `option()`; a parameter\nwithout the member is required."
         },
         "host_default": {
           "anyOf": [

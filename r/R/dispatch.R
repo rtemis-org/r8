@@ -66,6 +66,19 @@ dispatch_names <- function(params) {
 #' @keywords internal
 #' @noRd
 check_dispatch <- function(dispatch, args, label, replacement = FALSE) {
+  # The arguments of `implement<-` after the types it names.
+  reserved <- intersect(dispatch %||% args[[1L]], c("return_type", "value"))
+  if (length(reserved) > 0L) {
+    r8_abort(
+      "`",
+      label,
+      "` dispatches on `",
+      reserved[[1L]],
+      "`, which names an argument of implement(); name the parameter ",
+      "otherwise.",
+      class = "r8_declaration_error"
+    )
+  }
   if (is.null(dispatch)) {
     return(args[[1L]])
   }
@@ -293,7 +306,7 @@ IMPLICIT_CLASSES <- c(
 #'
 #' @examples
 #' op <- options(r8.namespace = "hosts")
-#' shape_text <- generic("shape_text", "x")
+#' shape_text <- generic("shape_text", params(x))
 #' implement(shape_text, "data.frame") <- function(x) paste(nrow(x), "rows")
 #' implement(shape_text, host_class("matrix")) <- function(x) {
 #'   paste(nrow(x), "by", ncol(x))
@@ -751,7 +764,7 @@ select_tuple <- function(trait_name, method, args, above = NULL) {
 #' op <- options(r8.namespace = "demo")
 #' A <- new_struct("A", fields = list(a = type_double()))
 #' A1 <- new_struct("A1", fields = list(a1 = type_double()), extends = A)
-#' combine <- generic("combine", c("x", "y"), dispatch = c("x", "y"))
+#' combine <- generic("combine", params(x, y), dispatch = c("x", "y"))
 #' implement(combine, A1, A) <- function(x, y) "A1, A"
 #' implement(combine, A, A1) <- function(x, y) "A, A1"
 #' r8_ambiguities(combine)

@@ -21,8 +21,7 @@ use serde_json::Value;
 
 use crate::fieldtype::field_type;
 use crate::rview::{
-    attr, attr_string, inherits, is_null, sexptype, string_elt, sym_names, sym_r8_name,
-    sym_r8_type, xlen,
+    attr, attr_string, inherits, is_null, sexptype, string_elt, sym_names, sym_r8_name, xlen,
 };
 
 /// A problem of reading a declaration.
@@ -103,50 +102,58 @@ fn one_string(x: SEXP) -> Option<String> {
         .flatten()
 }
 
-/// The JSON form of a default `x` of a field of type `ty`, as a tree whose
-/// numbers are kept as written. A default of a field of an R8 type is a value
-/// of the type, a struct or an enum variant with its fields, whose normalized
-/// form it takes.
+/// The JSON form of the default `x` of `name`, a field or parameter of type
+/// `ty`: an R value of the type, whose normalized form it takes, as a tree
+/// whose numbers are kept as written. `json_ir()` gives the JSON form itself,
+/// and `int64()` an integer by its digits. `NULL` is the default of a type
+/// that admits an absent value, `option()`.
 fn default_value(
     x: SEXP,
     ty: &FieldType,
     lookup: &(impl TypeLookup + Sized),
     path: &str,
+    name: &str,
 ) -> Read<Tree> {
-    if inherits(x, "r8_json_ir") {
+    if inherits(x, "r8_json_ir") || inherits(x, "r8_int64") {
         return read::<Exact>(x, path).map(|e| e.0);
     }
+    let invalid = |path: &str, why: &str| {
+        problem(
+            "default_invalid",
+            path,
+            format!("the default of `{name}` is invalid: {why}"),
+        )
+    };
     match ty {
-        FieldType::Option { inner, .. } => default_value(x, inner, lookup, path),
+        FieldType::Option { .. } if is_null(x) => Ok(Tree::Null),
+        FieldType::Option { inner, .. } => default_value(x, inner, lookup, path, name),
+        // A list, whose items may be `json_ir()`.
         FieldType::Vec { element, .. } if sexptype(x) == SEXPTYPE::VECSXP => (0..xlen(x))
             .map(|i| {
                 let e = unsafe { VECTOR_ELT(x, i as isize) };
-                if is_null(e) {
-                    Ok(Tree::Null)
-                } else {
-                    default_value(e, element, lookup, &format!("{path}/{i}"))
-                }
+                default_value(e, element, lookup, &format!("{path}/{i}"), name)
             })
             .collect::<Read<Vec<_>>>()
             .map(|v| Tree::Array(v.into_boxed_slice())),
-        FieldType::Vec { .. } => {
-            read::<Vec<Exact>>(x, path).map(|v| Tree::Array(v.into_iter().map(|e| e.0).collect()))
+        FieldType::Named { .. } if !inherits(x, "r8_value") => {
+            Err(built(path, BuildError::DefaultNotValue))
         }
-        FieldType::Named { .. } => {
-            if !inherits(x, "r8_value") {
-                return Err(built(path, BuildError::DefaultNotValue));
-            }
-            let q = attr_string(x, sym_r8_type())
-                .and_then(|q| QualifiedName::parse(&q).ok())
-                .ok_or_else(|| built(path, BuildError::DefaultNotValue))?;
+        FieldType::HostClass { .. } => {
+            Err(invalid(path, "a value of a host class has no JSON form"))
+        }
+        _ => {
             let lookup: &dyn TypeLookup = lookup;
-            Ok(rtemis_r8::canonical::normalized_tree(
-                crate::rview::RView::Whole(x),
-                &q,
-                lookup,
-            ))
+            let view = crate::rview::RView::Whole(x);
+            let errors = crate::construct::with_cache(|cache| {
+                rtemis_r8::validate::validate_field_access(view, ty, lookup, cache)
+            });
+            match errors.iter().find(|e| e.code != "unknown_type") {
+                Some(e) => Err(invalid(&format!("{path}{}", e.path), &e.message)),
+                None => Ok(rtemis_r8::canonical::normalized_field_tree(
+                    view, ty, lookup,
+                )),
+            }
         }
-        _ => read::<Exact>(x, path).map(|e| e.0),
     }
 }
 
@@ -185,6 +192,7 @@ fn field_def(
             &ty,
             lookup,
             &format!("{path}/default"),
+            n.as_str(),
         )?))
     } else {
         None
@@ -557,7 +565,13 @@ fn extended(
             // `NULL` removes the default, which the lowering admits for an
             // `option()` field only.
             Some(_) if is_null(x) => Some(None),
-            Some(f) => Some(Some(Box::new(default_value(x, &f.ty, lookup, &path)?))),
+            Some(f) => Some(Some(Box::new(default_value(
+                x,
+                &f.ty,
+                lookup,
+                &path,
+                f.name.as_str(),
+            )?))),
             None => None,
         };
         changes.push(rtemis_r8::ir::InheritedChange {
@@ -617,7 +631,7 @@ fn r8_default_canonical(x: Robj, r#type: Robj) -> extendr_api::Result<String> {
     let Ok(ty) = crate::irde::from_r::<FieldType>(unsafe { r#type.get() }) else {
         return Ok(String::new());
     };
-    Ok(default_value(unsafe { x.get() }, &ty, &*snapshot, "")
+    Ok(default_value(unsafe { x.get() }, &ty, &*snapshot, "", "")
         .map(|v| rtemis_r8::canonical::canonical_text(&v.to_value()))
         .unwrap_or_default())
 }
@@ -668,8 +682,97 @@ fn r8_required_fields(required_fields: Robj) -> extendr_api::Result<Robj> {
     })
 }
 
+/// Whether a call of R holds a default of type `ty` in its JSON form: a
+/// value of a host class has none.
+fn has_json_form(ty: &FieldType, default: SEXP) -> bool {
+    match ty {
+        FieldType::HostClass { .. } => false,
+        FieldType::Option { inner } => is_null(default) || has_json_form(inner, default),
+        _ => true,
+    }
+}
+
+/// The IR parameters of a generic or trait method, from `params()`.
+///
+/// @param names Character: The parameters' names.
+/// @param types List: Each parameter's type, a field type or an R8 type
+///   object, or `NULL`.
+/// @param constants List: For a default that is a syntactic constant, a list
+///   of its value; otherwise `NULL`.
+/// @param texts Character: Each default's source text, or `""`.
+/// @param dispatch Character: The names of the dispatched parameters.
+/// @return List: The IR parameters, or the message of one that does not
+///   read.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_params_ir(
+    names: Vec<String>,
+    types: Robj,
+    constants: Robj,
+    texts: Vec<String>,
+    dispatch: Vec<String>,
+) -> extendr_api::Result<Robj> {
+    use rtemis_r8::ir::{HostDefault, Param, ParamDef};
+    let snapshot = crate::declare::snapshot()?;
+    let lookup = &*snapshot;
+    // A method that dispatches on its first parameter alone carries no mark.
+    let first_only = dispatch.len() == 1 && names.first() == dispatch.first();
+    let (types, constants) = unsafe { (types.get(), constants.get()) };
+    let built = (|| -> Read<Vec<ParamDef>> {
+        let mut out = Vec::with_capacity(names.len());
+        for (i, n) in names.iter().enumerate() {
+            let path = format!("/params/{i}");
+            let t = unsafe { VECTOR_ELT(types, i as isize) };
+            let ty = if is_null(t) {
+                None
+            } else {
+                Some(field_type(t).map_err(|e| built(&format!("{path}/type"), e))?)
+            };
+            let constant = unsafe { VECTOR_ELT(constants, i as isize) };
+            let text = texts.get(i).map(String::as_str).unwrap_or_default();
+            let mut default = None;
+            let mut host_default = None;
+            if !text.is_empty() {
+                let value = (!is_null(constant)).then(|| unsafe { VECTOR_ELT(constant, 0) });
+                match (&ty, value) {
+                    (Some(ty), Some(v)) if has_json_form(ty, v) => {
+                        default = Some(Box::new(default_value(
+                            v,
+                            ty,
+                            lookup,
+                            &format!("{path}/default"),
+                            n,
+                        )?));
+                    }
+                    _ => {
+                        host_default = Some(HostDefault {
+                            host: "r".into(),
+                            text: text.into(),
+                        });
+                    }
+                }
+            }
+            out.push(ParamDef::from(Param {
+                name: n.clone(),
+                dispatch: !first_only && dispatch.contains(n),
+                ty,
+                default,
+                host_default,
+                description: "".into(),
+            }));
+        }
+        Ok(out)
+    })();
+    Ok(match built {
+        Ok(p) => crate::irser::to_r(&p).map_err(|e| extendr_api::Error::Other(e.to_string()))?,
+        Err(p) => Robj::from(format!("{} [{} at {}]", p.message, p.code, p.path)),
+    })
+}
+
 extendr_module! {
     mod reader;
+    fn r8_params_ir;
     fn r8_required_fields;
     fn r8_declare;
     fn r8_ft_table;

@@ -14,7 +14,8 @@ class (\code{\link[=host_class]{host_class()}}); for a trait whose methods dispa
 arguments, a list of them, one per dispatched argument the impl
 specializes, by position or by name, as \code{list(A, B)} or \code{list(y = B)}.}
 
-\item{methods}{Named list: One function per method.}
+\item{methods}{Named list: One function per method, or \code{\link[=impl_method]{impl_method()}} for
+a method with its own return type.}
 
 \item{tag_value}{Optional Character: The value of the trait's tag member
 for this type; defaults to the type's name.}
@@ -32,7 +33,7 @@ impl; an impl that another namespace declares is refused.
 }
 \examples{
 op <- options(r8.namespace = "demo")
-Describe <- new_trait("Describe", methods = list(describe = trait_method(function(x) NULL)))
+Describe <- new_trait("Describe", methods = list(describe = trait_method(params(x))))
 Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 impl(Describe, Point, methods = list(describe = function(x) sprintf("(\%g, \%g)", x$x, x$y)))
 describe <- Describe@describe

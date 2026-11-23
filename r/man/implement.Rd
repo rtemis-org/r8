@@ -5,26 +5,29 @@
 \alias{implement<-}
 \title{Declare the method of a generic for a type}
 \usage{
-implement(generic, ...) <- value
+implement(..., return_type = NULL) <- value
 }
 \arguments{
-\item{generic}{A generic, written as its name.}
-
-\item{...}{The types of the method: one R8 type object, or for a generic
-that dispatches on several arguments, one per dispatched argument it
+\item{...}{The generic, written as its name and without an argument name,
+then the types of the method: one R8 type object, or for a generic that
+dispatches on several arguments, one per dispatched argument it
 specializes, matched by position or by name, as
 \code{implement(combine, A, B)} or \code{implement(combine, y = B)}; a converter
 from \code{\link[=r8_converter]{r8_converter()}} takes an R8 type object or a class name.}
 
+\item{return_type}{Optional: The type of the value this method returns, an
+\code{r8_field_type} or an R8 type, which fits the return type that the
+generic declares, as \code{\link[=impl_method]{impl_method()}} states.}
+
 \item{value}{Function: The method.}
 }
 \value{
-\code{generic}, unchanged.
+The generic, unchanged.
 }
 \description{
 \code{implement(generic, Type) <- function(x) ...} declares the method that
 \code{generic} calls for values of \code{Type}, and returns \code{generic} unchanged.
-\code{generic} is written as its name. The function has exactly the generic's
+The generic is written as its name. The function has exactly the generic's
 arguments, or, for a generic with \code{...}, the generic's arguments first,
 \code{...} included, then any named arguments of its own. By the generic:
 }

@@ -266,6 +266,10 @@ method_block <- function(block, blocks, env) {
   generic <- eval(call[[2L]][[2L]], env)
   # The types after the generic, by position or by name.
   type_calls <- as.list(call[[2L]])[-(1:2)]
+  type_calls <- type_calls[names(type_calls) %||% "" != "return_type"]
+  if (!any(nzchar(names(type_calls)))) {
+    names(type_calls) <- NULL
+  }
   types <- lapply(type_calls, eval, env)
   type <- types[[1L]]
   fn <- eval(call[[3L]], env)

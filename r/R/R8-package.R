@@ -16,7 +16,7 @@
 #' @section Names:
 #' A function that a declaration is written with takes no prefix:
 #' [new_struct()], [type_double()], [field()], [rule()], [impl()],
-#' [generic()], and the standard traits. A function that operates on values,
+#' [generic()], [params()], [arg()], and the standard traits. A function that operates on values,
 #' types, or packages takes the prefix `r8_`: [r8_to_json()], [r8_hash()],
 #' [r8_validate()], [r8_register()]. S3 classes, condition classes, and value
 #' attributes take the prefix `r8_`; `R8_` prefixes the constants of the C

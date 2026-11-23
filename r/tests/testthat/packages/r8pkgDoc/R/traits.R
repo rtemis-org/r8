@@ -15,7 +15,7 @@ Resample <- R8::new_trait(
   "Resample",
   methods = list(
     resample = R8::trait_method(
-      function(x, n_cases, ...) NULL,
+      R8::params(x, n_cases, "..."),
       description = "Draws the training sets of n_cases cases."
     )
   )
@@ -56,7 +56,7 @@ Summarize <- R8::new_trait(
   "Summarize",
   methods = list(
     summary = R8::trait_method(
-      function(object, ...) NULL,
+      R8::params(object, "..."),
       description = "A one-line summary."
     )
   )

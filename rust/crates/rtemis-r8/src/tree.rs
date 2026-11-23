@@ -356,6 +356,13 @@ pub fn exact_option<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Box<Tree>>
     Option::<Exact>::deserialize(d).map(|o| o.map(|e| Box::new(e.0)))
 }
 
+/// Deserializes a boxed tree that is present, `null` included, with its
+/// numbers kept as written, for `#[serde(deserialize_with)]` on a member whose
+/// absence differs from `null`.
+pub fn exact_present<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Box<Tree>>, D::Error> {
+    Exact::deserialize(d).map(|e| Some(Box::new(e.0)))
+}
+
 impl Tree {
     /// The tree of a `serde_json::Value`, its numbers kept as written.
     pub fn from_value(v: &Value) -> Tree {

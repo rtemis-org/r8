@@ -24,7 +24,7 @@ test_that("generic() declares a generic and implement() its methods", {
   GBM <- ty[["GBM"]]
   Kernel <- ty[["Kernel"]]
   out <- declare_in("gen1", {
-    describe <- generic("describe", "x", description = "Describes x.")
+    describe <- generic("describe", params(x), description = "Describes x.")
     d0 <- describe
     implement(describe, GBM) <- function(x) paste(x$n_trees, "trees")
     implement(describe, Kernel) <- function(x) "a kernel"
@@ -49,42 +49,42 @@ test_that("generic() declares a generic and implement() its methods", {
 })
 
 test_that("generic() takes its arguments as given", {
-  g <- declare_in("gen2", generic("score", c("model", "data")))
+  g <- declare_in("gen2", generic("score", params(model, data)))
   expect_identical(names(formals(g)), c("model", "data"))
-  g2 <- declare_in("gen2", generic("rescore", c("model", "...", "data")))
+  g2 <- declare_in("gen2", generic("rescore", params(model, "...", data)))
   expect_identical(names(formals(g2)), c("model", "...", "data"))
 })
 
 test_that("generic() refuses names and arguments outside the rules", {
   for (bad in c("describe.gbm", "describe.x<-", "1st", "")) {
     expect_error(
-      declare_in("gen3", generic(bad, "x")),
+      declare_in("gen3", generic(bad, params(x))),
       "rule of trait names",
       class = "r8_declaration_error"
     )
   }
   expect_error(
-    declare_in("gen3", generic("default", "x")),
+    declare_in("gen3", generic("default", params(x))),
     "name_host_keyword",
     class = "r8_declaration_error"
   )
   expect_error(
-    declare_in("gen3", generic("g", "...")),
-    "dispatches on",
+    declare_in("gen3", generic("g", params("..."))),
+    "first parameter is the value dispatched on",
     class = "r8_declaration_error"
   )
   expect_error(
-    declare_in("gen3", generic("g", c("x", "x"))),
-    "distinct syntactic",
+    declare_in("gen3", generic("g", params(x, x))),
+    "`x` is declared twice",
     class = "r8_declaration_error"
   )
   expect_error(
-    declare_in("gen3", generic("summary", "object")),
+    declare_in("gen3", generic("summary", params(object))),
     "implement\\(summary, Type\\)",
     class = "r8_declaration_error"
   )
   expect_error(
-    declare_in("gen3", generic("nrow", "x")),
+    declare_in("gen3", generic("nrow", params(x))),
     "name the generic otherwise",
     class = "r8_declaration_error"
   )
@@ -95,16 +95,16 @@ test_that("a generic shares the namespace's names with types and trait methods",
     new_struct("describe", fields = list(a = type_double()))
     new_trait(
       "Explain",
-      methods = list(explain = trait_method(function(x) NULL))
+      methods = list(explain = trait_method(params(x)))
     )
   })
   expect_error(
-    declare_in("gen4", generic("describe", "x")),
+    declare_in("gen4", generic("describe", params(x))),
     "duplicate_type",
     class = "r8_declaration_error"
   )
   expect_error(
-    declare_in("gen4", generic("explain", "x")),
+    declare_in("gen4", generic("explain", params(x))),
     "duplicate_generic",
     class = "r8_declaration_error"
   )
@@ -193,7 +193,7 @@ test_that("implement() takes the method of a trait", {
   fit <- declare_in("gen9", {
     Fit <- new_trait(
       "Fit",
-      methods = list(fit = trait_method(function(spec, x) NULL))
+      methods = list(fit = trait_method(params(spec, x)))
     )
     fit <- Fit@fit
     implement(fit, GBM) <- function(spec, x) sum(x) + spec$n_trees
@@ -236,7 +236,7 @@ test_that("a method has the generic's arguments, and adds its own only after ...
   ty <- gbm_types("gen9")
   GBM <- ty[["GBM"]]
   declare_in("gen9", {
-    exact <- generic("exact", "x")
+    exact <- generic("exact", params(x))
     expect_error(
       implement(exact, GBM) <- function(x, ...) NULL,
       "takes exactly the generic's arguments: function(x)",
@@ -253,7 +253,7 @@ test_that("a method has the generic's arguments, and adds its own only after ...
     expect_identical(exact(x), 3L)
     # An argument the generic does not declare is an error at the call.
     expect_error(exact(x, digits = 2))
-    open <- generic("open_ended", c("x", "..."))
+    open <- generic("open_ended", params(x, "..."))
     expect_error(
       implement(open, GBM) <- function(x, digits = 1) NULL,
       "`...` included",
@@ -264,7 +264,7 @@ test_that("a method has the generic's arguments, and adds its own only after ...
     # impl() checks a method's arguments as implement() does.
     Size <- new_trait(
       "Size",
-      methods = list(size = trait_method(function(x) NULL))
+      methods = list(size = trait_method(params(x)))
     )
     expect_error(
       impl(Size, GBM, methods = list(size = function(x, ...) 1L)),
@@ -272,7 +272,7 @@ test_that("a method has the generic's arguments, and adds its own only after ...
       class = "r8_declaration_error"
     )
     expect_error(
-      trait_method(function(x) NULL, default_impl = function(x, y) NULL),
+      trait_method(params(x), default_impl = function(x, y) NULL),
       "the default",
       class = "r8_declaration_error"
     )

@@ -18,7 +18,7 @@ with other host languages.
 
 A function that a declaration is written with takes no prefix:
 \code{\link[=new_struct]{new_struct()}}, \code{\link[=type_double]{type_double()}}, \code{\link[=field]{field()}}, \code{\link[=rule]{rule()}}, \code{\link[=impl]{impl()}},
-\code{\link[=generic]{generic()}}, and the standard traits. A function that operates on values,
+\code{\link[=generic]{generic()}}, \code{\link[=params]{params()}}, \code{\link[=arg]{arg()}}, and the standard traits. A function that operates on values,
 types, or packages takes the prefix \code{r8_}: \code{\link[=r8_to_json]{r8_to_json()}}, \code{\link[=r8_hash]{r8_hash()}},
 \code{\link[=r8_validate]{r8_validate()}}, \code{\link[=r8_register]{r8_register()}}. S3 classes, condition classes, and value
 attributes take the prefix \code{r8_}; \code{R8_} prefixes the constants of the C

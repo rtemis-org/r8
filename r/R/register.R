@@ -84,6 +84,15 @@ r8_register <- function(pkgname = NULL) {
       pending[[length(pending) + 1L]] <- e[["record"]]
       next
     }
+    if (identical(e[["kind"]], "trait")) {
+      # A file after the generic's may define a function that masks one.
+      generics <- unclass(e[["trait"]])[["generics"]]
+      for (m in names(generics)) {
+        if (inherits(generics[[m]], "r8_generic")) {
+          check_base_names(environment(generics[[m]]), m)
+        }
+      }
+    }
     register_records(pending, pkg, check = FALSE)
     pending <- list()
     switch(

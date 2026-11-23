@@ -542,7 +542,7 @@ declare_r8 <- function(where = globalenv(), storage = "r") {
     for (n in names(r8_declarations())) assign(n, eval(r8_declarations()[[n]], envir = where), envir = where)
     where$Complexity <- R8::new_trait(
       "Complexity",
-      methods = list(complexity = R8::trait_method(function(x) NULL))
+      methods = list(complexity = R8::trait_method(R8::params(x)))
     )
     where$complexity <- where$Complexity@complexity
     R8::impl(where$Complexity, where$GBM, methods = list(complexity = function(x) 1L))

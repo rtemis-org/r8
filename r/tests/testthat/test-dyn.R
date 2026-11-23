@@ -8,12 +8,12 @@ dyn_types <- function(ns) {
   declare_in(ns, {
     Algorithm <- new_trait(
       "Algorithm",
-      methods = list(fit = trait_method(function(x) NULL)),
+      methods = list(fit = trait_method(params(x))),
       tag = "algorithm"
     )
     Plain <- new_trait(
       "Plain",
-      methods = list(label = trait_method(function(x) NULL))
+      methods = list(label = trait_method(params(x)))
     )
     Glmnet <- new_struct(
       "Glmnet",
@@ -139,7 +139,7 @@ test_that("dyn() takes a trait or a generic, and subtype() a struct", {
     "takes a trait object",
     class = "r8_declaration_error"
   )
-  g <- declare_in("dyn4", generic("g", "x"))
+  g <- declare_in("dyn4", generic("g", params(x)))
   expect_identical(unclass(dyn(g))[["trait"]], "dyn4::g")
 })
 

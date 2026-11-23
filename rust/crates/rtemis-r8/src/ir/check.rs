@@ -609,6 +609,18 @@ impl Checker<'_> {
                 ),
             );
         }
+        for i in m.dispatched() {
+            if m.params[i].ty().is_some_and(|t| !is_nominal(t)) {
+                self.report(
+                    "dispatch_param_type",
+                    &format!("{path}/params/{i}/type"),
+                    format!(
+                        "dispatched parameter `{}` has a type that names its values' types: an R8 type, `subtype()`, `dyn()`, or `host_class()`",
+                        m.params[i].name()
+                    ),
+                );
+            }
+        }
         if m.name.is_replacement() && m.params.last().map(ParamDef::name) != Some("value") {
             self.report(
                 "replacement_value",
@@ -622,6 +634,16 @@ impl Checker<'_> {
                 &format!("{path}/params"),
                 format!(
                     "replacement method `{}` dispatches on its first parameter only",
+                    m.name
+                ),
+            );
+        }
+        if m.name.is_replacement() && m.return_type.is_some() {
+            self.report(
+                "return_type_replacement",
+                &format!("{path}/return_type"),
+                format!(
+                    "replacement method `{}` returns a value of its first argument's type and declares no return type",
                     m.name
                 ),
             );
@@ -667,18 +689,15 @@ impl Checker<'_> {
                 "a method dispatches on named parameters, not on `...`".to_string(),
             );
         }
+        if q.name == "..." && (q.ty.is_some() || q.default.is_some() || q.host_default.is_some()) {
+            self.report(
+                "param_dots",
+                path,
+                "`...` takes no type and no default".to_string(),
+            );
+        }
         if let Some(t) = &q.ty {
             self.value_type(t, &format!("{path}/type"));
-            if q.dispatch && !is_nominal(t) {
-                self.report(
-                    "dispatch_param_type",
-                    &format!("{path}/type"),
-                    format!(
-                        "dispatched parameter `{}` has a type that names its values' types: an R8 type, `subtype()`, `dyn()`, or `host_class()`",
-                        q.name
-                    ),
-                );
-            }
         }
         if q.default.is_some() && q.host_default.is_some() {
             self.report(

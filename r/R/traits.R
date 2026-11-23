@@ -53,8 +53,8 @@ BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
 # %% trait_method ----
 #' Declare a trait method
 #'
-#' @param fn Function: Its formals are the method's signature; the first
-#'   formal is the value the method dispatches on.
+#' @param params The method's parameters, from [params()]; the first is the
+#'   value the method dispatches on.
 #' @param description Character: What the method does.
 #' @param default_impl Optional function: The method's default
 #'   implementation, used for a type whose impl does not define the method.
@@ -63,41 +63,49 @@ BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
 #'   on, by name, at most three and none of them `...`; the first argument
 #'   by default. Every method of a trait dispatches on the same number of
 #'   arguments, and an impl names a type for any of them (`impl()`).
+#' @param return_type Optional: The type of the value that every impl's
+#'   method returns, an `r8_field_type`, an R8 type, or `"Self"`, the type of
+#'   the first argument. An impl may declare a type that fits it
+#'   ([impl_method()]). A replacement method returns a value of its
+#'   argument's type and declares none.
 #'
 #' @return An `r8_trait_method`.
 #'
+#' @seealso [params()], [impl()].
+#'
 #' @examples
-#' trait_method(function(spec, x, y) NULL, description = "Trains a model.")
-#' trait_method(function(x, y, ...) NULL, dispatch = c("x", "y"))
+#' trait_method(params(spec, x, y), description = "Trains a model.")
+#' trait_method(params(x, y, "..."), dispatch = c("x", "y"))
+#' trait_method(
+#'   params(spec, x, verbosity = arg_integer(min = 0L, default = 1L)),
+#'   return_type = type_double()
+#' )
 #'
 #' @export
 trait_method <- function(
-  fn,
+  params,
   description = "",
   default_impl = NULL,
   stochastic = FALSE,
-  dispatch = NULL
+  dispatch = NULL,
+  return_type = NULL
 ) {
-  if (!is.function(fn) || length(formals(fn)) == 0L) {
-    r8_abort(
-      "A trait method's signature is a function with at least one argument.",
-      class = "r8_declaration_error"
-    )
-  }
+  p <- as_params(params, "trait_method()")
   if (!is.null(default_impl)) {
     check_method_formals(
       default_impl,
-      names(formals(fn)),
+      p[["names"]],
       "the default implementation"
     )
   }
   structure(
     list(
-      fn = fn,
+      params = p,
       description = description,
       default_impl = default_impl,
       stochastic = isTRUE(stochastic),
-      dispatch = dispatch
+      dispatch = dispatch,
+      return_type = return_type_ir(return_type, self = TRUE)
     ),
     class = "r8_trait_method"
   )
@@ -127,14 +135,35 @@ existing_generic <- function(name, env) {
     }
   }
   for (p in pkgs) {
-    if (
-      requireNamespace(p, quietly = TRUE) && name %in% getNamespaceExports(p)
-    ) {
+    if (requireNamespace(p, quietly = TRUE) && exports_name(p, name)) {
       return(list(fn = getExportedValue(p, name), package = p))
     }
   }
   NULL
 } # /R8::existing_generic
+
+
+# %% exports_name ----
+#' Whether a loaded package exports a name
+#'
+#' Looks the name up in the package's table of exports, where
+#' `getNamespaceExports()` lists the whole table.
+#'
+#' @param package Character: The package.
+#' @param name Character: The name.
+#'
+#' @return Logical.
+#'
+#' @keywords internal
+#' @noRd
+exports_name <- function(package, name) {
+  table <- if (identical(package, "base")) {
+    baseenv()
+  } else {
+    getNamespaceInfo(package, "exports")
+  }
+  exists(name, envir = table, inherits = FALSE)
+} # /R8::exports_name
 
 
 # %% is_s3_generic ----
@@ -194,66 +223,138 @@ RESERVED_METHODS <- c(
 # %% make_generic ----
 #' A new generic for a trait method
 #'
-#' The generic finds the impl for its first argument and calls it with its
-#' formals. A replacement generic, whose method name ends in `<-`, passes the
+#' The generic finds the impl for its dispatched arguments and calls it with
+#' its formals. A replacement generic, whose method name ends in `<-`, passes the
 #' impl's result to the C routine `replaced`, which returns it when it is a
 #' value of the first argument's type.
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
-#' @param fn Function: The signature.
-#' @param dispatch Optional Character: The dispatched arguments, in formal
-#'   order; `NULL` for the first.
+#' @param p An `r8_params`: The parameters.
+#' @param dispatch Character: The dispatched arguments, in formal order.
 #'
 #' @return The generic, with its dispatched arguments as the attribute
 #'   `r8_dispatch`.
 #'
 #' @keywords internal
 #' @noRd
-make_generic <- function(trait_name, method, fn, dispatch = NULL) {
-  args <- names(formals(fn))
-  dispatch <- dispatch %||% args[[1L]]
+make_generic <- function(trait_name, method, p, dispatch) {
+  args <- p[["names"]]
   first <- as.name(args[[1L]])
   call_args <- lapply(args, function(a) {
     if (a == "...") quote(...) else as.name(a)
   })
   names(call_args) <- ifelse(args == "...", "", args)
   key <- as.name(paste(trait_name, method, sep = "|"))
-  # Constants only: the method's key as a symbol and namespace bindings, so
-  # a generic sent to a worker dispatches through the worker's impls.
-  d <- lapply(dispatch, as.name)
-  find <- switch(
-    length(d),
-    bquote(.Call(.r8_c_find, .(d[[1L]]), quote(.(key)), .r8_dispatch)),
-    bquote(.Call(
-      .r8_c_find2,
-      .(d[[1L]]),
-      .(d[[2L]]),
-      quote(.(key)),
-      .r8_dispatch
-    )),
-    bquote(.Call(
-      .r8_c_find3,
-      .(d[[1L]]),
-      .(d[[2L]]),
-      .(d[[3L]]),
-      quote(.(key)),
-      .r8_dispatch
-    ))
-  )
-  body <- as.call(c(list(call("(", find)), call_args))
+  # The generic is enclosed by the environment that calls params(), where its
+  # defaults are evaluated, and reaches R8 through R8's namespace, a constant
+  # of its body, which serializes by reference. Unserialized in a worker, the
+  # generic of a package loads the package and dispatches through the
+  # worker's impls.
+  ns <- asNamespace("R8")
+  at <- function(name) call("$", ns, as.name(name))
+  find <- as.call(c(
+    list(
+      quote(.Call),
+      at(c(".r8_c_find", ".r8_c_find2", ".r8_c_find3")[[length(dispatch)]])
+    ),
+    lapply(dispatch, as.name),
+    list(call("quote", key), at(".r8_dispatch"))
+  ))
+  body <- as.call(c(list(find), call_args))
   if (endsWith(method, "<-")) {
-    body <- bquote(.Call(.r8_c_replaced, .(first), .(body), quote(.(key))))
+    body <- as.call(list(
+      quote(.Call),
+      at(".r8_c_replaced"),
+      first,
+      body,
+      call("quote", key)
+    ))
   }
-  g <- as.function(c(formals(fn), body), envir = asNamespace("R8"))
+  check_base_names(p[["env"]], method)
   structure(
-    g,
+    as.function(c(p[["formals"]], body), envir = p[["env"]]),
     class = c("r8_generic", "function"),
     r8_trait = trait_name,
     r8_method = method,
     r8_dispatch = dispatch
   )
 } # /R8::make_generic
+
+
+# The functions of base R that a generic's body calls.
+GENERIC_BODY_CALLS <- c(".Call", "$", "quote")
+
+
+# %% check_base_names ----
+#' Refuse an environment that masks the functions a generic's body calls
+#'
+#' A generic's body calls these functions of base R from the environment that
+#' encloses the generic, where the byte compiler inlines them.
+#'
+#' @param env Environment: The generic's environment.
+#' @param method Character: The generic's or trait method's name.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+check_base_names <- function(env, method) {
+  for (n in GENERIC_BODY_CALLS) {
+    if (!identical(get(n, envir = env, mode = "function"), get(n, baseenv()))) {
+      r8_abort(
+        "`",
+        n,
+        "` is masked where the generic `",
+        method,
+        "` is declared; a generic calls base R's `",
+        n,
+        "`, so the function that masks it takes another name ",
+        "[base_masked].",
+        class = "r8_declaration_error"
+      )
+    }
+  }
+  invisible(NULL)
+} # /R8::check_base_names
+
+
+# %% check_method_defaults ----
+#' Refuse a method's default for a parameter of its R8 generic
+#'
+#' A generic calls its method with every parameter of its own, so a default
+#' of the method for one of them is never used. A method's own arguments
+#' after `...`, and a method of an S3 generic that R8 does not own, keep
+#' their defaults.
+#'
+#' @param fn Function: The method.
+#' @param params Character: The generic's parameters.
+#' @param label Character: The generic's or trait method's name.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+check_method_defaults <- function(fn, params, label) {
+  fmls <- formals(fn)
+  for (p in setdiff(params, "...")) {
+    if (!identical(fmls[[p]], quote(expr = ))) {
+      fixed <- ifelse(params == "...", "\"...\"", params)
+      fixed[params == p] <- paste0(p, " = ", deparse1(fmls[[p]]))
+      r8_abort(
+        "The method of `",
+        label,
+        "` gives `",
+        p,
+        "` a default, which belongs to the generic: params(",
+        paste(fixed, collapse = ", "),
+        ") [method_default].",
+        class = "r8_declaration_error"
+      )
+    }
+  }
+  invisible(NULL)
+} # /R8::check_method_defaults
 
 
 # %% replacement_method ----
@@ -777,7 +878,7 @@ value_type_text <- function(x) {
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
-#' Fit <- new_trait("Fit", methods = list(fit = trait_method(function(spec, x, y) NULL)))
+#' Fit <- new_trait("Fit", methods = list(fit = trait_method(params(spec, x, y))))
 #' fit <- Fit@fit
 #' options(op)
 #'
@@ -898,6 +999,7 @@ build_trait <- function(
         class = "r8_declaration_error"
       )
     }
+    p <- tm[["params"]]
     existing <- existing_generic(m, env)
     if (!is.null(existing)) {
       if (!is_s3_generic(existing[["fn"]])) {
@@ -914,7 +1016,7 @@ build_trait <- function(
         )
       }
       gen_args <- names(formals(existing[["fn"]]))
-      own <- names(formals(tm[["fn"]]))
+      own <- p[["names"]]
       if (
         !is.null(gen_args) && !identical(own[seq_along(gen_args)], gen_args)
       ) {
@@ -932,10 +1034,9 @@ build_trait <- function(
         )
       }
     }
-    own_args <- names(formals(tm[["fn"]]))
     dispatch <- check_dispatch(
       tm[["dispatch"]],
-      own_args,
+      p[["names"]],
       paste0(qname, "@", m),
       replacement = endsWith(m, "<-")
     )
@@ -952,15 +1053,24 @@ build_trait <- function(
           class = "r8_declaration_error"
         )
       }
+      check_mapped(tm, m, existing[["package"]])
       generics[[m]] <- existing[["fn"]]
     } else {
-      generics[[m]] <- make_generic(qname, m, tm[["fn"]], dispatch)
+      generics[[m]] <- make_generic(qname, m, p, dispatch)
+      if (!is.null(tm[["default_impl"]])) {
+        check_method_defaults(
+          tm[["default_impl"]],
+          p[["names"]],
+          paste0(qname, "@", m)
+        )
+      }
     }
     method_ir <- list(
       name = m,
       description = tm[["description"]],
-      params = dispatch_params(own_args, dispatch)
+      params = params_ir(p, dispatch)
     )
+    method_ir[["return_type"]] <- tm[["return_type"]]
     if (tm[["stochastic"]]) {
       method_ir[["stochastic"]] <- TRUE
     }
@@ -991,6 +1101,53 @@ build_trait <- function(
   )
   trait
 } # /R8::build_trait
+
+
+# %% check_mapped ----
+#' Refuse what a trait method that maps an existing generic does not use
+#'
+#' R calls the existing generic, with its own formals, and each method with
+#' its own defaults, so such a method's parameters are names, without types
+#' and defaults, and it declares no return type.
+#'
+#' @param tm An `r8_trait_method`.
+#' @param method Character: Its name.
+#' @param package Character: The existing generic's package.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+check_mapped <- function(tm, method, package) {
+  p <- tm[["params"]]
+  typed <- !vapply(p[["types"]], is.null, logical(1))
+  given <- typed | nzchar(p[["texts"]])
+  if (!any(given) && is.null(tm[["return_type"]])) {
+    return(invisible(NULL))
+  }
+  i <- match(TRUE, given)
+  r8_abort(
+    "Method `",
+    method,
+    "` is an S3 method of `",
+    package,
+    "::",
+    method,
+    "`, whose own arguments and whose methods' own defaults apply; ",
+    if (is.na(i)) {
+      "it declares no return type"
+    } else {
+      paste0(
+        "its parameter `",
+        p[["names"]][[i]],
+        "` takes no ",
+        if (typed[[i]]) "type" else "default"
+      )
+    },
+    " [mapped_generic].",
+    class = "r8_declaration_error"
+  )
+} # /R8::check_mapped
 
 
 # %% register_trait ----
@@ -1057,7 +1214,8 @@ register_trait <- function(trait, namespace) {
 #'   class ([host_class()]); for a trait whose methods dispatch on several
 #'   arguments, a list of them, one per dispatched argument the impl
 #'   specializes, by position or by name, as `list(A, B)` or `list(y = B)`.
-#' @param methods Named list: One function per method.
+#' @param methods Named list: One function per method, or [impl_method()] for
+#'   a method with its own return type.
 #' @param tag_value Optional Character: The value of the trait's tag member
 #'   for this type; defaults to the type's name.
 #'
@@ -1065,7 +1223,7 @@ register_trait <- function(trait, namespace) {
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
-#' Describe <- new_trait("Describe", methods = list(describe = trait_method(function(x) NULL)))
+#' Describe <- new_trait("Describe", methods = list(describe = trait_method(params(x))))
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 #' impl(Describe, Point, methods = list(describe = function(x) sprintf("(%g, %g)", x$x, x$y)))
 #' describe <- Describe@describe
@@ -1078,13 +1236,71 @@ impl <- function(trait, target, methods = list(), tag_value = NULL) {
 } # /R8::impl
 
 
+# %% impl_method ----
+#' Declare a method of an impl with its own return type
+#'
+#' In the `methods` of [impl()], a function with the type of the value it
+#' returns, which fits the return type of the trait's method:
+#' `impl(Train, GLMNET, methods = list(train = impl_method(fn, return_type =
+#' GLMNETModel)))`, where `train` is declared with
+#' `return_type = subtype(Model)`. The same type fits; a struct, or
+#' `subtype()` of it, fits `subtype()` of a struct it extends; a type with an
+#' impl of the trait fits `dyn()` of it; and `T` or `option(T)` fits
+#' `option(T)`. A constraint narrows nothing: `type_double(min = 0)` fits
+#' `type_double(min = 0)` only. `implement(generic, Type, return_type = T) <-
+#' fn` declares the same for a generic.
+#'
+#' @param fn Function: The method.
+#' @param return_type An `r8_field_type` or an R8 type: The type of the value
+#'   it returns.
+#'
+#' @return An `r8_impl_method`.
+#'
+#' @seealso [impl()], [implement<-].
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Model <- new_struct("Model", fields = list(rss = type_double()))
+#' LinearModel <- new_struct("LinearModel", extends = Model)
+#' Linear <- new_struct("Linear")
+#' Train <- new_trait("Train", methods = list(
+#'   train = trait_method(params(spec, y), return_type = subtype(Model))
+#' ))
+#' impl(Train, Linear, methods = list(
+#'   train = impl_method(
+#'     function(spec, y) LinearModel(rss = sum((y - mean(y))^2)),
+#'     return_type = LinearModel
+#'   )
+#' ))
+#' Train@train(Linear(), c(1, 2, 3))
+#' options(op)
+#'
+#' @export
+impl_method <- function(fn, return_type) {
+  if (!is.function(fn)) {
+    r8_abort("`fn` is a function.", class = "r8_declaration_error")
+  }
+  if (is.null(return_type)) {
+    r8_abort(
+      "impl_method() gives a method its own return type; a method without ",
+      "one is the function itself.",
+      class = "r8_declaration_error"
+    )
+  }
+  structure(
+    list(fn = fn, return_type = return_type_ir(return_type, self = FALSE)),
+    class = "r8_impl_method"
+  )
+} # /R8::impl_method
+
+
 # %% impl_declare ----
 #' Check, register, and record an impl
 #'
 #' @param trait A trait object.
 #' @param type An R8 type object, or a list of them, by name or by position, one per
 #'   dispatched argument the impl specializes.
-#' @param methods Named list: One function per method.
+#' @param methods Named list: One function or `impl_method()` per method.
 #' @param tag_value Optional Character: The tag value.
 #' @param env Environment: Where the impl is declared.
 #' @param dispatch Optional Character: The dispatched arguments of the
@@ -1108,7 +1324,6 @@ impl_declare <- function(
   }
   t <- unclass(trait)
   from <- inherits(trait, "r8_from_trait")
-  # The dispatched arguments, from the trait's first method.
   # The dispatched arguments of the method declared, or else of the trait's
   # first method.
   dispatch <- dispatch %||%
@@ -1139,7 +1354,10 @@ impl_declare <- function(
   source <- if (from) t[["source"]] else ""
   source_type <- from && identical(t[["source_ir"]][["kind"]], "named")
   check_members(methods, "methods", "an impl")
+  typed <- vapply(methods, inherits, logical(1), "r8_impl_method")
+  return_types <- lapply(methods[typed], function(m) m[["return_type"]])
   fns <- methods
+  fns[typed] <- lapply(methods[typed], function(m) m[["fn"]])
   methods_ir <- trait_ir(t)[["methods"]]
   declared <- vapply(
     methods_ir,
@@ -1169,6 +1387,12 @@ impl_declare <- function(
       paste0(t[["name"]], "@", m)
     }
     check_method_formals(fns[[m]], params, label)
+    # A trait method that maps an S3 generic is called by R, which applies
+    # the method's own defaults.
+    mapped <- t[["generics"]][[m]]
+    if (is.null(mapped) || inherits(mapped, "r8_generic")) {
+      check_method_defaults(fns[[m]], params, label)
+    }
   }
   for (m in declared) {
     has_default_impl <- isTRUE(Filter(
@@ -1191,7 +1415,15 @@ impl_declare <- function(
   ir <- c(
     list(`trait` = t[["name"]]),
     tuple_ir(positions),
-    list(methods = as.list(union(names(fns), adopted)))
+    list(
+      methods = lapply(union(names(fns), adopted), function(m) {
+        if (is.null(return_types[[m]])) {
+          m
+        } else {
+          list(name = m, return_type = return_types[[m]])
+        }
+      })
+    )
   )
   if (length(ir[["type_args"]]) == 0L) {
     ir[["type_args"]] <- NULL

@@ -14,14 +14,14 @@ test_that("a trait and a generic declared in R dispatch on the value", {
   Size <- declare_in("conftest", {
     Size <- new_trait(
       "Size",
-      methods = list(total = trait_method(function(x) NULL))
+      methods = list(total = trait_method(params(x)))
     )
     impl(Size, Probe, methods = list(total = function(x) sum(x$weights)))
     Size
   })
   expect_identical(Size@total(x), 2)
   weight_mean <- declare_in("conftest", {
-    weight_mean <- generic("weight_mean", "x")
+    weight_mean <- generic("weight_mean", params(x))
     implement(weight_mean, Probe) <- function(x) mean(x$weights)
     weight_mean
   })

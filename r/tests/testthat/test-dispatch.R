@@ -20,7 +20,7 @@ test_that("a generic dispatches on the arguments it names, through extends", {
   ty <- pair_types("md1")
   list2env(ty, environment())
   declare_in("md1", {
-    combine <- generic("combine", c("x", "y", "..."), dispatch = c("x", "y"))
+    combine <- generic("combine", params(x, y, "..."), dispatch = c("x", "y"))
     expect_identical(attr(combine, "r8_dispatch"), c("x", "y"))
     expect_output(print(combine), "Dispatches on: x, y")
     implement(combine, A, B) <- function(x, y, ...) "A, B"
@@ -56,7 +56,7 @@ test_that("an omitted or named position matches any value", {
   ty <- pair_types("md2")
   list2env(ty, environment())
   declare_in("md2", {
-    place <- generic("place", c("x", "at", "z"), dispatch = c("x", "z"))
+    place <- generic("place", params(x, at, z), dispatch = c("x", "z"))
     implement(place, z = C) <- function(x, at, z) "any, C"
     implement(place, A, z = C) <- function(x, at, z) "A, C"
     implement(place, A) <- function(x, at, z) "A, any"
@@ -82,7 +82,7 @@ test_that("an ambiguous call names the method to declare", {
   ty <- pair_types("md3")
   list2env(ty, environment())
   declare_in("md3", {
-    combine <- generic("combine", c("x", "y"), dispatch = c("x", "y"))
+    combine <- generic("combine", params(x, y), dispatch = c("x", "y"))
     implement(combine, A1, B) <- function(x, y) "A1, B"
     implement(combine, A, B1) <- function(x, y) "A, B1"
     amb <- r8_ambiguities(combine)
@@ -106,7 +106,7 @@ test_that("r8_next_impl() continues to the unique less specific method or the on
   ty <- pair_types("md4")
   list2env(ty, environment())
   declare_in("md4", {
-    combine <- generic("combine", c("x", "y"), dispatch = c("x", "y"))
+    combine <- generic("combine", params(x, y), dispatch = c("x", "y"))
     implement(combine, A, B) <- function(x, y) "A, B"
     implement(combine, A1, B) <- function(x, y) paste("A1, B >", r8_next_impl())
     implement(combine, A, B1) <- function(x, y) "A, B1"
@@ -142,9 +142,9 @@ test_that("a trait's methods dispatch on several arguments, with one impl per tu
     Pair <- new_trait(
       "Pair",
       methods = list(
-        join = trait_method(function(x, y) NULL, dispatch = c("x", "y")),
+        join = trait_method(params(x, y), dispatch = c("x", "y")),
         label = trait_method(
-          function(p, q) NULL,
+          params(p, q),
           dispatch = c("p", "q"),
           default_impl = function(p, q) "default label"
         )
@@ -170,8 +170,8 @@ test_that("a trait's methods dispatch on several arguments, with one impl per tu
       new_trait(
         "Bad",
         methods = list(
-          one = trait_method(function(x, y) NULL, dispatch = c("x", "y")),
-          two = trait_method(function(x) NULL)
+          one = trait_method(params(x, y), dispatch = c("x", "y")),
+          two = trait_method(params(x))
         )
       ),
       "dispatch_arity",
@@ -182,7 +182,7 @@ test_that("a trait's methods dispatch on several arguments, with one impl per tu
         "Tagged",
         tag = "kind",
         methods = list(
-          pair = trait_method(function(x, y) NULL, dispatch = c("x", "y"))
+          pair = trait_method(params(x, y), dispatch = c("x", "y"))
         )
       ),
       "dispatch_tag",
@@ -199,22 +199,22 @@ test_that("a trait's methods dispatch on several arguments, with one impl per tu
 test_that("dispatch arguments are checked at declaration", {
   declare_in("md6", {
     expect_error(
-      generic("f", c("x", "..."), dispatch = c("x", "...")),
+      generic("f", params(x, "..."), dispatch = c("x", "...")),
       "`...` is not one",
       class = "r8_declaration_error"
     )
     expect_error(
-      generic("f", c("x", "y"), dispatch = "z"),
+      generic("f", params(x, y), dispatch = "z"),
       "`z` is not one",
       class = "r8_declaration_error"
     )
     expect_error(
-      generic("f", c("a", "b", "c", "d"), dispatch = c("a", "b", "c", "d")),
+      generic("f", params(a, b, c, d), dispatch = c("a", "b", "c", "d")),
       "at most 3",
       class = "r8_declaration_error"
     )
     expect_error(
-      generic("lab<-", c("x", "y", "value"), dispatch = c("x", "y")),
+      generic("lab<-", params(x, y, value), dispatch = c("x", "y")),
       "first argument only",
       class = "r8_declaration_error"
     )
@@ -222,14 +222,14 @@ test_that("dispatch arguments are checked at declaration", {
       new_trait(
         "S",
         methods = list(
-          merge = trait_method(function(x, y, ...) NULL, dispatch = c("x", "y"))
+          merge = trait_method(params(x, y, "..."), dispatch = c("x", "y"))
         )
       ),
       "dispatches on its first argument only",
       class = "r8_declaration_error"
     )
     # A dispatched argument is forced; a missing one is R's own error.
-    g <- generic("g", c("x", "y"), dispatch = c("x", "y"))
+    g <- generic("g", params(x, y), dispatch = c("x", "y"))
     expect_error(g(1), "argument \"y\" is missing")
   })
 })
@@ -239,7 +239,7 @@ test_that("an impl of another namespace follows the orphan rule over its positio
   list2env(ty, environment())
   combine <- declare_in(
     "md7",
-    generic("combine", c("x", "y"), dispatch = c("x", "y"))
+    generic("combine", params(x, y), dispatch = c("x", "y"))
   )
   Mine <- declare_in(
     "md8",
@@ -272,7 +272,7 @@ test_that("values without a class attribute hit the dispatch cache", {
     Show <- new_trait(
       "Show",
       methods = list(
-        show_it = trait_method(function(x) NULL, default_impl = function(x) {
+        show_it = trait_method(params(x), default_impl = function(x) {
           "default"
         })
       )

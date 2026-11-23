@@ -521,6 +521,21 @@ r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
 #' @noRd
 r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
 
+#' The IR parameters of a generic or trait method, from `params()`.
+#'
+#' @param names Character: The parameters' names.
+#' @param types List: Each parameter's type, a field type or an R8 type
+#'   object, or `NULL`.
+#' @param constants List: For a default that is a syntactic constant, a list
+#'   of its value; otherwise `NULL`.
+#' @param texts Character: Each default's source text, or `""`.
+#' @param dispatch Character: The names of the dispatched parameters.
+#' @return List: The IR parameters, or the message of one that does not
+#'   read.
+#' @keywords internal
+#' @noRd
+r8_params_ir <- function(names, types, constants, texts, dispatch) .Call(wrap__r8_params_ir, names, types, constants, texts, dispatch)
+
 #' The required fields of `new_trait(required_fields = )`: each a field type,
 #' an R8 type object, or `field(type, description = )`; a default, a fill
 #' policy, `sensitive`, a unit, and extensions belong to a struct's field.

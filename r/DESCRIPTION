@@ -37,3 +37,25 @@ Roxygen: list(markdown = TRUE)
 Config/rextendr/version: 0.5.0
 SystemRequirements: Cargo (Rust's package manager), rustc >= 1.88.0, xz
 Config/roxygen2/version: 8.1.1
+Collate: 
+    'R8-package.R'
+    'conform.R'
+    'declare.R'
+    'dispatch.R'
+    'extendr-wrappers.R'
+    'extends.R'
+    'generate.R'
+    'generic.R'
+    'identity.R'
+    'integrate.R'
+    'types.R'
+    'params.R'
+    'register.R'
+    'resolve.R'
+    'roclet.R'
+    'rules.R'
+    'text.R'
+    'traits.R'
+    'utils.R'
+    'values.R'
+    'zzz.R'

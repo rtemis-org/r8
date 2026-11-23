@@ -101,7 +101,7 @@ system_code <- function(system) {
     ),
     "R8" = list(
       GBM = structure(r8_gbm_text(), class = "source_text"),
-      Complexity = quote(R8::new_trait("Complexity", methods = list(complexity = R8::trait_method(function(x) NULL)))),
+      Complexity = quote(R8::new_trait("Complexity", methods = list(complexity = R8::trait_method(R8::params(x))))),
       impl = quote(R8::impl(Complexity, GBM, methods = list(complexity = function(x) 1L)))
     )
   )

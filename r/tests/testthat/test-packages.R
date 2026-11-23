@@ -706,6 +706,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "Summarize.Rd",
       "as_resampler.Rd",
       "describe.Rd",
+      "label_of.Rd",
       "n_resamples.Rd",
       "pair_with.Rd",
       "seed-set.Rd"
@@ -788,6 +789,18 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     "## R8 method for class 'data.frame', struct 'Resampler'\n\\special{pair_with(x, y)}",
     fixed = TRUE
   )
+  # The formals of a generic and a method's return type, which is no type of
+  # the method's tuple.
+  expect_match(
+    rd("label_of.Rd"),
+    "label_of(x, sep = default_sep(), n = 2L, ...)",
+    fixed = TRUE
+  )
+  expect_match(
+    rd("label_of.Rd"),
+    "## R8 method for struct 'Resampler'\n\\special{label_of(x, sep, n, ...)}",
+    fixed = TRUE
+  )
   # A second run writes nothing.
   again <- run_r(
     character(),
@@ -833,7 +846,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "print(Method@Bootstrap)",
       "seed(r) <- 9L",
       "cat(r$seed, n_resamples(as_resampler('abc')), '\\n')",
-      "cat(pair_with(r, Method@Bootstrap), '|', pair_with(1, r), '|', pair_with(data.frame(), r), '\\n')"
+      "cat(pair_with(r, Method@Bootstrap), '|', pair_with(1, r), '|', pair_with(data.frame(), r), '\\n')",
+      "cat(label_of(r), label_of(r, n = 3L, sep = '+'), '\\n')"
     )
   )
   expect_identical(
@@ -845,7 +859,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "2",
       "A resampling method",
       "9 3",
-      "a resampler and a method | anything and a resampler | a data frame and a resampler"
+      "a resampler and a method | anything and a resampler | a data frame and a resampler",
+      "r-r r+r+r"
     ),
     info = paste(used, collapse = "\n")
   )
@@ -875,13 +890,48 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       ),
       "cat('future', future::value(f), sep = '|')",
       "cat('\\n')",
-      "future::plan(future::sequential)"
+      "future::plan(future::sequential)",
+      # A generic sent to a worker that has not loaded its package.
+      "mirai::daemons(1)",
+      "m <- mirai::mirai({ before <- 'r8pkgDoc' %in% loadedNamespaces(); c(before, f(r), g(r)) }, f = label_of, g = describe, r = r)",
+      "cat('sent', mirai::collect_mirai(m), sep = '|')",
+      "cat('\\n')",
+      "mirai::daemons(0)"
     )
   )
   expected <- "2 resamples, seed 1|a resampling method|Resampler(2)|2|A resampling method|a resampler and a method"
   info <- paste(workers, collapse = "\n")
   expect_true(paste0("mirai|", expected) %in% workers, info = info)
   expect_true(paste0("future|", expected) %in% workers, info = info)
+  # Unserializing the generic loads its package.
+  expect_true("sent|TRUE|r-r|2 resamples" %in% workers, info = info)
+})
+
+test_that("a package that masks a function its generics call is refused at load", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  dir <- tempfile("r8mask")
+  dir.create(dir)
+  file.copy(test_path("packages", "r8pkgA"), dir, recursive = TRUE)
+  # A file after the generics'.
+  writeLines(
+    ".Call <- function(...) stop(\"masked\")",
+    file.path(dir, "r8pkgA", "R", "zzzz.R")
+  )
+  lib <- file.path(dir, "library")
+  dir.create(lib)
+  out <- suppressWarnings(system2(
+    file.path(R.home("bin"), "R"),
+    c("CMD", "INSTALL", paste0("--library=", lib), file.path(dir, "r8pkgA")),
+    stdout = TRUE,
+    stderr = TRUE
+  ))
+  expect_true(
+    any(grepl("base_masked", out, fixed = TRUE)),
+    info = paste(out, collapse = "\n")
+  )
 })
 
 

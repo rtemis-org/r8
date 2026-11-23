@@ -5,16 +5,17 @@
 \title{Declare a trait method}
 \usage{
 trait_method(
-  fn,
+  params,
   description = "",
   default_impl = NULL,
   stochastic = FALSE,
-  dispatch = NULL
+  dispatch = NULL,
+  return_type = NULL
 )
 }
 \arguments{
-\item{fn}{Function: Its formals are the method's signature; the first
-formal is the value the method dispatches on.}
+\item{params}{The method's parameters, from \code{\link[=params]{params()}}; the first is the
+value the method dispatches on.}
 
 \item{description}{Character: What the method does.}
 
@@ -27,6 +28,12 @@ implementation, used for a type whose impl does not define the method.}
 on, by name, at most three and none of them \code{...}; the first argument
 by default. Every method of a trait dispatches on the same number of
 arguments, and an impl names a type for any of them (\code{impl()}).}
+
+\item{return_type}{Optional: The type of the value that every impl's
+method returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of
+the first argument. An impl may declare a type that fits it
+(\code{\link[=impl_method]{impl_method()}}). A replacement method returns a value of its
+argument's type and declares none.}
 }
 \value{
 An \code{r8_trait_method}.
@@ -35,7 +42,14 @@ An \code{r8_trait_method}.
 Declare a trait method
 }
 \examples{
-trait_method(function(spec, x, y) NULL, description = "Trains a model.")
-trait_method(function(x, y, ...) NULL, dispatch = c("x", "y"))
+trait_method(params(spec, x, y), description = "Trains a model.")
+trait_method(params(x, y, "..."), dispatch = c("x", "y"))
+trait_method(
+  params(spec, x, verbosity = arg_integer(min = 0L, default = 1L)),
+  return_type = type_double()
+)
 
+}
+\seealso{
+\code{\link[=params]{params()}}, \code{\link[=impl]{impl()}}.
 }

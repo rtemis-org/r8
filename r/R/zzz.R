@@ -67,7 +67,7 @@ Display <- build_trait(
   "Display",
   list(
     format = trait_method(
-      function(x, ...) NULL,
+      params(x, "..."),
       description = "The text that print() shows."
     )
   ),
@@ -83,7 +83,7 @@ Debug <- build_trait(
   "Debug",
   list(
     str = trait_method(
-      function(object, ...) NULL,
+      params(object, "..."),
       description = "The structure, for developers."
     )
   ),
@@ -97,7 +97,7 @@ Debug <- build_trait(
 #' @export
 Shape <- build_trait(
   "Shape",
-  list(dim = trait_method(function(x) NULL, description = "The dimensions.")),
+  list(dim = trait_method(params(x), description = "The dimensions.")),
   "A value's dimensions.",
   NULL,
   "R8",
@@ -110,7 +110,7 @@ PartialOrd <- build_trait(
   "PartialOrd",
   list(
     partial_cmp = trait_method(
-      function(x, y) NULL,
+      params(x, y),
       description = "The order of x relative to y, or NA when not ordered."
     )
   ),
@@ -126,7 +126,7 @@ Print <- build_trait(
   "Print",
   list(
     print = trait_method(
-      function(x, ...) NULL,
+      params(x, "..."),
       description = "Writes the value to the console."
     )
   ),

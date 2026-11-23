@@ -106,3 +106,36 @@ fn a_numeric_type_holds_one_bound_per_side() {
     };
     assert!(!i.in_range(0) && i.in_range(1) && i.in_range(9) && !i.in_range(10));
 }
+
+/// A parameter's `null` default, of a parameter of type `option()`, is read,
+/// written, and recorded apart from a parameter without a default.
+#[test]
+fn a_null_parameter_default_is_not_an_absent_one() {
+    use rtemis_r8::ir::{ParamDef, TraitDef};
+    use rtemis_r8::record::{self, Declaration, DeclarationRef};
+    let text = json!({
+        "name": "Fit",
+        "description": "",
+        "methods": [{
+            "name": "fit",
+            "description": "",
+            "params": [
+                "x",
+                {"name": "n", "type": {"kind": "option", "inner": {"kind": "integer"}}, "default": null},
+                {"name": "m", "type": {"kind": "option", "inner": {"kind": "integer"}}},
+            ],
+        }],
+    });
+    let tr: TraitDef = serde_json::from_value(text.clone()).unwrap();
+    let given: Vec<bool> = tr.methods[0]
+        .params
+        .iter()
+        .map(|p| matches!(p, ParamDef::Full(q) if q.default.is_some()))
+        .collect();
+    assert_eq!(given, [false, true, false]);
+    assert_eq!(serde_json::to_value(&tr).unwrap(), text);
+
+    let ns = rtemis_r8::name::Name::new("ns").unwrap();
+    let read = record::decode(&record::encode([(&ns, DeclarationRef::Trait(&tr))])).unwrap();
+    assert!(matches!(&read[0].declaration, Declaration::Trait(t) if t == &tr));
+}

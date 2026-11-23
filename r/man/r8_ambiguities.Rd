@@ -25,7 +25,7 @@ its impls, with those of the packages it uses, leave no call ambiguous.
 op <- options(r8.namespace = "demo")
 A <- new_struct("A", fields = list(a = type_double()))
 A1 <- new_struct("A1", fields = list(a1 = type_double()), extends = A)
-combine <- generic("combine", c("x", "y"), dispatch = c("x", "y"))
+combine <- generic("combine", params(x, y), dispatch = c("x", "y"))
 implement(combine, A1, A) <- function(x, y) "A1, A"
 implement(combine, A, A1) <- function(x, y) "A, A1"
 r8_ambiguities(combine)

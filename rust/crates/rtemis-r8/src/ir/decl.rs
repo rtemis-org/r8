@@ -510,11 +510,13 @@ pub struct Param {
     /// The parameter's type, which every argument satisfies.
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub ty: Option<FieldType>,
-    /// The parameter's default in its JSON form, for a typed parameter.
+    /// The parameter's default in its JSON form, for a typed parameter. A
+    /// `null` is the default of a parameter of type `option()`; a parameter
+    /// without the member is required.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::tree::exact_option"
+        deserialize_with = "crate::tree::exact_present"
     )]
     #[cfg_attr(feature = "schema", schemars(with = "Option<Value>"))]
     pub default: Option<Box<crate::tree::Tree>>,
@@ -559,6 +561,23 @@ impl ParamDef {
         match self {
             ParamDef::Name(_) => None,
             ParamDef::Full(p) => p.ty.as_ref(),
+        }
+    }
+}
+
+impl From<Param> for ParamDef {
+    /// The name alone for a parameter with nothing else, the form the check
+    /// requires, and the object form otherwise.
+    fn from(p: Param) -> Self {
+        if !p.dispatch
+            && p.ty.is_none()
+            && p.default.is_none()
+            && p.host_default.is_none()
+            && p.description.is_empty()
+        {
+            ParamDef::Name(p.name)
+        } else {
+            ParamDef::Full(p)
         }
     }
 }

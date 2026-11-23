@@ -28,7 +28,7 @@ test_that("a parent's replacement method on a child returns the child", {
   Range <- ty[["Range"]]
   Window <- ty[["Window"]]
   declare_in("rp1", {
-    `tag<-` <- generic("tag<-", c("x", "value"))
+    `tag<-` <- generic("tag<-", params(x, value))
     implement(`tag<-`, Range) <- function(x, value) {
       x$tag <- value
       x
@@ -48,7 +48,7 @@ test_that("a replacement method that returns another type raises r8_type_error",
   Range <- ty[["Range"]]
   Window <- ty[["Window"]]
   declare_in("rp2", {
-    `tag<-` <- generic("tag<-", c("x", "value"))
+    `tag<-` <- generic("tag<-", params(x, value))
     implement(`tag<-`, Range) <- function(x, value) {
       Range(lo = x$lo, hi = x$hi, tag = value)
     }
@@ -78,7 +78,7 @@ test_that("an enum's replacement method may change the variant", {
       variants = list(Running = variant(), Done = variant())
     )
     Other <- new_enum("Other", variants = list(Z = variant()))
-    `status<-` <- generic("status<-", c("x", "value"))
+    `status<-` <- generic("status<-", params(x, value))
     implement(`status<-`, Status) <- function(x, value) {
       if (identical(value, "done")) Status@Done else Other@Z
     }
@@ -95,7 +95,7 @@ test_that("a host object's replacement result keeps its class vector", {
       "Note",
       methods = list(
         `note<-` = trait_method(
-          function(x, value) NULL,
+          params(x, value),
           default_impl = function(x, value) {
             if (identical(value, "drop")) {
               return(unclass(x))
@@ -122,7 +122,7 @@ test_that("r8_next_impl() in a replacement impl passes the current arguments", {
   Range <- ty[["Range"]]
   Window <- ty[["Window"]]
   declare_in("rp5", {
-    `tag<-` <- generic("tag<-", c("x", "value"))
+    `tag<-` <- generic("tag<-", params(x, value))
     implement(`tag<-`, Range) <- function(x, value) {
       x$tag <- value
       x
@@ -153,7 +153,7 @@ test_that("an S3 replacement generic's method is checked and continues with r8_n
   declare_in("rp6", {
     Units <- new_trait(
       "Units",
-      methods = list(`units<-` = trait_method(function(x, value) NULL))
+      methods = list(`units<-` = trait_method(params(x, value)))
     )
     impl(
       Units,
@@ -206,41 +206,41 @@ test_that("a Print impl continues with r8_next_impl()", {
 
 test_that("generic() declares replacement generics under the trait with_f", {
   declare_in("rp8", {
-    `labels<-` <- generic("labels<-", c("x", "value"))
+    `labels<-` <- generic("labels<-", params(x, value))
     expect_identical(attr(`labels<-`, "r8_trait"), "rp8::with_labels")
     expect_identical(attr(`labels<-`, "r8_method"), "labels<-")
     expect_output(print(`labels<-`), "<r8 generic rp8::labels<->")
     expect_output(print(`labels<-`), "labels\\(x\\) <- value")
     expect_error(
-      generic("with_labels"),
+      generic("with_labels", params(x)),
       "share the trait `rp8::with_labels`",
       class = "r8_declaration_error"
     )
     expect_error(
       new_trait(
         "with_labels",
-        methods = list(f = trait_method(function(x) NULL))
+        methods = list(f = trait_method(params(x)))
       ),
       "trait of the replacement generic",
       class = "r8_declaration_error"
     )
     expect_error(
-      generic("lab<-", "x"),
-      "the last argument `value`",
+      generic("lab<-", params(x)),
+      "the last parameter `value`",
       class = "r8_declaration_error"
     )
     expect_error(
-      generic("lab<-", c("value", "x")),
-      "the last argument `value`",
+      generic("lab<-", params(value, x)),
+      "the last parameter `value`",
       class = "r8_declaration_error"
     )
     expect_error(
-      generic("levels<-", c("x", "value")),
+      generic("levels<-", params(x, value)),
       "reserved",
       class = "r8_declaration_error"
     )
     expect_error(
-      generic("units<-", c("x", "value")),
+      generic("units<-", params(x, value)),
       "implement\\(`units<-`, Type\\)",
       class = "r8_declaration_error"
     )
@@ -250,7 +250,7 @@ test_that("generic() declares replacement generics under the trait with_f", {
 test_that("new_trait() reserves the replacement names that implement() refuses", {
   for (m in c("names<-", "length<-", "dim<-", "levels<-", "[<-")) {
     methods <- stats::setNames(
-      list(trait_method(function(x, value) NULL)),
+      list(trait_method(params(x, value))),
       m
     )
     expect_error(

@@ -8,11 +8,11 @@ test_that("a trait method dispatches on the type of its first argument", {
       "Area",
       methods = list(
         area = trait_method(
-          function(shape, ...) NULL,
+          params(shape, "..."),
           description = "The area."
         ),
         label = trait_method(
-          function(shape) NULL,
+          params(shape),
           default_impl = function(shape) {
             "a shape"
           }
@@ -50,7 +50,7 @@ test_that("a method named as an existing S3 generic becomes its method", {
   T <- declare_in("tr", {
     Show <- new_trait(
       "Show",
-      methods = list(summary = trait_method(function(object, ...) NULL))
+      methods = list(summary = trait_method(params(object, "...")))
     )
     Point <- new_struct(
       "Point",
@@ -76,7 +76,7 @@ test_that("the methods of R8 and its standard traits are reserved", {
         new_trait(
           "Reserved",
           methods = stats::setNames(
-            list(trait_method(function(x, ...) NULL)),
+            list(trait_method(params(x, "..."))),
             m
           )
         )
@@ -90,12 +90,12 @@ test_that("the methods of R8 and its standard traits are reserved", {
 test_that("two traits of one namespace declare no method of one name", {
   declare_in(
     "dupgen",
-    new_trait("Fit", methods = list(fit = trait_method(function(x) NULL)))
+    new_trait("Fit", methods = list(fit = trait_method(params(x))))
   )
   expect_error(
     declare_in(
       "dupgen",
-      new_trait("Train", methods = list(fit = trait_method(function(x) NULL)))
+      new_trait("Train", methods = list(fit = trait_method(params(x))))
     ),
     "duplicate_generic",
     class = "r8_declaration_error"
@@ -106,7 +106,7 @@ test_that("plain functions, mismatched signatures, and orphan impls are refused"
   expect_error(
     declare_in(
       "tr",
-      new_trait("Rows", methods = list(nrow = trait_method(function(x) NULL)))
+      new_trait("Rows", methods = list(nrow = trait_method(params(x))))
     ),
     "not a generic",
     class = "r8_declaration_error"
@@ -116,7 +116,7 @@ test_that("plain functions, mismatched signatures, and orphan impls are refused"
       "tr",
       new_trait(
         "Summ",
-        methods = list(summary = trait_method(function(self) NULL))
+        methods = list(summary = trait_method(params(self)))
       )
     ),
     "begin with",
@@ -127,7 +127,7 @@ test_that("plain functions, mismatched signatures, and orphan impls are refused"
     list(
       Tr = new_trait(
         "Orphan",
-        methods = list(go = trait_method(function(x) NULL))
+        methods = list(go = trait_method(params(x)))
       ),
       Ty = new_struct("Mine", fields = list(a = type_double()))
     )
@@ -153,7 +153,7 @@ test_that("an impl of the same trait for the same type replaces it", {
     list(
       Tr = new_trait(
         "Again",
-        methods = list(again = trait_method(function(x) NULL))
+        methods = list(again = trait_method(params(x)))
       ),
       Ty = new_struct("Twice", fields = list(a = type_double()))
     )
@@ -175,7 +175,7 @@ test_that("dispatch follows impls changed after a call, and serves defaults and 
     Size <- new_trait(
       "Size",
       methods = list(
-        size = trait_method(function(x) NULL, default_impl = function(x) {
+        size = trait_method(params(x), default_impl = function(x) {
           "default"
         })
       )
@@ -203,17 +203,20 @@ test_that("dispatch follows impls changed after a call, and serves defaults and 
   expect_identical(size(other), "default")
   expect_identical(size(other), "default")
   expect_identical(size(1), "default")
-  # The generic's body holds constants only.
+  # The generic's body holds constants and R8's namespace, which serializes by
+  # reference.
   bound <- all.names(body(size))
   expect_true(all(c(".r8_c_find", ".r8_dispatch") %in% bound))
-  expect_false(any(vapply(as.list(body(size)), is.environment, logical(1))))
+  find <- body(size)[[1L]]
+  expect_identical(find[[2L]][[2L]], asNamespace("R8"))
+  expect_lt(length(serialize(body(size), NULL)), 1000L)
 })
 
 test_that("a trait's required fields are checked against each implementor", {
   declare_in("req1", {
     Measured <- new_trait(
       "Measured",
-      methods = list(span = trait_method(function(x) NULL)),
+      methods = list(span = trait_method(params(x))),
       required_fields = list(
         lo = type_double(),
         hi = field(option(type_double()), description = "The upper end.")
@@ -250,7 +253,7 @@ test_that("a trait's required fields are checked against each implementor", {
     expect_error(
       new_trait(
         "Bad",
-        methods = list(f = trait_method(function(x) NULL)),
+        methods = list(f = trait_method(params(x))),
         required_fields = list(a = field(type_double(), default = 1))
       ),
       "required_field_form",

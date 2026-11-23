@@ -25,7 +25,7 @@ struct and the structs that extend it are \code{\link[=subtype]{subtype()}}.
 }
 \examples{
 op <- options(r8.namespace = "demo")
-Planar <- new_trait("Planar", methods = list(area = trait_method(function(x) NULL)))
+Planar <- new_trait("Planar", methods = list(area = trait_method(params(x))))
 Square <- new_struct("Square", fields = list(side = type_double()))
 impl(Planar, Square, methods = list(area = function(x) x$side^2))
 Drawing <- new_struct("Drawing", fields = list(shape = dyn(Planar)))

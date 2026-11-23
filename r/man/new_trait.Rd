@@ -52,7 +52,7 @@ arguments.
 }
 \examples{
 op <- options(r8.namespace = "demo")
-Fit <- new_trait("Fit", methods = list(fit = trait_method(function(spec, x, y) NULL)))
+Fit <- new_trait("Fit", methods = list(fit = trait_method(params(spec, x, y))))
 fit <- Fit@fit
 options(op)
 

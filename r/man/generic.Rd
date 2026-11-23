@@ -5,7 +5,7 @@
 \alias{print.r8_generic}
 \title{Declare a generic}
 \usage{
-generic(name, args = "x", description = "", dispatch = NULL)
+generic(name, params, description = "", dispatch = NULL, return_type = NULL)
 
 \method{print}{r8_generic}(x, ...)
 }
@@ -15,11 +15,11 @@ generic(name, args = "x", description = "", dispatch = NULL)
 name followed by \verb{<-} for a replacement generic, such as \code{"labels<-"}.
 It is the name the generic is assigned to.}
 
-\item{args}{Character: The formal argument names, in order. The first is
-the value dispatched on. A generic with \code{...} lets each method add named
+\item{params}{The generic's parameters, from \code{\link[=params]{params()}}. The first is the
+value dispatched on. A generic with \code{"..."} lets each method add named
 arguments after the generic's; a generic without it calls its methods
 with exactly its arguments, and a call with another argument is an
-error. Removing \code{...} from a generic breaks the methods that add
+error. Removing \code{"..."} from a generic breaks the methods that add
 arguments.}
 
 \item{description}{Character: What the generic does.}
@@ -36,6 +36,12 @@ specific in one position make a call on both ambiguous, an
 \code{r8_dispatch_error} that names the method to declare, and
 \code{\link[=r8_ambiguities]{r8_ambiguities()}} lists such pairs.}
 
+\item{return_type}{Optional: The type of the value that every method
+returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of the
+first argument. A method may declare a type that fits it
+(\link{implement<-}). A replacement generic returns a value of its argument's
+type and declares none.}
+
 \item{x}{A generic of class \code{r8_generic}.}
 
 \item{...}{Not used.}
@@ -51,7 +57,7 @@ exports it. The generic is a trait with one method named as the generic,
 \code{ns::describe}, which Rust and the C interface implement as any trait.
 }
 \details{
-A replacement generic, \code{generic("labels<-", c("x", "value"))}, is called
+A replacement generic, \code{generic("labels<-", params(x, value))}, is called
 as \code{labels(x) <- value}, which rebinds \code{x} to the method's result; the
 original value is unchanged. Its last argument is \code{value}, and each
 method returns a value of the type of \code{x}: for a child type, the child,
@@ -62,13 +68,17 @@ bindings other than R.
 \examples{
 op <- options(r8.namespace = "models")
 GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
-describe <- generic("describe", "x")
-implement(describe, GBM) <- function(x) {
-  paste("Gradient boosting,", x$n_trees, "trees")
+describe <- generic(
+  "describe",
+  params(x, digits = arg_integer(min = 0L, default = 3L)),
+  return_type = type_character()
+)
+implement(describe, GBM) <- function(x, digits) {
+  paste("Gradient boosting,", format(x$n_trees, digits = digits), "trees")
 }
 describe(GBM(n_trees = 100L))
 
-`n_trees<-` <- generic("n_trees<-", c("x", "value"))
+`n_trees<-` <- generic("n_trees<-", params(x, value))
 implement(`n_trees<-`, GBM) <- function(x, value) {
   x$n_trees <- value
   x
@@ -80,5 +90,6 @@ options(op)
 
 }
 \seealso{
-\link{implement<-} declares a method; \code{\link[=r8_method]{r8_method()}} returns one.
+\code{\link[=params]{params()}} declares the parameters; \link{implement<-} declares a
+method; \code{\link[=r8_method]{r8_method()}} returns one.
 }

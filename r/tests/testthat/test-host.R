@@ -49,7 +49,7 @@ test_that("host_class() records S3, implicit, and S4 classes", {
 
 test_that("an R8 generic dispatches on S3 and implicit classes", {
   declare_in("hc1", {
-    describe <- generic("describe", "x")
+    describe <- generic("describe", params(x))
     implement(describe, "data.frame") <- function(x) "a data frame"
     implement(describe, "tbl") <- function(x) "a tibble"
     implement(describe, "matrix") <- function(x) "a matrix"
@@ -81,7 +81,7 @@ test_that("an R8 generic dispatches on S3 and implicit classes", {
 
 test_that("the dispatch cache keys a value by its whole chain", {
   declare_in("hc2", {
-    which_one <- generic("which_one", "x")
+    which_one <- generic("which_one", params(x))
     implement(which_one, "b") <- function(x) "b"
     implement(which_one, "c") <- function(x) "c"
     implement(which_one, "integer") <- function(x) "integer"
@@ -109,7 +109,7 @@ test_that("the dispatch cache keys a value by its whole chain", {
 test_that("host classes take part in multiple dispatch", {
   declare_in("hc3", {
     Sel <- new_struct("Sel", fields = list(cols = vec(type_character())))
-    exc <- generic("exc", c("x", "idx"), dispatch = c("x", "idx"))
+    exc <- generic("exc", params(x, idx), dispatch = c("x", "idx"))
     implement(exc, "data.frame", "character") <- function(x, idx) {
       x[, setdiff(names(x), idx), drop = FALSE]
     }
@@ -132,7 +132,7 @@ test_that("host classes take part in multiple dispatch", {
       df[, c("b", "c"), drop = FALSE]
     )
     # Each impl more specific in one position, at the call.
-    pick <- generic("pick", c("x", "y"), dispatch = c("x", "y"))
+    pick <- generic("pick", params(x, y), dispatch = c("x", "y"))
     implement(pick, "tbl") <- function(x, y) "tbl, any"
     implement(pick, y = "character") <- function(x, y) "any, character"
     tbl <- structure(list(), class = c("tbl", "data.frame"))
@@ -150,7 +150,7 @@ test_that("host classes take part in multiple dispatch", {
 test_that("R8 values and host objects match their own positions only", {
   declare_in("hc4", {
     A <- new_struct("A", fields = list(a = type_double()))
-    kind <- generic("kind", "x")
+    kind <- generic("kind", params(x))
     implement(kind, A) <- function(x) "A"
     implement(kind, "list") <- function(x) "list"
     expect_identical(kind(A(a = 1)), "A")
@@ -190,7 +190,7 @@ test_that("an impl on a host class follows the orphan rule", {
   declare_in("hc5", {
     Describe <- new_trait(
       "Describe",
-      methods = list(describe = trait_method(function(x) NULL))
+      methods = list(describe = trait_method(params(x)))
     )
   })
   declare_in("hc6", {
@@ -215,8 +215,8 @@ test_that("an impl on a host class takes an existing S3 method", {
     Summ <- new_trait(
       "Summ",
       methods = list(
-        summary = trait_method(function(object, ...) NULL),
-        label = trait_method(function(x) NULL)
+        summary = trait_method(params(object, "...")),
+        label = trait_method(params(x))
       )
     )
     # data.frame has summary.data.frame in base, which the impl takes.
@@ -257,7 +257,7 @@ test_that("an impl on a host class takes an existing S3 method", {
 
 test_that("an impl on a host class reaches the next R8 impl of its chain", {
   declare_in("hc8", {
-    describe <- generic("describe", "x")
+    describe <- generic("describe", params(x))
     implement(describe, "data.frame") <- function(x) "df"
     implement(describe, "tbl") <- function(x) paste("tbl of", r8_next_impl())
     tbl <- structure(list(a = 1), class = c("tbl", "data.frame"))
@@ -269,7 +269,7 @@ test_that("a dyn() field admits R8 values only", {
   declare_in("hc9", {
     Describe <- new_trait(
       "Describe",
-      methods = list(describe = trait_method(function(x) NULL))
+      methods = list(describe = trait_method(params(x)))
     )
     impl(Describe, "data.frame", methods = list(describe = function(x) "df"))
     A <- new_struct("A", fields = list(a = type_double()))
@@ -297,7 +297,7 @@ test_that("r8_convert() reads the class vector as .class2() gives it", {
 test_that("S4 classes are host classes by name and by class object", {
   skip_if_not_installed("Matrix")
   declare_in("hc11", {
-    describe <- generic("describe", "x")
+    describe <- generic("describe", params(x))
     implement(
       describe,
       methods::getClass("CsparseMatrix", where = asNamespace("Matrix"))
@@ -331,7 +331,7 @@ test_that("S4 classes are host classes by name and by class object", {
 
 test_that("dyn() of a generic holds a value with a method of it", {
   declare_in("hc12", {
-    describe <- generic("describe", "x")
+    describe <- generic("describe", params(x))
     A <- new_struct("A", fields = list(a = type_double()))
     B <- new_struct("B", fields = list(b = type_double()))
     implement(describe, A) <- function(x) "A"
@@ -343,7 +343,7 @@ test_that("dyn() of a generic holds a value with a method of it", {
     expect_error(Report(body = data.frame()), class = "r8_value_error")
     back <- r8_from_json(Report, r8_to_json(r))
     expect_true(r8_equal(back, r))
-    pair <- generic("pair", c("x", "y"), dispatch = c("x", "y"))
+    pair <- generic("pair", params(x, y), dispatch = c("x", "y"))
     expect_error(
       dyn(pair),
       "dispatches on 2 arguments",
@@ -357,8 +357,8 @@ test_that("an impl on a host class continues to an internal generic's default", 
     Len <- new_trait(
       "Len",
       methods = list(
-        length = trait_method(function(x) NULL),
-        label = trait_method(function(x) NULL)
+        length = trait_method(params(x)),
+        label = trait_method(params(x))
       )
     )
     impl(
@@ -387,7 +387,7 @@ test_that("an impl on a host class continues to an internal generic's default", 
 
 test_that("a value of class r8_value carries one type name", {
   declare_in("hc14", {
-    kind <- generic("kind", "x")
+    kind <- generic("kind", params(x))
     implement(kind, "list") <- function(x) "list"
     bad <- structure(list(), class = "r8_value", r8_type = c("a::B", "a::C"))
     expect_error(kind(bad), "one string", class = "r8_dispatch_error")

@@ -892,3 +892,16 @@ pub fn normalized_tree<'a, A: Access<'a>>(
     e.named(ty, value, None);
     e.w.out.take().unwrap_or(Tree::Null)
 }
+
+/// The normalized form of a valid value of the field type `ty`, in any host
+/// form, as a [`Tree`] with no runs: the JSON form of a default that a host
+/// gives as a value of the type.
+pub fn normalized_field_tree<'a, A: Access<'a>>(
+    value: A,
+    ty: &FieldType,
+    lookup: &dyn TypeLookup,
+) -> Tree {
+    let mut e = Emitter::with_sink(lookup, crate::tree::TreeSink::default(), false);
+    e.value(ty, value);
+    e.w.out.take().unwrap_or(Tree::Null)
+}

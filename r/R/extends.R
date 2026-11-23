@@ -155,7 +155,7 @@ r8_upcast <- function(x, type) {
 #' op <- options(r8.namespace = "demo")
 #' Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
 #' Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
-#' span_text <- generic("span_text", "x")
+#' span_text <- generic("span_text", params(x))
 #' implement(span_text, Range) <- function(x) paste(x$lo, "to", x$hi)
 #' implement(span_text, Window) <- function(x) paste(x$label, r8_next_impl())
 #' span_text(Window(lo = 1, hi = 2, label = "w"))

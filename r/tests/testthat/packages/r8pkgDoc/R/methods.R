@@ -12,7 +12,11 @@ NULL
 #' @examples
 #' describe(Resampler(method = Method@Bootstrap, n_resamples = 2L))
 #' @export
-describe <- R8::generic("describe", c("x", "..."), description = "Describes x.")
+describe <- R8::generic(
+  "describe",
+  R8::params(x, "..."),
+  description = "Describes x."
+)
 
 #' @param verbose Logical: Include the seed.
 implement(describe, Resampler) <- function(x, ..., verbose = FALSE) {
@@ -70,7 +74,7 @@ implement(n_resamples, Resampler) <- function(x, ...) {
 #' @export
 `seed<-` <- R8::generic(
   "seed<-",
-  c("x", "value"),
+  R8::params(x, value),
   description = "Replaces the seed."
 )
 
@@ -93,7 +97,7 @@ implement(as_resampler, "character") <- function(x) {
 #' @examples
 #' pair_with(Resampler(method = Method@Bootstrap, n_resamples = 2L), Method@Bootstrap)
 #' @export
-pair_with <- R8::generic("pair_with", c("x", "y"), dispatch = c("x", "y"))
+pair_with <- R8::generic("pair_with", R8::params(x, y), dispatch = c("x", "y"))
 
 implement(pair_with, Resampler, Method) <- function(x, y) {
   "a resampler and a method"
@@ -105,4 +109,40 @@ implement(pair_with, y = Resampler) <- function(x, y) {
 
 implement(pair_with, "data.frame", Resampler) <- function(x, y) {
   "a data frame and a resampler"
+}
+
+#' Label a value
+#'
+#' @param x A value of a type with a method of `label_of()`.
+#' @param sep Character: The separator.
+#' @param n Integer: The number of marks.
+#' @param ... Arguments of methods.
+#'
+#' @return Character: The label.
+#'
+#' @examples
+#' label_of(Resampler(method = Method@Bootstrap, n_resamples = 2L))
+#' @export
+label_of <- R8::generic(
+  "label_of",
+  R8::params(
+    x,
+    sep = R8::arg_character(default = default_sep()),
+    n = R8::arg_integer(min = 1L, default = 2L),
+    "..."
+  ),
+  description = "Labels x.",
+  return_type = R8::type_character()
+)
+
+# An unexported function that a default calls.
+default_sep <- function() "-"
+
+implement(label_of, Resampler, return_type = R8::type_character()) <- function(
+  x,
+  sep,
+  n,
+  ...
+) {
+  paste(rep("r", n), collapse = sep)
 }
