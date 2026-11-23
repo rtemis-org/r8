@@ -243,6 +243,9 @@ register_exports <- function(pkg, entries = list()) {
   claim_namespace(namespace, pkg)
   compared <- r8_exports_compare(ptr, namespace)
   check_exports(pkg, compared, rust_stored)
+  for (name in r8_exports_traits(ptr)) {
+    check_trait_registered(name, pkg)
+  }
   fns <- r8_register_exports(ptr, pkg, namespace)
   assign(
     pkg,
@@ -279,6 +282,85 @@ register_exports <- function(pkg, entries = list()) {
   }
   length(fns[["method"]])
 } # /R8::register_exports
+
+
+# %% check_trait_registered ----
+#' Check that a trait that a package implements is registered
+#'
+#' A package that names another package's trait as `pkg::Trait` and imports
+#' nothing from that package evaluates the name when it is installed, and
+#' loads without the other package.
+#'
+#' @param name Character: The trait's qualified name.
+#' @param pkg Character: The package that implements it.
+#'
+#' @return `NULL`, invisibly; signals `r8_declaration_error` for a trait that
+#'   is not registered, with the import that loads the package that declares
+#'   it.
+#'
+#' @keywords internal
+#' @noRd
+check_trait_registered <- function(name, pkg) {
+  if (!is.null(.r8_traits[[name]])) {
+    return(invisible(NULL))
+  }
+  namespace <- sub("::.*$", "", name)
+  owner <- r8_namespace_owner(namespace)
+  provider <- r8_namespace_providers()[[namespace]]
+  r8_abort(
+    "Package '",
+    pkg,
+    "' implements `",
+    name,
+    "`, which is not registered: ",
+    if (nzchar(owner)) {
+      paste0(
+        "package '",
+        owner,
+        "' ",
+        utils::packageVersion(owner),
+        " is loaded and declares no such trait."
+      )
+    } else if (length(provider) > 0L) {
+      paste0(
+        "package '",
+        provider[[1L]],
+        "' declares the namespace `",
+        namespace,
+        "` and is not loaded. Import from it in NAMESPACE, so that it loads first: ",
+        import_directive(provider[[1L]], sub("^.*::", "", name)),
+        "."
+      )
+    } else {
+      paste0("no installed package declares the namespace `", namespace, "`.")
+    },
+    class = "r8_declaration_error"
+  )
+} # /R8::check_trait_registered
+
+
+# %% import_directive ----
+#' The NAMESPACE directive that imports from a package
+#'
+#' @param pkg Character: An installed package, which is not loaded.
+#' @param name Character: The name to import.
+#'
+#' @return Character: `importFrom()` of `name` when the package's NAMESPACE
+#'   exports it by name, and `import()` of the package otherwise.
+#'
+#' @keywords internal
+#' @noRd
+import_directive <- function(pkg, name) {
+  exports <- tryCatch(
+    parseNamespaceFile(pkg, dirname(system.file(package = pkg)))[["exports"]],
+    error = function(e) character()
+  )
+  if (name %in% exports) {
+    paste0("importFrom(", pkg, ", ", name, ")")
+  } else {
+    paste0("import(", pkg, ")")
+  }
+} # /R8::import_directive
 
 
 # %% clear_compiled ----

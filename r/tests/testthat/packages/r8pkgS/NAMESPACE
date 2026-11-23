@@ -1,0 +1,4 @@
+useDynLib(r8pkgS, .registration = TRUE)
+importFrom(r8pkgR, Interval)
+export(Tile)
+export(gap)

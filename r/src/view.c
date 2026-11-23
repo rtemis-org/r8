@@ -879,13 +879,82 @@ static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
   return out;
 }
 
+// The name of the variant of the enum value `x`, the string of its attribute
+// `r8_variant`, or NULL for another object, one that keeps the attribute
+// without the class of R8's values included.
+static SEXP enum_variant(SEXP x) {
+  static SEXP variant_sym = NULL;
+  if (variant_sym == NULL) {
+    variant_sym = Rf_install("r8_variant");
+  }
+  SEXP v = Rf_getAttrib(x, variant_sym);
+  return TYPEOF(v) == STRSXP && XLENGTH(v) == 1 && Rf_inherits(x, "r8_value") ? v : NULL;
+}
+
+// The name of the variant of the enum value `x`; R8's `variant_abort()`
+// raises the error for another object.
+// spec: R8/class-system#values-in-r
+static SEXP r8_variant(SEXP x) {
+  SEXP v = enum_variant(x);
+  if (v == NULL) {
+    SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
+    r8_abort3("variant_abort", x, R_NilValue, R_NilValue, ns);
+    UNPROTECT(2);
+    return R_NilValue;
+  }
+  return v;
+}
+
+// Whether the variants `variants`, R8's `.r8_variants`, hold the enum of the
+// value `x` with a variant `name`, a string that is neither NA nor empty.
+static int declares_variant(SEXP x, SEXP name, SEXP variants) {
+  static SEXP type_sym = NULL;
+  if (type_sym == NULL) {
+    type_sym = Rf_install("r8_type");
+  }
+  SEXP type = Rf_getAttrib(x, type_sym);
+  if (TYPEOF(type) != STRSXP || XLENGTH(type) != 1 || TYPEOF(variants) != ENVSXP) {
+    return 0;
+  }
+  SEXP declared = r8_get_var(Rf_installTrChar(STRING_ELT(type, 0)), variants, R_NilValue);
+  return TYPEOF(declared) == ENVSXP &&
+         R_existsVarInFrame(declared, Rf_installTrChar(name));
+}
+
+// Whether the enum value `x` is of the variant `variant`, one string that the
+// enum declares. R8's `other_variant()` decides what the variants read so far
+// do not: it reads the declaration, or raises the error for `x` or
+// `variant`.
+// spec: R8/class-system#values-in-r
+static SEXP r8_is_variant(SEXP x, SEXP variant, SEXP variants) {
+  SEXP v = enum_variant(x);
+  if (v != NULL && TYPEOF(variant) == STRSXP && XLENGTH(variant) == 1) {
+    SEXP name = STRING_ELT(variant, 0);
+    if (name != NA_STRING && LENGTH(name) > 0) {
+      if (name == STRING_ELT(v, 0) ||
+          strcmp(Rf_translateCharUTF8(name), Rf_translateCharUTF8(STRING_ELT(v, 0))) == 0) {
+        return Rf_ScalarLogical(TRUE);
+      }
+      if (declares_variant(x, name, variants)) {
+        return Rf_ScalarLogical(FALSE);
+      }
+    }
+  }
+  SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
+  SEXP call =
+    PROTECT(Rf_lang3(Rf_install("other_variant"), PROTECT(quoted(x)), PROTECT(quoted(variant))));
+  SEXP out = Rf_eval(call, ns);
+  UNPROTECT(5);
+  return out;
+}
+
 // The C routines that R calls through `.Call()` on a native symbol:
 // list(invoke, exports, construct, find, replaced, find2, find3, call,
-// result, upcast). R8's `.Call` routines are the Rust code's, registered by
+// result, upcast, variant, is_variant). R8's `.Call` routines are the Rust code's, registered by
 // extendr; these continue a jump, call R_GetCCallable(), evaluate R code, or
 // read the fields of Rust-stored values from C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 10));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 12));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
@@ -896,7 +965,9 @@ SEXP r8_native_symbols(void) {
   SET_VECTOR_ELT(out, 7, native_symbol((DL_FUNC) r8_call));
   SET_VECTOR_ELT(out, 8, native_symbol((DL_FUNC) r8_result));
   SET_VECTOR_ELT(out, 9, native_symbol((DL_FUNC) r8_upcast));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 10));
+  SET_VECTOR_ELT(out, 10, native_symbol((DL_FUNC) r8_variant));
+  SET_VECTOR_ELT(out, 11, native_symbol((DL_FUNC) r8_is_variant));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 12));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
@@ -907,6 +978,8 @@ SEXP r8_native_symbols(void) {
   SET_STRING_ELT(names, 7, Rf_mkChar("call"));
   SET_STRING_ELT(names, 8, Rf_mkChar("result"));
   SET_STRING_ELT(names, 9, Rf_mkChar("upcast"));
+  SET_STRING_ELT(names, 10, Rf_mkChar("variant"));
+  SET_STRING_ELT(names, 11, Rf_mkChar("is_variant"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

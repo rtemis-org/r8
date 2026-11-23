@@ -7,8 +7,10 @@ publish = false
 # Its own workspace root, inside the R8 checkout.
 [workspace]
 
+# A static library for this package, and a Rust library for the crate of
+# r8pkgS, which depends on it.
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "lib"]
 path = "src/lib.rs"
 
 [dependencies]

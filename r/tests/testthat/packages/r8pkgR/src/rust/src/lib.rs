@@ -5,7 +5,7 @@
 //! against which the conformance tests of `tests/testthat/conformance` run;
 //! and structs that extend one another (`interval`).
 
-mod interval;
+pub mod interval;
 
 use interval::*;
 use rtemis_r8::R8;
@@ -24,13 +24,13 @@ pub struct Signal {
 
 /// The Rust side of `pkgr::Norm`, declared in R with `magnitude(x)`,
 /// `ratio(x, by)`, and `distance(x, y)`.
+#[r8::methods(trait = "pkgr::Norm")]
 pub trait Norm {
     fn magnitude(&self) -> f64;
     fn ratio(&self, by: f64) -> r8::Result<f64>;
     fn distance(&self, y: &Signal) -> r8::Result<f64>;
 }
 
-#[r8::methods(trait = "pkgr::Norm")]
 impl Norm for Signal {
     fn magnitude(&self) -> f64 {
         self.values.iter().map(|v| v * v).sum::<f64>().sqrt()
@@ -58,7 +58,6 @@ impl Norm for Signal {
     }
 }
 
-#[r8::methods(trait = "R8::Display")]
 impl r8::Display for Signal {
     fn format(&self, _dots: Dots) -> String {
         format!("Signal {} ({} values)", self.name, self.values.len())
@@ -104,22 +103,19 @@ pub struct Probe {
     pub mask: Buffer<Logical>,
 }
 
-#[r8::methods(trait = "R8::Display")]
 impl r8::Display for Probe {
     fn format(&self, _dots: Dots) -> String {
         format!("Probe {} ({})", self.label, self.count)
     }
 }
 
-#[r8::methods(trait = "R8::PartialOrd")]
 impl r8::PartialOrd for Probe {
-    fn partial_cmp(&self, other: r8::Sexp) -> Option<std::cmp::Ordering> {
-        let other = unsafe { r8::Receiver::<Probe>::from_named_arg(other.0, "y") }.ok()?;
-        self.ratio.partial_cmp(&other.ratio)
+    fn partial_cmp(&self, y: r8::Sexp) -> Option<std::cmp::Ordering> {
+        let y = unsafe { r8::Receiver::<Probe>::from_named_arg(y.0, "y") }.ok()?;
+        self.ratio.partial_cmp(&y.ratio)
     }
 }
 
-#[r8::methods(trait = "R8::Shape")]
 impl r8::Shape for Probe {
     fn dim(&self) -> Vec<i32> {
         vec![self.index.len() as i32, 2]
@@ -163,7 +159,6 @@ pub enum Resampler {
     Loocv,
 }
 
-#[r8::methods(trait = "R8::Display")]
 impl r8::Display for Resampler {
     fn format(&self, _dots: Dots) -> String {
         match self {
@@ -184,15 +179,18 @@ r8::exports! {
     types = [Signal, Resampler, Probe, Interval, Band, Strip],
     impls = [
         Signal: Norm,
-        Signal: Display,
-        Resampler: Display,
-        Probe: Display,
-        Probe: PartialOrd,
-        Probe: Shape,
+        Signal: r8::Display,
+        Resampler: r8::Display,
+        Probe: r8::Display,
+        Probe: r8::PartialOrd,
+        Probe: r8::Shape,
         Interval: Width,
-        Interval: Shifted,
+        Interval: Middle,
         Interval: Overlap,
-        Interval: Display,
+        Interval: r8::Display,
+        Interval: Shifted,
+        Band: Shifted,
+        Strip: Shifted,
         Band: Total,
         Strip: Shares,
     ],

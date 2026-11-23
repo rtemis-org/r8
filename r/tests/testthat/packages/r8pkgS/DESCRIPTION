@@ -1,0 +1,18 @@
+Package: r8pkgS
+Title: Test Package with a Crate That Depends on Another Package's Crate
+Version: 0.0.1
+Authors@R: person("E.D.", "Gennatas", role = c("aut", "cre"), email = "gennatas@gmail.com")
+Description: Declares in Rust a struct that extends one of r8pkgR, and
+    registers for it impls of the Rust traits of r8pkgR's crate, for the
+    tests of R8.
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Imports:
+    R8 (>= 0.4.0),
+    r8pkgR
+SystemRequirements: Cargo (Rust's package manager), rustc
+Config/R8/namespace: pkgs
+Collate: 
+    'r8-types.R'
+    'tile.R'
+    'zzz.R'

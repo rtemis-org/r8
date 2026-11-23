@@ -1,0 +1,29 @@
+# Makevars
+# ::r8pkgS::
+# 2026- EDG rtemis.org
+
+# The Rust code is a static library, built from src/rust with the crate of
+# r8pkgR and the crates of this R8 checkout (path dependencies), for the tests
+# of R8.
+
+# R8_TARGET_DIR, which the justfile of R8 sets, places the Cargo target
+# directory outside the package directory; r8pkgR builds the same dependencies
+# there. Unset, it is src/rust/target.
+ifdef R8_TARGET_DIR
+TARGET_DIR = $(R8_TARGET_DIR)/r8pkgR
+else
+TARGET_DIR = ./rust/target
+endif
+LIBDIR = $(TARGET_DIR)/release
+STATLIB = $(LIBDIR)/libr8pkgs.a
+PKG_LIBS = -L$(LIBDIR) -lr8pkgs
+
+all: $(SHLIB)
+
+# Cargo decides what to rebuild, so make runs it on every build.
+.PHONY: $(STATLIB)
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	PATH="$(PATH):$(HOME)/.cargo/bin" cargo build --lib --release --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR)

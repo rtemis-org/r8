@@ -114,9 +114,14 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
 }
 
 /// A Rust-stored type of either kind: its name, its codec table, and its
-/// value from the fields of a value whose state is not lent. `#[derive(R8)]` with
-/// `#[r8(storage = "rust")]` implements it; `#[r8::methods]`, [`Value`](crate::Value),
-/// and `r8::exports!` take it.
+/// value from the fields of a value whose state is not lent. `#[derive(R8)]`
+/// with `#[r8(storage = "rust")]` implements it. A type that `r8::exports!`
+/// lists implements it, and a method of `#[r8::methods]` returns a value of
+/// one, and takes it as `&T`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a Rust-stored type",
+    note = "a Rust-stored type is declared with `#[derive(R8)]` and `#[r8(storage = \"rust\")]`"
+)]
 pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The qualified type name, NUL-terminated.
     const TYPE_NAME: &'static CStr;

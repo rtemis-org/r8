@@ -8,9 +8,18 @@
 Norm <- R8::new_trait(
   "Norm",
   methods = list(
-    magnitude = R8::trait_method(R8::params(x)),
-    ratio = R8::trait_method(R8::params(x, by)),
-    distance = R8::trait_method(R8::params(x, y))
+    magnitude = R8::trait_method(
+      R8::params(x),
+      return_type = R8::type_double()
+    ),
+    ratio = R8::trait_method(
+      R8::params(x, by = R8::arg_double()),
+      return_type = R8::type_double()
+    ),
+    distance = R8::trait_method(
+      R8::params(x, y = R8::arg(Signal)),
+      return_type = R8::type_double()
+    )
   )
 )
 magnitude <- Norm@magnitude

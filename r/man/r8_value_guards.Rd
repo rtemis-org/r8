@@ -4,7 +4,6 @@
 \alias{r8_value_guards}
 \alias{names<-.r8_value}
 \alias{length<-.r8_value}
-\alias{[<-.r8_value}
 \alias{dim<-.r8_value}
 \alias{levels<-.r8_value}
 \title{Guards on R8 values}
@@ -12,8 +11,6 @@
 \method{names}{r8_value}(x, ...) <- value
 
 \method{length}{r8_value}(x, ...) <- value
-
-\method{[}{r8_value}(x, ...) <- value
 
 \method{dim}{r8_value}(x, ...) <- value
 
@@ -30,7 +27,7 @@
 Does not return.
 }
 \description{
-\verb{names<-}, \verb{length<-}, \verb{[<-}, \verb{dim<-}, and \verb{levels<-} would change a value
-without validation, so they abort; \code{[[} with a number aborts, as fields
-are read by name.
+\verb{names<-}, \verb{length<-}, \verb{dim<-}, and \verb{levels<-} would change a value without
+validation, so they abort; \code{[[} and \code{[} with a number abort, as fields are
+read by name.
 }

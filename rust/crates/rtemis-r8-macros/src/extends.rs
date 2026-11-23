@@ -183,9 +183,15 @@ fn snake(name: &str) -> String {
 }
 
 /// `impl Subtype<P>` for each type `P` that the embedded parent is a subtype
-/// of.
-pub fn subtype_of_parent(ident: &Ident, parent: &Parent) -> Tokens {
+/// of. The types of the struct's own fields are `Clone`.
+pub fn subtype_of_parent(ident: &Ident, parent: &Parent, own: &[&syn::Field]) -> Tokens {
     let (base, ty) = (parent.ident, parent.ty);
+    let clones = own.iter().map(|f| {
+        let (name, ty) = (&f.ident, &f.ty);
+        quote_spanned! { ty.span() =>
+            #name: <#ty as ::std::clone::Clone>::clone(&self.#name)
+        }
+    });
     quote! {
         impl<__R8P> ::rtemis_r8::derive::Subtype<__R8P> for #ident
         where
@@ -193,6 +199,16 @@ pub fn subtype_of_parent(ident: &Ident, parent: &Parent) -> Tokens {
         {
             fn upcast(&self) -> &__R8P {
                 <#ty as ::rtemis_r8::derive::Subtype<__R8P>>::upcast(&self.#base)
+            }
+            #[allow(clippy::clone_on_copy)]
+            fn with_upcast(&self, __r8_value: __R8P) -> Self {
+                Self {
+                    #base: <#ty as ::rtemis_r8::derive::Subtype<__R8P>>::with_upcast(
+                        &self.#base,
+                        __r8_value,
+                    ),
+                    #(#clones,)*
+                }
             }
         }
     }
@@ -211,8 +227,8 @@ pub fn parent_is_extensible(parent: &Parent) -> Tokens {
 
 /// `Subtype<Self>`, `Extensible`, and the interface trait `<Type>Like` of a
 /// struct of `#[r8(extensible)]`: an accessor per field that the struct
-/// adds, `to_<type>()`, and the interface trait of its parent as a
-/// supertrait.
+/// adds, `to_<type>()`, `with_<type>()`, and the interface trait of its
+/// parent as a supertrait.
 pub fn interface(
     ident: &Ident,
     vis: &Visibility,
@@ -221,6 +237,7 @@ pub fn interface(
 ) -> Result<Tokens> {
     let like = format_ident!("{}Like", ident);
     let to = format_ident!("to_{}", snake(&ident.to_string()));
+    let with = format_ident!("with_{}", snake(&ident.to_string()));
     let supertrait = parent.map(|p| like_path(p.ty)).transpose()?;
     let (colon, bound) = match &supertrait {
         Some(s) => (quote! { : #s }, quote! { + #s }),
@@ -228,11 +245,15 @@ pub fn interface(
     };
     // The methods that the interface traits of the struct and of its parent
     // and `Subtype` give a value, which an accessor of the same name hides.
-    let mut taken = vec!["upcast".to_string(), to.to_string()];
+    let mut taken: Vec<String> = ["upcast".into(), "with_upcast".into()].into();
+    let mut reserve = |name: &str| {
+        let name = snake(name);
+        taken.extend([format!("to_{name}"), format!("with_{name}")]);
+    };
+    reserve(&ident.to_string());
     if let Some(last) = supertrait.as_ref().and_then(|s| s.segments.last()) {
         let like = last.ident.to_string();
-        let parent = like.strip_suffix("Like").expect("named by `like_path`");
-        taken.push(format!("to_{}", snake(parent)));
+        reserve(like.strip_suffix("Like").expect("named by `like_path`"));
     }
     let mut decls = Vec::new();
     let mut impls = Vec::new();
@@ -263,13 +284,18 @@ pub fn interface(
         });
     }
     let trait_doc = format!(
-        "The interface of [`{ident}`] and of every struct that extends it: an accessor per field and the `{ident}` value."
+        "The interface of [`{ident}`] and of every struct that extends it: an accessor per field, the `{ident}` value, and the value with another one."
     );
     let to_doc = format!("The [`{ident}`] value that the value holds.");
+    let with_doc =
+        format!("The value that holds `value` in place of its [`{ident}`], with its other fields.");
     Ok(quote! {
         impl ::rtemis_r8::derive::Subtype<#ident> for #ident {
             fn upcast(&self) -> &#ident {
                 self
+            }
+            fn with_upcast(&self, __r8_value: #ident) -> #ident {
+                __r8_value
             }
         }
         impl ::rtemis_r8::derive::Extensible for #ident {}
@@ -279,11 +305,18 @@ pub fn interface(
             #(#decls)*
             #[doc = #to_doc]
             fn #to(&self) -> #ident;
+            #[doc = #with_doc]
+            fn #with(&self, value: #ident) -> Self
+            where
+                Self: Sized;
         }
         impl<__R8S: ::rtemis_r8::derive::Subtype<#ident> #bound> #like for __R8S {
             #(#impls)*
             fn #to(&self) -> #ident {
                 ::std::clone::Clone::clone(<__R8S as ::rtemis_r8::derive::Subtype<#ident>>::upcast(self))
+            }
+            fn #with(&self, value: #ident) -> Self {
+                <__R8S as ::rtemis_r8::derive::Subtype<#ident>>::with_upcast(self, value)
             }
         }
     })

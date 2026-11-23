@@ -89,6 +89,13 @@ pub trait Subtype<P> {
     /// The value of `P` that the value holds: the value itself, or its
     /// embedded ancestor.
     fn upcast(&self) -> &P;
+
+    /// The value that holds `value` in place of its value of `P`: `value`
+    /// itself, or a value with another embedded ancestor, whose other fields
+    /// are clones of this one's.
+    fn with_upcast(&self, value: P) -> Self
+    where
+        Self: Sized;
 }
 
 /// A struct that other structs extend, declared with `#[r8(extensible)]`.
@@ -96,7 +103,8 @@ pub trait Subtype<P> {
 ///
 /// A child embeds its parent as its first field, marked `#[r8(extends)]`.
 /// The derive writes the interface trait of an extensible struct, named with
-/// `Like` after the struct: an accessor per field, and the struct's value.
+/// `Like` after the struct: an accessor per field, the struct's value, and
+/// the child with another value of the struct.
 ///
 #[cfg_attr(
     feature = "macros",
@@ -134,6 +142,14 @@ let w = Window::from_document(
 assert_eq!(width(&w), 4.0);
 let range: &Range = w.upcast();
 assert_eq!(range.hi, w.to_range().hi);
+
+// A function that keeps the type of its argument.
+fn shifted<T: RangeLike>(x: &T, by: f64) -> T {
+    x.with_range(Range { lo: x.lo() + by, hi: x.hi() + by })
+}
+
+let w = shifted(&w, 1.0);
+assert_eq!((w.lo(), w.hi(), w.label.as_str()), (&1.0, &5.0, "w"));
 ```
 "##
 )]
@@ -208,6 +224,21 @@ pub trait Extensible: R8 + Clone + Subtype<Self> {}
 /// #[derive(R8, Clone)]
 /// #[r8(namespace = "demo", version = 1, extensible)]
 /// struct Range { to_range: f64 }
+/// ```
+///
+/// A child with a field of a type that is not `Clone`:
+///
+/// ```compile_fail,E0277
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// enum Side { Left, Right }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends)] base: Range, side: Side }
 /// ```
 ///
 /// `extensible` on an enum, and `extends` in a variant:

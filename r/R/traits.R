@@ -1512,6 +1512,10 @@ impl_declare <- function(
 #' @keywords internal
 #' @noRd
 register_impl <- function(entry) {
+  check_trait_registered(
+    entry[["trait_name"]],
+    r8_namespace_owner(entry[["namespace"]])
+  )
   for (p in entry[["s4_classes"]]) {
     check_s4_class(p[["class"]], p[["package"]])
   }

@@ -74,20 +74,26 @@ pub fn impls_from_rows(rows: &[ImplRow], package: &str) -> Result<Vec<ImplDef>, 
     Ok(out)
 }
 
-/// Checks that each row's number of parameters equals the number its trait
-/// declares for the method, the trait's package having declared it.
+/// Checks that each row names a method of a declared trait, and that its
+/// number of parameters equals the number the trait declares for it.
 pub fn check_params(rows: &[ImplRow], set: &DocumentSet, package: &str) -> Result<(), String> {
     for r in rows {
-        let declared = QualifiedName::parse(&r.trait_name).ok().and_then(|q| {
+        let Some(declared_in) = QualifiedName::parse(&r.trait_name).ok().and_then(|q| {
             set.namespace(&q.namespace)?
                 .traits
                 .iter()
-                .find(|t| t.name == q.name)?
-                .methods
-                .iter()
-                .find(|m| m.name.as_str() == r.method)
-                .map(|m| m.params.len())
-        });
+                .find(|t| t.name == q.name)
+        }) else {
+            return Err(format!(
+                "`{package}` implements `{}`, which is not registered",
+                r.trait_name
+            ));
+        };
+        let declared = declared_in
+            .methods
+            .iter()
+            .find(|m| m.name.as_str() == r.method)
+            .map(|m| m.params.len());
         match declared {
             Some(n) if n != r.n_params => {
                 return Err(format!(
@@ -98,8 +104,8 @@ pub fn check_params(rows: &[ImplRow], set: &DocumentSet, package: &str) -> Resul
             Some(_) => {}
             None => {
                 return Err(format!(
-                    "the trait `{}` declares no method `{}`; its package declares it before `{package}` registers",
-                    r.trait_name, r.method
+                    "`{package}` implements the method `{}` of `{}`, which declares no such method",
+                    r.method, r.trait_name
                 ));
             }
         }

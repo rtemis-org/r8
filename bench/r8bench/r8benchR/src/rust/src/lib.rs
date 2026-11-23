@@ -96,12 +96,12 @@ pub struct GBM {
 
 /// The Rust side of `bench::Complexity`, declared in R with
 /// `complexity(x)`.
+#[r8::methods(trait = "bench::Complexity")]
 pub trait Complexity {
     /// A constant, so that the dispatch row times dispatch alone.
     fn complexity(&self) -> i32;
 }
 
-#[r8::methods(trait = "bench::Complexity")]
 impl Complexity for GBM {
     fn complexity(&self) -> i32 {
         1

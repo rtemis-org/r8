@@ -4,8 +4,11 @@
 \alias{r8_value_fields}
 \alias{$.r8_value}
 \alias{[[.r8_value}
+\alias{[.r8_value}
+\alias{as.list.r8_value}
 \alias{$<-.r8_value}
 \alias{[[<-.r8_value}
+\alias{[<-.r8_value}
 \alias{@.r8_value}
 \title{Fields of an R8 value}
 \usage{
@@ -13,9 +16,15 @@
 
 \method{[[}{r8_value}(x, i, ...)
 
+\method{[}{r8_value}(x, i, ...)
+
+\method{as.list}{r8_value}(x, ...)
+
 \method{$}{r8_value}(x, name) <- value
 
 \method{[[}{r8_value}(x, i) <- value
+
+\method{[}{r8_value}(x, i) <- value
 
 \method{@}{r8_value}(object, name)
 }
@@ -24,23 +33,51 @@
 
 \item{name}{The name.}
 
-\item{i}{Character: The field name.}
+\item{i}{Character: The field name; for \code{x[i]}, one name or more, each once
+in an assignment.}
 
 \item{...}{Not used.}
 
-\item{value}{The new field value.}
+\item{value}{The new field value; for \code{x[i]}, a list of new field values.}
 
 \item{object}{An R8 value.}
 }
 \value{
-The field's value, or the new R8 value.
+The field's value, a named list of fields, or the new R8 value.
 
 Does not return.
 }
 \description{
-\code{x$name} and \code{x[["name"]]} read a field by its exact name; an unknown name
-is an error. \code{x$name <- v} and \code{x[["name"]] <- v} return a new value,
-validated; \code{x} is unchanged.
+\code{x$name} and \code{x[["name"]]} read a field by its exact name, and
+\code{x[c("a", "b")]} several, as a plain named list; an unknown name is an
+error. \code{as.list(x)} gives every field as a plain named list, in declaration
+order and with \code{NULL} for an absent field, so that \code{lapply()}, \code{vapply()},
+and \code{Filter()} take a value.
 
 \code{@} reads the associated items of a type, not the fields of a value.
+}
+\details{
+\code{x$name <- v} and \code{x[["name"]] <- v} return a new value, validated; \code{x} is
+unchanged. \code{x[c("a", "b")] <- list(v, w)} replaces several fields: each is
+validated, then the rules that read any of them run once, on the new value,
+so a rule between the fields holds for the result and not for each step.
+The list has one element per name, and its own names, when it has them, are
+the fields'.
+}
+\examples{
+op <- options(r8.namespace = "demo")
+Interval <- new_struct(
+  "Interval",
+  fields = list(lo = type_double(), hi = type_double())
+)
+x <- Interval(lo = 0, hi = 2)
+x$lo
+x[c("lo", "hi")]
+vapply(x, class, "")
+x$lo <- 1
+x
+x[c("lo", "hi")] <- list(5, 9)
+x
+options(op)
+
 }

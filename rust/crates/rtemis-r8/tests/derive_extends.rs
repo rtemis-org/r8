@@ -260,6 +260,35 @@ fn the_interface_trait_of_a_struct_serves_every_struct_that_extends_it() {
     assert_eq!(all.iter().map(|x| *x.hi()).sum::<f64>(), 12.0);
 }
 
+/// A function that keeps the type of its argument.
+fn shifted<T: RangeLike>(x: &T, by: f64) -> T {
+    let range = x.to_range();
+    x.with_range(Range {
+        lo: range.lo + by,
+        hi: range.hi + by,
+        ..range
+    })
+}
+
+#[test]
+fn a_child_takes_another_value_of_an_ancestor() {
+    let p = pane();
+    let moved = shifted(&p, 2.0);
+    assert_eq!((*moved.lo(), *moved.hi(), moved.number), (3.0, 6.0, 3));
+    assert_eq!(moved.window.label, p.window.label);
+    assert_eq!(shifted(&p.window, 2.0), moved.window);
+    assert_eq!(shifted(&p.window.base, 2.0), moved.window.base);
+    let window = Window {
+        label: "other".into(),
+        ..p.window.clone()
+    };
+    let renamed = p.with_window(window.clone());
+    assert_eq!((renamed.window, renamed.number), (window.clone(), 3));
+    assert_eq!(Subtype::<Window>::with_upcast(&p, window.clone()).number, 3);
+    // A value with another value of its own type is that value.
+    assert_eq!(p.window.with_window(window.clone()), window);
+}
+
 #[derive(R8, Debug, Clone, PartialEq)]
 #[r8(namespace = "demo", version = 1)]
 struct Twice {

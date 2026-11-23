@@ -30,13 +30,8 @@ r8_alloc_stats <- function() .Call(wrap__r8_alloc_stats)
 #' @noRd
 r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, fields, type_name, variant)
 
-#' Replaces the field `name` of the R8 value `x` with `value`, returning a
-#' new value: the field is validated against its type, and the type's rules
-#' that read it run on the new value. The other fields and the attributes
-#' are shared with `x`.
-#'
-#' Returns the new value; `list(errors = <problems>)` with the class
-#' `r8_problems`; or `NULL` when `name` is not a field.
+#' Replaces the field `name` of the R8 value `x` with `value`, as
+#' `replace_fields()` states.
 #'
 #' @param x An R8 value.
 #' @param name Character: The field name.
@@ -45,6 +40,19 @@ r8_new_value <- function(fields, type_name, variant) .Call(wrap__r8_new_value, f
 #' @keywords internal
 #' @noRd
 r8_set_field <- function(x, name, value) .Call(wrap__r8_set_field, x, name, value)
+
+#' Replaces the fields `names` of the R8 value `x` with the elements of
+#' `values`, as `replace_fields()` states.
+#'
+#' @param x An R8 value.
+#' @param names The field names.
+#' @param values The new field values.
+#' @return The new value or the problems; `NULL` when `names` are not distinct
+#'   fields, or `values` is not a plain list of one value per name, with the
+#'   names of the fields or none.
+#' @keywords internal
+#' @noRd
+r8_set_fields <- function(x, names, values) .Call(wrap__r8_set_fields, x, names, values)
 
 #' The ancestors of the registered type `type_name` through `extends`, the
 #' nearest first, and whether the type is stale.
@@ -375,6 +383,14 @@ r8_exports_document <- function(ptr, ns) .Call(wrap__r8_exports_document, ptr, n
 #' @noRd
 r8_exports_compare <- function(ptr, ns) .Call(wrap__r8_exports_compare, ptr, ns)
 
+#' The traits that the impl entries of an exports table name.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @return Character: The qualified trait names, each once.
+#' @keywords internal
+#' @noRd
+r8_exports_traits <- function(ptr) .Call(wrap__r8_exports_traits, ptr)
+
 #' Registers an exports table: declares the impls its impl entries make and
 #' keeps the codecs of its Rust-stored types and its impl functions,
 #' replacing the package's earlier entries. The types are the package's R
@@ -408,6 +424,15 @@ r8_impl_fn <- function(trait_name, type_name, method) .Call(wrap__r8_impl_fn, tr
 #' @keywords internal
 #' @noRd
 r8_compiled_types <- function() .Call(wrap__r8_compiled_types)
+
+#' The candidate nearest to `name`, for a message.
+#'
+#' @param name Character: The name.
+#' @param candidates Character: The candidates.
+#' @return Character: The nearest, or a vector of length 0.
+#' @keywords internal
+#' @noRd
+r8_nearest_name <- function(name, candidates) .Call(wrap__r8_nearest_name, name, candidates)
 
 #' `type_integer()`.
 #' @keywords internal

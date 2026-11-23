@@ -557,6 +557,21 @@ fn nearest_function(name: &str) -> Option<String> {
     .map(str::to_string)
 }
 
+/// The candidate nearest to `name`, for a message.
+///
+/// @param name Character: The name.
+/// @param candidates Character: The candidates.
+/// @return Character: The nearest, or a vector of length 0.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_nearest_name(name: &str, candidates: Vec<String>) -> Vec<String> {
+    rtemis_r8::name::nearest(name, candidates.iter().map(String::as_str))
+        .map(str::to_string)
+        .into_iter()
+        .collect()
+}
+
 /// The name of a symbol.
 fn symbol_name(x: SEXP) -> String {
     unsafe {
@@ -759,6 +774,7 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
 
 extendr_module! {
     mod fieldtype;
+    fn r8_nearest_name;
     fn r8_ft_integer;
     fn r8_field;
     fn r8_ft_double;

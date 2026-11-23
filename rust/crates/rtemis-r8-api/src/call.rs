@@ -17,6 +17,10 @@ use crate::rust_stored::{RustStored, module, panic_text};
 use crate::sys::{self, SEXP};
 
 /// An argument of an impl function, converted from its R value.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a parameter of an R8 method",
+    note = "a parameter is a `bool`, an `i32`, an `f64`, a `String`, a `Buffer`, an `Option` of one, a `Sexp`, a `Dots`, or `&T` of a Rust-stored type `T`"
+)]
 pub trait FromR: Sized {
     /// The argument from `x`; `name` names the parameter in errors.
     ///
@@ -118,7 +122,7 @@ impl<T> Deref for Receiver<'_, T> {
     }
 }
 
-impl<T: RustStored> Receiver<'_, T> {
+impl<T> Receiver<'_, T> {
     /// The receiver from `x`, a value of `T` or of a struct that extends it,
     /// to which the method for `T` applies; an object of another type returns
     /// `type_mismatch`.
@@ -127,7 +131,10 @@ impl<T: RustStored> Receiver<'_, T> {
     ///
     /// On R's main thread, with a valid `x` that stays protected while the
     /// receiver lives.
-    pub unsafe fn from_arg(x: SEXP) -> Result<Self> {
+    pub unsafe fn from_arg(x: SEXP) -> Result<Self>
+    where
+        T: RustStored,
+    {
         unsafe { Self::lent(x, "x", api::api()?.upcast_state) }
     }
 
@@ -139,13 +146,19 @@ impl<T: RustStored> Receiver<'_, T> {
     ///
     /// On R's main thread, with a valid `x` that stays protected while the
     /// value lives.
-    pub unsafe fn from_named_arg(x: SEXP, name: &str) -> Result<Self> {
+    pub unsafe fn from_named_arg(x: SEXP, name: &str) -> Result<Self>
+    where
+        T: RustStored,
+    {
         unsafe { Self::lent(x, name, api::api()?.value_state) }
     }
 
     /// The value of `T` in `x` through `lend`, which lends its state or
     /// reports a value whose fields are read instead.
-    unsafe fn lent(x: SEXP, name: &str, lend: Option<abi::StateFn>) -> Result<Self> {
+    unsafe fn lent(x: SEXP, name: &str, lend: Option<abi::StateFn>) -> Result<Self>
+    where
+        T: RustStored,
+    {
         let mut state: *const c_void = std::ptr::null();
         let mut err = abi::Error {
             code: [0; 64],
@@ -207,7 +220,13 @@ pub unsafe fn r_variant(x: SEXP) -> Result<String> {
     }
 }
 
-/// A result of an impl function, converted to its R value.
+/// A result of an impl function, converted to its R value: a Rust-stored
+/// value is wrapped by R8, for a type whose codec this package's exports
+/// hold.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not the result of an R8 method",
+    note = "a result is a `bool`, an `i32`, an `f64`, a string, a `Vec` or a `Buffer` of numbers, a Rust-stored value, a `Sexp`, `()`, or an `Option` or a `Result` of one"
+)]
 pub trait IntoR {
     /// The R value; a jump out of an allocation is kept for R8 to continue.
     fn into_r(self) -> std::result::Result<SEXP, Jumped>;
@@ -341,11 +360,7 @@ impl<T: Element> IntoR for Buffer<T> {
     }
 }
 
-/// A Rust-stored value returned by an impl function, wrapped by R8, of a type
-/// whose codec this package's exports hold.
-pub struct Value<T: RustStored>(pub T);
-
-impl<T: RustStored> IntoR for Value<T> {
+impl<T: RustStored> IntoR for T {
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         let a = api::api().map_err(Jumped::Error)?;
         let Some(f) = a.new_value else {
@@ -359,7 +374,7 @@ impl<T: RustStored> IntoR for Value<T> {
             code: [0; 64],
             message: [0; 1024],
         };
-        let state = Box::into_raw(Box::new(self.0));
+        let state = Box::into_raw(Box::new(self));
         let status = unsafe {
             f(
                 T::TYPE_NAME.as_ptr(),

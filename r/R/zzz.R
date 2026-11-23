@@ -440,6 +440,8 @@ declare_conversion <- function(converter, source, fn, env) {
   assign(".r8_c_invoke", .r8_native[["invoke"]], envir = ns)
   assign(".r8_c_call", .r8_native[["call"]], envir = ns)
   assign(".r8_c_result", .r8_native[["result"]], envir = ns)
+  assign(".r8_c_variant", .r8_native[["variant"]], envir = ns)
+  assign(".r8_c_is_variant", .r8_native[["is_variant"]], envir = ns)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Shape, PartialOrd, Print)) {
     register_trait(t, "R8")

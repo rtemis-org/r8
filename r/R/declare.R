@@ -623,8 +623,9 @@ type_ir <- function(type) {
 #' Declare a struct
 #'
 #' A product type: named fields, each with a type and per-field facts, and
-#' rules over them. The type object constructs values: `Svm(cost = 2)`.
-#' Types declared in a package belong to its namespace (the `DESCRIPTION`
+#' rules over them. The type object constructs values, `Svm(cost = 2)`, and
+#' `inherits(x, Svm)` tests for a value of the type or of a struct that extends
+#' it. Types declared in a package belong to its namespace (the `DESCRIPTION`
 #' field `Config/R8/namespace`, or the package name); types declared at the
 #' console belong to the option `r8.namespace`, `"global"` by default.
 #'
@@ -658,7 +659,9 @@ type_ir <- function(type) {
 #'   rules = rule(lo <= hi, message = "lo is at most hi."))
 #' Window <- new_struct("Window", fields = list(label = type_character()),
 #'   extends = Range)
-#' Window(lo = 1, hi = 2, label = "w")
+#' w <- Window(lo = 1, hi = 2, label = "w")
+#' w
+#' inherits(w, Range)
 #' options(op)
 #'
 #' @export
@@ -897,17 +900,10 @@ new_enum <- function(
     return(r8_converter(object))
   }
   qname <- attr(object, "r8_name")
-  variants <- .r8_variants[[qname]] %||% enum_variants(qname, object)
+  variants <- .r8_variants[[qname]] %||% enum_variants(qname, type_ir(object))
   v <- variants[[name]]
   if (is.null(v)) {
-    r8_abort(
-      "`",
-      name,
-      "` is not a variant of `",
-      qname,
-      "`.",
-      class = "r8_value_error"
-    )
+    unknown_variant(name, qname)
   }
   if (!inherits(v, "r8_variant_spec")) {
     return(v)
@@ -928,16 +924,16 @@ new_enum <- function(
 #' The variants of an enum, to be built on first access
 #'
 #' @param qname Character: The enum's qualified name.
-#' @param object The enum type object.
+#' @param ir List: The enum's declaration.
 #'
 #' @return Environment: Each variant's declaration, of class
 #'   `r8_variant_spec`, by name; kept in `.r8_variants`.
 #'
 #' @keywords internal
 #' @noRd
-enum_variants <- function(qname, object) {
+enum_variants <- function(qname, ir) {
   env <- new.env(parent = emptyenv())
-  for (v in type_ir(object)[["variants"]]) {
+  for (v in ir[["variants"]]) {
     env[[v[["name"]]]] <- structure(v, class = "r8_variant_spec")
   }
   .r8_variants[[qname]] <- env
@@ -1014,6 +1010,24 @@ r8_declaration <- function(type) {
   ensure_registered(type)
   r8_type_document(attr(type, "r8_name"))
 } # /R8::r8_declaration
+
+
+# %% nameOfClass.r8_type ----
+#' The class of a type's values
+#'
+#' `inherits(x, Type)` calls it: a value's classes are its type's qualified
+#' name, then those of its type's ancestors.
+#'
+#' @param x An R8 type object.
+#'
+#' @return Character: The qualified name of the type.
+#'
+#' @exportS3Method base::nameOfClass
+#' @keywords internal
+#' @noRd
+nameOfClass.r8_type <- function(x) {
+  attr(x, "r8_name", exact = TRUE)
+} # /R8::nameOfClass.r8_type
 
 
 # %% print.r8_type ----

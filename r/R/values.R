@@ -8,8 +8,8 @@
 
 # An R8 value in R is a named list of its fields, of classes
 # c("ns::Type", "r8_value"), with the attributes `r8_type`, `r8_version`, and,
-# for an enum value, `r8_variant`. Values are immutable: `$<-` and `[[<-`
-# return a new value, validated.
+# for an enum value, `r8_variant`. Values are immutable: `$<-`, `[[<-`, and
+# `[<-` return a new value, validated.
 
 # %% problems_message ----
 #' The message of a list of problems
@@ -664,17 +664,43 @@ new_dgc <- function(i, p, x, dim) {
 # %% $.r8_value ----
 #' Fields of an R8 value
 #'
-#' `x$name` and `x[["name"]]` read a field by its exact name; an unknown name
-#' is an error. `x$name <- v` and `x[["name"]] <- v` return a new value,
-#' validated; `x` is unchanged.
+#' `x$name` and `x[["name"]]` read a field by its exact name, and
+#' `x[c("a", "b")]` several, as a plain named list; an unknown name is an
+#' error. `as.list(x)` gives every field as a plain named list, in declaration
+#' order and with `NULL` for an absent field, so that `lapply()`, `vapply()`,
+#' and `Filter()` take a value.
+#'
+#' `x$name <- v` and `x[["name"]] <- v` return a new value, validated; `x` is
+#' unchanged. `x[c("a", "b")] <- list(v, w)` replaces several fields: each is
+#' validated, then the rules that read any of them run once, on the new value,
+#' so a rule between the fields holds for the result and not for each step.
+#' The list has one element per name, and its own names, when it has them, are
+#' the fields'.
 #'
 #' @param x An R8 value.
 #' @param name Character: The field name.
-#' @param i Character: The field name.
-#' @param value The new field value.
+#' @param i Character: The field name; for `x[i]`, one name or more, each once
+#'   in an assignment.
+#' @param value The new field value; for `x[i]`, a list of new field values.
 #' @param ... Not used.
 #'
-#' @return The field's value, or the new R8 value.
+#' @return The field's value, a named list of fields, or the new R8 value.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Interval <- new_struct(
+#'   "Interval",
+#'   fields = list(lo = type_double(), hi = type_double())
+#' )
+#' x <- Interval(lo = 0, hi = 2)
+#' x$lo
+#' x[c("lo", "hi")]
+#' vapply(x, class, "")
+#' x$lo <- 1
+#' x
+#' x[c("lo", "hi")] <- list(5, 9)
+#' x
+#' options(op)
 #'
 #' @name r8_value_fields
 #' @export
@@ -699,6 +725,32 @@ new_dgc <- function(i, p, x, dim) {
 } # /R8::[[.r8_value
 
 
+# %% [.r8_value ----
+#' @rdname r8_value_fields
+#' @export
+`[.r8_value` <- function(x, i, ...) {
+  if (missing(i) || !is.character(i) || ...length() > 0L) {
+    r8_abort(
+      "Fields are read by name: x[c(\"a\", \"b\")].",
+      class = "r8_value_error"
+    )
+  }
+  unknown <- is.na(match(i, attr(x, "names", exact = TRUE)))
+  if (any(unknown)) {
+    unknown_field(x, i[unknown][[1L]])
+  }
+  .subset(x, i)
+} # /R8::[.r8_value
+
+
+# %% as.list.r8_value ----
+#' @rdname r8_value_fields
+#' @export
+as.list.r8_value <- function(x, ...) {
+  .subset(x, attr(x, "names", exact = TRUE))
+} # /R8::as.list.r8_value
+
+
 # %% $<-.r8_value ----
 #' @rdname r8_value_fields
 #' @export
@@ -721,6 +773,21 @@ new_dgc <- function(i, p, x, dim) {
 } # /R8::[[<-.r8_value
 
 
+# %% [<-.r8_value ----
+#' @rdname r8_value_fields
+#' @export
+`[<-.r8_value` <- function(x, i, value) {
+  if (missing(i)) {
+    fields_refused(x, NULL, value)
+  }
+  res <- .Call(wrap__r8_set_fields, x, i, value)
+  if (is.null(attr(res, "r8_type", exact = TRUE))) {
+    fields_refused(x, i, value, res)
+  }
+  res
+} # /R8::[<-.r8_value
+
+
 # %% field_get ----
 #' Read a field
 #'
@@ -735,28 +802,40 @@ field_get <- function(x, name) {
   v <- .subset2(x, name)
   # `names()` dispatches; the attribute does not.
   if (is.null(v) && is.na(match(name, attr(x, "names", exact = TRUE)))) {
-    variant <- attr(x, "r8_variant")
-    label <- paste0(
-      attr(x, "r8_type"),
-      if (!is.null(variant)) paste0("@", variant)
-    )
-    fields <- names(x)
-    r8_abort(
-      "`",
-      name,
-      "` is not a field of `",
-      label,
-      "`",
-      if (length(fields) == 0L) {
-        ", which has no fields."
-      } else {
-        paste0(". Fields: ", paste(fields, collapse = ", "), ".")
-      },
-      class = "r8_value_error"
-    )
+    unknown_field(x, name)
   }
   v
 } # /R8::field_get
+
+
+# %% unknown_field ----
+#' Signal that a value has no field of a name
+#'
+#' @param x An R8 value.
+#' @param name Character: The name.
+#'
+#' @return Does not return; signals `r8_value_error`.
+#'
+#' @keywords internal
+#' @noRd
+unknown_field <- function(x, name) {
+  variant <- attr(x, "r8_variant")
+  fields <- attr(x, "names", exact = TRUE)
+  r8_abort(
+    "`",
+    name,
+    "` is not a field of `",
+    attr(x, "r8_type"),
+    if (!is.null(variant)) paste0("@", variant),
+    "`",
+    if (length(fields) == 0L) {
+      ", which has no fields."
+    } else {
+      paste0(". Fields: ", paste(fields, collapse = ", "), ".")
+    },
+    class = "r8_value_error"
+  )
+} # /R8::unknown_field
 
 
 # %% field_set ----
@@ -796,6 +875,78 @@ field_set <- function(x, name, value) {
 } # /R8::field_set
 
 
+# %% fields_refused ----
+#' Signal why an assignment of several fields is refused
+#'
+#' @param x An R8 value.
+#' @param fields The index of the assignment.
+#' @param values The new values.
+#' @param res Optional `r8_problems`: The problems of the new value, for an
+#'   assignment of fields by name from a list.
+#'
+#' @return Does not return; signals `r8_value_error`.
+#'
+#' @keywords internal
+#' @noRd
+fields_refused <- function(x, fields, values, res = NULL) {
+  refuse <- function(...) r8_abort(..., class = "r8_value_error")
+  if (!is.character(fields)) {
+    refuse("Fields are replaced by name: x[c(\"a\", \"b\")] <- list(v, w).")
+  }
+  unknown <- is.na(match(fields, attr(x, "names", exact = TRUE)))
+  if (any(unknown)) {
+    unknown_field(x, fields[unknown][[1L]])
+  }
+  if (anyDuplicated(fields)) {
+    refuse(
+      "The field `",
+      fields[[anyDuplicated(fields)]],
+      "` is replaced twice."
+    )
+  }
+  if (!is.vector(values, "list")) {
+    refuse(
+      "x[names] <- value takes a plain list, such as list(v, w); ",
+      "x$name <- v replaces one field."
+    )
+  }
+  if (length(values) != length(fields)) {
+    refuse(
+      "x[names] <- value takes one new value per field; found ",
+      length(fields),
+      if (length(fields) == 1L) " field and " else " fields and ",
+      length(values),
+      if (length(values) == 1L) " value." else " values."
+    )
+  }
+  if (!is.null(names(values)) && !identical(names(values), fields)) {
+    refuse(
+      "The names of the list are the fields it replaces, in their order: ",
+      paste(fields, collapse = ", "),
+      "; found ",
+      paste(names(values), collapse = ", "),
+      "."
+    )
+  }
+  shown <- if (length(fields) > 4L) c(fields[1:3], "...") else fields
+  index <- paste(
+    ifelse(shown == "...", "...", paste0("\"", shown, "\"")),
+    collapse = ", "
+  )
+  construct_error(
+    res,
+    attr(x, "r8_type"),
+    attr(x, "r8_variant") %||% "",
+    inputs = structure(values, names = fields),
+    assignment = paste0(
+      "x[",
+      if (length(fields) == 1L) index else paste0("c(", index, ")"),
+      "] <- value"
+    )
+  )
+} # /R8::fields_refused
+
+
 # %% @.r8_value ----
 #' `@` on an R8 value
 #'
@@ -826,7 +977,7 @@ guard <- function(what) {
     r8_abort(
       "`",
       what,
-      "` would change an R8 value without validation; values are replaced field by field with `$<-`.",
+      "` would change an R8 value without validation; `$<-` and `[<-` replace fields.",
       class = "r8_value_error"
     )
   }
@@ -834,9 +985,9 @@ guard <- function(what) {
 
 #' Guards on R8 values
 #'
-#' `names<-`, `length<-`, `[<-`, `dim<-`, and `levels<-` would change a value
-#' without validation, so they abort; `[[` with a number aborts, as fields
-#' are read by name.
+#' `names<-`, `length<-`, `dim<-`, and `levels<-` would change a value without
+#' validation, so they abort; `[[` and `[` with a number abort, as fields are
+#' read by name.
 #'
 #' @param x An R8 value.
 #' @param value Not used.
@@ -851,10 +1002,6 @@ guard <- function(what) {
 #' @rdname r8_value_guards
 #' @export
 `length<-.r8_value` <- guard("length<-")
-
-#' @rdname r8_value_guards
-#' @export
-`[<-.r8_value` <- guard("[<-")
 
 #' @rdname r8_value_guards
 #' @export

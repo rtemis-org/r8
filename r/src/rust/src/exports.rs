@@ -469,6 +469,25 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
     ))
 }
 
+/// The traits that the impl entries of an exports table name.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @return Character: The qualified trait names, each once.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_exports_traits(ptr: Robj) -> Result<Vec<String>> {
+    let e = exports_of(&ptr)?;
+    let mut out: Vec<String> = Vec::new();
+    for i in 0..if e.impls.is_null() { 0 } else { e.n_impls } {
+        let name = text(unsafe { (*e.impls.add(i)).trait_name }, "trait name")?;
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    Ok(out)
+}
+
 /// The compiled impl function of `method` of the trait `trait_name` for the
 /// type `type_name`, as an external pointer to the function, which R passes
 /// to R8's C routine `invoke` (`r8_native_symbols()`).
@@ -530,6 +549,7 @@ extendr_module! {
     fn r8_clear_external_ptrs;
     fn r8_exports_document;
     fn r8_exports_compare;
+    fn r8_exports_traits;
     fn r8_register_exports;
     fn r8_impl_fn;
     fn r8_compiled_types;

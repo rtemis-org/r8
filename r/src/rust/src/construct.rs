@@ -979,13 +979,8 @@ pub(crate) fn problems(errors: &[ValueError]) -> Result<Robj> {
     Ok(r)
 }
 
-/// Replaces the field `name` of the R8 value `x` with `value`, returning a
-/// new value: the field is validated against its type, and the type's rules
-/// that read it run on the new value. The other fields and the attributes
-/// are shared with `x`.
-///
-/// Returns the new value; `list(errors = <problems>)` with the class
-/// `r8_problems`; or `NULL` when `name` is not a field.
+/// Replaces the field `name` of the R8 value `x` with `value`, as
+/// `replace_fields()` states.
 ///
 /// @param x An R8 value.
 /// @param name Character: The field name.
@@ -995,6 +990,62 @@ pub(crate) fn problems(errors: &[ValueError]) -> Result<Robj> {
 /// @noRd
 #[extendr]
 fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
+    replace_fields(&x, &[(name, unsafe { value.get() })])
+}
+
+/// Replaces the fields `names` of the R8 value `x` with the elements of
+/// `values`, as `replace_fields()` states.
+///
+/// @param x An R8 value.
+/// @param names The field names.
+/// @param values The new field values.
+/// @return The new value or the problems; `NULL` when `names` are not distinct
+///   fields, or `values` is not a plain list of one value per name, with the
+///   names of the fields or none.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_set_fields(x: Robj, names: Robj, values: Robj) -> Result<Robj> {
+    let (ns, vs) = unsafe { (names.get(), values.get()) };
+    let fields: Option<Vec<_>> = strings(ns).into_iter().collect();
+    let Some(fields) = fields.filter(|_| sexptype(ns) == SEXPTYPE::STRSXP) else {
+        return Ok(().into());
+    };
+    let distinct = fields
+        .iter()
+        .enumerate()
+        .all(|(i, f)| !fields[..i].contains(f));
+    let given = attr(vs, sym_names());
+    let named = is_null(given)
+        || strings(given).len() == fields.len()
+            && strings(given)
+                .iter()
+                .zip(&fields)
+                .all(|(g, f)| g.as_ref() == Some(f));
+    if !distinct
+        || !named
+        || sexptype(vs) != SEXPTYPE::VECSXP
+        || !is_null(attr(vs, sym_class()))
+        || xlen(vs) != fields.len()
+    {
+        return Ok(().into());
+    }
+    let changes: Vec<(&str, SEXP)> = fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (&**f, unsafe { VECTOR_ELT(vs, i as R_xlen_t) }))
+        .collect();
+    replace_fields(&x, &changes)
+}
+
+/// A new value of the R8 value `x` with each field of `changes` replaced: the
+/// fields are validated against their types, and the type's rules that read
+/// any of them run once, on the new value. The other fields and the
+/// attributes are shared with `x`.
+///
+/// Returns the new value; `list(errors = <problems>)`, of every field, with
+/// the class `r8_problems`; or `NULL` when a name is not a field.
+fn replace_fields(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Robj> {
     let xs = unsafe { x.get() };
     let type_name = attr_string(xs, sym_r8_type()).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
@@ -1023,38 +1074,45 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
             }
         }
     };
-    let Some(k) = fields.iter().position(|f| f.name.as_str() == name) else {
-        return Ok(().into());
-    };
-    let f = &fields[k];
-    let vs = unsafe { value.get() };
-    let at = format!("/{}", name.replace('~', "~0").replace('/', "~1"));
-    // The field's new value: validated, in its stored form, or its default.
-    let mut created: Option<Robj> = None;
-    let stored = if is_null(vs) {
-        match &f.default {
-            Some(d) => default_r(d, &f.ty, lookup, (&q, variant.as_deref().unwrap_or(""), k))?,
-            None if matches!(f.ty, FieldType::Option { .. }) => nil(),
-            None => {
-                let segments = vec![rtemis_r8::problem::Segment::Field(name.to_string())];
-                let problem = rtemis_r8::problem::Problem::Required;
-                let message = problem.sentence(&segments, None, None, &rtemis_r8::problem::Neutral);
-                return problems(&[ValueError {
-                    code: "missing_field",
-                    path: at,
-                    message,
-                    segments,
-                    problem: Some(problem),
-                    ..Default::default()
-                }]);
+    // Each field's new value: validated, in its stored form, or its default.
+    let mut created: Vec<Robj> = Vec::new();
+    let mut stored: Vec<(usize, SEXP)> = Vec::with_capacity(changes.len());
+    let mut errors: Vec<ValueError> = Vec::new();
+    for &(name, vs) in changes {
+        let Some(k) = fields.iter().position(|f| f.name.as_str() == name) else {
+            return Ok(().into());
+        };
+        let f = &fields[k];
+        let at = format!("/{}", name.replace('~', "~0").replace('/', "~1"));
+        if is_null(vs) {
+            match &f.default {
+                Some(d) => {
+                    let at = (&q, variant.as_deref().unwrap_or(""), k);
+                    stored.push((k, default_r(d, &f.ty, lookup, at)?));
+                }
+                None if matches!(f.ty, FieldType::Option { .. }) => stored.push((k, nil())),
+                None => {
+                    let segments = vec![rtemis_r8::problem::Segment::Field(name.to_string())];
+                    let problem = rtemis_r8::problem::Problem::Required;
+                    let message =
+                        problem.sentence(&segments, None, None, &rtemis_r8::problem::Neutral);
+                    errors.push(ValueError {
+                        code: "missing_field",
+                        path: at,
+                        message,
+                        segments,
+                        problem: Some(problem),
+                        ..Default::default()
+                    });
+                }
             }
+            continue;
         }
-    } else {
-        let mut errors = with_cache(|cache| {
+        let mut found = with_cache(|cache| {
             rtemis_r8::validate::validate_field_access(RView::Whole(vs), &f.ty, lookup, cache)
         });
-        if !errors.is_empty() {
-            for e in &mut errors {
+        if !found.is_empty() {
+            for e in &mut found {
                 e.path = format!("{at}{}", e.path);
                 e.segments
                     .insert(0, rtemis_r8::problem::Segment::Field(name.to_string()));
@@ -1067,32 +1125,46 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
                     );
                 }
             }
-            return problems(&errors);
+            errors.append(&mut found);
+            continue;
         }
-        match normalize(vs, &f.ty, lookup)? {
+        if !errors.is_empty() {
+            continue;
+        }
+        let s = match normalize(vs, &f.ty, lookup)? {
             Some(r) => {
                 let s = unsafe { r.get() };
-                created = Some(r);
+                created.push(r);
                 s
             }
             None => vs,
+        };
+        stored.push((k, s));
+    }
+    if !errors.is_empty() {
+        return problems(&errors);
+    }
+    // A Rust-stored value: the codec builds the new state, one field at a
+    // time, and the new value reads its fields from it on demand, keeping the
+    // fields the old value has read, except the replaced ones; the rules then
+    // read the fields they name. The old value's fields are not read.
+    if crate::rust_stored::state_of(xs).is_some() {
+        let mut value = x.clone();
+        for ((name, _), (k, s)) in changes.iter().zip(&stored) {
+            let from = unsafe { value.get() };
+            let (state, vt) = crate::rust_stored::state_of(from)
+                .ok_or_else(|| fail("a Rust-stored value has a state"))?;
+            let new_state = crate::rust_stored::with_field(vt, state, name, *s).map_err(fail)?;
+            value = own(crate::rust_stored::wrap_from(
+                vt,
+                new_state,
+                xs,
+                from,
+                *k as R_xlen_t,
+            ));
         }
-    };
-    // A Rust-stored value: the codec builds the new state, and the new value
-    // reads its fields from it on demand, keeping the fields the old value
-    // has read, except the replaced one; the rules then read the fields they
-    // name. The old value's fields are not read.
-    if let Some((state, vt)) = crate::rust_stored::state_of(xs) {
-        let new_state = crate::rust_stored::with_field(vt, state, name, stored).map_err(fail)?;
-        let value = own(crate::rust_stored::wrap_from(
-            vt,
-            new_state,
-            xs,
-            xs,
-            k as R_xlen_t,
-        ));
         drop(created);
-        let errors = reading_rule_errors(rules, fields, name, unsafe { value.get() }, lookup);
+        let errors = reading_rule_errors(rules, fields, changes, unsafe { value.get() }, lookup);
         if !errors.is_empty() {
             return problems(&errors);
         }
@@ -1104,7 +1176,9 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
         for i in 0..n {
             SET_VECTOR_ELT(out, i as R_xlen_t, VECTOR_ELT(xs, i as R_xlen_t));
         }
-        SET_VECTOR_ELT(out, k as R_xlen_t, stored);
+        for &(k, s) in &stored {
+            SET_VECTOR_ELT(out, k as R_xlen_t, s);
+        }
         for sym in [
             sym_names(),
             sym_class(),
@@ -1122,25 +1196,25 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
         r
     };
     drop(created);
-    let errors = reading_rule_errors(rules, fields, name, unsafe { out.get() }, lookup);
+    let errors = reading_rule_errors(rules, fields, changes, unsafe { out.get() }, lookup);
     if !errors.is_empty() {
         return problems(&errors);
     }
     Ok(out)
 }
 
-/// The violations of the rules of `rules` that read the field `name`, on the
-/// value `os` whose fields are `fields`. The rules come compiled from the
+/// The violations of the rules of `rules` that read any field of `changes`,
+/// on the value `os` whose fields are `fields`. The rules come compiled from the
 /// rule cache, each with the fields it reads, and read only the fields they
 /// name.
 fn reading_rule_errors(
     rules: &[rtemis_r8::ir::RuleDef],
     fields: &[FieldDef],
-    name: &str,
+    changes: &[(&str, SEXP)],
     os: SEXP,
     lookup: &dyn TypeLookup,
 ) -> Vec<ValueError> {
-    // The rules that read the field, compiled once per registry and kept in
+    // The rules that read a field, compiled once per registry and kept in
     // the rule cache, each with the fields it reads.
     let mut errors = Vec::new();
     if !rules.is_empty() {
@@ -1151,7 +1225,9 @@ fn reading_rule_errors(
                     // it reads can cause, is reported by the writes of the
                     // fields its expressions name.
                     let named = |l: &rtemis_r8::ir::Logic| {
-                        rtemis_r8::rules::reads(l).iter().any(|x| x == name)
+                        rtemis_r8::rules::reads(l)
+                            .iter()
+                            .any(|x| changes.iter().any(|(n, _)| x == n))
                     };
                     if !named(&r.invariant) && !r.when.as_ref().is_some_and(named) {
                         continue;
@@ -1167,7 +1243,7 @@ fn reading_rule_errors(
                     });
                     continue;
                 };
-                if !rule.reads_field(name) {
+                if !changes.iter().any(|(n, _)| rule.reads_field(n)) {
                     continue;
                 }
                 match rule.check_access(RView::Whole(os), fields, lookup) {
@@ -1314,5 +1390,6 @@ extendr_module! {
     mod construct;
     fn r8_new_value;
     fn r8_set_field;
+    fn r8_set_fields;
     fn r8_type_ancestors;
 }

@@ -1,6 +1,5 @@
 //! The exports table of a package (`R8Exports`): what `r8::exports!`
-//! builds from the package's Rust-stored types and the impls that
-//! `#[r8::methods]` generates.
+//! builds from the package's Rust-stored types and the impls of its rows.
 
 use std::ffi::{CStr, c_void};
 use std::sync::OnceLock;
@@ -23,20 +22,21 @@ pub struct MethodRow {
     pub n_params: usize,
 }
 
-/// The methods of one impl, which `#[r8::methods]` generates.
+/// The methods of one impl, which the function that `#[r8::methods]` adds
+/// to a trait gives for a type that implements it.
 pub struct ImplSet {
     /// The qualified trait name.
     pub trait_name: &'static CStr,
     /// The qualified type name.
     pub type_name: &'static CStr,
     /// The methods.
-    pub methods: &'static [MethodRow],
+    pub methods: Vec<MethodRow>,
 }
 
 /// The package's exports table, built on first use: the declaration record
 /// of `types` (the declarations of the Rust-stored types), the codec tables
-/// `codecs`, and the impl entries, from which R8 builds the impl
-/// declarations.
+/// `codecs`, and the entries of the impls that `impls` give, from which R8
+/// builds the impl declarations.
 ///
 /// # Panics
 ///
@@ -49,7 +49,7 @@ pub fn table(
     namespace: &str,
     codecs: &'static [abi::Codec],
     types: impl FnOnce() -> Vec<TypeDef>,
-    impls: &'static [&'static ImplSet],
+    impls: &'static [fn() -> ImplSet],
 ) -> *const abi::Exports {
     *cell.get_or_init(|| {
         use rtemis_r8::record::{self, DeclarationRef};
@@ -59,10 +59,11 @@ pub fn table(
         let ir: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let entries: Vec<abi::ImplEntry> = impls
             .iter()
-            .flat_map(|s| {
-                s.methods.iter().map(|m| abi::ImplEntry {
-                    trait_name: s.trait_name.as_ptr(),
-                    type_name: s.type_name.as_ptr(),
+            .flat_map(|set| {
+                let set = set();
+                set.methods.into_iter().map(move |m| abi::ImplEntry {
+                    trait_name: set.trait_name.as_ptr(),
+                    type_name: set.type_name.as_ptr(),
                     method: m.name.as_ptr(),
                     call: Some(m.call),
                     n_params: m.n_params,
@@ -87,7 +88,7 @@ pub fn table(
 
 /// Registers the package's exports function with
 /// `R_RegisterCCallable(package, "r8_exports", f)` and records R's main
-/// thread; `r8::exports!` emits `r8_init()`, which calls it.
+/// thread; `r8::exports!` emits `r8_init_<package>()`, which calls it.
 ///
 /// # Safety
 ///

@@ -55,8 +55,9 @@ The item.
 }
 \description{
 A product type: named fields, each with a type and per-field facts, and
-rules over them. The type object constructs values: \code{Svm(cost = 2)}.
-Types declared in a package belong to its namespace (the \code{DESCRIPTION}
+rules over them. The type object constructs values, \code{Svm(cost = 2)}, and
+\code{inherits(x, Svm)} tests for a value of the type or of a struct that extends
+it. Types declared in a package belong to its namespace (the \code{DESCRIPTION}
 field \code{Config/R8/namespace}, or the package name); types declared at the
 console belong to the option \code{r8.namespace}, \code{"global"} by default.
 
@@ -71,7 +72,9 @@ Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double(
   rules = rule(lo <= hi, message = "lo is at most hi."))
 Window <- new_struct("Window", fields = list(label = type_character()),
   extends = Range)
-Window(lo = 1, hi = 2, label = "w")
+w <- Window(lo = 1, hi = 2, label = "w")
+w
+inherits(w, Range)
 options(op)
 
 }

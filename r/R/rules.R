@@ -437,30 +437,3 @@ as_rules <- function(rules) {
   }
   rules
 } # /R8::as_rules
-
-
-# %% r8_is_variant ----
-#' Test an enum value's variant
-#'
-#' `TRUE` when `x` is a value of an R8 enum whose variant is `variant`. A
-#' rule tests a field's variant with the rule dialect's `is_variant(kernel,
-#' "Rbf")` ([rule()]).
-#'
-#' @param x An R8 enum value.
-#' @param variant Character: The variant name.
-#'
-#' @return Logical: One value.
-#'
-#' @examples
-#' op <- options(r8.namespace = "demo")
-#' Shape <- new_enum("Shape", variants = list(Circle = variant(), Square = variant()))
-#' r8_is_variant(Shape@Circle, "Circle")
-#' options(op)
-#'
-#' @export
-r8_is_variant <- function(x, variant) {
-  if (!inherits(x, "r8_value") || is.null(attr(x, "r8_variant"))) {
-    r8_abort("`x` is an R8 enum value.", class = "r8_type_error")
-  }
-  identical(attr(x, "r8_variant"), variant)
-} # /R8::r8_is_variant

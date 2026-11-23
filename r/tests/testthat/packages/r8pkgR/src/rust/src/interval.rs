@@ -1,6 +1,8 @@
 //! Structs that extend one another: `pkgr::Interval`, `pkgr::Band`, which
 //! extends it, and `pkgr::Strip`, which extends `Band`; with impls on
-//! `Interval`, which apply to the three.
+//! `Interval`, which apply to the three, and an impl of each of the three
+//! (`Shifted`), whose result keeps the type of the value. The crate of
+//! r8pkgS depends on this one.
 
 use rtemis_r8::R8;
 use rtemis_r8_api as r8;
@@ -9,7 +11,10 @@ use rtemis_r8_api::{Buffer, Dots};
 /// A numeric interval.
 #[derive(R8, Clone)]
 #[r8(namespace = "pkgr", version = 1, storage = "rust", extensible)]
-#[r8(rule(id = "ordered", invariant = r#"{"<=": [{"var": "lo"}, {"var": "hi"}]}"#))]
+#[r8(rule(
+    id = "ordered",
+    invariant = r#"{"<=": [{"var": "lo"}, {"var": "hi"}]}"#
+))]
 pub struct Interval {
     /// The lower end.
     pub lo: f64,
@@ -45,40 +50,65 @@ pub struct Strip {
 }
 
 /// The Rust side of the generic `pkgr::width`.
+#[r8::methods(trait = "pkgr::width")]
 pub trait Width {
     fn width(&self) -> f64;
 }
 
-#[r8::methods(trait = "pkgr::width")]
 impl Width for Interval {
     fn width(&self) -> f64 {
         self.hi - self.lo
     }
 }
 
-/// The Rust side of the generic `pkgr::shifted`.
-pub trait Shifted {
-    fn shifted(&self, by: f64) -> r8::Value<Interval>;
+/// The Rust side of the generic `pkgr::middle`, whose impl for `Interval`
+/// returns an `Interval` for a value of any of the three.
+#[r8::methods(trait = "pkgr::middle")]
+pub trait Middle {
+    fn middle(&self) -> Interval;
 }
 
-#[r8::methods(trait = "pkgr::shifted")]
-impl Shifted for Interval {
-    fn shifted(&self, by: f64) -> r8::Value<Interval> {
-        r8::Value(Interval {
-            lo: self.lo + by,
-            hi: self.hi + by,
+impl Middle for Interval {
+    fn middle(&self) -> Interval {
+        let quarter = (self.hi - self.lo) / 4.0;
+        Interval {
+            lo: self.lo + quarter,
+            hi: self.hi - quarter,
             unit: self.unit.clone(),
-        })
+        }
+    }
+}
+
+/// The Rust side of the generic `pkgr::shifted`, whose impl for `Interval`
+/// and every struct that extends it returns a value of the same type.
+#[r8::methods(trait = "pkgr::shifted")]
+pub trait Shifted {
+    fn shifted(&self, by: f64) -> r8::Result<Self>
+    where
+        Self: Sized;
+}
+
+impl<T: IntervalLike> Shifted for T {
+    fn shifted(&self, by: f64) -> r8::Result<Self> {
+        if !by.is_finite() {
+            return Err(r8::Error::new("not_finite", "`by` is finite"));
+        }
+        let interval = self.to_interval();
+        Ok(self.with_interval(Interval {
+            lo: interval.lo + by,
+            hi: interval.hi + by,
+            ..interval
+        }))
     }
 }
 
 /// The Rust side of the generic `pkgr::overlap`, whose `y` is an `Interval`
 /// exactly.
+#[r8::methods(trait = "pkgr::overlap")]
 pub trait Overlap {
     fn overlap(&self, y: &Interval) -> f64;
 }
 
-#[r8::methods(trait = "pkgr::overlap")]
 impl Overlap for Interval {
     fn overlap(&self, y: &Interval) -> f64 {
         (self.hi.min(y.hi) - self.lo.max(y.lo)).max(0.0)
@@ -87,11 +117,11 @@ impl Overlap for Interval {
 
 /// The Rust side of the generic `pkgr::total`, which reads the fields that
 /// `Band` adds and those it inherits.
+#[r8::methods(trait = "pkgr::total")]
 pub trait Total {
     fn total(&self) -> f64;
 }
 
-#[r8::methods(trait = "pkgr::total")]
 impl Total for Band {
     fn total(&self) -> f64 {
         self.lo() + self.weights().iter().sum::<f64>()
@@ -100,18 +130,17 @@ impl Total for Band {
 
 /// The Rust side of the generic `pkgr::shares`: whether the weights of the
 /// `Band` that a `Strip` holds, cloned from it, share their memory.
+#[r8::methods(trait = "pkgr::shares")]
 pub trait Shares {
     fn shares(&self) -> bool;
 }
 
-#[r8::methods(trait = "pkgr::shares")]
 impl Shares for Strip {
     fn shares(&self) -> bool {
         self.to_band().weights.as_ptr() == self.weights().as_ptr()
     }
 }
 
-#[r8::methods(trait = "R8::Display")]
 impl r8::Display for Interval {
     fn format(&self, _dots: Dots) -> String {
         format!("[{}, {}]", self.lo, self.hi)

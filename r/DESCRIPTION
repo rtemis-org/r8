@@ -59,4 +59,5 @@ Collate:
     'traits.R'
     'utils.R'
     'values.R'
+    'variant.R'
     'zzz.R'
