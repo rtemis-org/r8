@@ -201,6 +201,15 @@ pub trait Extensible: R8 + Clone + Subtype<Self> {}
 /// struct Window { #[r8(extends, inherited(lo()))] base: Range }
 /// ```
 ///
+/// A field named as a method of the values that extend the struct:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { to_range: f64 }
+/// ```
+///
 /// `extensible` on an enum, and `extends` in a variant:
 ///
 /// ```compile_fail

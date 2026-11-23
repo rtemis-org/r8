@@ -151,18 +151,26 @@ impl<T: RustStored> Receiver<'_, T> {
             code: [0; 64],
             message: [0; 1024],
         };
-        let status = match lend {
-            Some(f) => unsafe { f(x, T::TYPE_NAME.as_ptr(), module(), &mut state, &mut err) },
-            None => ERROR,
+        let Some(f) = lend else {
+            return Err(Error::new(
+                "no_api",
+                "R8's API lends no state of a value; update R8",
+            ));
         };
+        let status = unsafe { f(x, T::TYPE_NAME.as_ptr(), module(), &mut state, &mut err) };
         if status == OK {
             return Ok(Receiver::Borrowed(unsafe { &*state.cast::<T>() }));
         }
-        if Error::from_abi(&err).code != "not_lent" {
-            return Err(Error::new(
-                "type_mismatch",
-                format!("`{name}` is not a `{}`", T::NAME),
-            ));
+        let e = Error::from_abi(&err);
+        match e.code.as_str() {
+            "not_lent" => {}
+            "type_mismatch" => {
+                return Err(Error::new(
+                    "type_mismatch",
+                    format!("`{name}` is not a `{}`", T::NAME),
+                ));
+            }
+            _ => return Err(Error::new(e.code, format!("`{name}`: {}", e.message))),
         }
         // A field read of a value of another package's codec may raise an R
         // error.

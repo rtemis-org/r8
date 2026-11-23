@@ -226,10 +226,27 @@ pub fn interface(
         Some(s) => (quote! { : #s }, quote! { + #s }),
         None => (quote! {}, quote! {}),
     };
+    // The methods that the interface traits of the struct and of its parent
+    // and `Subtype` give a value, which an accessor of the same name hides.
+    let mut taken = vec!["upcast".to_string(), to.to_string()];
+    if let Some(last) = supertrait.as_ref().and_then(|s| s.segments.last()) {
+        let like = last.ident.to_string();
+        let parent = like.strip_suffix("Like").expect("named by `like_path`");
+        taken.push(format!("to_{}", snake(parent)));
+    }
     let mut decls = Vec::new();
     let mut impls = Vec::new();
     for f in own {
         let name = f.ident.as_ref().expect("named fields");
+        if taken.contains(&field_name(name)) {
+            return Err(Error::new_spanned(
+                name,
+                format!(
+                    "a field of a struct of `#[r8(extensible)]` is not named `{}`, a method of the values that extend it",
+                    field_name(name)
+                ),
+            ));
+        }
         let ty = &f.ty;
         let doc = match description(&f.attrs) {
             d if d.is_empty() => format!("The field `{}`.", field_name(name)),
