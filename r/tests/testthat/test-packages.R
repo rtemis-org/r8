@@ -847,7 +847,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "seed(r) <- 9L",
       "cat(r$seed, n_resamples(as_resampler('abc')), '\\n')",
       "cat(pair_with(r, Method@Bootstrap), '|', pair_with(1, r), '|', pair_with(data.frame(), r), '\\n')",
-      "cat(label_of(r), label_of(r, n = 3L, sep = '+'), '\\n')"
+      "cat(label_of(r), label_of(r, n = 3L, sep = '+'), '\\n')",
+      "cat(class(tryCatch(label_of(r, n = 0), error = identity))[[1L]], label_of(r, n = 1), '\\n')"
     )
   )
   expect_identical(
@@ -860,7 +861,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "A resampling method",
       "9 3",
       "a resampler and a method | anything and a resampler | a data frame and a resampler",
-      "r-r r+r+r"
+      "r-r r+r+r",
+      "r8_argument_error r"
     ),
     info = paste(used, collapse = "\n")
   )
@@ -893,7 +895,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "future::plan(future::sequential)",
       # A generic sent to a worker that has not loaded its package.
       "mirai::daemons(1)",
-      "m <- mirai::mirai({ before <- 'r8pkgDoc' %in% loadedNamespaces(); c(before, f(r), g(r)) }, f = label_of, g = describe, r = r)",
+      "m <- mirai::mirai({ before <- 'r8pkgDoc' %in% loadedNamespaces(); c(before, f(r), g(r), class(tryCatch(f(r, sep = 1), error = identity))[[1L]]) }, f = label_of, g = describe, r = r)",
       "cat('sent', mirai::collect_mirai(m), sep = '|')",
       "cat('\\n')",
       "mirai::daemons(0)"
@@ -904,7 +906,10 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
   expect_true(paste0("mirai|", expected) %in% workers, info = info)
   expect_true(paste0("future|", expected) %in% workers, info = info)
   # Unserializing the generic loads its package.
-  expect_true("sent|TRUE|r-r|2 resamples" %in% workers, info = info)
+  expect_true(
+    "sent|TRUE|r-r|2 resamples|r8_argument_error" %in% workers,
+    info = info
+  )
 })
 
 test_that("a package that masks a function its generics call is refused at load", {

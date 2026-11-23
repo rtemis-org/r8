@@ -580,6 +580,38 @@ r8_ft_table <- function(columns, open, rules) .Call(wrap__r8_ft_table, columns, 
 #' @noRd
 r8_default_canonical <- function(x, type) .Call(wrap__r8_default_canonical, x, type)
 
+#' Validates the arguments of a call that the tests did not pass.
+#'
+#' @param key The method's key, a symbol.
+#' @param values List: The values of the forced parameters.
+#' @return `NULL` when every value is in its stored form; a list, per
+#'   parameter the value in its stored form or `NULL`; or the problems, of
+#'   class `r8_problems`.
+#' @keywords internal
+#' @noRd
+r8_check_args <- function(key, values) .Call(wrap__r8_check_args, key, values)
+
+#' Validates a result that the test did not pass.
+#'
+#' @param key The method's key, a symbol.
+#' @param tuple Character: The tuple key of the impl that returned it.
+#' @param value The result.
+#' @return `NULL` when the result is in its stored form; a list of the
+#'   result in its stored form; or the problems, of class `r8_problems`.
+#' @keywords internal
+#' @noRd
+r8_check_result <- function(key, tuple, value) .Call(wrap__r8_check_result, key, tuple, value)
+
+#' The stored form of a constant default of a parameter, which its
+#' declaration has checked.
+#'
+#' @param x The default.
+#' @param type The parameter's type, a field type or an R8 type object.
+#' @return The value.
+#' @keywords internal
+#' @noRd
+r8_stored_form <- function(x, type) .Call(wrap__r8_stored_form, x, type)
+
 #' The default layout of an R8 value, as the lists of an `r8_text`.
 #'
 #' Nested values whose type is in `display_types` show the text that

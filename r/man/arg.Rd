@@ -131,6 +131,9 @@ default \code{NULL}: the argument may be omitted and is then absent;
 gives a parameter without a type a default that is itself a type, such as
 \code{arg(default = GBM)}.
 
+Each call of the generic checks and converts its typed arguments
+(\code{\link[=generic]{generic()}}).
+
 A type means the same in a parameter as in a field: \code{arg(Range)} admits a
 value of exactly \code{Range}, \code{arg(subtype(Range))} also the structs that
 extend it, \code{arg(dyn(Fit))} any implementor of the trait \code{Fit}, and

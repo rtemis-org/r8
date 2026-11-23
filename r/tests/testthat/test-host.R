@@ -393,3 +393,32 @@ test_that("a value of class r8_value carries one type name", {
     expect_error(kind(bad), "one string", class = "r8_dispatch_error")
   })
 })
+
+test_that("a symbol or a call dispatches as a value and is not evaluated", {
+  declare_in("hostlang", {
+    kind <- generic("kind", params(x))
+    implement(kind, "call") <- function(x) "a call"
+    implement(kind, "name") <- function(x) "a name"
+    expect_identical(kind(quote(stop("evaluated"))), "a call")
+    expect_identical(kind(quote(not_bound)), "a name")
+    expect_identical(kind(quote(not_bound)), "a name")
+    pair <- generic("pair", params(x, y), dispatch = c("x", "y"))
+    implement(pair, "call", "name") <- function(x, y) "a call and a name"
+    expect_identical(
+      pair(quote(stop("evaluated")), quote(not_bound)),
+      "a call and a name"
+    )
+    `tag<-` <- generic("tag<-", params(x, value))
+    implement(`tag<-`, "name") <- function(x, value) as.name(value)
+    implement(`tag<-`, "call") <- function(x, value) as.name(value)
+    s <- quote(not_bound)
+    tag(s) <- "other"
+    expect_identical(s, quote(other))
+    e <- quote(stop("evaluated"))
+    expect_error(
+      tag(e) <- "other",
+      "replacement_type",
+      class = "r8_result_error"
+    )
+  })
+})

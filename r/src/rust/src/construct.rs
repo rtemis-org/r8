@@ -41,16 +41,29 @@ pub(crate) fn registry_changed() {
 }
 
 /// Runs `f` with the rule cache of the current registry.
+///
+/// `f` reads R objects, from which R may jump: an element method of an ALTREP
+/// vector raises an error, or the user interrupts it. The cache is taken for
+/// the call and the lock released, so a jump leaves an empty cache and no
+/// lock held, where a held lock would block every later call.
 pub(crate) fn with_cache<T>(f: impl FnOnce(&mut RuleCache) -> T) -> T {
     static CACHE: OnceLock<Mutex<(u64, RuleCache)>> = OnceLock::new();
     let m = CACHE.get_or_init(|| Mutex::new((0, RuleCache::new())));
-    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
     let g = GENERATION.load(Ordering::Relaxed);
-    if guard.0 != g {
-        guard.1.clear();
-        guard.0 = g;
+    let mut cache = {
+        let mut held = m.lock().unwrap_or_else(|e| e.into_inner());
+        if held.0 != g {
+            held.1.clear();
+            held.0 = g;
+        }
+        std::mem::take(&mut held.1)
+    };
+    let out = f(&mut cache);
+    let mut held = m.lock().unwrap_or_else(|e| e.into_inner());
+    if held.0 == g {
+        held.1 = cache;
     }
-    f(&mut guard.1)
+    out
 }
 
 /// An R object kept between calls; R runs these calls on one thread.
@@ -77,22 +90,26 @@ pub(crate) fn default_r(
     static CACHE: OnceLock<Mutex<(u64, Defaults)>> = OnceLock::new();
     let (q, variant, k) = field;
     let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
-    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
     let g = GENERATION.load(Ordering::Relaxed);
-    if guard.0 != g {
-        guard.1.clear();
-        guard.0 = g;
-    }
-    if let Some(Some(r)) = guard
-        .1
-        .get(q)
-        .and_then(|v| v.get(variant))
-        .and_then(|fields| fields.get(k))
     {
-        return Ok(unsafe { r.0.get() });
+        let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.0 != g {
+            guard.1.clear();
+            guard.0 = g;
+        }
+        if let Some(Some(r)) = guard
+            .1
+            .get(q)
+            .and_then(|v| v.get(variant))
+            .and_then(|fields| fields.get(k))
+        {
+            return Ok(unsafe { r.0.get() });
+        }
     }
+    // Decoding allocates R objects, from which R may jump: no lock is held.
     let r = crate::values::decode_field(rtemis_r8::tree::TreeRef::new(d), ft, lookup)?;
     let s = unsafe { r.get() };
+    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
     let slots = guard
         .1
         .entry(q.clone())
@@ -766,25 +783,28 @@ pub(crate) fn shared_attributes(
     type ByType = HashMap<Box<str>, ByVariant>;
     static CACHE: OnceLock<Mutex<(u64, ByType)>> = OnceLock::new();
     let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
-    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
     let g = GENERATION.load(Ordering::Relaxed);
-    if guard.0 != g {
-        for a in guard.1.values().flat_map(|v| v.values()) {
-            unsafe {
-                for x in [a.names, a.class, a.r8_type, a.r8_version, a.r8_variant] {
-                    if x != extendr_ffi::R_NilValue {
-                        extendr_ffi::R_ReleaseObject(x);
+    let v = variant.unwrap_or("");
+    {
+        let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.0 != g {
+            for a in guard.1.values().flat_map(|v| v.values()) {
+                unsafe {
+                    for x in [a.names, a.class, a.r8_type, a.r8_version, a.r8_variant] {
+                        if x != extendr_ffi::R_NilValue {
+                            extendr_ffi::R_ReleaseObject(x);
+                        }
                     }
                 }
             }
+            guard.1.clear();
+            guard.0 = g;
         }
-        guard.1.clear();
-        guard.0 = g;
+        if let Some(a) = guard.1.get(qname).and_then(|m| m.get(v)) {
+            return *a;
+        }
     }
-    let v = variant.unwrap_or("");
-    if let Some(a) = guard.1.get(qname).and_then(|m| m.get(v)) {
-        return *a;
-    }
+    // The vectors are R allocations, from which R may jump: no lock is held.
     let classes = value_class(qname);
     let a = unsafe {
         let names_v = kept(character(names).get());
@@ -813,6 +833,7 @@ pub(crate) fn shared_attributes(
             r8_variant: var,
         }
     };
+    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
     guard.1.entry(qname.into()).or_default().insert(v.into(), a);
     a
 }

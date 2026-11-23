@@ -22,6 +22,7 @@ mod oracle;
 mod reader;
 mod rust_stored;
 mod rview;
+mod signature;
 mod text;
 mod values;
 mod version;
@@ -37,6 +38,7 @@ extendr_module! {
     use fieldtype;
     use rust_stored;
     use reader;
+    use signature;
     use text;
     use values;
     use version;
@@ -53,6 +55,7 @@ extendr_module! {
     use rust_stored;
     use reader;
     use oracle;
+    use signature;
     use text;
     use values;
     use version;

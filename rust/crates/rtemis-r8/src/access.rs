@@ -414,8 +414,9 @@ pub trait Access<'a>: Copy + 'a {
     fn bytes(self) -> Read<Cow<'a, [u8]>>;
     /// A value of `type_json()`.
     fn json(self) -> Read<()>;
-    /// A present value of a host-only field.
-    fn host_only(self) -> Read<()>;
+    /// A present value of a host-only field, an object of the class `class`
+    /// of the host `host`.
+    fn host_class(self, host: &str, class: &str) -> Read<()>;
 
     /// A `vec()` of `element`: the number of items.
     fn vec(self, element: &FieldType) -> Read<usize>;
@@ -1154,7 +1155,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         Ok(())
     }
 
-    fn host_only(self) -> Read<()> {
+    fn host_class(self, _host: &str, _class: &str) -> Read<()> {
         Err(Form::new(
             "host_only",
             "a host-only R value has no JSON form; the member is null or omitted",

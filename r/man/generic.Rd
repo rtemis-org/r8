@@ -38,7 +38,7 @@ specific in one position make a call on both ambiguous, an
 
 \item{return_type}{Optional: The type of the value that every method
 returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of the
-first argument. A method may declare a type that fits it
+first dispatched argument. A method may declare a type that fits it
 (\link{implement<-}). A replacement generic returns a value of its argument's
 type and declares none.}
 
@@ -57,12 +57,20 @@ exports it. The generic is a trait with one method named as the generic,
 \code{ns::describe}, which Rust and the C interface implement as any trait.
 }
 \details{
+A call checks its typed arguments before it dispatches: it forces them, in
+the order of the parameters, converts them as a constructor does, such as
+a whole double for an integer, and raises \code{r8_argument_error} with every
+problem of every argument. A result that does not satisfy the return type
+raises \code{r8_result_error}. An argument without a type stays lazy. The checks
+belong to the generic's call: \code{\link[=r8_method]{r8_method()}} and \code{\link[=r8_next_impl]{r8_next_impl()}} call a
+method without them.
+
 A replacement generic, \code{generic("labels<-", params(x, value))}, is called
 as \code{labels(x) <- value}, which rebinds \code{x} to the method's result; the
 original value is unchanged. Its last argument is \code{value}, and each
 method returns a value of the type of \code{x}: for a child type, the child,
 such as \code{x} after \code{x$label <- value}; any other result raises
-\code{r8_type_error}. Its trait is \code{ns::with_labels}, the method's name in the
+\code{r8_result_error}. Its trait is \code{ns::with_labels}, the method's name in the
 bindings other than R.
 }
 \examples{

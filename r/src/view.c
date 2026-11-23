@@ -538,6 +538,21 @@ static SEXP dispatch_key(SEXP x) {
   return TYPEOF(x) < 32 ? implicit[d][TYPEOF(x)] : R_NilValue;
 }
 
+// A value as an argument of a call that C evaluates: evaluation would look a
+// symbol up and run a language object, so each is quoted.
+static SEXP quoted(SEXP x) {
+  return TYPEOF(x) == SYMSXP || TYPEOF(x) == LANGSXP ? Rf_lang2(Rf_install("quote"), x) : x;
+}
+
+// R8's namespace, the parent of `.r8_dispatch`, which a reload replaces.
+static SEXP r8_namespace(SEXP dispatch) {
+#if R_VERSION >= R_Version(4, 5, 0)
+  return R_ParentEnv(dispatch);
+#else
+  return ENCLOS(dispatch);
+#endif
+}
+
 // The impl of the trait method `key`, a symbol "Trait|method", for the
 // values `args[0..n]` of its dispatched arguments: from the method's index in
 // `dispatch` (`.r8_dispatch`), one environment per position keyed by
@@ -560,12 +575,7 @@ static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
   if (TYPEOF(node) == CLOSXP) {
     return node;
   }
-  // `.r8_dispatch`'s parent is R8's namespace, which a reload replaces.
-#if R_VERSION >= R_Version(4, 5, 0)
-  SEXP ns = R_ParentEnv(dispatch);
-#else
-  SEXP ns = ENCLOS(dispatch);
-#endif
+  SEXP ns = r8_namespace(dispatch);
   // "Trait|method": a qualified trait name holds no '|'.
   const char *text = CHAR(PRINTNAME(key));
   const char *bar = strchr(text, '|');
@@ -580,7 +590,7 @@ static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
   SETCAR(cell, Rf_mkString(bar + 1));
   for (int i = 0; i < n; i++) {
     cell = CDR(cell);
-    SETCAR(cell, args[i]);
+    SETCAR(cell, quoted(args[i]));
   }
   SEXP impl = Rf_eval(call, ns);
   UNPROTECT(2);
@@ -602,59 +612,237 @@ static SEXP r8_find3(SEXP x, SEXP y, SEXP z, SEXP key, SEXP dispatch) {
   return find_n(args, 3, key, dispatch);
 }
 
-// The result `out` of a replacement method called on `x`, through the trait
-// method `key`, a symbol "Trait|method": `out` when it is a value of `x`'s
-// type, the same `r8_type` for an R8 value and an identical class vector for
-// any other object, implicit class included. Otherwise R8's
-// `replacement_abort()` raises the error. The routine keeps no SEXP beyond
-// installed symbols.
-// spec: R8/class-system#replacement-methods
-static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
-  static SEXP type_sym = NULL, abort_sym = NULL, class_sym = NULL;
+// The tests of a typed method's arguments and result (signature.rs), which
+// neither allocate R memory nor raise an R error, and the Rust routines
+// behind `.Call(wrap__r8_check_args, ...)` and `.Call(wrap__r8_check_result,
+// ...)`, which validate what a test does not pass. The outcomes are the
+// constants of signature.rs.
+enum { R8_PASS = 0, R8_CHECK = 1, R8_TO_INTEGER = 2, R8_TO_DOUBLE = 3, R8_SELF = 4 };
+int r8_signature_forced(SEXP key, SEXP *out, int capacity);
+int r8_signature_test(SEXP key, const SEXP *symbols, const SEXP *values, int n,
+                      int *outcomes, int *dispatched, int *n_dispatched);
+int r8_signature_result(SEXP key, SEXP tuple, SEXP value);
+SEXP wrap__r8_check_args(SEXP key, SEXP values);
+SEXP wrap__r8_check_result(SEXP key, SEXP tuple, SEXP value);
+
+// The value `x` of a test's outcome: `x`, or its conversion.
+static SEXP converted(SEXP x, int outcome) {
+  switch (outcome) {
+  case R8_TO_INTEGER:
+    return Rf_ScalarInteger((int) REAL(x)[0]);
+  case R8_TO_DOUBLE:
+    return Rf_ScalarReal((double) INTEGER(x)[0]);
+  default:
+    return x;
+  }
+}
+
+static int is_problems(SEXP x) {
+  return TYPEOF(x) == VECSXP && Rf_inherits(x, "r8_problems");
+}
+
+// Calls R8's function `name` with three values; it raises an R error.
+static void r8_abort3(const char *name, SEXP a, SEXP b, SEXP c, SEXP ns) {
+  a = PROTECT(quoted(a));
+  b = PROTECT(quoted(b));
+  c = PROTECT(quoted(c));
+  SEXP call = PROTECT(Rf_lang4(Rf_install(name), a, b, c));
+  Rf_eval(call, ns);
+  UNPROTECT(4);
+}
+
+// The parameters a call forces that fit on the C stack.
+#define R8_FORCED 32
+
+// Checks the arguments of a call of the typed generic of the method `key`,
+// whose frame is `env`, and returns the method's impl for them, as
+// `find_n()` does.
+//
+// The typed and the dispatched parameters are forced in the order of the
+// formals with R's own evaluation, so a missing argument without a default
+// and an error raised while forcing propagate as R's own. Forcing runs R
+// code, which may declare the method again; its signature is read again
+// afterwards, and the call starts over when the parameters differ. The
+// values stay protected from their forcing to the dispatch, whatever the
+// frame's bindings become. A value that its type converts, such as a whole
+// double for an integer, is bound in the frame in its stored form, which the
+// method receives.
+// spec: R8/class-system#checks-at-a-call
+static SEXP r8_call(SEXP env, SEXP key, SEXP dispatch) {
+  if (TYPEOF(env) != ENVSXP || TYPEOF(key) != SYMSXP || TYPEOF(dispatch) != ENVSXP) {
+    Rf_error("a typed generic calls R8 with its frame, its key, and the dispatch cache");
+  }
+  SEXP few[R8_FORCED], few_values[R8_FORCED];
+  int few_outcomes[R8_FORCED];
+  for (;;) {
+    SEXP *symbols = few, *values = few_values;
+    int *outcomes = few_outcomes;
+    int n = r8_signature_forced(key, symbols, R8_FORCED);
+    if (n > R8_FORCED) {
+      symbols = (SEXP *) R_alloc((size_t) n, sizeof(SEXP));
+      values = (SEXP *) R_alloc((size_t) n, sizeof(SEXP));
+      outcomes = (int *) R_alloc((size_t) n, sizeof(int));
+      n = r8_signature_forced(key, symbols, n);
+    }
+    if (n < 0) {
+      r8_abort3("signature_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), R_NilValue,
+                R_NilValue, r8_namespace(dispatch));
+    }
+    for (int i = 0; i < n; i++) {
+      values[i] = PROTECT(r8_get_var(symbols[i], env, R_MissingArg));
+    }
+    int at[3], n_at = 0;
+    int outcome =
+      r8_signature_test(key, symbols, values, n, outcomes, at, &n_at);
+    if (outcome < 0) {
+      UNPROTECT(n);
+      continue;
+    }
+    if (outcome == R8_CHECK) {
+      SEXP list = PROTECT(Rf_allocVector(VECSXP, n));
+      for (int i = 0; i < n; i++) {
+        SET_VECTOR_ELT(list, i, values[i]);
+      }
+      SEXP checked = PROTECT(wrap__r8_check_args(key, list));
+      if (is_problems(checked)) {
+        r8_abort3("argument_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), checked, env,
+                  r8_namespace(dispatch));
+      }
+      if (TYPEOF(checked) == VECSXP && XLENGTH(checked) == n) {
+        for (int i = 0; i < n; i++) {
+          SEXP stored = VECTOR_ELT(checked, i);
+          if (stored != R_NilValue) {
+            // The frame keeps the value once `checked` is released.
+            Rf_defineVar(symbols[i], stored, env);
+          }
+        }
+      }
+      UNPROTECT(2);
+    }
+    if (outcome != R8_PASS) {
+      for (int i = 0; i < n; i++) {
+        if (outcomes[i] == R8_TO_INTEGER || outcomes[i] == R8_TO_DOUBLE) {
+          SEXP v = PROTECT(converted(values[i], outcomes[i]));
+          Rf_defineVar(symbols[i], v, env);
+          UNPROTECT(1);
+        }
+      }
+    }
+    SEXP args[3];
+    for (int k = 0; k < n_at; k++) {
+      args[k] = values[at[k]];
+    }
+    SEXP impl = find_n(args, n_at, key, dispatch);
+    UNPROTECT(n);
+    return impl;
+  }
+}
+
+// Whether `out` is a value of the type of `x`: the same `r8_type` for an R8
+// value and an identical class vector for any other object, implicit class
+// included.
+static int same_type(SEXP x, SEXP out) {
+  static SEXP type_sym = NULL, class_sym = NULL;
   if (type_sym == NULL) {
     type_sym = Rf_install("r8_type");
-    abort_sym = Rf_install("replacement_abort");
     class_sym = Rf_install("class");
   }
   SEXP type = Rf_getAttrib(x, type_sym);
-  int same;
   if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
     SEXP got = Rf_getAttrib(out, type_sym);
-    same = TYPEOF(got) == STRSXP && XLENGTH(got) == 1 &&
+    return TYPEOF(got) == STRSXP && XLENGTH(got) == 1 &&
            (STRING_ELT(got, 0) == STRING_ELT(type, 0) ||
             strcmp(Rf_translateCharUTF8(STRING_ELT(got, 0)),
                    Rf_translateCharUTF8(STRING_ELT(type, 0))) == 0);
-  } else if (Rf_getAttrib(out, type_sym) != R_NilValue) {
-    same = 0;
-  } else {
-    SEXP cx = Rf_getAttrib(x, R_ClassSymbol);
-    SEXP co = Rf_getAttrib(out, R_ClassSymbol);
-    if (cx != R_NilValue || co != R_NilValue) {
-      same = R_compute_identical(cx, co, 16);
-    } else {
-      SEXP base = R_BaseEnv;
-      SEXP ix = PROTECT(Rf_eval(PROTECT(Rf_lang2(class_sym, x)), base));
-      SEXP io = PROTECT(Rf_eval(PROTECT(Rf_lang2(class_sym, out)), base));
-      same = R_compute_identical(ix, io, 16);
-      UNPROTECT(4);
-    }
   }
-  if (same) {
+  if (Rf_getAttrib(out, type_sym) != R_NilValue) {
+    return 0;
+  }
+  SEXP cx = Rf_getAttrib(x, R_ClassSymbol);
+  SEXP co = Rf_getAttrib(out, R_ClassSymbol);
+  if (cx != R_NilValue || co != R_NilValue) {
+    return R_compute_identical(cx, co, 16);
+  }
+  SEXP cls = PROTECT(Rf_lang2(class_sym, PROTECT(quoted(x))));
+  SEXP ix = PROTECT(Rf_eval(cls, R_BaseEnv));
+  SETCADR(cls, quoted(out));
+  SEXP io = PROTECT(Rf_eval(cls, R_BaseEnv));
+  int same = R_compute_identical(ix, io, 16);
+  UNPROTECT(4);
+  return same;
+}
+
+// Checks the result of a call of the method `key` from the impl `f`:
+// `visible` is the list that `withVisible()` made of it, `x` the call's first
+// dispatched argument. The result's stored form replaces it in the list,
+// which the generic's frame alone holds. Returns whether the result is
+// visible.
+// spec: R8/class-system#checks-at-a-call
+static SEXP r8_result(SEXP visible, SEXP f, SEXP key, SEXP x, SEXP dispatch) {
+  static SEXP provider_sym = NULL;
+  if (provider_sym == NULL) {
+    provider_sym = Rf_install("r8_provider");
+  }
+  if (TYPEOF(visible) != VECSXP || XLENGTH(visible) != 2 || TYPEOF(key) != SYMSXP ||
+      TYPEOF(dispatch) != ENVSXP) {
+    Rf_error("a typed generic calls R8 with its result, its key, and the dispatch cache");
+  }
+  SEXP value = VECTOR_ELT(visible, 0);
+  SEXP provider = Rf_getAttrib(f, provider_sym);
+  SEXP tuple = TYPEOF(provider) == STRSXP && XLENGTH(provider) == 3
+                 ? STRING_ELT(provider, 2)
+                 : R_BlankString;
+  int outcome = r8_signature_result(key, tuple, value);
+  if (outcome == R8_TO_INTEGER || outcome == R8_TO_DOUBLE) {
+    SET_VECTOR_ELT(visible, 0, converted(value, outcome));
+  } else if (outcome == R8_SELF) {
+    if (!same_type(x, value)) {
+      SEXP out = PROTECT(Rf_allocVector(VECSXP, 2));
+      SET_VECTOR_ELT(out, 0, value);
+      SET_VECTOR_ELT(out, 1, provider);
+      r8_abort3("self_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), x, out,
+                r8_namespace(dispatch));
+    }
+  } else if (outcome == R8_CHECK) {
+    SEXP text = PROTECT(Rf_ScalarString(tuple));
+    SEXP checked = PROTECT(wrap__r8_check_result(key, text, value));
+    if (is_problems(checked)) {
+      r8_abort3("result_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), text, checked,
+                r8_namespace(dispatch));
+    }
+    if (TYPEOF(checked) == VECSXP && XLENGTH(checked) == 1) {
+      SET_VECTOR_ELT(visible, 0, VECTOR_ELT(checked, 0));
+    }
+    UNPROTECT(2);
+  } else if (outcome < 0) {
+    r8_abort3("signature_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), R_NilValue,
+              R_NilValue, r8_namespace(dispatch));
+  }
+  return VECTOR_ELT(visible, 1);
+}
+
+// The result `out` of a replacement method called on `x`, through the trait
+// method `key`, a symbol "Trait|method": `out` when it is a value of `x`'s
+// type (`same_type()`). Otherwise R8's `replacement_abort()` raises the error.
+// The routine keeps no SEXP beyond installed symbols.
+// spec: R8/class-system#replacement-methods
+static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
+  if (same_type(x, out)) {
     return out;
   }
   SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
-  SEXP call = PROTECT(Rf_lang4(abort_sym, PROTECT(Rf_ScalarString(PRINTNAME(key))), x, out));
-  Rf_eval(call, ns);
-  UNPROTECT(4);
+  r8_abort3("replacement_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), x, out, ns);
+  UNPROTECT(3);
   return out;
 }
 
 // The C routines that R calls through `.Call()` on a native symbol:
-// list(invoke, exports, construct, find, replaced, find2, find3). R8's `.Call` routines are the Rust code's,
-// registered by extendr; these continue a jump or call R_GetCCallable() from
-// C frames.
+// list(invoke, exports, construct, find, replaced, find2, find3, call,
+// result). R8's `.Call` routines are the Rust code's, registered by extendr;
+// these continue a jump, call R_GetCCallable(), or evaluate R code from C
+// frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 7));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 9));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
@@ -662,7 +850,9 @@ SEXP r8_native_symbols(void) {
   SET_VECTOR_ELT(out, 4, native_symbol((DL_FUNC) r8_replaced));
   SET_VECTOR_ELT(out, 5, native_symbol((DL_FUNC) r8_find2));
   SET_VECTOR_ELT(out, 6, native_symbol((DL_FUNC) r8_find3));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 7));
+  SET_VECTOR_ELT(out, 7, native_symbol((DL_FUNC) r8_call));
+  SET_VECTOR_ELT(out, 8, native_symbol((DL_FUNC) r8_result));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 9));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
@@ -670,6 +860,8 @@ SEXP r8_native_symbols(void) {
   SET_STRING_ELT(names, 4, Rf_mkChar("replaced"));
   SET_STRING_ELT(names, 5, Rf_mkChar("find2"));
   SET_STRING_ELT(names, 6, Rf_mkChar("find3"));
+  SET_STRING_ELT(names, 7, Rf_mkChar("call"));
+  SET_STRING_ELT(names, 8, Rf_mkChar("result"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

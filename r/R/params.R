@@ -111,6 +111,9 @@ arg_shorthand <- function(constructor) {
 #' gives a parameter without a type a default that is itself a type, such as
 #' `arg(default = GBM)`.
 #'
+#' Each call of the generic checks and converts its typed arguments
+#' ([generic()]).
+#'
 #' A type means the same in a parameter as in a field: `arg(Range)` admits a
 #' value of exactly `Range`, `arg(subtype(Range))` also the structs that
 #' extend it, `arg(dyn(Fit))` any implementor of the trait `Fit`, and
@@ -594,6 +597,15 @@ param_name <- function(given, exprs, i, env) {
         class = "r8_declaration_error"
       )
     }
+    if (startsWith(given, ".r8_")) {
+      r8_abort(
+        "`",
+        given,
+        "` is reserved: the names that begin with `.r8_` are those of R8 in ",
+        "a generic's frame.",
+        class = "r8_declaration_error"
+      )
+    }
     if (make.names(given) != given) {
       r8_abort(
         "`",
@@ -807,6 +819,32 @@ params_ir <- function(p, dispatch) {
 } # /R8::params_ir
 
 
+# %% stored_defaults ----
+#' Parameters with their constant defaults in stored form
+#'
+#' A constant default of a typed parameter, which `params_ir()` has checked,
+#' becomes the formal's default in its stored form, such as `1L` for `1` and
+#' `type_integer()`, which a call then passes without a conversion.
+#'
+#' @param p An `r8_params`.
+#'
+#' @return An `r8_params`.
+#'
+#' @keywords internal
+#' @noRd
+stored_defaults <- function(p) {
+  for (i in seq_along(p[["names"]])) {
+    if (!is.null(p[["types"]][[i]]) && !is.null(p[["constants"]][[i]])) {
+      value <- p[["constants"]][[i]][[1L]]
+      if (!is.null(value)) {
+        p[["formals"]][i] <- list(r8_stored_form(value, p[["types"]][[i]]))
+      }
+    }
+  }
+  p
+} # /R8::stored_defaults
+
+
 # %% return_type_ir ----
 #' The IR of a return type
 #'
@@ -831,7 +869,7 @@ return_type_ir <- function(x, self) {
   r8_abort(
     "A return type is a field type, such as type_double(), subtype(), dyn(), ",
     "or host_class(), an R8 type",
-    if (self) ", or \"Self\", the type of the first argument",
+    if (self) ", or \"Self\", the type of the first dispatched argument",
     ".",
     class = "r8_declaration_error"
   )

@@ -24,8 +24,9 @@ defines an S4 class of that name.}
 }
 \value{
 An object of class \code{r8_host_class}, which is also a field type:
-\code{option(host_class("lm"))} declares a field that holds an \code{lm} object in
-R, host-only, absent from documents and from the content hash.
+\code{option(host_class("lm"))} declares a field that holds an object whose
+class vector contains \code{"lm"}, host-only, absent from documents and from
+the content hash.
 }
 \description{
 Names a class that R8 did not declare: an S3 class, an implicit class

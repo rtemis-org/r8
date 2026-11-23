@@ -212,7 +212,7 @@ from_text <- function(s) {
 #'
 #' @return A value of `type`. A source without an impl raises
 #'   `r8_dispatch_error`, and an impl's result of another type
-#'   `r8_type_error`.
+#'   `r8_result_error`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -282,7 +282,7 @@ r8_convert <- function(x, type) {
             )
           },
           "; a From impl returns a value of its target.",
-          class = "r8_type_error"
+          class = c("r8_result_error", "r8_type_error")
         )
       }
       return(out)
@@ -456,6 +456,8 @@ declare_conversion <- function(converter, source, fn, env) {
   assign(".r8_c_find2", .r8_native[["find2"]], envir = ns)
   assign(".r8_c_find3", .r8_native[["find3"]], envir = ns)
   assign(".r8_c_invoke", .r8_native[["invoke"]], envir = ns)
+  assign(".r8_c_call", .r8_native[["call"]], envir = ns)
+  assign(".r8_c_result", .r8_native[["result"]], envir = ns)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Shape, PartialOrd, Print)) {
     register_trait(t, "R8")

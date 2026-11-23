@@ -301,8 +301,9 @@ IMPLICIT_CLASSES <- c(
 #'   defines an S4 class of that name.
 #'
 #' @return An object of class `r8_host_class`, which is also a field type:
-#'   `option(host_class("lm"))` declares a field that holds an `lm` object in
-#'   R, host-only, absent from documents and from the content hash.
+#'   `option(host_class("lm"))` declares a field that holds an object whose
+#'   class vector contains `"lm"`, host-only, absent from documents and from
+#'   the content hash.
 #'
 #' @examples
 #' op <- options(r8.namespace = "hosts")

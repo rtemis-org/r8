@@ -467,3 +467,78 @@ test_that("a dgCMatrix out of compressed sparse column form is reported", {
     expect_identical(in_place[["errors"]][["path"]], "/x")
   }
 })
+
+test_that("an R object of any type is refused where its type does not admit it", {
+  # A symbol, a call, a function, and an environment have no vector length; a
+  # value of each is refused with an R8 error and leaves later constructions
+  # as they were.
+  objects <- list(
+    quote(not_bound),
+    quote(stop("evaluated")),
+    quote(if (a) b),
+    sum,
+    identity,
+    globalenv(),
+    expression(a),
+    pairlist(1),
+    1i,
+    as.raw(1),
+    list(1),
+    ~ a + b,
+    methods::getClass("numeric"),
+    as.name("x")
+  )
+  types <- list(
+    type_logical(),
+    type_integer(),
+    type_double(),
+    type_character(),
+    type_raw(),
+    type_date(),
+    type_posixct(),
+    type_factor(levels = "a"),
+    type_matrix(type_double()),
+    type_array(type_double(), dim = 1L),
+    type_sparse_matrix(),
+    type_table(list(k = type_integer())),
+    type_json(),
+    vec(type_double()),
+    vec(vec(type_double())),
+    btree_map(type_double()),
+    index_map(type_double()),
+    option(host_class("lm"))
+  )
+  for (i in seq_along(types)) {
+    S <- declare_in(
+      "anyobj",
+      new_struct(paste0("S", i), fields = list(v = types[[i]]))
+    )
+    for (j in seq_along(objects)) {
+      r <- tryCatch(
+        {
+          S(v = objects[[j]])
+          "constructed"
+        },
+        r8_value_error = function(e) "refused"
+      )
+      expect_true(
+        r %in% c("constructed", "refused"),
+        info = paste("type", i, "object", j)
+      )
+    }
+  }
+  S <- declare_in(
+    "anyobj",
+    new_struct("Last", fields = list(n = type_integer()))
+  )
+  expect_error(
+    S(n = quote(not_bound)),
+    "r_type|r_length",
+    class = "r8_value_error"
+  )
+  expect_identical(S(n = 1L)$n, 1L)
+  x <- S(n = 1L)
+  expect_error(x$n <- quote(not_bound), class = "r8_value_error")
+  x$n <- 2L
+  expect_identical(x$n, 2L)
+})

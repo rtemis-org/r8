@@ -153,11 +153,22 @@ pub(crate) fn sexptype(x: SEXP) -> SEXPTYPE {
     unsafe { TYPEOF(x) }
 }
 
+/// The length of a vector, 0 for `NULL`, and 1 for an object that is not a
+/// vector, such as a symbol, a function, or an environment, for which
+/// `XLENGTH()` raises an R error, a jump through the Rust frames that called
+/// it.
 pub(crate) fn xlen(x: SEXP) -> usize {
-    if is_null(x) {
-        0
-    } else {
-        unsafe { XLENGTH(x) as usize }
+    match sexptype(x) {
+        SEXPTYPE::NILSXP => 0,
+        SEXPTYPE::LGLSXP
+        | SEXPTYPE::INTSXP
+        | SEXPTYPE::REALSXP
+        | SEXPTYPE::CPLXSXP
+        | SEXPTYPE::STRSXP
+        | SEXPTYPE::VECSXP
+        | SEXPTYPE::EXPRSXP
+        | SEXPTYPE::RAWSXP => unsafe { XLENGTH(x) as usize },
+        _ => 1,
     }
 }
 
@@ -189,6 +200,65 @@ pub(crate) fn inherits(x: SEXP, class: &str) -> bool {
     let c = attr(x, sym_class());
     sexptype(c) == SEXPTYPE::STRSXP
         && (0..xlen(c)).any(|i| string_elt(c, i).as_deref() == Some(class))
+}
+
+/// The class attribute of `x` as a message writes it, or `""` without one.
+fn classes(x: SEXP) -> String {
+    strings(attr(x, sym_class()))
+        .into_iter()
+        .flatten()
+        .map(|c| format!("{c:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Whether the class vector of `x`, as R's `.class2()` gives it, holds
+/// `class`, which is what a dispatched position of that class matches. The
+/// implicit classes of an object without a class attribute are read from its
+/// type and `dim` attribute; R gives those of an S4 object and of a language
+/// object.
+pub(crate) fn is_host_class(x: SEXP, class: &str) -> bool {
+    if inherits(x, class) {
+        return true;
+    }
+    let object = !is_null(attr(x, sym_class()));
+    let s4 = unsafe { extendr_ffi::Rf_isS4(x) } == extendr_ffi::Rboolean::TRUE;
+    if s4 || sexptype(x) == SEXPTYPE::LANGSXP {
+        use extendr_api::prelude::*;
+        let x = unsafe { Robj::from_sexp(x) };
+        // The call evaluates its argument, which quotes a language object.
+        let x = lang!("quote", x);
+        return R!("base::.class2")
+            .ok()
+            .and_then(|f| f.as_function())
+            .and_then(|f| f.call(pairlist!(x)).ok())
+            .is_some_and(|c| {
+                c.as_str_iter()
+                    .is_some_and(|mut names| names.any(|n| n == class))
+            });
+    }
+    if object {
+        return false;
+    }
+    match (class, xlen(attr(x, sym_dim()))) {
+        ("matrix", n) => return n == 2,
+        ("array", n) => return n > 0,
+        _ => {}
+    }
+    match sexptype(x) {
+        SEXPTYPE::NILSXP => class == "NULL",
+        SEXPTYPE::LGLSXP => class == "logical",
+        SEXPTYPE::INTSXP => matches!(class, "integer" | "numeric"),
+        SEXPTYPE::REALSXP => matches!(class, "double" | "numeric"),
+        SEXPTYPE::CPLXSXP => class == "complex",
+        SEXPTYPE::STRSXP => class == "character",
+        SEXPTYPE::RAWSXP => class == "raw",
+        SEXPTYPE::VECSXP => class == "list",
+        SEXPTYPE::SYMSXP => class == "name",
+        SEXPTYPE::ENVSXP => class == "environment",
+        SEXPTYPE::CLOSXP | SEXPTYPE::SPECIALSXP | SEXPTYPE::BUILTINSXP => class == "function",
+        _ => false,
+    }
 }
 
 /// The class vector of `x` is exactly `want`.
@@ -748,8 +818,18 @@ impl<'a> Access<'a> for RView<'a> {
         }
     }
 
-    fn host_only(self) -> Read<()> {
-        Ok(())
+    fn host_class(self, host: &str, class: &str) -> Read<()> {
+        match self.sexp() {
+            Some(x) if host == "r" && is_host_class(x, class) => Ok(()),
+            x => Err(Form::problem(
+                "r_type",
+                rtemis_r8::problem::Problem::Kind(format!("an object of class {class:?}")),
+                Some(rtemis_r8::rules::Shown::Kind(match x.map(classes) {
+                    Some(c) if !c.is_empty() => format!("an object of class {c}"),
+                    _ => self.found().to_string(),
+                })),
+            )),
+        }
     }
 
     fn vec(self, element: &FieldType) -> Read<usize> {

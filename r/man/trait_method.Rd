@@ -31,7 +31,7 @@ arguments, and an impl names a type for any of them (\code{impl()}).}
 
 \item{return_type}{Optional: The type of the value that every impl's
 method returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of
-the first argument. An impl may declare a type that fits it
+the first dispatched argument. An impl may declare a type that fits it
 (\code{\link[=impl_method]{impl_method()}}). A replacement method returns a value of its
 argument's type and declares none.}
 }

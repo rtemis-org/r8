@@ -42,6 +42,12 @@
 .r8_c_find2 <- NULL
 .r8_c_find3 <- NULL
 
+# The native symbols of the C routines `call`, which checks the arguments of
+# a typed generic's call and finds the impl, and `result`, which checks its
+# result, bound when the package loads.
+.r8_c_call <- NULL
+.r8_c_result <- NULL
+
 # Trait objects by qualified name, for the impls of compiled code.
 .r8_traits <- new.env(parent = emptyenv())
 
@@ -65,7 +71,7 @@ BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
 #'   arguments, and an impl names a type for any of them (`impl()`).
 #' @param return_type Optional: The type of the value that every impl's
 #'   method returns, an `r8_field_type`, an R8 type, or `"Self"`, the type of
-#'   the first argument. An impl may declare a type that fits it
+#'   the first dispatched argument. An impl may declare a type that fits it
 #'   ([impl_method()]). A replacement method returns a value of its
 #'   argument's type and declares none.
 #'
@@ -230,15 +236,21 @@ RESERVED_METHODS <- c(
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
+#' A generic with typed parameters passes its frame to the C routine `call`,
+#' which forces and checks them before it finds the impl; one with a return
+#' type passes the impl's result to the C routine `result`, and returns it
+#' invisibly when the impl did. A generic without types calls neither.
+#'
 #' @param p An `r8_params`: The parameters.
 #' @param dispatch Character: The dispatched arguments, in formal order.
+#' @param return_type The return type's IR, or `NULL`.
 #'
 #' @return The generic, with its dispatched arguments as the attribute
 #'   `r8_dispatch`.
 #'
 #' @keywords internal
 #' @noRd
-make_generic <- function(trait_name, method, p, dispatch) {
+make_generic <- function(trait_name, method, p, dispatch, return_type = NULL) {
   args <- p[["names"]]
   first <- as.name(args[[1L]])
   call_args <- lapply(args, function(a) {
@@ -253,12 +265,17 @@ make_generic <- function(trait_name, method, p, dispatch) {
   # worker's impls.
   ns <- asNamespace("R8")
   at <- function(name) call("$", ns, as.name(name))
+  typed <- !all(vapply(p[["types"]], is.null, logical(1)))
   find <- as.call(c(
-    list(
-      quote(.Call),
-      at(c(".r8_c_find", ".r8_c_find2", ".r8_c_find3")[[length(dispatch)]])
-    ),
-    lapply(dispatch, as.name),
+    list(quote(.Call)),
+    if (typed) {
+      list(at(".r8_c_call"), quote(environment()))
+    } else {
+      c(
+        at(c(".r8_c_find", ".r8_c_find2", ".r8_c_find3")[[length(dispatch)]]),
+        lapply(dispatch, as.name)
+      )
+    },
     list(call("quote", key), at(".r8_dispatch"))
   ))
   body <- as.call(c(list(find), call_args))
@@ -270,6 +287,26 @@ make_generic <- function(trait_name, method, p, dispatch) {
       body,
       call("quote", key)
     ))
+  } else if (!is.null(return_type)) {
+    checked <- as.call(list(
+      quote(.Call),
+      at(".r8_c_result"),
+      quote(.r8_v),
+      quote(.r8_f),
+      call("quote", key),
+      as.name(dispatch[[1L]]),
+      at(".r8_dispatch")
+    ))
+    body <- call(
+      "{",
+      call("<-", quote(.r8_f), find),
+      call(
+        "<-",
+        quote(.r8_v),
+        call("withVisible", as.call(c(list(quote(.r8_f)), call_args)))
+      ),
+      call("if", checked, quote(.r8_v[[1L]]), quote(invisible(.r8_v[[1L]])))
+    )
   }
   check_base_names(p[["env"]], method)
   structure(
@@ -283,7 +320,18 @@ make_generic <- function(trait_name, method, p, dispatch) {
 
 
 # The functions of base R that a generic's body calls.
-GENERIC_BODY_CALLS <- c(".Call", "$", "quote")
+GENERIC_BODY_CALLS <- c(
+  ".Call",
+  "$",
+  "quote",
+  "environment",
+  "withVisible",
+  "invisible",
+  "[[",
+  "{",
+  "<-",
+  "if"
+)
 
 
 # %% check_base_names ----
@@ -463,7 +511,7 @@ replacement_abort <- function(key, x, out) {
       paste0(", or declare the method for `", type, "`")
     },
     " [replacement_type].",
-    class = "r8_type_error"
+    class = c("r8_result_error", "r8_type_error")
   )
 } # /R8::replacement_abort
 
@@ -1056,7 +1104,6 @@ build_trait <- function(
       check_mapped(tm, m, existing[["package"]])
       generics[[m]] <- existing[["fn"]]
     } else {
-      generics[[m]] <- make_generic(qname, m, p, dispatch)
       if (!is.null(tm[["default_impl"]])) {
         check_method_defaults(
           tm[["default_impl"]],
@@ -1071,6 +1118,15 @@ build_trait <- function(
       params = params_ir(p, dispatch)
     )
     method_ir[["return_type"]] <- tm[["return_type"]]
+    if (is.null(existing)) {
+      generics[[m]] <- make_generic(
+        qname,
+        m,
+        stored_defaults(p),
+        dispatch,
+        tm[["return_type"]]
+      )
+    }
     if (tm[["stochastic"]]) {
       method_ir[["stochastic"]] <- TRUE
     }

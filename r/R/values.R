@@ -385,8 +385,11 @@ rules_skipped <- function(errors, type_name, variant = "") {
 #' @param type_name Optional character: The qualified type, whose rules a
 #'   closing line reports as not evaluated when fields are invalid.
 #' @param variant Character: The enum variant, or `""`.
+#' @param source Optional character: Where the value comes from, after the
+#'   label.
+#' @param class Character: The condition's classes, before `r8_error`.
 #'
-#' @return Does not return; signals `r8_value_error`, whose field
+#' @return Does not return; signals an error of class `class`, whose field
 #'   `problems` holds `problems_data(errors)`.
 #'
 #' @keywords internal
@@ -398,7 +401,9 @@ value_abort <- function(
   inputs = NULL,
   assignment = NULL,
   type_name = NULL,
-  variant = ""
+  variant = "",
+  source = NULL,
+  class = "r8_value_error"
 ) {
   errors[["hint"]] <- coercion_hints(errors, inputs)
   n <- length(unique(problem_keys(errors)))
@@ -409,6 +414,7 @@ value_abort <- function(
     label,
     "`",
     if (!is.null(assignment)) paste0(" from `", assignment, "`"),
+    if (!is.null(source)) paste0(" from ", source),
     ": ",
     n,
     if (n == 1L) " problem" else " problems",
@@ -421,7 +427,7 @@ value_abort <- function(
         if (skipped == 1L) " field is invalid." else " fields are invalid."
       )
     },
-    class = "r8_value_error",
+    class = class,
     data = list(problems = problems_data(errors))
   )
 } # /R8::value_abort

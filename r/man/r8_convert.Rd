@@ -14,7 +14,7 @@ r8_convert(x, type)
 \value{
 A value of \code{type}. A source without an impl raises
 \code{r8_dispatch_error}, and an impl's result of another type
-\code{r8_type_error}.
+\code{r8_result_error}.
 }
 \description{
 Returns \code{x} when it is a value of \code{type}, and its upcast when \code{type} is an

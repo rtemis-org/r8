@@ -171,12 +171,20 @@ check_method_formals <- function(fn, gen_args, label) {
 #' exports it. The generic is a trait with one method named as the generic,
 #' `ns::describe`, which Rust and the C interface implement as any trait.
 #'
+#' A call checks its typed arguments before it dispatches: it forces them, in
+#' the order of the parameters, converts them as a constructor does, such as
+#' a whole double for an integer, and raises `r8_argument_error` with every
+#' problem of every argument. A result that does not satisfy the return type
+#' raises `r8_result_error`. An argument without a type stays lazy. The checks
+#' belong to the generic's call: [r8_method()] and [r8_next_impl()] call a
+#' method without them.
+#'
 #' A replacement generic, `generic("labels<-", params(x, value))`, is called
 #' as `labels(x) <- value`, which rebinds `x` to the method's result; the
 #' original value is unchanged. Its last argument is `value`, and each
 #' method returns a value of the type of `x`: for a child type, the child,
 #' such as `x` after `x$label <- value`; any other result raises
-#' `r8_type_error`. Its trait is `ns::with_labels`, the method's name in the
+#' `r8_result_error`. Its trait is `ns::with_labels`, the method's name in the
 #' bindings other than R.
 #'
 #' @param name Character: The generic's name, an R8 name such as
@@ -203,7 +211,7 @@ check_method_formals <- function(fn, gen_args, label) {
 #'   [r8_ambiguities()] lists such pairs.
 #' @param return_type Optional: The type of the value that every method
 #'   returns, an `r8_field_type`, an R8 type, or `"Self"`, the type of the
-#'   first argument. A method may declare a type that fits it
+#'   first dispatched argument. A method may declare a type that fits it
 #'   ([implement<-]). A replacement generic returns a value of its argument's
 #'   type and declares none.
 #'
@@ -314,13 +322,19 @@ generic <- function(
   trait_name <- if (replacement) paste0("with_", base) else name
   qname <- paste0(namespace, "::", trait_name)
   check_generic_trait(qname, name)
-  g <- make_generic(qname, name, p, dispatch)
   method <- list(
     name = name,
     description = description,
     params = params_ir(p, dispatch)
   )
   method[["return_type"]] <- return_type_ir(return_type, self = TRUE)
+  g <- make_generic(
+    qname,
+    name,
+    stored_defaults(p),
+    dispatch,
+    method[["return_type"]]
+  )
   ir <- list(
     name = trait_name,
     description = description,

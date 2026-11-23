@@ -141,6 +141,15 @@ impl IntegerType {
     pub fn in_range(&self, x: i32) -> bool {
         self.lower.is_none_or(|b| b.admits_above(x)) && self.upper.is_none_or(|b| b.admits_below(x))
     }
+
+    /// Whether the whole number `x` is a value of the type.
+    #[inline(always)]
+    pub fn admits(&self, x: i64) -> bool {
+        (-(i32::MAX as i64)..=i32::MAX as i64).contains(&x) && {
+            let y = x as i32;
+            self.in_range(y) && self.values.as_ref().is_none_or(|v| v.contains(&y))
+        }
+    }
 }
 
 /// Constraints of `type_integer()`, whose domain is −2147483647 to
@@ -255,6 +264,14 @@ impl DoubleType {
     #[inline(always)]
     pub fn in_range(&self, x: f64) -> bool {
         self.lower.is_none_or(|b| b.admits_above(x)) && self.upper.is_none_or(|b| b.admits_below(x))
+    }
+
+    /// Whether `x`, which is not a missing value, is a value of the type.
+    #[inline(always)]
+    pub fn admits(&self, x: f64) -> bool {
+        (!self.finite || x.is_finite())
+            && self.in_range(x)
+            && self.values.as_ref().is_none_or(|v| v.contains(&x))
     }
 }
 

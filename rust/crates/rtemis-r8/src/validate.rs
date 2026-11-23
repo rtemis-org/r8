@@ -203,24 +203,6 @@ fn number_key(x: f64) -> Key {
     })
 }
 
-/// Whether a double satisfies its constraints; the reporting check runs
-/// only when it does not.
-#[inline(always)]
-fn double_ok(c: &DoubleType, x: f64) -> bool {
-    (!c.finite || x.is_finite())
-        && c.in_range(x)
-        && c.values.as_ref().is_none_or(|v| v.contains(&x))
-}
-
-/// Whether a whole number satisfies the integer range and its constraints.
-#[inline(always)]
-fn integer_ok(c: &IntegerType, x: i64) -> bool {
-    (INT_MIN..=INT_MAX).contains(&x) && {
-        let y = x as i32;
-        c.in_range(y) && c.values.as_ref().is_none_or(|v| v.contains(&y))
-    }
-}
-
 /// A chunk of a numeric sequence.
 #[derive(Clone, Copy)]
 enum Chunk<'c> {
@@ -236,17 +218,17 @@ fn chunk_ok(inner: &FieldType, optional: bool, chunk: Chunk) -> bool {
     match (inner, chunk) {
         (FieldType::Double(c), Chunk::F64(s)) => s
             .iter()
-            .all(|&x| na_ok(crate::access::is_na_real(x), double_ok(c, x))),
+            .all(|&x| na_ok(crate::access::is_na_real(x), c.admits(x))),
         (FieldType::Double(c), Chunk::I32(s)) => s
             .iter()
-            .all(|&x| na_ok(x == i32::MIN, double_ok(c, f64::from(x)))),
+            .all(|&x| na_ok(x == i32::MIN, c.admits(f64::from(x)))),
         (FieldType::Integer(c), Chunk::I32(s)) => s
             .iter()
-            .all(|&x| na_ok(x == i32::MIN, integer_ok(c, i64::from(x)))),
+            .all(|&x| na_ok(x == i32::MIN, c.admits(i64::from(x)))),
         (FieldType::Integer(c), Chunk::F64(s)) => s.iter().all(|&x| {
             na_ok(
                 crate::access::is_na_real(x),
-                x.fract() == 0.0 && integer_ok(c, x as i64),
+                x.fract() == 0.0 && c.admits(x as i64),
             )
         }),
         _ => false,
@@ -457,12 +439,12 @@ impl<'l> Validator<'l, '_> {
                 }
             }
             FieldType::Integer(c) => match v.integer() {
-                Ok(x) if integer_ok(c, x) => {}
+                Ok(x) if c.admits(x) => {}
                 Ok(x) => self.integer(c, x, path),
                 Err(f) => self.form(f, path),
             },
             FieldType::Double(c) => match v.double() {
-                Ok(x) if double_ok(c, x) => {}
+                Ok(x) if c.admits(x) => {}
                 Ok(x) => self.double(c, x, path),
                 Err(f) => self.form(f, path),
             },
@@ -525,8 +507,8 @@ impl<'l> Validator<'l, '_> {
                     self.form(f, path);
                 }
             }
-            FieldType::HostClass { .. } => {
-                if let Err(f) = v.host_only() {
+            FieldType::HostClass { host, class, .. } => {
+                if let Err(f) = v.host_class(host, class) {
                     self.form(f, path);
                 }
             }
@@ -596,7 +578,7 @@ impl<'l> Validator<'l, '_> {
         match inner {
             FieldType::Double(c) => v.each_double(n, |i, r| match r {
                 Ok(Some(x)) => {
-                    if !double_ok(c, x) {
+                    if !c.admits(x) {
                         self.double(c, x, &P::Idx(path, i));
                     }
                     if unique {
@@ -609,7 +591,7 @@ impl<'l> Validator<'l, '_> {
             }),
             FieldType::Integer(c) => v.each_integer(n, |i, r| match r {
                 Ok(Some(x)) => {
-                    if !integer_ok(c, x) {
+                    if !c.admits(x) {
                         self.integer(c, x, &P::Idx(path, i));
                     }
                     if unique {
