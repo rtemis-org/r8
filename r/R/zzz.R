@@ -170,7 +170,9 @@ From <- function(source) {
 #' ancestor of its type (`r8_upcast()`). Otherwise calls the `From(source)`
 #' impl of `type` for the nearest source with one: for an R8 value, its type,
 #' then its ancestors through `extends`, nearest first; for any other object,
-#' its classes, then `"numeric"` for a number. The impl receives `x`
+#' its class vector as [.class2()] gives it, which includes the implicit
+#' classes, such as `"matrix"`, `"integer"`, and `"numeric"`, and an S4
+#' object's superclasses. The impl receives `x`
 #' unchanged, and its result must be a value of `type`. Conversions are not
 #' chained.
 #'
@@ -207,7 +209,7 @@ r8_convert <- function(x, type) {
   sources <- if (r8) {
     c(attr(x, "r8_type"), ancestors)
   } else {
-    unique(c(class(x), if (is.numeric(x)) "numeric"))
+    .class2(x)
   }
   for (s in sources) {
     fn <- .r8_impls[[paste("R8::From", s, target, sep = "|")]]

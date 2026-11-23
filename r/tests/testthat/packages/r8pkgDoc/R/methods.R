@@ -102,3 +102,7 @@ implement(pair_with, Resampler, Method) <- function(x, y) {
 implement(pair_with, y = Resampler) <- function(x, y) {
   "anything and a resampler"
 }
+
+implement(pair_with, "data.frame", Resampler) <- function(x, y) {
+  "a data frame and a resampler"
+}

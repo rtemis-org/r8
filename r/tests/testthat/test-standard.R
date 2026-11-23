@@ -101,7 +101,7 @@ test_that("From converts through r8_convert(), Type@from(), and r8_converter()",
   )
   expect_error(
     r8_convert(5, Count),
-    'no From impl for "numeric"\\.$',
+    'no From impl for "double", "numeric"\\.$',
     class = "r8_dispatch_error"
   )
   expect_error(Money@nothing, class = "r8_dispatch_error")

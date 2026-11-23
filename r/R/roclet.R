@@ -277,8 +277,11 @@ method_block <- function(block, blocks, env) {
     paste(deparse(gcall), collapse = "")
   }
   converter <- inherits(generic, "r8_converter")
+  host <- !inherits(type, "r8_type")
   tname <- if (is.character(type)) {
     type
+  } else if (host) {
+    unclass(as_host_class(type))[["class"]]
   } else {
     sub("^.*::", "", attr(type, "r8_name"))
   }
@@ -299,8 +302,8 @@ method_block <- function(block, blocks, env) {
   } else if (identical(target[["package"]], declaring_package(env))) {
     topic <- topic_of(blocks, generic)
   }
-  if (is.null(topic) && !is.character(type)) {
-    for (t in types) {
+  if (is.null(topic)) {
+    for (t in Filter(function(x) inherits(x, "r8_type"), types)) {
       topic <- topic %||% topic_of(blocks, t)
     }
   }
@@ -322,6 +325,9 @@ method_block <- function(block, blocks, env) {
           if (identical(p, "any")) {
             return("any")
           }
+          if (is_host_key(p)) {
+            return(paste0("class '", host_key_class(p), "'"))
+          }
           t <- Filter(function(x) identical(attr(x, "r8_name"), p), types)[[1L]]
           paste0(type_kind(t), " '", sub("^.*::", "", p), "'")
         },
@@ -336,7 +342,7 @@ method_block <- function(block, blocks, env) {
       tuple
     } else {
       paste0(
-        if (is.character(type)) "class" else type_kind(type),
+        if (host) "class" else type_kind(type),
         " '",
         tname,
         "'"

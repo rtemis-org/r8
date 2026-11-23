@@ -28,6 +28,11 @@
 - `generic(dispatch = c("x", "y"))` and `trait_method(dispatch =)` dispatch on several arguments: `implement(f, A, B) <- fn`, `implement(f, y = B) <- fn`, and `impl(Trait, list(A, B), ...)` declare methods for tuples of types, and a position a method does not name matches any value. The most specific method in every position runs; a call that two methods make ambiguous raises `r8_dispatch_error` naming the method to declare, and `r8_ambiguities()` lists such pairs. A package whose methods make a call ambiguous with those of a package it imports is refused at load.
 - `r8_method(f, A, B)` returns the method of a tuple, and `r8_next_impl(A, B)` continues to the method it names.
 - A value without a class attribute, such as a number or a matrix, keeps its resolved method in the dispatch cache.
+- R8 generics and traits take methods for classes of other class systems in every dispatched position: a string names an S3 or implicit class (`implement(f, "data.frame") <- fn`, `"matrix"`, `"NULL"`), and `host_class(class, package, system = "s4")` or an S4 class object names an S4 class. The class nearer the front of an object's `.class2()` vector is more specific.
+- An impl on a class that already has a method of a mapped S3 generic takes that method; supplying one is refused (`host_method_exists`). `r8_next_impl()` from an impl on a class continues to the next S3 method.
+- `dyn(generic)` declares a field of any R8 type with a method of a generic of one dispatched argument; a `dyn()` field holds R8 values only.
+- `r8_convert()` reads an object's classes with `.class2()`, so `From("numeric")` converts integers and doubles, and an impl on an S4 superclass converts its subclasses.
+- `r8_clear_dispatch()` clears the dispatch cache.
 
 # R8 0.4.0
 

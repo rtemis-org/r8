@@ -199,6 +199,20 @@ r8_next_impl <- function(...) {
   } else {
     next_in_chain(trait_name, method, values[[1L]], after)
   }
+  if (
+    is.null(fn) &&
+      length(chosen) == 0L &&
+      length(dispatch) == 1L &&
+      is_host_key(after) &&
+      maps_s3_generic(trait_name, method)
+  ) {
+    # The S3 method after the class, from the frame UseMethod() called.
+    dispatch_frame <- sys.frame(sys.parent())
+    if (!exists(".Generic", envir = dispatch_frame, inherits = FALSE)) {
+      dispatch_frame <- sys.frame(sys.parent(2L))
+    }
+    return(do.call("NextMethod", list(), envir = dispatch_frame))
+  }
   if (is.null(fn)) {
     r8_abort(
       "The impl of `",
@@ -227,6 +241,26 @@ r8_next_impl <- function(...) {
   }
   do.call(fn, args)
 } # /R8::r8_next_impl
+
+
+# %% maps_s3_generic ----
+#' Whether a trait method is the method of an existing S3 generic
+#'
+#' @param trait_name Character: The trait's qualified name.
+#' @param method Character: The method name.
+#'
+#' @return Logical.
+#'
+#' @keywords internal
+#' @noRd
+maps_s3_generic <- function(trait_name, method) {
+  t <- .r8_traits[[trait_name]]
+  if (is.null(t)) {
+    return(FALSE)
+  }
+  g <- unclass(t)[["generics"]][[method]]
+  is.function(g) && !inherits(g, "r8_generic") && !is_s4_generic(g)
+} # /R8::maps_s3_generic
 
 
 # %% method_dispatch ----
@@ -268,13 +302,9 @@ method_dispatch <- function(trait_name, method) {
 #' @noRd
 next_in_chain <- function(trait_name, method, x, after) {
   r8 <- inherits(x, "r8_value")
-  type <- if (r8) attr(x, "r8_type") else class(x)[1L]
+  type <- value_type_text(x)
   if (nzchar(after)) {
-    chain <- if (r8 && is.null(attr(x, "r8_variant"))) {
-      c(type, r8_ancestors(x))
-    } else {
-      class(x)
-    }
+    chain <- chain_keys(x)
     if (!after %in% chain) {
       r8_abort(
         "r8_next_impl() continues the impl for `",
@@ -287,9 +317,36 @@ next_in_chain <- function(trait_name, method, x, after) {
         class = "r8_dispatch_error"
       )
     }
+  } else {
+    return(NULL)
   }
-  impl_in_chain(trait_name, method, type, r8 = r8, after = after)
+  if (is.null(.r8_traits[[trait_name]])) {
+    # The method of an S3 generic that implement() declares for an R8 type.
+    return(impl_in_chain(trait_name, method, type, r8 = r8, after = after))
+  }
+  resolve_tuple(trait_name, method, list(x), above = after)
 } # /R8::next_in_chain
+
+
+# %% chain_keys ----
+#' The position keys a value matches, most specific first
+#'
+#' @param x The value.
+#'
+#' @return Character: For an R8 value, its type and its ancestors; for
+#'   another object, its class vector as `.class2()` gives it, each class in
+#'   double quotes, as host-class positions are keyed.
+#'
+#' @keywords internal
+#' @noRd
+chain_keys <- function(x) {
+  if (inherits(x, "r8_value")) {
+    type <- attr(x, "r8_type")
+    if (is.null(attr(x, "r8_variant"))) c(type, r8_ancestors(x)) else type
+  } else {
+    paste0("\"", .class2(x), "\"")
+  }
+} # /R8::chain_keys
 
 
 # %% chosen_impl ----
@@ -329,12 +386,7 @@ chosen_impl <- function(trait_name, method, dispatch, values, chosen) {
   for (i in seq_along(positions)) {
     p <- positions[[i]]
     v <- values[[i]]
-    chain <- if (inherits(v, "r8_value") && is.null(attr(v, "r8_variant"))) {
-      c(attr(v, "r8_type"), r8_ancestors(v))
-    } else if (inherits(v, "r8_value")) {
-      attr(v, "r8_type")
-    }
-    if (!identical(p, "any") && !p %in% chain) {
+    if (!identical(p, "any") && !p %in% chain_keys(v)) {
       r8_abort(
         "The impl of `",
         trait_name,

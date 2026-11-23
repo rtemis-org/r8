@@ -29,7 +29,7 @@ test_that("a child holds its parent's fields and rules, then its own", {
     # The parent's rules apply to the child.
     expect_error(C(a = -1, b = 3, c = "x"), "A_POS", class = "r8_value_error")
     expect_error(C(b = -3, c = "x"), "B_POS", class = "r8_value_error")
-    ir <- type_ir(C)
+    ir <- R8:::type_ir(C)
     expect_identical(ir[["extends"]], "ext1::B")
     expect_identical(
       vapply(ir[["fields"]], function(f) f[["inherited_from"]] %||% "", ""),

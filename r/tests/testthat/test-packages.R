@@ -780,6 +780,11 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     "## R8 method for any, struct 'Resampler'\n\\special{pair_with(x, y)}",
     fixed = TRUE
   )
+  expect_match(
+    rd("pair_with.Rd"),
+    "## R8 method for class 'data.frame', struct 'Resampler'\n\\special{pair_with(x, y)}",
+    fixed = TRUE
+  )
   # A second run writes nothing.
   again <- run_r(
     character(),
@@ -825,7 +830,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "print(Method@Bootstrap)",
       "seed(r) <- 9L",
       "cat(r$seed, n_resamples(as_resampler('abc')), '\\n')",
-      "cat(pair_with(r, Method@Bootstrap), '|', pair_with(1, r), '\\n')"
+      "cat(pair_with(r, Method@Bootstrap), '|', pair_with(1, r), '|', pair_with(data.frame(), r), '\\n')"
     )
   )
   expect_identical(
@@ -837,7 +842,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "2",
       "A resampling method",
       "9 3",
-      "a resampler and a method | anything and a resampler"
+      "a resampler and a method | anything and a resampler | a data frame and a resampler"
     ),
     info = paste(used, collapse = "\n")
   )

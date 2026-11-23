@@ -453,12 +453,21 @@ fn trait_impls(
     Ok((arity, impls))
 }
 
-/// The positions of an impl as text: qualified type names, class names, or
-/// `any`.
+/// A position as R8's R code keys it: a qualified type name, `any`, or a
+/// host class's name in double quotes, `"data.frame"`, which no type name
+/// and no `any` can equal.
+fn position_string(p: &rtemis_r8::ir::ImplTarget) -> String {
+    match p {
+        rtemis_r8::ir::ImplTarget::HostClass { class, .. } => format!("\"{class}\""),
+        other => other.to_string(),
+    }
+}
+
+/// The positions of an impl as text (`position_string()`).
 fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
     rtemis_r8::ir::dispatch::positions(imp, arity)
-        .iter()
-        .map(ToString::to_string)
+        .into_iter()
+        .map(position_string)
         .collect()
 }
 
@@ -468,6 +477,8 @@ fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
 /// @param trait_name Character: The trait's qualified name.
 /// @param types Character: The R8 type of each dispatched argument, `NA`
 ///   for a value of no R8 type.
+/// @param chains List: For each argument of no R8 type, its class vector
+///   as `.class2()` gives it; `NULL` for a value of an R8 type.
 /// @param above Optional Character: The positions of the running impl, for
 ///   the next impl.
 /// @return List: `kind` (`"impl"`, `"default"`, `"ambiguous"`, or
@@ -478,7 +489,7 @@ fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_dispatch_resolve(trait_name: &str, types: Robj, above: Robj) -> Result<List> {
+fn r8_dispatch_resolve(trait_name: &str, types: Robj, chains: List, above: Robj) -> Result<List> {
     use rtemis_r8::ir::dispatch::{Arg, Resolution, resolve};
     let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
     let docs = snapshot()?;
@@ -488,8 +499,11 @@ fn r8_dispatch_resolve(trait_name: &str, types: Robj, above: Robj) -> Result<Lis
         .as_str_iter()
         .ok_or_else(|| fail("`types` is character"))?;
     let args: Vec<Arg> = strings
-        .map(|s| match s {
-            s if s.is_na() => Arg::Other,
+        .zip(chains.values())
+        .map(|(s, chain)| match s {
+            s if s.is_na() => chain.as_str_vector().map_or(Arg::Other, |c| {
+                Arg::Classes(c.into_iter().map(str::to_string).collect())
+            }),
             s => QualifiedName::parse(s).map_or(Arg::Other, Arg::Type),
         })
         .collect();
@@ -575,7 +589,7 @@ fn r8_dispatch_ambiguities(trait_name: &str) -> Result<Robj> {
     for a in rtemis_r8::ir::dispatch::ambiguities(&*docs, &impls, arity, &|_, _| true) {
         first.push(text(tuple_strings(impls[a.first], arity)));
         second.push(text(tuple_strings(impls[a.second], arity)));
-        meet.push(text(a.meet.iter().map(ToString::to_string).collect()));
+        meet.push(text(a.meet.iter().map(position_string).collect()));
         let (na, nb) = (&found[a.first].0, &found[a.second].0);
         namespaces.push(if na == nb {
             na.to_string()

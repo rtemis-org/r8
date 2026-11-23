@@ -43,6 +43,11 @@ fn imp(target: &str, other: &str) -> ImplDef {
     let pos = |s: &str| {
         if s == "any" {
             json!({"kind": "any"})
+        } else if let Some(class) = s.strip_prefix("class:") {
+            // `class:<package>/<class>`, or `class:<class>` with no package.
+            let (package, class) = class.split_once('/').unwrap_or(("", class));
+            json!({"kind": "host_class", "host": "r", "package": package,
+                "class": class, "system": "s3"})
         } else {
             json!({"kind": "type", "name": s})
         }
@@ -126,6 +131,31 @@ fn the_orphan_rule_applies_to_every_position() {
     // A refused impl leaves the registry as it was.
     let docs = r.snapshot();
     assert_eq!(impls_by_namespace(&docs, &q("core::Combine")).len(), 1);
+}
+
+#[test]
+fn a_host_class_of_the_declaring_package_is_its_own() {
+    let r = registry();
+    // A class whose package is the declaring namespace counts as its own.
+    let ok = r
+        .declare_impl(&name("pa"), imp("class:pa/frame", "core::B"))
+        .unwrap();
+    assert!(codes(&ok).is_empty(), "{:?}", ok.problems);
+    // A class of another package, or of none, is the trait's namespace's to
+    // implement.
+    for target in ["class:pb/frame", "class:data.frame"] {
+        let out = r.declare_impl(&name("pa"), imp(target, "core::B")).unwrap();
+        assert_eq!(codes(&out), ["impl_orphan"], "{target}");
+    }
+    let ok = r
+        .declare_impl(&name("core"), imp("class:data.frame", "core::B"))
+        .unwrap();
+    assert!(codes(&ok).is_empty(), "{:?}", ok.problems);
+    // A host class before the declaring namespace's own type.
+    let ok = r
+        .declare_impl(&name("pb"), imp("class:data.frame", "pb::B3"))
+        .unwrap();
+    assert!(codes(&ok).is_empty(), "{:?}", ok.problems);
 }
 
 #[test]

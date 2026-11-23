@@ -124,7 +124,7 @@ test_that("tag values are names and unique among a trait's implementors", {
   })
 })
 
-test_that("dyn() takes a trait or a struct type", {
+test_that("dyn() takes a trait, a generic, or a struct type", {
   e <- dyn_types("dyn4")
   expect_error(dyn(e$Color), "is an enum", class = "r8_declaration_error")
   expect_error(
@@ -133,7 +133,7 @@ test_that("dyn() takes a trait or a struct type", {
     class = "r8_declaration_error"
   )
   g <- declare_in("dyn4", generic("g", "x"))
-  expect_error(dyn(g), "reserved", class = "r8_declaration_error")
+  expect_identical(unclass(dyn(g))[["trait"]], "dyn4::g")
 })
 
 test_that("a document naming an unregistered type names its namespace", {

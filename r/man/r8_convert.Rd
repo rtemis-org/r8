@@ -21,7 +21,9 @@ Returns \code{x} when it is a value of \code{type}, and its upcast when \code{ty
 ancestor of its type (\code{r8_upcast()}). Otherwise calls the \code{From(source)}
 impl of \code{type} for the nearest source with one: for an R8 value, its type,
 then its ancestors through \code{extends}, nearest first; for any other object,
-its classes, then \code{"numeric"} for a number. The impl receives \code{x}
+its class vector as \code{\link[=.class2]{.class2()}} gives it, which includes the implicit
+classes, such as \code{"matrix"}, \code{"integer"}, and \code{"numeric"}, and an S4
+object's superclasses. The impl receives \code{x}
 unchanged, and its result must be a value of \code{type}. Conversions are not
 chained.
 }

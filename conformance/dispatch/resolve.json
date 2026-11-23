@@ -298,6 +298,38 @@
               "name": "core::C"
             }
           ]
+        },
+        {
+          "trait": "core::Combine",
+          "target": {
+            "kind": "type",
+            "name": "core::C"
+          },
+          "methods": [],
+          "type_args": [
+            {
+              "kind": "host_class",
+              "host": "r",
+              "class": "data.frame",
+              "system": "s3"
+            }
+          ]
+        },
+        {
+          "trait": "core::Combine",
+          "target": {
+            "kind": "host_class",
+            "host": "r",
+            "class": "data.frame",
+            "system": "s3"
+          },
+          "methods": [],
+          "type_args": [
+            {
+              "kind": "type",
+              "name": "core::B"
+            }
+          ]
         }
       ]
     },
@@ -642,6 +674,104 @@
             "pa::A3",
             "core::B"
           ]
+        ]
+      }
+    },
+    {
+      "id": "host-class-second",
+      "description": "A host class in the second position, more specific than any.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        {
+          "classes": [
+            "tbl_df",
+            "tbl",
+            "data.frame"
+          ]
+        }
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "data.frame"
+        ]
+      }
+    },
+    {
+      "id": "host-class-second-other",
+      "description": "An object of another class in the second position: any.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        {
+          "classes": [
+            "matrix",
+            "array",
+            "double",
+            "numeric"
+          ]
+        }
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "any"
+        ]
+      }
+    },
+    {
+      "id": "host-class-first",
+      "description": "A host class in the first position and an R8 type's child in the second.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        {
+          "classes": [
+            "data.frame"
+          ]
+        },
+        "core::B1"
+      ],
+      "expect": {
+        "impl": [
+          "data.frame",
+          "core::B"
+        ]
+      }
+    },
+    {
+      "id": "forged-class",
+      "description": "An object whose class vector names an R8 type is not a value of that type.",
+      "op": "dispatch",
+      "type": "core::Describe",
+      "input": [
+        {
+          "classes": [
+            "core::A",
+            "r8_value"
+          ]
+        }
+      ],
+      "expect": {
+        "default": true
+      }
+    },
+    {
+      "id": "type-not-host",
+      "description": "A value of an R8 type does not match a host-class position.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        "core::A"
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "any"
         ]
       }
     }

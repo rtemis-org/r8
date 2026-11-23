@@ -456,37 +456,86 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
   return out;
 }
 
-// The key of a value in a dispatch index: its `r8_type` attribute; the first
-// element of its class attribute as `class:<class>`; for an object without
-// a class attribute, `class:matrix` or `class:array` when it has a `dim`
-// attribute, and otherwise `type:<typeof>`. R8's `dispatch_key()` computes
-// the same keys. Returns R_NilValue for a class name too long to key.
+// The key of a value in a dispatch index, which determines the value's chain
+// in a position: its `r8_type` attribute; for an object with a class
+// attribute, `class:` and the whole class vector joined by the byte 0x1F,
+// followed for an S4 object by 0x1F, `@`, and the class's package; for an
+// object without one, `type:`, `matrix:`, or `array:` by its `dim` attribute,
+// and its `typeof()`, from a table of installed symbols. R8's
+// `dispatch_key()` computes the same keys. Returns R_NilValue for a language
+// object, whose class depends on its head, and for a key longer than 255
+// bytes: such values are not cached.
 static SEXP dispatch_key(SEXP x) {
-  static SEXP type_sym = NULL, matrix_sym = NULL, array_sym = NULL;
+  static SEXP type_sym = NULL, package_sym = NULL;
+  static SEXP implicit[3][32];
   if (type_sym == NULL) {
     type_sym = Rf_install("r8_type");
-    matrix_sym = Rf_install("class:matrix");
-    array_sym = Rf_install("class:array");
+    package_sym = Rf_install("package");
+    const char *prefix[3] = {"type:", "matrix:", "array:"};
+    // The types of objects that reach a generic without a class attribute.
+    const SEXPTYPE types[] = {NILSXP,     SYMSXP,  LISTSXP,    CLOSXP,
+                              ENVSXP,     SPECIALSXP, BUILTINSXP, LGLSXP,
+                              INTSXP,     REALSXP, CPLXSXP,    STRSXP,
+                              VECSXP,     EXPRSXP, EXTPTRSXP,  WEAKREFSXP,
+                              RAWSXP};
+    char buf[64];
+    for (int d = 0; d < 3; d++) {
+      for (int t = 0; t < 32; t++) {
+        implicit[d][t] = R_NilValue;
+      }
+      for (size_t k = 0; k < sizeof types / sizeof types[0]; k++) {
+        snprintf(buf, sizeof buf, "%s%s", prefix[d], Rf_type2char(types[k]));
+        implicit[d][types[k]] = Rf_install(buf);
+      }
+    }
   }
   SEXP type = Rf_getAttrib(x, type_sym);
   if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
     return Rf_installTrChar(STRING_ELT(type, 0));
   }
-  char buf[256];
   SEXP cls = Rf_getAttrib(x, R_ClassSymbol);
   if (TYPEOF(cls) == STRSXP && XLENGTH(cls) >= 1) {
-    const char *c = Rf_translateCharUTF8(STRING_ELT(cls, 0));
-    if (snprintf(buf, sizeof buf, "class:%s", c) < (int) sizeof buf) {
-      return Rf_install(buf);
+    char buf[256];
+    size_t at = 6;
+    memcpy(buf, "class:", 6);
+    R_xlen_t n = XLENGTH(cls);
+    for (R_xlen_t i = 0; i <= n; i++) {
+      const char *c;
+      if (i < n) {
+        c = Rf_translateCharUTF8(STRING_ELT(cls, i));
+      } else if (Rf_isS4(x)) {
+        SEXP pkg = Rf_getAttrib(cls, package_sym);
+        c = TYPEOF(pkg) == STRSXP && XLENGTH(pkg) == 1
+              ? Rf_translateCharUTF8(STRING_ELT(pkg, 0))
+              : "";
+        if (at + 2 >= sizeof buf) {
+          return R_NilValue;
+        }
+        buf[at++] = '\x1f';
+        buf[at++] = '@';
+      } else {
+        break;
+      }
+      size_t len = strlen(c);
+      size_t sep = i > 0 && i < n ? 1 : 0;
+      if (at + sep + len >= sizeof buf) {
+        return R_NilValue;
+      }
+      if (sep) {
+        buf[at++] = '\x1f';
+      }
+      memcpy(buf + at, c, len);
+      at += len;
     }
+    buf[at] = '\0';
+    return Rf_install(buf);
+  }
+  if (TYPEOF(x) == LANGSXP) {
     return R_NilValue;
   }
   SEXP dim = Rf_getAttrib(x, R_DimSymbol);
-  if (dim != R_NilValue) {
-    return XLENGTH(dim) == 2 ? matrix_sym : array_sym;
-  }
-  snprintf(buf, sizeof buf, "type:%s", Rf_type2char(TYPEOF(x)));
-  return Rf_install(buf);
+  int d = dim == R_NilValue ? 0 : (XLENGTH(dim) == 2 ? 1 : 2);
+  return TYPEOF(x) < 32 ? implicit[d][TYPEOF(x)] : R_NilValue;
 }
 
 // The impl of the trait method `key`, a symbol "Trait|method", for the

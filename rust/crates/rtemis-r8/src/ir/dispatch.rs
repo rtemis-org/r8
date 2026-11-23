@@ -111,12 +111,16 @@ fn check_arity(tr: &TraitDef, imp: &ImplDef, path: &str) -> Vec<DeclError> {
     out
 }
 
-/// `true` when a position of `imp` names a type of the namespace `ns` and
-/// every position before it names a type or a class.
+/// `true` when a position of `imp` names a type of the namespace `ns`, or a
+/// host class whose package is `ns`, and every position before it names a
+/// type or a class.
 fn names_own_type(ns: &Name, imp: &ImplDef) -> bool {
     for p in std::iter::once(&imp.target).chain(&imp.type_args) {
         match p {
             ImplTarget::Type { name } if name.namespace == *ns => return true,
+            ImplTarget::HostClass { package, .. } if package.as_str() == ns.as_str() => {
+                return true;
+            }
             ImplTarget::Type { .. } | ImplTarget::HostClass { .. } => {}
             ImplTarget::Any => return false,
         }
@@ -304,17 +308,28 @@ pub enum Resolution {
     Stale(QualifiedName),
 }
 
+/// The chain of an argument in one position: the R8 type and its
+/// ancestors, or a host object's class vector. A type position matches an
+/// R8 chain only and a host-class position a host chain only, so an object
+/// whose class vector names an R8 type is not a value of that type.
+enum Chain {
+    Type(Vec<String>),
+    Host(Vec<String>),
+    None,
+}
+
 /// The rank of an impl's position for an argument: its index in the
-/// argument's chain (the type, then its ancestors, or the class vector), or
-/// the top for any; `None` when the position does not apply.
-fn rank(p: &ImplTarget, chain: &[String]) -> Option<usize> {
-    match p {
-        ImplTarget::Any => Some(usize::MAX),
-        ImplTarget::Type { name } => {
+/// argument's chain, or the top for any; `None` when the position does not
+/// apply.
+fn rank(p: &ImplTarget, chain: &Chain) -> Option<usize> {
+    match (p, chain) {
+        (ImplTarget::Any, _) => Some(usize::MAX),
+        (ImplTarget::Type { name }, Chain::Type(c)) => {
             let n = name.to_string();
-            chain.iter().position(|c| *c == n)
+            c.iter().position(|x| *x == n)
         }
-        ImplTarget::HostClass { class, .. } => chain.iter().position(|c| c == class),
+        (ImplTarget::HostClass { class, .. }, Chain::Host(c)) => c.iter().position(|x| x == class),
+        _ => None,
     }
 }
 
@@ -330,19 +345,21 @@ pub fn resolve(
     args: &[Arg],
     above: Option<usize>,
 ) -> Resolution {
-    let mut chains: Vec<Vec<String>> = Vec::with_capacity(args.len());
+    let mut chains: Vec<Chain> = Vec::with_capacity(args.len());
     for a in args {
         chains.push(match a {
             Arg::Type(t) => {
                 if lookup.is_stale(t) {
                     return Resolution::Stale(t.clone());
                 }
-                std::iter::once(t.to_string())
-                    .chain(lookup.ancestors(t).iter().map(ToString::to_string))
-                    .collect()
+                Chain::Type(
+                    std::iter::once(t.to_string())
+                        .chain(lookup.ancestors(t).iter().map(ToString::to_string))
+                        .collect(),
+                )
             }
-            Arg::Classes(c) => c.clone(),
-            Arg::Other => Vec::new(),
+            Arg::Classes(c) => Chain::Host(c.clone()),
+            Arg::Other => Chain::None,
         });
     }
     let ranks: Vec<Option<Vec<usize>>> = impls

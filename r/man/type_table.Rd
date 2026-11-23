@@ -27,7 +27,11 @@ columns are the struct's fields.
 \examples{
 type_table(
   list(start = type_integer(), width = type_integer(min = 0L)),
-  rules = list(rule(start + width - 1 <= 2147483647, message = "The end fits in an integer.", id = "END_FITS"))
+  rules = list(rule(
+    start + width - 1 <= 2147483647,
+    message = "The end fits in an integer.",
+    id = "END_FITS"
+  ))
 )
 
 }

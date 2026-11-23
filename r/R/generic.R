@@ -599,9 +599,17 @@ classify_generic <- function(g, type_label = "Type") {
     return(generic)
   }
   single <- length(types) == 1L && is.null(names(types))
-  if (single && !inherits(types[[1L]], "r8_type")) {
-    r8_abort("`type` is an R8 type object.", class = "r8_declaration_error")
+  if (single && is.null(types[[1L]])) {
+    position_of(NULL)
   }
+  if (single && !is_position(types[[1L]])) {
+    r8_abort(
+      "`type` is an R8 type object or a class: a string such as ",
+      "\"data.frame\", host_class(), or an S4 class object.",
+      class = "r8_declaration_error"
+    )
+  }
+  host <- single && !inherits(types[[1L]], "r8_type")
   if (!single && !inherits(generic, "r8_generic")) {
     r8_abort(
       "A method of this generic is declared for one R8 type; several types, ",
@@ -611,8 +619,24 @@ classify_generic <- function(g, type_label = "Type") {
     )
   }
   type <- if (single) types[[1L]] else types
-  bare <- if (single) sub("^.*::", "", attr(type, "r8_name")) else "Type"
+  bare <- if (single && !host) {
+    sub("^.*::", "", attr(type, "r8_name"))
+  } else {
+    "Type"
+  }
   target <- classify_generic(generic, bare)
+  if (host && !identical(target[["kind"]], "trait")) {
+    r8_abort(
+      "A method on a class of another class system is declared for an R8 ",
+      "generic or trait; a method of `",
+      target[["package"]] %||% "",
+      if (!is.null(target[["package"]])) "::",
+      target[["name"]] %||% "this generic",
+      "` for a class R8 did not declare belongs to the package of the ",
+      "generic or of the class.",
+      class = "r8_declaration_error"
+    )
+  }
   if (identical(target[["kind"]], "s3")) {
     declare_s3_method(target, type, value, env)
     return(generic)
@@ -777,7 +801,8 @@ r8_method <- function(generic, ...) {
     inherits(generic, "r8_generic") &&
       (length(attr(generic, "r8_dispatch")) > 1L ||
         length(types) != 1L ||
-        !is.null(names(types)))
+        !is.null(names(types)) ||
+        !inherits(types[[1L]], "r8_type"))
   ) {
     positions <- impl_tuple(
       types,

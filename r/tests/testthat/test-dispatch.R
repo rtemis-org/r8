@@ -282,6 +282,6 @@ test_that("values without a class attribute hit the dispatch cache", {
     expect_identical(show_it(matrix(1:4, 2)), "default")
     index <- R8:::.r8_dispatch[["md9::Show|show_it"]]
     expect_true(exists("type:double", envir = index, inherits = FALSE))
-    expect_true(exists("class:matrix", envir = index, inherits = FALSE))
+    expect_true(exists("matrix:integer", envir = index, inherits = FALSE))
   })
 })

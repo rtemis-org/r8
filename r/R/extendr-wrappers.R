@@ -233,6 +233,8 @@ r8_check_namespaces <- function(namespaces, imports = character()) .Call(wrap__r
 #' @param trait_name Character: The trait's qualified name.
 #' @param types Character: The R8 type of each dispatched argument, `NA`
 #'   for a value of no R8 type.
+#' @param chains List: For each argument of no R8 type, its class vector
+#'   as `.class2()` gives it; `NULL` for a value of an R8 type.
 #' @param above Optional Character: The positions of the running impl, for
 #'   the next impl.
 #' @return List: `kind` (`"impl"`, `"default"`, `"ambiguous"`, or
@@ -242,7 +244,7 @@ r8_check_namespaces <- function(namespaces, imports = character()) .Call(wrap__r
 #'   stale type).
 #' @keywords internal
 #' @noRd
-r8_dispatch_resolve <- function(trait_name, types, above) .Call(wrap__r8_dispatch_resolve, trait_name, types, above)
+r8_dispatch_resolve <- function(trait_name, types, chains, above) .Call(wrap__r8_dispatch_resolve, trait_name, types, chains, above)
 
 #' The ambiguous pairs among a trait's registered impls.
 #'

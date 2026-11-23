@@ -466,6 +466,29 @@ clear_dispatch <- function() {
 } # /R8::clear_dispatch
 
 
+# %% r8_clear_dispatch ----
+#' Clear R8's dispatch cache
+#'
+#' R8 caches the method each generic resolved for the chain of its
+#' arguments' types, keyed by each argument's type or class vector, and
+#' clears the cache when an impl is declared. An S4 class's superclasses
+#' belong to its class definition, so `methods::setIs()` or
+#' `methods::setClassUnion()` on an existing class changes the chain of
+#' objects of that class without an impl's declaration; a session that does
+#' so after a generic of an impl on the new superclass ran calls
+#' `r8_clear_dispatch()`.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @examples
+#' r8_clear_dispatch()
+#'
+#' @export
+r8_clear_dispatch <- function() {
+  clear_dispatch()
+} # /R8::r8_clear_dispatch
+
+
 # %% clear_ancestry ----
 #' Clear the memo of ancestors
 #'
@@ -643,9 +666,9 @@ is_compiled_impl <- function(fn) {
 # %% r8_find_impl ----
 #' The impl of a trait method for the values of its dispatched arguments
 #'
-#' One dispatched argument resolves through the chain of its type
-#' (`impl_in_chain()`); several resolve through the core's rule of multiple
-#' dispatch (`resolve_tuple()`).
+#' Resolves through the core's rule of dispatch (`resolve_tuple()`), over the
+#' chain of each argument: an R8 value's type and its ancestors, or another
+#' object's class vector as `.class2()` gives it.
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
@@ -657,39 +680,31 @@ is_compiled_impl <- function(fn) {
 #' @noRd
 r8_find_impl <- function(trait_name, method, args) {
   key <- paste(trait_name, method, sep = "|")
-  if (length(args) > 1L) {
-    impl <- resolve_tuple(trait_name, method, args)
-    if (!is.null(impl)) {
-      cache_impl(key, args, impl)
-      return(impl)
-    }
-    r8_abort(
-      "No impl of `",
-      trait_name,
-      "` (method `",
-      method,
-      "`) applies to (",
-      paste(vapply(args, value_type_text, character(1)), collapse = ", "),
-      "), and the trait has no default.",
-      class = "r8_dispatch_error"
-    )
-  }
-  x <- args[[1L]]
-  r8 <- inherits(x, "r8_value")
-  type <- if (r8) attr(x, "r8_type") else class(x)[1L]
-  impl <- impl_in_chain(trait_name, method, type, r8 = r8)
+  impl <- resolve_tuple(trait_name, method, args)
   if (!is.null(impl)) {
     cache_impl(key, args, impl)
     return(impl)
   }
+  if (length(args) == 1L) {
+    r8_abort(
+      "`",
+      value_type_text(args[[1L]]),
+      "` does not implement `",
+      trait_name,
+      "` (method `",
+      method,
+      "`).",
+      class = "r8_dispatch_error"
+    )
+  }
   r8_abort(
-    "`",
-    type,
-    "` does not implement `",
+    "No impl of `",
     trait_name,
     "` (method `",
     method,
-    "`).",
+    "`) applies to (",
+    paste(vapply(args, value_type_text, character(1)), collapse = ", "),
+    "), and the trait has no default.",
     class = "r8_dispatch_error"
   )
 } # /R8::r8_find_impl
@@ -1041,14 +1056,14 @@ impl_declare <- function(
     } else {
       dispatch_names(trait_ir(t)[["methods"]][[1L]][["params"]])
     }
-  types <- if (inherits(type, "r8_type")) {
+  types <- if (is_position(type)) {
     list(type)
   } else if (is.list(type) && !is.object(type)) {
     type
   } else {
     r8_abort(
-      "`type` is an R8 type object, or a list of them, one per dispatched ",
-      "argument of `",
+      "`type` is an R8 type object or a class, or a list of them, one per ",
+      "dispatched argument of `",
       t[["name"]],
       "` (",
       paste(dispatch, collapse = ", "),
@@ -1092,6 +1107,10 @@ impl_declare <- function(
       class = "r8_declaration_error"
     )
   }
+  adopted <- character()
+  if (length(positions) == 1L && is_host_key(positions[[1L]])) {
+    adopted <- host_methods(t, host_key_class(positions[[1L]]), fns)
+  }
   for (m in names(fns)) {
     params <- param_names(methods_ir[[match(m, declared)]][["params"]])
     label <- if (isTRUE(trait_ir(t)[["generic"]])) {
@@ -1106,7 +1125,7 @@ impl_declare <- function(
       function(x) x[["name"]] == m,
       methods_ir
     )[[1L]][["has_default"]])
-    if (is.null(fns[[m]]) && !has_default) {
+    if (is.null(fns[[m]]) && !has_default && !m %in% adopted) {
       r8_abort(
         "The impl of `",
         t[["name"]],
@@ -1122,7 +1141,7 @@ impl_declare <- function(
   ir <- c(
     list(`trait` = t[["name"]]),
     tuple_ir(positions),
-    list(methods = as.list(names(fns)))
+    list(methods = as.list(union(names(fns), adopted)))
   )
   if (length(ir[["type_args"]]) == 0L) {
     ir[["type_args"]] <- NULL
@@ -1171,6 +1190,16 @@ impl_declare <- function(
   if (inherits(trait, "r8_from_trait")) {
     entry[["source"]] <- t[["source"]]
   }
+  if (length(adopted) > 0L) {
+    entry[["adopted"]] <- adopted
+  }
+  s4 <- Filter(
+    function(p) identical(p[["system"]], "s4"),
+    attr(positions, "ir")
+  )
+  if (length(s4) > 0L) {
+    entry[["s4_classes"]] <- s4
+  }
   register_impl(entry)
   record_declaration(env, entry)
   invisible(NULL)
@@ -1187,6 +1216,9 @@ impl_declare <- function(
 #' @keywords internal
 #' @noRd
 register_impl <- function(entry) {
+  for (p in entry[["s4_classes"]]) {
+    check_s4_class(p[["class"]], p[["package"]])
+  }
   # The registry checks the impl first, so a refused impl leaves the R
   # functions of the impls as they were.
   register_records(list(entry[["record"]]))
@@ -1207,11 +1239,31 @@ register_impl <- function(entry) {
   # An impl that defines no method still takes precedence over the impls of
   # the type's ancestors.
   mark_impl(t[["name"]], entry[["type_name"]])
+  # A method of an existing generic that the host class already has.
+  for (m in entry[["adopted"]]) {
+    set_impl(
+      t[["name"]],
+      m,
+      entry[["type_name"]],
+      existing_method(
+        t[["generics"]][[m]],
+        m,
+        host_key_class(entry[["type_name"]])
+      )
+    )
+  }
   for (m in names(entry[["fns"]])) {
     generic <- t[["generics"]][[m]]
     fn <- entry[["fns"]][[m]]
     set_impl(t[["name"]], m, entry[["type_name"]], fn)
     if (!inherits(generic, "r8_generic")) {
+      # An S3 method is registered for the class itself; a host class's key
+      # holds the name in double quotes.
+      s3_class <- if (is_host_key(entry[["type_name"]])) {
+        host_key_class(entry[["type_name"]])
+      } else {
+        entry[["type_name"]]
+      }
       # The S3 method is the stamped impl, from which r8_next_impl() reads
       # its provider.
       fn <- .r8_impls[[paste(t[["name"]], m, entry[["type_name"]], sep = "|")]]
@@ -1222,11 +1274,141 @@ register_impl <- function(entry) {
       } else if (endsWith(m, "<-")) {
         fn <- replacement_method(fn, paste(t[["name"]], m, sep = "|"))
       }
-      registerS3method(m, entry[["type_name"]], fn, envir = s3_envir(generic))
+      registerS3method(m, s3_class, fn, envir = s3_envir(generic))
     }
   }
   invisible(NULL)
 } # /R8::register_impl
+
+
+# %% check_s4_class ----
+#' Check that a package defines an S4 class
+#'
+#' Checks `host_class(class, package, system = "s4")` when the package's
+#' namespace is loaded: at the impl's declaration, and in `r8_register()`
+#' at the declaring package's load.
+#'
+#' @param class Character: The class name.
+#' @param package Character: The package.
+#'
+#' @return `NULL`, invisibly; a package that defines no S4 class of the name,
+#'   or defines it as an S3 class registered with S4, raises
+#'   `r8_declaration_error`.
+#'
+#' @keywords internal
+#' @noRd
+check_s4_class <- function(class, package) {
+  if (!isNamespaceLoaded(package)) {
+    return(invisible(NULL))
+  }
+  def <- methods::getClassDef(class, package = package)
+  if (
+    is.null(def) ||
+      !identical(def@package, package) ||
+      methods::extends(def, "oldClass")
+  ) {
+    r8_abort(
+      "'",
+      package,
+      "' defines no S4 class `",
+      class,
+      "`; an S3 class is named as a string, \"",
+      class,
+      "\" [host_class_s4].",
+      class = "r8_declaration_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::check_s4_class
+
+
+# %% existing_method ----
+#' The method of an existing generic for exactly a class, outside R8
+#'
+#' @param generic Function: An S3 generic of another package.
+#' @param method Character: Its name.
+#' @param class Character: The class.
+#'
+#' @return Function, or `NULL` when the class has no such method or R8
+#'   registered it.
+#'
+#' @keywords internal
+#' @noRd
+existing_method <- function(generic, method, class) {
+  fn <- utils::getS3method(
+    method,
+    class,
+    optional = TRUE,
+    envir = s3_envir(generic)
+  )
+  if (is.null(fn) || !is.null(attr(fn, "r8_provider"))) NULL else fn
+} # /R8::existing_method
+
+
+# %% host_methods ----
+#' The methods of an impl on a host class that the class already has
+#'
+#' A trait method that maps an existing S3 generic, for a class that already
+#' has a method of that generic outside R8, takes that method: the impl
+#' omits it, and supplying one raises `r8_declaration_error`, since
+#' registering it would replace another package's method for every caller.
+#' A trait method that maps an S4 generic is not implemented for host
+#' classes.
+#'
+#' @param t List: The unclassed trait.
+#' @param class Character: The host class.
+#' @param fns Named list: The impl's functions.
+#'
+#' @return Character: The names of the methods the class already has.
+#'
+#' @keywords internal
+#' @noRd
+host_methods <- function(t, class, fns) {
+  adopted <- character()
+  for (m in names(t[["generics"]])) {
+    generic <- t[["generics"]][[m]]
+    if (inherits(generic, "r8_generic")) {
+      next
+    }
+    if (is_s4_generic(generic)) {
+      r8_abort(
+        "`",
+        m,
+        "` of `",
+        t[["name"]],
+        "` is an S4 generic; impls of S4 generics on host classes are not ",
+        "declared by R8.",
+        class = "r8_declaration_error"
+      )
+    }
+    existing <- existing_method(generic, m, class)
+    if (is.null(existing)) {
+      next
+    }
+    if (!is.null(fns[[m]])) {
+      env <- environment(existing)
+      r8_abort(
+        "`",
+        class,
+        "` has a method of `",
+        m,
+        "`",
+        if (!is.null(env)) paste0(" in '", environmentName(topenv(env)), "'"),
+        "; the impl of `",
+        t[["name"]],
+        "` for `",
+        class,
+        "` omits `",
+        m,
+        "` and takes that method, since registering another would replace ",
+        "it for every caller [host_method_exists].",
+        class = "r8_declaration_error"
+      )
+    }
+    adopted <- c(adopted, m)
+  }
+  adopted
+} # /R8::host_methods
 
 
 # %% set_impl ----

@@ -218,10 +218,15 @@ type_json <- function() {
 #'
 #' `dyn(Trait)` holds a value of any type that implements `Trait`, or that
 #' extends a type that does. Its JSON form names the type in the trait's tag
-#' member, or else in `"$type"`. `dyn(Struct)` holds a value of `Struct` or of
-#' any struct that extends it, named in `"$type"`.
+#' member, or else in `"$type"`. `dyn(generic)`, for a generic from
+#' [generic()] that dispatches on one argument, holds a value of any type
+#' with a method of the generic. `dyn(Struct)` holds a value of `Struct` or of
+#' any struct that extends it, named in `"$type"`. A value of a class of
+#' another class system is not held, even when the class has an impl of the
+#' trait; [r8_convert()] through a `From` impl turns it into an R8 value.
 #'
-#' @param x A trait object from [new_trait()], or an R8 struct type object.
+#' @param x A trait object from [new_trait()], a generic from [generic()], or
+#'   an R8 struct type object.
 #'
 #' @return An `r8_field_type`.
 #'
@@ -237,11 +242,20 @@ type_json <- function() {
 #' @export
 dyn <- function(x) {
   if (inherits(x, "r8_generic")) {
-    r8_abort(
-      "dyn() takes a trait object or a struct type object; a generic from ",
-      "generic() is reserved for impls on classes of other packages.",
-      class = "r8_declaration_error"
-    )
+    if (length(attr(x, "r8_dispatch")) > 1L) {
+      r8_abort(
+        "dyn() of a generic holds a value with a method of it; `",
+        attr(x, "r8_method"),
+        "` dispatches on ",
+        length(attr(x, "r8_dispatch")),
+        " arguments, so no single value has one.",
+        class = "r8_declaration_error"
+      )
+    }
+    return(structure(
+      list(kind = "dyn", `trait` = attr(x, "r8_trait")),
+      class = "r8_field_type"
+    ))
   }
   if (inherits(x, "r8_trait")) {
     return(structure(
@@ -485,7 +499,11 @@ type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
 #' @examples
 #' type_table(
 #'   list(start = type_integer(), width = type_integer(min = 0L)),
-#'   rules = list(rule(start + width - 1 <= 2147483647, message = "The end fits in an integer.", id = "END_FITS"))
+#'   rules = list(rule(
+#'     start + width - 1 <= 2147483647,
+#'     message = "The end fits in an integer.",
+#'     id = "END_FITS"
+#'   ))
 #' )
 #'
 #' @export
