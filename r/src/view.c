@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#define R8_INTERNAL_ABI
 #include <R8.h>
 #include <Rversion.h>
 #include <R_ext/Altrep.h>
@@ -332,6 +333,26 @@ R8Status r8_api_value_of_fields(const char *type_name, const char *variant,
                                 const char *declaration_hash, SEXP fields, SEXP *value,
                                 R8Error *err);
 R8Status r8_api_with_fields(SEXP value, SEXP fields, SEXP *new_value, R8Error *err);
+R8Status r8_api_pin(const void *module, const uint8_t *record, size_t len, R8Error *err);
+
+// The type of a value, and the variant of an enum's value, each one string, or
+// R_NilValue (value.c).
+SEXP r8_c_type(SEXP x);
+SEXP r8_c_variant(SEXP x);
+SEXP r8_c_is_value(SEXP x);
+SEXP r8_c_names(SEXP x);
+
+// The identity of a value, or R_NilValue (value.c), and whether an identity is
+// of the registered declaration (value.rs).
+SEXP r8_value_id(SEXP x);
+int r8_identity_current(SEXP id);
+
+static R8Status r8_api_value_type(SEXP value, const char **type_name, const char **variant) {
+  SEXP type = r8_c_type(value), v = r8_c_variant(value);
+  *type_name = type == R_NilValue ? NULL : CHAR(STRING_ELT(type, 0));
+  *variant = v == R_NilValue ? NULL : CHAR(STRING_ELT(v, 0));
+  return R8_OK;
+}
 
 static const R8Api api = {
     R8_ABI_VERSION,
@@ -346,6 +367,8 @@ static const R8Api api = {
     api_protect,
     r8_api_value_of_fields,
     r8_api_with_fields,
+    r8_api_pin,
+    r8_api_value_type,
 };
 
 static const R8Api *r8_api(uint32_t abi_version) {
@@ -378,15 +401,9 @@ SEXP r8_value_of_fields(const char *type_name, SEXP fields, R8Error *err);
 // its fields only.
 // spec: R8/class-system#inheritance
 static SEXP r8_upcast(SEXP x, SEXP type) {
-  static SEXP type_sym = NULL;
-  if (type_sym == NULL) {
-    type_sym = Rf_install("r8_type");
-  }
   const char *target = CHAR(STRING_ELT(type, 0));
-  SEXP own = Rf_getAttrib(x, type_sym);
-  int n = TYPEOF(own) == STRSXP && XLENGTH(own) == 1 && TYPEOF(x) == VECSXP
-              ? r8_inherited_fields(CHAR(STRING_ELT(own, 0)), target)
-              : -1;
+  SEXP own = r8_c_type(x);
+  int n = own == R_NilValue || !r8_identity_current(r8_value_id(x)) ? -1 : r8_inherited_fields(CHAR(STRING_ELT(own, 0)), target);
   if (n < 0 || XLENGTH(x) < n) {
     Rf_error("`x` is not a value of a subtype of `%s`", target);
   }
@@ -479,7 +496,7 @@ static SEXP native_symbol(DL_FUNC f) {
 // adds R_getVarEx() to the API, and on earlier R evaluating the symbol in
 // `env` forces the promise the same way. `absent` is returned for a symbol
 // the frame does not bind (R 4.5.0 and later; earlier R raises R's error).
-static SEXP r8_get_var(SEXP sym, SEXP env, SEXP absent) {
+SEXP r8_get_var(SEXP sym, SEXP env, SEXP absent) {
 #if R_VERSION >= R_Version(4, 5, 0)
   return R_getVarEx(sym, env, FALSE, absent);
 #else
@@ -489,6 +506,24 @@ static SEXP r8_get_var(SEXP sym, SEXP env, SEXP absent) {
 
 // The Rust routine behind `.Call(wrap__r8_new_value, ...)`.
 SEXP wrap__r8_new_value(SEXP fields, SEXP type_name, SEXP variant);
+
+// Whether `x` is a value of another declaration than the registered one, or a
+// list without a class that holds one.
+static int holds_other(SEXP x) {
+  SEXP id = r8_value_id(x);
+  if (id != R_NilValue) {
+    return !r8_identity_current(id);
+  }
+  if (TYPEOF(x) == VECSXP && !ALTREP(x) && !Rf_isObject(x)) {
+    R_xlen_t n = XLENGTH(x);
+    for (R_xlen_t i = 0; i < n; i++) {
+      if (holds_other(VECTOR_ELT(x, i))) {
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
 
 // Constructs a value from a constructor's frame. Each field, named in
 // `names` in declaration order, is its value in `env`, its promise forced
@@ -517,7 +552,16 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
       absent = Rf_asLogical(Rf_eval(test, env)) == 1;
     }
     if (!absent) {
-      SET_VECTOR_ELT(fields, i, r8_get_var(sym, env, R_NilValue));
+      SEXP v = r8_get_var(sym, env, R_NilValue);
+      SET_VECTOR_ELT(fields, i, v);
+      // A default that is a value, made when the package of the constructor was
+      // installed, is built from the registered declarations.
+      if (LOGICAL(required)[i] != 1 && holds_other(v)) {
+        SETCADR(test, sym);
+        if (Rf_asLogical(Rf_eval(test, env)) == 1) {
+          SET_VECTOR_ELT(fields, i, R_NilValue);
+        }
+      }
     }
   }
   Rf_setAttrib(fields, R_NamesSymbol, names);
@@ -527,19 +571,20 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
 }
 
 // The key of a value in a dispatch index, which determines the value's chain
-// in a position: its `r8_type` attribute; for an object with a class
+// in a position: the type of a value of R8, of the registered declaration; for
+// another object with a class
 // attribute, `class:` and the whole class vector joined by the byte 0x1F,
 // followed for an S4 object by 0x1F, `@`, and the class's package; for an
 // object without one, `type:`, `matrix:`, or `array:` by its `dim` attribute,
 // and its `typeof()`, from a table of installed symbols. R8's
 // `dispatch_key()` computes the same keys. Returns R_NilValue for a language
-// object, whose class depends on its head, and for a key longer than 255
-// bytes: such values are not cached.
+// object, whose class depends on its head, for a key longer than 255 bytes, and
+// for a value of another declaration than the registered one: such values are
+// not cached.
 static SEXP dispatch_key(SEXP x) {
-  static SEXP type_sym = NULL, package_sym = NULL;
+  static SEXP package_sym = NULL;
   static SEXP implicit[3][32];
-  if (type_sym == NULL) {
-    type_sym = Rf_install("r8_type");
+  if (package_sym == NULL) {
     package_sym = Rf_install("package");
     const char *prefix[3] = {"type:", "matrix:", "array:"};
     // The types of objects that reach a generic without a class attribute.
@@ -559,9 +604,10 @@ static SEXP dispatch_key(SEXP x) {
       }
     }
   }
-  SEXP type = Rf_getAttrib(x, type_sym);
-  if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
-    return Rf_installTrChar(STRING_ELT(type, 0));
+  SEXP type = r8_c_type(x);
+  if (type != R_NilValue) {
+    return r8_identity_current(r8_value_id(x)) ? Rf_installTrChar(STRING_ELT(type, 0))
+                                               : R_NilValue;
   }
   SEXP cls = Rf_getAttrib(x, R_ClassSymbol);
   if (TYPEOF(cls) == STRSXP && XLENGTH(cls) >= 1) {
@@ -808,25 +854,18 @@ static SEXP r8_call(SEXP env, SEXP key, SEXP dispatch) {
   }
 }
 
-// Whether `out` is a value of the type of `x`: the same `r8_type` for an R8
-// value and an identical class vector for any other object, implicit class
+// Whether `out` is a value of the type of `x`: the same type for a value of
+// R8, and an identical class vector for any other object, implicit class
 // included.
 static int same_type(SEXP x, SEXP out) {
-  static SEXP type_sym = NULL, class_sym = NULL;
-  if (type_sym == NULL) {
-    type_sym = Rf_install("r8_type");
+  static SEXP class_sym = NULL;
+  if (class_sym == NULL) {
     class_sym = Rf_install("class");
   }
-  SEXP type = Rf_getAttrib(x, type_sym);
-  if (TYPEOF(type) == STRSXP && XLENGTH(type) == 1) {
-    SEXP got = Rf_getAttrib(out, type_sym);
-    return TYPEOF(got) == STRSXP && XLENGTH(got) == 1 &&
-           (STRING_ELT(got, 0) == STRING_ELT(type, 0) ||
-            strcmp(Rf_translateCharUTF8(STRING_ELT(got, 0)),
-                   Rf_translateCharUTF8(STRING_ELT(type, 0))) == 0);
-  }
-  if (Rf_getAttrib(out, type_sym) != R_NilValue) {
-    return 0;
+  SEXP type = r8_c_type(x), got = r8_c_type(out);
+  if (type != R_NilValue || got != R_NilValue) {
+    return type != R_NilValue && got != R_NilValue &&
+           STRING_ELT(type, 0) == STRING_ELT(got, 0);
   }
   SEXP cx = Rf_getAttrib(x, R_ClassSymbol);
   SEXP co = Rf_getAttrib(out, R_ClassSymbol);
@@ -906,24 +945,12 @@ static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
   return out;
 }
 
-// The name of the variant of the enum value `x`, the string of its attribute
-// `r8_variant`, or NULL for another object, one that keeps the attribute
-// without the class of R8's values included.
-static SEXP enum_variant(SEXP x) {
-  static SEXP variant_sym = NULL;
-  if (variant_sym == NULL) {
-    variant_sym = Rf_install("r8_variant");
-  }
-  SEXP v = Rf_getAttrib(x, variant_sym);
-  return TYPEOF(v) == STRSXP && XLENGTH(v) == 1 && Rf_inherits(x, "r8_value") ? v : NULL;
-}
-
 // The name of the variant of the enum value `x`; R8's `variant_abort()`
 // raises the error for another object.
 // spec: R8/class-system#values-in-r
 static SEXP r8_variant(SEXP x) {
-  SEXP v = enum_variant(x);
-  if (v == NULL) {
+  SEXP v = r8_c_variant(x);
+  if (v == R_NilValue) {
     SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
     r8_abort3("variant_abort", x, R_NilValue, R_NilValue, ns);
     UNPROTECT(2);
@@ -935,12 +962,8 @@ static SEXP r8_variant(SEXP x) {
 // Whether the variants `variants`, R8's `.r8_variants`, hold the enum of the
 // value `x` with a variant `name`, a string that is neither NA nor empty.
 static int declares_variant(SEXP x, SEXP name, SEXP variants) {
-  static SEXP type_sym = NULL;
-  if (type_sym == NULL) {
-    type_sym = Rf_install("r8_type");
-  }
-  SEXP type = Rf_getAttrib(x, type_sym);
-  if (TYPEOF(type) != STRSXP || XLENGTH(type) != 1 || TYPEOF(variants) != ENVSXP) {
+  SEXP type = r8_c_type(x);
+  if (type == R_NilValue || TYPEOF(variants) != ENVSXP) {
     return 0;
   }
   SEXP declared = r8_get_var(Rf_installTrChar(STRING_ELT(type, 0)), variants, R_NilValue);
@@ -954,8 +977,8 @@ static int declares_variant(SEXP x, SEXP name, SEXP variants) {
 // `variant`.
 // spec: R8/class-system#values-in-r
 static SEXP r8_is_variant(SEXP x, SEXP variant, SEXP variants) {
-  SEXP v = enum_variant(x);
-  if (v != NULL && TYPEOF(variant) == STRSXP && XLENGTH(variant) == 1) {
+  SEXP v = r8_c_variant(x);
+  if (v != R_NilValue && TYPEOF(variant) == STRSXP && XLENGTH(variant) == 1) {
     SEXP name = STRING_ELT(variant, 0);
     if (name != NA_STRING && LENGTH(name) > 0) {
       if (name == STRING_ELT(v, 0) ||
@@ -975,13 +998,27 @@ static SEXP r8_is_variant(SEXP x, SEXP variant, SEXP variants) {
   return out;
 }
 
+// NULL for a value of the registered declaration of its type and for any other
+// object; R8's `other_abort()` raises the error for a value of another
+// declaration.
+static SEXP r8_require(SEXP x) {
+  SEXP id = r8_value_id(x);
+  if (id != R_NilValue && !r8_identity_current(id)) {
+    SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
+    r8_abort3("other_abort", x, R_NilValue, R_NilValue, ns);
+    UNPROTECT(2);
+  }
+  return R_NilValue;
+}
+
 // The C routines that R calls through `.Call()` on a native symbol:
 // list(invoke, exports, construct, find, replaced, find2, find3, call,
-// result, upcast, variant, is_variant). R8's `.Call` routines are the Rust code's, registered by
-// extendr; these continue a jump, call R_GetCCallable(), evaluate R code, or
+// result, upcast, variant, is_variant, type, variant_of, is_value, names,
+// require). R8's `.Call` routines
+// are the Rust code's, registered by extendr; these continue a jump, call R_GetCCallable(), evaluate R code, or
 // read the fields of Rust-stored values from C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 12));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 17));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
@@ -994,7 +1031,12 @@ SEXP r8_native_symbols(void) {
   SET_VECTOR_ELT(out, 9, native_symbol((DL_FUNC) r8_upcast));
   SET_VECTOR_ELT(out, 10, native_symbol((DL_FUNC) r8_variant));
   SET_VECTOR_ELT(out, 11, native_symbol((DL_FUNC) r8_is_variant));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 12));
+  SET_VECTOR_ELT(out, 12, native_symbol((DL_FUNC) r8_c_type));
+  SET_VECTOR_ELT(out, 13, native_symbol((DL_FUNC) r8_c_variant));
+  SET_VECTOR_ELT(out, 14, native_symbol((DL_FUNC) r8_c_is_value));
+  SET_VECTOR_ELT(out, 15, native_symbol((DL_FUNC) r8_c_names));
+  SET_VECTOR_ELT(out, 16, native_symbol((DL_FUNC) r8_require));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 17));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
@@ -1007,6 +1049,11 @@ SEXP r8_native_symbols(void) {
   SET_STRING_ELT(names, 9, Rf_mkChar("upcast"));
   SET_STRING_ELT(names, 10, Rf_mkChar("variant"));
   SET_STRING_ELT(names, 11, Rf_mkChar("is_variant"));
+  SET_STRING_ELT(names, 12, Rf_mkChar("type"));
+  SET_STRING_ELT(names, 13, Rf_mkChar("variant_of"));
+  SET_STRING_ELT(names, 14, Rf_mkChar("is_value"));
+  SET_STRING_ELT(names, 15, Rf_mkChar("names"));
+  SET_STRING_ELT(names, 16, Rf_mkChar("require"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

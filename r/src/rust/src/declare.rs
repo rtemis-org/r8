@@ -651,8 +651,7 @@ fn r8_type_ir(name: &str) -> Result<Robj> {
 fn r8_pending_fields(x: Robj) -> Result<Robj> {
     use rtemis_r8::ir::Resolve;
     let xs = unsafe { x.get() };
-    let type_name = crate::rview::attr_string(xs, crate::rview::sym_r8_type())
-        .ok_or_else(|| fail("not an R8 value"))?;
+    let type_name = crate::value::type_name(xs).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
     let reg = registry().snapshot();
     let (mut names, mut policies) = (Vec::new(), Vec::new());

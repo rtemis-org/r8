@@ -108,7 +108,7 @@ conform_value <- function(x, type, path, changes) {
       )
     }))
   }
-  if (kind == "named" && is.list(x) && !inherits(x, "r8_value")) {
+  if (kind == "named" && is.list(x) && !is_value(x)) {
     ir <- tryCatch(r8_type_ir(type[["name"]]), error = function(e) NULL)
     if (identical(ir[["kind"]], "struct")) {
       note(paste0("constructed a `", type[["name"]], "` from a list"))

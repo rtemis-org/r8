@@ -17,12 +17,14 @@
 //!   values;
 //! - [`canonical`]: the canonical form (RFC 8785), documents, and content hashes,
 //!   with the canonical binary forms of matrices, tables, and vectors;
+//! - [`refine`]: whether a registered declaration refines the one that code
+//!   was compiled against;
 //! - [`equal`]: equality of two values by their normalized forms;
 //! - [`value_schema`]: the JSON Schema of a type's values;
 //! - [`derive`](mod@derive): the traits behind `#[derive(R8)]`, which the
 //!   `macros` feature re-exports;
-//! - [`abi`]: the Rust mirror of `R8.h`, the C interface between R packages
-//!   and the R8 registry.
+//! - [`abi`]: the types of the interface between R8 and the compiled code of R
+//!   packages, which the crate `rtemis-r8-api` implements.
 //!
 //! The R package `R8` binds the crate through extendr. The [`access`]
 //! module's trait is unstable until the release that adds Rust-stored values.
@@ -48,10 +50,12 @@ mod open;
 pub mod problem;
 pub mod reader;
 pub mod record;
+pub mod refine;
 pub mod registry;
 pub mod rules;
 pub mod text;
 pub mod tree;
+pub mod update;
 pub mod validate;
 pub mod value_schema;
 

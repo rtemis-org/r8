@@ -19,11 +19,13 @@ mod irde;
 mod irser;
 #[cfg(feature = "oracle")]
 mod oracle;
+mod pins;
 mod reader;
 mod rust_stored;
 mod rview;
 mod signature;
 mod text;
+mod value;
 mod values;
 mod version;
 
@@ -40,6 +42,7 @@ extendr_module! {
     use reader;
     use signature;
     use text;
+    use value;
     use values;
     use version;
 }
@@ -57,6 +60,7 @@ extendr_module! {
     use oracle;
     use signature;
     use text;
+    use value;
     use values;
     use version;
 }

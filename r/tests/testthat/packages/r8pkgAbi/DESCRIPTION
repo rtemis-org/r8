@@ -1,0 +1,12 @@
+Package: r8pkgAbi
+Title: Test Package of R8's Binary Interface
+Version: 0.0.1
+Authors@R: person("E.D.", "Gennatas", role = c("aut", "cre"), email = "gennatas@gmail.com")
+Description: Calls the functions of R8's binary interface, and gives R8
+    exports tables that it refuses, for the tests of R8.
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Imports:
+    R8
+LinkingTo:
+    R8

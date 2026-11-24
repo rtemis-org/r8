@@ -26,17 +26,29 @@
 #' again and makes its types, traits, and impls available. Registering a
 #' package again replaces its declarations.
 #'
-#' A package with compiled exports (`R8.h`) registers them after its R
-#' declarations. Every type of the exports has an R declaration with the same
+#' A package with compiled exports, the types and the methods of its Rust code,
+#' registers them after its R declarations. Every type of the exports has an R declaration with the same
 #' declaration hash, the type of every codec is declared with
 #' `storage = "rust"`, and every type declared with `storage = "rust"` has a codec;
 #' otherwise registration signals `r8_declaration_error` and lists each
 #' difference. `r8_document_rust()` generates the R declarations of types
-#' declared in Rust. A codec written in C, whose type the exports declare
-#' only in R, sets the declaration hash of its type (`declaration_hash`),
-#' which registration compares with the hash of the R declaration, since the
-#' codec reads fields by position. Each impl declaration of the exports is
-#' built from its impl entries, grouped by trait and positions.
+#' declared in Rust. Each impl declaration of the exports is built from its
+#' impl entries, grouped by trait and positions.
+#'
+#' @section Types that other packages use:
+#' The compiled code of a package holds the declarations of the types of other
+#' packages that it was compiled against. It reads the fields of a value of such
+#' a type, by name, when every value that the registered declaration admits is
+#' one that the compiled declaration admits: fields may be added or reordered,
+#' bounds tightened, and rules added. A field removed or renamed, another type
+#' or unit, a bound loosened, a rule removed, and another `version` are a
+#' warning of class `r8_declaration_warning` when the package loads, and an error
+#' when its code reads a value. A struct that extends a struct of another
+#' package is refused at load when the parent's fields or rules differ.
+#'
+#' A package does not change a type that other packages use without
+#' coordinating the change with them: see the section "Changing a type that
+#' other packages use" of [new_struct()].
 #'
 #' @param pkgname Optional Character: The package; by default, the package
 #'   whose code calls `r8_register()`.
@@ -103,12 +115,13 @@ r8_register <- function(pkgname = NULL) {
     )
   }
   register_records(pending, pkg, check = FALSE)
-  n_compiled <- register_exports(pkg, entries)
+  exports <- register_exports(pkg, entries)
   clear_variants()
   check_namespaces(pkg)
   done <- TRUE
   stale_elsewhere(pkg)
-  invisible(length(entries) + n_compiled)
+  warn_changed(exports[["changed"]], pkg)
+  invisible(length(entries) + exports[["n"]])
 } # /R8::r8_register
 
 
@@ -237,7 +250,7 @@ register_exports <- function(pkg, entries = list()) {
   )
   if (is.null(ptr)) {
     check_exports(pkg, NULL, rust_stored)
-    return(0L)
+    return(list(n = 0L))
   }
   namespace <- declaring_namespace(asNamespace(pkg))
   claim_namespace(namespace, pkg)
@@ -248,9 +261,6 @@ register_exports <- function(pkg, entries = list()) {
   }
   check_signatures(r8_exports_signatures(ptr, pkg), pkg)
   fns <- r8_register_exports(ptr, pkg, namespace)
-  for (class in unlist(fns[["s4"]], recursive = FALSE)) {
-    check_s4_class(class[["class"]], class[["package"]])
-  }
   assign(
     pkg,
     data.frame(
@@ -284,8 +294,64 @@ register_exports <- function(pkg, entries = list()) {
       pkg
     )
   }
-  length(fns[["method"]])
+  list(n = length(fns[["method"]]), changed = fns[["changed"]])
 } # /R8::register_exports
+
+
+# %% warn_changed ----
+#' Warn of types that a package's compiled code may not read
+#'
+#' The compiled code of a package reads the fields of a value of another
+#' package's type when the registered declaration of the type refines the one
+#' that the code was compiled against. A read that R8 refuses is an error; the
+#' warning names what differs when the package loads.
+#'
+#' @param changed List: `type_name` and `message` of each difference.
+#' @param pkg Character: The package.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+warn_changed <- function(changed, pkg) {
+  types <- unique(changed[["type_name"]])
+  if (length(types) == 0L) {
+    return(invisible(NULL))
+  }
+  owners <- vapply(sub("::.*$", "", types), r8_namespace_owner, character(1L))
+  versioned <- function(p) {
+    paste0("'", p, "' ", as.character(getNamespaceVersion(p)))
+  }
+  lines <- vapply(
+    seq_along(types),
+    function(i) {
+      of <- changed[["message"]][changed[["type_name"]] == types[[i]]]
+      paste0(
+        "`",
+        types[[i]],
+        "` of ",
+        if (nzchar(owners[[i]])) versioned(owners[[i]]) else "another package",
+        "\n",
+        paste0("- ", of, collapse = "\n")
+      )
+    },
+    character(1L)
+  )
+  r8_warn(
+    "Package ",
+    versioned(pkg),
+    " was compiled against another declaration of ",
+    paste(lines, collapse = "\n"),
+    "\nIts compiled methods that read ",
+    if (length(types) == 1L) "a value of it" else "a value of these types",
+    " raise an error. Install versions of '",
+    pkg,
+    "' and of ",
+    paste0("'", unique(owners[nzchar(owners)]), "'", collapse = " and "),
+    " that were built for each other.",
+    class = "r8_declaration_warning"
+  )
+} # /R8::warn_changed
 
 
 # %% check_signatures ----
@@ -463,8 +529,7 @@ check_exports <- function(pkg, compared, rust_stored) {
   names <- compared[["type_name"]]
   status <- compared[["status"]]
   codec <- compared[["codec"]]
-  hash <- compared[["hash"]]
-  declared <- !status %in% c("missing", "undeclared")
+  declared <- status != "missing"
   problems <- c(
     sprintf(
       "`%s` is declared in the compiled exports and has no R declaration.",
@@ -473,25 +538,6 @@ check_exports <- function(pkg, compared, rust_stored) {
     sprintf(
       "The R declaration of `%s` differs from its declaration in the compiled exports.",
       names[status == "differs"]
-    ),
-    sprintf(
-      "`%s` has a codec in the compiled exports and no R declaration.",
-      names[status == "undeclared"]
-    ),
-    sprintf(
-      "The codec of `%s` sets no `declaration_hash`; the hash of its R declaration is \"%s\".",
-      names[status == "unpinned"],
-      hash[status == "unpinned"]
-    ),
-    sprintf(
-      paste0(
-        "The `declaration_hash` of the codec of `%s` differs from the hash of ",
-        "its R declaration, \"%s\". The codec reads fields by position: ",
-        "check it against the declaration, then set its `declaration_hash` to ",
-        "that hash."
-      ),
-      names[status == "stale"],
-      hash[status == "stale"]
     ),
     sprintf(
       "`%s` has a codec in the compiled exports; its R declaration takes storage = \"rust\".",
@@ -579,16 +625,8 @@ compiled_method <- function(trait_name, tuple, method, pkg) {
   )
   if (identical(trait_name, "R8::From")) {
     # The type, then the source.
-    source <- sub("^[^,]*,", "", tuple)
-    if (is_host_key(source)) {
-      source <- host_key_class(source)
-    }
-    put_impl("R8::From", source, sub(",.*$", "", tuple), fn)
+    put_impl("R8::From", sub("^[^,]*,", "", tuple), sub(",.*$", "", tuple), fn)
     return(invisible(NULL))
-  }
-  if (is_host_key(tuple) && !grepl(",", tuple, fixed = TRUE)) {
-    # A class that has a method of an S3 generic keeps it.
-    host_methods(t, host_key_class(tuple), stats::setNames(list(fn), method))
   }
   register_method(t, method, tuple, fn)
 } # /R8::compiled_method

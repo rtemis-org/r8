@@ -21,7 +21,7 @@ The path of \code{R/r8-types.R}, invisibly.
 }
 \description{
 Writes \code{R/r8-types.R}, the R declaration of each type and trait that a
-package declares in Rust and lists in its compiled exports (\code{R8.h}): one
+package declares in Rust and lists in its compiled exports: one
 \code{new_struct()} or \code{new_enum()} call per type, Rust-stored types with
 \code{storage = "rust"}, and one \code{generic()} or \code{new_trait()} call per trait, with
 a binding for each of a trait's generics, with roxygen comments from the

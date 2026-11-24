@@ -19,8 +19,8 @@
 #' [generic()], [params()], [arg()], and the standard traits. A function that operates on values,
 #' types, or packages takes the prefix `r8_`: [r8_to_json()], [r8_hash()],
 #' [r8_validate()], [r8_register()]. S3 classes, condition classes, and value
-#' attributes take the prefix `r8_`; `R8_` prefixes the constants of the C
-#' header `R8.h` and the environment variable `R8_OUTPUT_TYPE`.
+#' attributes take the prefix `r8_`; `R8_` prefixes the environment
+#' variable `R8_OUTPUT_TYPE`.
 #'
 #' @section Conditions:
 #' Every error R8 signals has the class `r8_error`, after one of:
@@ -39,11 +39,24 @@
 #' - `r8_dispatch_error`: a generic or trait method with no impl for the
 #'   value's type, a conversion without a `From` impl, or `r8_next_impl()`
 #'   without a next impl.
+#' - `r8_other_declaration_error`, beside `r8_value_error` or
+#'   `r8_dispatch_error`: a value made under another declaration of its type
+#'   than the registered one, which [r8_update()] converts or refuses.
 #' - `r8_text_error`: text output given invalid arguments.
 #'
-#' Every warning R8 signals has the class `r8_warning`; `r8_stale_warning` is
-#' a declaration that leaves structs stale, which extend an earlier
-#' declaration of their parent.
+#' Every warning R8 signals has the class `r8_warning`:
+#'
+#' - `r8_stale_warning`: a declaration that leaves structs stale, which extend an
+#'   earlier declaration of their parent.
+#' - `r8_declaration_warning`: a package whose compiled code was compiled against
+#'   another declaration of a type of another package, and may not read it
+#'   ([r8_register()]).
+#'
+#' @section Types that other packages use:
+#' A package does not change a type that other packages use without coordinating
+#' the change with them, with a minimum version of the declaring package in their
+#' `DESCRIPTION`: see the section "Changing a type that other packages use" of
+#' [new_struct()].
 #'
 #' @keywords internal
 "_PACKAGE"

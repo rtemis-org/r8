@@ -8,17 +8,13 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use extendr_api::SEXP;
 use extendr_api::prelude::*;
-use extendr_ffi::{
-    R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_STRING_ELT, SEXPTYPE, VECTOR_ELT,
-};
+use extendr_ffi::{R_xlen_t, SEXPTYPE, VECTOR_ELT};
 use rtemis_r8::abi::{Codec, ERROR, Error, OK, Sexp, Status};
-use rtemis_r8::ir::{TypeDef, VariantKind};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 
-use crate::construct::mkchar;
 use crate::declare::registry;
-use crate::rview::{attr_string, sym_r8_type, xlen};
+use crate::rview::xlen;
 
 static WRAP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static BUILD: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -119,10 +115,9 @@ fn r8_format_size(bytes: f64) -> String {
     rtemis_r8::text::format_size(bytes.max(0.0) as u64)
 }
 
-/// The value over `state` with the attributes of `like`, the assembled
-/// list of the value's fields; the value owns the state.
-pub(crate) fn wrap(vt: *const Codec, state: *mut c_void, like: SEXP) -> SEXP {
-    wrap_from(vt, state, like, unsafe { extendr_ffi::R_NilValue }, -1)
+/// The value of the identity `id` over `state`; the value owns the state.
+pub(crate) fn wrap(vt: *const Codec, state: *mut c_void, id: SEXP) -> SEXP {
+    wrap_from(vt, state, id, unsafe { extendr_ffi::R_NilValue }, -1)
 }
 
 /// `wrap()` for a value derived from the Rust-stored value `from`, whose
@@ -130,7 +125,7 @@ pub(crate) fn wrap(vt: *const Codec, state: *mut c_void, like: SEXP) -> SEXP {
 pub(crate) fn wrap_from(
     vt: *const Codec,
     state: *mut c_void,
-    like: SEXP,
+    id: SEXP,
     from: SEXP,
     skip: R_xlen_t,
 ) -> SEXP {
@@ -138,7 +133,7 @@ pub(crate) fn wrap_from(
     assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
     let f: unsafe extern "C" fn(*const Codec, *mut c_void, SEXP, SEXP, R_xlen_t) -> SEXP =
         unsafe { std::mem::transmute(f) };
-    unsafe { f(vt, state, like, from, skip) }
+    unsafe { f(vt, state, id, from, skip) }
 }
 
 /// A state built by the codec from `state` with the field `name` replaced
@@ -271,11 +266,6 @@ pub(crate) fn is_enum_codec(vt: *const Codec) -> bool {
     codec.variant.is_some() && codec.from_variant.is_some()
 }
 
-/// Whether a codec table sets `from_reader`.
-pub(crate) fn has_from_reader(vt: *const Codec) -> bool {
-    unsafe { &*vt }.from_reader.is_some()
-}
-
 /// A state built by the codec's `from_reader` from the value at `root`,
 /// which `reader` lends.
 pub(crate) fn from_reader(
@@ -360,55 +350,6 @@ pub(crate) fn check_variant(
     ))
 }
 
-/// The field names and version of a value of the type `def`, of the
-/// variant `variant` for an enum; `None` when the enum declares no such
-/// variant.
-pub(crate) fn value_fields(
-    def: &TypeDef,
-    variant: Option<&str>,
-    lookup: &dyn TypeLookup,
-) -> Option<(Vec<String>, u32)> {
-    let (names, version) = value_names(def, variant, lookup)?;
-    Some((names.into_iter().map(str::to_string).collect(), version))
-}
-
-/// [`value_fields`], its names borrowed from the declarations.
-fn value_names<'a>(
-    def: &'a TypeDef,
-    variant: Option<&str>,
-    lookup: &'a dyn TypeLookup,
-) -> Option<(Vec<&'a str>, u32)> {
-    fn names(fs: &[rtemis_r8::ir::FieldDef]) -> Vec<&str> {
-        fs.iter().map(|f| f.name.as_str()).collect()
-    }
-    match def {
-        TypeDef::Struct(s) => Some((names(&s.fields), s.version)),
-        TypeDef::Enum(e) => {
-            let v = e
-                .variants
-                .iter()
-                .find(|v| Some(v.name.as_str()) == variant)?;
-            let fields = match &v.kind {
-                VariantKind::Unit => Vec::new(),
-                VariantKind::Struct { fields, .. } => names(fields),
-                VariantKind::Newtype { of } => match lookup.find(of) {
-                    Some(TypeDef::Struct(s)) => names(&s.fields),
-                    _ => return None,
-                },
-            };
-            Some((fields, e.version))
-        }
-    }
-}
-
-/// The version of a struct or enum declaration.
-fn def_version(def: &TypeDef) -> u32 {
-    match def {
-        TypeDef::Struct(s) => s.version,
-        TypeDef::Enum(e) => e.version,
-    }
-}
-
 /// `R8Api.new_value`: wraps a state of a registered Rust-stored struct or
 /// enum, which the caller's module built, as an R8 value. R8 owns the state
 /// once it returns `OK`; an enum value takes the variant that the codec's
@@ -463,7 +404,7 @@ fn new_value(
         return Err(("invalid_argument", "`state` or `value` is NULL".to_string()));
     }
     let name = c_text(type_name).unwrap_or_default();
-    let Some(vt) = crate::exports::codec(&name) else {
+    let Some(vt) = crate::exports::codec(&name).map_err(|m| ("declaration_changed", m))? else {
         return Err((
             "unknown_type",
             format!("`{name}` is not a registered Rust-stored type"),
@@ -480,67 +421,26 @@ fn new_value(
     let q = QualifiedName::parse(&name).map_err(|e| ("unknown_type", e.to_string()))?;
     let docs = registry().snapshot();
     let lookup: &dyn TypeLookup = &*docs;
-    let Some(def) = lookup.find(&q) else {
+    if lookup.find(&q).is_none() {
         return Err(("unknown_type", format!("`{q}` is not a registered type")));
-    };
-    let variant = state_variant(vt, state);
-    let Some((names, version)) = value_fields(def, variant.as_deref(), lookup) else {
-        return Err((
-            "codec_variant",
-            format!(
-                "the state's variant `{}` is not a variant of `{q}`",
-                variant.unwrap_or_default()
-            ),
-        ));
-    };
-    // The registry is released before R allocates: a jump out of an
-    // allocation skips no Rust frame that holds the lock.
-    drop(docs);
-    let qname = q.to_string();
-    let args = BuildArgs {
-        vt,
-        state,
-        qname: &qname,
-        names: &names,
-        version,
-        variant: variant.as_deref(),
-    };
-    let mut out: SEXP = unsafe { extendr_ffi::R_NilValue };
-    let mut err = blank();
-    let status = protect(
-        build_value,
-        std::ptr::from_ref(&args).cast_mut().cast(),
-        &mut out,
-        &mut err,
-    );
-    // The value takes the state only when the build returns.
-    if status != OK {
-        return Err(("r_error", "R could not allocate the value".to_string()));
     }
+    let variant = state_variant(vt, state);
+    let jumped = || ("r_error", "R could not allocate the value".to_string());
+    let id = guarded(|| crate::value::identity(&q, variant.as_deref(), lookup))
+        .ok_or_else(jumped)?
+        .map_err(|_| {
+            (
+                "codec_variant",
+                format!(
+                    "the state's variant `{}` is not a variant of `{q}`",
+                    variant.as_deref().unwrap_or_default()
+                ),
+            )
+        })?;
+    // The value takes the state only when the wrapper returns.
+    let out = guarded(|| wrap(vt, state, id)).ok_or_else(jumped)?;
     unsafe { *value = out.cast() };
     Ok(())
-}
-
-/// The arguments of `build_value()`, borrowed from `new_value()`.
-struct BuildArgs<'a> {
-    vt: *const Codec,
-    state: *mut c_void,
-    qname: &'a str,
-    names: &'a [String],
-    version: u32,
-    variant: Option<&'a str>,
-}
-
-/// Builds a Rust-stored value under `r8_protect()`; it holds only borrows,
-/// so a jump out of it skips no destructor.
-extern "C" fn build_value(p: *mut c_void) -> SEXP {
-    let a = unsafe { &*p.cast::<BuildArgs>() };
-    unsafe {
-        let like = template(a.qname, a.names, a.version, a.variant);
-        let v = wrap(a.vt, a.state, like);
-        Rf_unprotect(1);
-        v
-    }
 }
 
 /// `R8Api.protect` (`r8_protect()` in `view.c`).
@@ -559,6 +459,35 @@ fn protect(
         *mut Error,
     ) -> Status = unsafe { std::mem::transmute(p) };
     unsafe { p(f, data, value, err) }
+}
+
+/// `R8Api.pin`: gives R8 the declarations, a record of `len` bytes at `record`,
+/// that `module` was compiled against.
+///
+/// # Safety
+///
+/// `record` points to `len` readable bytes; `err` is writable or NULL; called
+/// on R's main thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_api_pin(
+    module: *const c_void,
+    record: *const u8,
+    len: usize,
+    err: *mut Error,
+) -> Status {
+    report(
+        err,
+        "R8 panicked while reading the declarations",
+        AssertUnwindSafe(|| {
+            if module.is_null() || record.is_null() {
+                return Err((
+                    "invalid_argument",
+                    "`module` or `record` is NULL".to_string(),
+                ));
+            }
+            crate::pins::add(module, unsafe { std::slice::from_raw_parts(record, len) })
+        }),
+    )
 }
 
 /// The outcome of `f`, which may call R functions that jump, run by
@@ -644,11 +573,10 @@ pub unsafe extern "C" fn r8_api_value_of_fields(
 
 /// The value of the type `q`, of the variant `variant` for an enum, over
 /// `fields`, the list of its fields in declaration order and in their stored
-/// forms, which are not validated: the list itself with the type's shared
-/// attributes, or, for a type whose codec is registered, a Rust-stored value
-/// of the state that the codec builds from them. R allocates under
-/// `guarded()` with `guard`, for a caller that R must not jump out of, and
-/// otherwise in the caller's frame.
+/// forms, which are not validated: a value over the list itself, or, for a
+/// type whose codec is registered, a Rust-stored value of the state that the
+/// codec builds from them. R allocates under `guarded()` with `guard`, for a
+/// caller that R must not jump out of, and otherwise in the caller's frame.
 pub(crate) fn value_of_fields(
     q: &QualifiedName,
     variant: Option<&str>,
@@ -656,38 +584,30 @@ pub(crate) fn value_of_fields(
     lookup: &dyn TypeLookup,
     guard: bool,
 ) -> Result<SEXP, (&'static str, String)> {
-    let Some(def) = lookup.find(q) else {
-        return Err(("unknown_type", format!("`{q}` is not a registered type")));
+    let jumped = || ("r_error", "R could not allocate the value".to_string());
+    let identity = || crate::value::identity(q, variant, lookup);
+    let id = if guard {
+        guarded(identity).ok_or_else(jumped)??
+    } else {
+        identity()?
     };
-    let Some((names, version)) = value_names(def, variant, lookup) else {
-        return Err((
-            "unknown_variant",
-            format!("`{q}` has no variant `{}`", variant.unwrap_or_default()),
-        ));
-    };
-    let is_list = unsafe { extendr_ffi::TYPEOF(fields) } == SEXPTYPE::VECSXP;
-    if !is_list || xlen(fields) != names.len() {
+    let n = xlen(crate::value::names_of(id));
+    let is_list = unsafe { extendr_ffi::TYPEOF(fields) } == SEXPTYPE::VECSXP
+        && unsafe { extendr_ffi::ALTREP(fields) } == 0
+        && crate::rview::attrib_count(fields) == 0;
+    if !is_list || xlen(fields) != n {
         return Err((
             "invalid_argument",
-            format!(
-                "`fields` is the list of the {} fields of `{q}`",
-                names.len()
-            ),
+            format!("`fields` is the list of the {n} fields of `{q}`, without attributes"),
         ));
     }
-    let jumped = || ("r_error", "R could not allocate the value".to_string());
-    let qname = q.to_string();
-    let set_attributes = || {
-        let shared = crate::construct::shared_attributes(&qname, version, variant, &names);
-        unsafe { crate::construct::set_value_attributes(fields, shared) };
-    };
-    if guard {
-        guarded(set_attributes).ok_or_else(jumped)?;
-    } else {
-        set_attributes();
-    }
-    let Some(vt) = crate::exports::codec(&qname) else {
-        return Ok(fields);
+    let Some(vt) = crate::exports::codec(&q.to_string()).map_err(|m| ("declaration_changed", m))?
+    else {
+        return if guard {
+            guarded(|| crate::value::new(fields, id)).ok_or_else(jumped)
+        } else {
+            Ok(crate::value::new(fields, id))
+        };
     };
     let state = match variant {
         None => from_fields(vt, fields),
@@ -695,9 +615,9 @@ pub(crate) fn value_of_fields(
     }
     .map_err(|m| ("codec", m))?;
     if !guard {
-        return Ok(wrap(vt, state, fields));
+        return Ok(wrap(vt, state, id));
     }
-    guarded(|| wrap(vt, state, fields)).ok_or_else(|| {
+    guarded(|| wrap(vt, state, id)).ok_or_else(|| {
         if let Some(d) = unsafe { (*vt).drop } {
             unsafe { d(state) };
         }
@@ -732,32 +652,6 @@ pub unsafe extern "C" fn r8_api_with_fields(
             Ok(())
         }),
     )
-}
-
-/// A list of the field names `names` with the attributes of a value of the
-/// type `qname`, of the variant `variant` for an enum, the template of a
-/// Rust-stored value; returned protected.
-/// It allocates no Rust memory, so it runs inside `r8_protect()`.
-///
-/// # Safety
-///
-/// The caller unprotects the result.
-pub(crate) unsafe fn template(
-    qname: &str,
-    names: &[String],
-    version: u32,
-    variant: Option<&str>,
-) -> SEXP {
-    unsafe {
-        // Left protected for the caller, as before.
-        let like = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, names.len() as R_xlen_t));
-        let field_names: Vec<&str> = names.iter().map(String::as_str).collect();
-        crate::construct::set_value_attributes(
-            like,
-            crate::construct::shared_attributes(qname, version, variant, &field_names),
-        );
-        like
-    }
 }
 
 /// `R8Api.value_state`: lends the state of a value of the type `type_name` to
@@ -808,7 +702,9 @@ pub unsafe extern "C" fn r8_api_upcast_state(
 /// `upcast`, of a struct that extends it, to `module`: the codec of the
 /// value has the same module and, for another type, embeds the state of
 /// `type_name`. `not_lent` reports any other value of the type, or of a
-/// registered subtype with `upcast`; `type_mismatch` any other object. The state of a value read
+/// registered subtype with `upcast`, whose fields the module may read, and
+/// `pins::check()`'s codes one whose fields it may not; `type_mismatch` any
+/// other object. The state of a value read
 /// before its codec was registered is built first; a value whose state cannot
 /// be built is the codec's error.
 fn lend(
@@ -825,6 +721,12 @@ fn lend(
         ));
     }
     let x: SEXP = value.cast();
+    if let Some(o) = crate::value::other(x) {
+        return Err((
+            "declaration_changed".into(),
+            format!("the value was {}", o.message()),
+        ));
+    }
     if state_of(x).is_none() {
         guarded(|| build(x))
             .ok_or_else(|| {
@@ -854,7 +756,7 @@ fn lend(
         }
     }
     let name = name.to_string_lossy();
-    let held = attr_string(x, sym_r8_type()).unwrap_or_default();
+    let held = crate::value::type_name(x).unwrap_or_default();
     let is_one = held == name
         || (upcast
             && match (QualifiedName::parse(&held), QualifiedName::parse(&name)) {
@@ -866,10 +768,13 @@ fn lend(
                 _ => false,
             });
     Err(if is_one {
-        (
-            "not_lent".into(),
-            format!("the state of the `{held}` is not this module's to read"),
-        )
+        match crate::pins::check(module, &name) {
+            Ok(()) => (
+                "not_lent".into(),
+                format!("the state of the `{held}` is not this module's to read"),
+            ),
+            Err((code, message)) => (code.into(), message),
+        }
     } else if held.is_empty() {
         (
             "type_mismatch".into(),
@@ -883,70 +788,44 @@ fn lend(
     })
 }
 
-/// The version, declaration hash, and registering package of the
-/// Rust-stored type `name`, which `Serialized_state` records with the
-/// state's bytes: `list(version, hash, package)`, or `NULL` when the type
-/// is not registered.
+/// The package that registers the codec of the Rust-stored type `name`, which
+/// `Serialized_state` records with the state's bytes, one string, or `NULL`
+/// when the type is not registered.
 ///
 /// # Safety
 ///
 /// `type_name` is NUL-terminated; called on R's main thread.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_rust_stored_meta(type_name: *const c_char) -> Sexp {
+pub unsafe extern "C" fn r8_rust_stored_package(type_name: *const c_char) -> Sexp {
     let nil = unsafe { extendr_ffi::R_NilValue }.cast();
     let result = catch_unwind(AssertUnwindSafe(|| -> Option<Sexp> {
         let name = c_text(type_name)?;
         let q = QualifiedName::parse(&name).ok()?;
-        let docs = registry().snapshot();
-        let lookup: &dyn TypeLookup = &*docs;
-        let def = lookup.find(&q)?;
-        let version = def_version(def);
-        let hash = crate::construct::registry_declaration_hash(&q, lookup);
+        registry().snapshot().find(&q)?;
         let package = crate::exports::codec_package(&name).unwrap_or_default();
-        unsafe {
-            let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, 3));
-            extendr_ffi::SET_VECTOR_ELT(out, 0, extendr_ffi::Rf_ScalarInteger(version as i32));
-            extendr_ffi::SET_VECTOR_ELT(out, 1, scalar_string(&hash));
-            extendr_ffi::SET_VECTOR_ELT(out, 2, scalar_string(&package));
-            Rf_unprotect(1);
-            Some(out.cast())
-        }
+        Some(unsafe { crate::value::strings(&[&package]) }.cast())
     }));
     result.ok().flatten().unwrap_or(nil)
 }
 
-/// A character vector of the one string `s`.
+/// The codec that reads a state recorded as a value of `type_name` with the
+/// declaration `declaration`, the text of an identity; NULL, with `err`
+/// filled, when no package has registered it or its declaration differs.
 ///
 /// # Safety
 ///
-/// Called on R's main thread; the result is unprotected.
-unsafe fn scalar_string(s: &str) -> SEXP {
-    unsafe {
-        let x = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, 1));
-        SET_STRING_ELT(x, 0, mkchar(s));
-        Rf_unprotect(1);
-        x
-    }
-}
-
-/// The codec that reads a state recorded as a value of `type_name` at
-/// `version` with the declaration hash `hash`; NULL, with `err` filled,
-/// when no package has registered it or its declaration differs.
-///
-/// # Safety
-///
-/// `type_name` and `hash` are NUL-terminated; `err` is writable.
+/// `type_name` and `declaration` are NUL-terminated; `err` is writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_rust_stored_codec(
     type_name: *const c_char,
-    version: i32,
-    hash: *const c_char,
+    declaration: *const c_char,
     err: *mut Error,
 ) -> *const Codec {
     let result = catch_unwind(AssertUnwindSafe(
         || -> Result<*const Codec, (&'static str, String)> {
             let name = c_text(type_name).unwrap_or_default();
-            let Some(vt) = crate::exports::codec(&name) else {
+            let found = crate::exports::codec(&name).map_err(|m| ("declaration_changed", m))?;
+            let Some(vt) = found else {
                 return Err((
                     "codec_missing",
                     format!("no loaded package registers the codec of `{name}`"),
@@ -955,24 +834,15 @@ pub unsafe extern "C" fn r8_rust_stored_codec(
             let q = QualifiedName::parse(&name).map_err(|e| ("unknown_type", e.to_string()))?;
             let docs = registry().snapshot();
             let lookup: &dyn TypeLookup = &*docs;
-            let Some(def) = lookup.find(&q) else {
+            if lookup.find(&q).is_none() {
                 return Err(("unknown_type", format!("`{name}` is not a registered type")));
-            };
-            let registered = def_version(def);
-            if registered as i32 != version {
-                return Err((
-                    "version_mismatch",
-                    format!(
-                        "the value was saved at version {version} of `{name}`, and version {registered} is registered"
-                    ),
-                ));
             }
-            let recorded = c_text(hash).unwrap_or_default();
-            if *crate::construct::registry_declaration_hash(&q, lookup) != *recorded {
+            let recorded = c_text(declaration).unwrap_or_default();
+            if crate::value::declaration(&q, lookup) != recorded {
                 return Err((
                     "declaration_changed",
                     format!(
-                        "the declaration of `{name}` differs from the one the value was saved with, at the same version"
+                        "the declaration of `{name}` differs from the one the value was saved with"
                     ),
                 ));
             }

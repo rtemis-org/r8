@@ -173,6 +173,13 @@
 //! [`SubtypeValue`], and one of any implementor of a trait an
 //! [`ImplementorValue`].
 //!
+//! A crate that depends on the crate of another package reads the values of that
+//! package's types by the names of their fields, when every value that the
+//! registered declaration admits is one that the compiled declaration admits; a
+//! read is otherwise the error `declaration_changed`. A type that other packages
+//! use changes in coordination with them, with a minimum version of the declaring
+//! package in their `DESCRIPTION` and `Cargo.toml`.
+//!
 //! The crate reaches R through its own declarations of R's C API (`sys`)
 //! and R8 through `R8Api` (`R8.h`). Every R function that can jump runs
 //! inside `R8Api.protect`, so a jump skips no Rust destructor.

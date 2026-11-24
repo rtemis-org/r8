@@ -1,4 +1,5 @@
-//! The C interface between R packages and the R8 registry, ABI version 1.
+//! The interface between R8 and the compiled code of R packages, ABI version 1,
+//! which packages reach through the crate `rtemis-r8-api`.
 //!
 //! These `#[repr(C)]` types mirror `r/inst/include/R8.h` field for field,
 //! which states the interface and its rules: every call on R's main thread,
@@ -228,17 +229,9 @@ pub struct Codec {
     >,
     /// Builds a state from the value R8 has read from a document and
     /// validated, through the reader, from the value's root node. R8 reads a
-    /// document through it when `size` covers it and it is set, and through
-    /// `from_fields` or `from_variant` otherwise.
+    /// document through it.
     pub from_reader:
         Option<unsafe extern "C" fn(*const Reader, Node, *mut *mut c_void, *mut Error) -> Status>,
-    /// The declaration hash of the type the codec was written against,
-    /// `sha256:<hex>`, NUL-terminated: set by a codec whose type has no
-    /// declaration in the exports' record, a codec written by hand in C,
-    /// and NULL otherwise. Registration requires it to equal the hash of
-    /// the type's R declaration, since `from_fields` and `from_variant`
-    /// read fields by position.
-    pub declaration_hash: *const c_char,
     /// The state of the ancestor named, NUL-terminated, that the state
     /// embeds, which lives as long as the state; NULL when it embeds none of
     /// that name. `None` in the codec of a type whose states embed no
@@ -289,15 +282,10 @@ pub struct ImplEntry {
     pub method: *const c_char,
     /// The impl function.
     pub call: Option<MethodFn>,
-    /// The number of the method's parameters, `x` included and `...`
-    /// counted as one, which registration checks against the trait's
-    /// declaration.
-    pub n_params: usize,
     /// The signatures of the impl's methods as the compiled code has them, a
     /// declaration record ([`crate::record`]) of one trait that holds them, which
     /// registration checks against the trait's declaration. The entries of one
-    /// impl have one; NULL in a table written by hand in C, whose functions
-    /// read R values.
+    /// impl have one.
     pub signature: *const u8,
     /// The length of `signature` in bytes.
     pub signature_len: usize,
@@ -312,10 +300,13 @@ pub struct Exports {
     pub size: u32,
     /// The package name, NUL-terminated.
     pub package: *const c_char,
-    /// The declarations of the package's types in Rust as a declaration
-    /// record ([`crate::record`]), which holds type declarations only; NULL
-    /// in a table written by hand in C, whose types are the package's R
-    /// declarations.
+    /// The compiled code of the package, as its codecs name it
+    /// ([`Codec::module`]).
+    pub module: *const c_void,
+    /// The declarations of the package's types and traits in Rust as a
+    /// declaration record ([`crate::record`]), with the types of other
+    /// namespaces that the code was compiled against, which R8 compares with
+    /// the registered ones ([`crate::refine`]) and does not register.
     pub ir_record: *const u8,
     /// The length of `ir_record` in bytes.
     pub ir_record_len: usize,
@@ -372,6 +363,12 @@ pub struct Api {
     /// Builds a value from another with some of its fields replaced, which R8
     /// validates with the rules that read them.
     pub with_fields: Option<WithFieldsFn>,
+    /// Gives R8 the declarations, as a declaration record, that the caller's
+    /// module was compiled against, of a type whose values it reads by their
+    /// fields.
+    pub pin: Option<PinFn>,
+    /// The names of the type and of the variant of a value.
+    pub value_type: Option<ValueTypeFn>,
 }
 
 /// `R8ExportsFn`: the function a package registers as `"r8_exports"`.
@@ -410,6 +407,15 @@ pub type ValueOfFieldsFn = unsafe extern "C" fn(
     *mut Error,
 ) -> Status;
 
+/// `pin` of [`Api`]: the caller's module, the declaration record and its
+/// length in bytes, and the error report.
+pub type PinFn = unsafe extern "C" fn(*const c_void, *const u8, usize, *mut Error) -> Status;
+
+/// `value_type` of [`Api`]: the value, its type's qualified name, and the
+/// variant of an enum's value, NULL for a struct's; both are NULL for an object
+/// that is not a value, and valid for the session.
+pub type ValueTypeFn = unsafe extern "C" fn(Sexp, *mut *const c_char, *mut *const c_char) -> Status;
+
 /// `with_fields` of [`Api`]: the value, the named list of the new fields, the
 /// new value, and the error report.
 pub type WithFieldsFn = unsafe extern "C" fn(Sexp, Sexp, *mut Sexp, *mut Error) -> Status;
@@ -446,10 +452,6 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Codec.variant", offset_of!(Codec, variant)),
         ("R8Codec.from_variant", offset_of!(Codec, from_variant)),
         ("R8Codec.from_reader", offset_of!(Codec, from_reader)),
-        (
-            "R8Codec.declaration_hash",
-            offset_of!(Codec, declaration_hash),
-        ),
         ("R8Codec.upcast", offset_of!(Codec, upcast)),
         ("R8Reader", size_of::<Reader>()),
         ("R8Reader.context", offset_of!(Reader, context)),
@@ -476,7 +478,6 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ),
         ("R8ImplEntry.method", offset_of!(ImplEntry, method)),
         ("R8ImplEntry.call", offset_of!(ImplEntry, call)),
-        ("R8ImplEntry.n_params", offset_of!(ImplEntry, n_params)),
         ("R8ImplEntry.signature", offset_of!(ImplEntry, signature)),
         (
             "R8ImplEntry.signature_len",
@@ -485,6 +486,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Exports", size_of::<Exports>()),
         ("R8Exports.size", offset_of!(Exports, size)),
         ("R8Exports.package", offset_of!(Exports, package)),
+        ("R8Exports.module", offset_of!(Exports, module)),
         ("R8Exports.ir_record", offset_of!(Exports, ir_record)),
         (
             "R8Exports.ir_record_len",
@@ -507,5 +509,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Api.protect", offset_of!(Api, protect)),
         ("R8Api.value_of_fields", offset_of!(Api, value_of_fields)),
         ("R8Api.with_fields", offset_of!(Api, with_fields)),
+        ("R8Api.pin", offset_of!(Api, pin)),
+        ("R8Api.value_type", offset_of!(Api, value_type)),
     ]
 }

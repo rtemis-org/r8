@@ -49,8 +49,8 @@ type_name_of <- function(type) {
     ensure_registered(type)
     return(attr(type, "r8_name"))
   }
-  if (inherits(type, "r8_value") && is.null(attr(type, "r8_variant"))) {
-    return(attr(type, "r8_type"))
+  if (is_value(type) && is.null(value_variant(type))) {
+    return(value_type(type))
   }
   r8_abort(
     "`type` is an R8 struct type object or a value of one.",
@@ -84,15 +84,16 @@ type_name_of <- function(type) {
 #'
 #' @export
 r8_upcast <- function(x, type) {
-  if (!inherits(x, "r8_value") || !is.null(attr(x, "r8_variant"))) {
+  if (!is_value(x) || !is.null(value_variant(x))) {
     r8_abort("`x` is an R8 struct value.", class = "r8_type_error")
   }
   if (!inherits(type, "r8_struct_type")) {
     r8_abort("`type` is an R8 struct type object.", class = "r8_type_error")
   }
   ensure_registered(type)
+  require_current(x)
   target <- attr(type, "r8_name")
-  source <- attr(x, "r8_type")
+  source <- value_type(x)
   if (identical(source, target)) {
     return(x)
   }
@@ -294,7 +295,7 @@ method_dispatch <- function(trait_name, method) {
 #' @keywords internal
 #' @noRd
 next_in_chain <- function(trait_name, method, x, after) {
-  r8 <- inherits(x, "r8_value")
+  r8 <- is_value(x)
   type <- value_type_text(x)
   if (nzchar(after)) {
     chain <- chain_keys(x)
@@ -333,9 +334,9 @@ next_in_chain <- function(trait_name, method, x, after) {
 #' @keywords internal
 #' @noRd
 chain_keys <- function(x) {
-  if (inherits(x, "r8_value")) {
-    type <- attr(x, "r8_type")
-    if (is.null(attr(x, "r8_variant"))) c(type, r8_ancestors(x)) else type
+  if (is_value(x)) {
+    type <- value_type(x)
+    if (is.null(value_variant(x))) c(type, r8_ancestors(x)) else type
   } else {
     paste0("\"", .class2(x), "\"")
   }

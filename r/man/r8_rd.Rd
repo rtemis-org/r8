@@ -23,8 +23,7 @@ file of the generic when the package declares and documents the generic,
 an R8 generic or an S3 generic, and otherwise to the Rd file of the type. A roxygen block above the call
 adds its \verb{@param} entries to that file; a call without a block is found by
 scanning \verb{R/}, and is left out when neither the generic nor the type has an
-Rd file in the package. A method the package implements in compiled code
-(\code{R8.h}), registered when roxygen2 loads the package, takes an entry by the
+Rd file in the package. A method the package implements in Rust, registered when roxygen2 loads the package, takes an entry by the
 same rules, with the formals of the trait's method. A replacement method
 is written as its call, \code{labels(x) <- value}. A method of a converter
 from \code{r8_converter()}, \code{implement(as_target, "character") <- function(x) ...}, takes the entry \verb{## R8 method for class 'character'} in the Rd

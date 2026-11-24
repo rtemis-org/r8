@@ -32,6 +32,9 @@ pub trait RustStoredStruct: rtemis_r8::derive::R8 + Send + Sync + Sized + 'stati
     /// On R's main thread, with valid R objects.
     unsafe fn from_fields(fields: &[SEXP]) -> Result<Self>;
 
+    /// Calls `f` with the name of each field, in declaration order.
+    fn names(f: &mut dyn FnMut(&'static CStr));
+
     /// The value from the root node of a value R8 has read from a document
     /// and validated; each field is read by name.
     fn from_reader<'a>(r: &Reader<'a>, root: Node<'a>) -> Result<Self>;
@@ -90,6 +93,10 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
     ///
     /// On R's main thread, with valid R objects.
     unsafe fn from_variant(variant: &str, fields: &[SEXP]) -> Result<Self>;
+
+    /// Calls `f` with the name of each field of `variant`, in declaration
+    /// order; with none for a unit variant and for a name of no variant.
+    fn names(variant: &str, f: &mut dyn FnMut(&'static CStr));
 
     /// The value from the root node of a value R8 has read from a document
     /// and validated: the variant from the variant's name, or from the tag
@@ -150,16 +157,15 @@ pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The codec table: [`codec`] for a struct, [`enum_codec`] for an enum.
     const TABLE: Shared<abi::Codec>;
 
-    /// The value from the fields of `x`, a value of the type whose state
-    /// R8 does not lend to this module: an R-stored one, as
+    /// The value from the fields of `x`, found by name: a value of the type
+    /// whose state R8 does not lend to this module, an R-stored one, as
     /// `serialize(version = 2)` reads one back, or one of another package's
-    /// codec. `x` may be a value of a struct that extends the type, whose
-    /// first fields are the type's.
+    /// codec. `x` may be a value of a struct that extends the type.
     ///
     /// # Safety
     ///
-    /// On R's main thread, with valid R objects.
-    unsafe fn from_value(x: SEXP, fields: &[SEXP]) -> Result<Self>;
+    /// On R's main thread, with a valid `x` that stays protected.
+    unsafe fn from_value(x: SEXP) -> Result<Self>;
 
     /// The value from a node of a value R8 has read from a document and
     /// validated.
@@ -224,7 +230,6 @@ pub const fn codec<T: RustStoredStruct>() -> Shared<abi::Codec> {
         variant: None,
         from_variant: None,
         from_reader: Some(struct_from_reader::<T>),
-        declaration_hash: std::ptr::null(),
         upcast: Some(upcast::<T>),
     })
 }
@@ -246,7 +251,6 @@ pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::Codec> {
         variant: Some(variant::<T>),
         from_variant: Some(from_variant::<T>),
         from_reader: Some(enum_from_reader::<T>),
-        declaration_hash: std::ptr::null(),
         upcast: None,
     })
 }

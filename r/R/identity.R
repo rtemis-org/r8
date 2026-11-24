@@ -25,12 +25,12 @@
 #'
 #' @export
 r8_hash <- function(x) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  if (!is_value(x)) {
+    value_required(x)
   }
   res <- r8_value_hash(x)
   if (is.list(res)) {
-    value_abort("Invalid", attr(x, "r8_type"), res[["errors"]])
+    value_abort("Invalid", value_type(x), res[["errors"]])
   }
   res
 } # /R8::r8_hash
@@ -55,10 +55,22 @@ r8_hash <- function(x) {
 #'
 #' @export
 r8_equal <- function(x, y) {
-  if (!inherits(x, "r8_value") || !inherits(y, "r8_value")) {
+  if (!is_value(x) || !is_value(y)) {
     r8_abort("`x` and `y` are R8 values.", class = "r8_type_error")
   }
-  r8_values_equal(x, y)
+  res <- r8_values_equal(x, y)
+  if (is.list(res)) {
+    if (!is.null(res[["stale"]])) {
+      stale_abort(value_type(x), res[["stale"]], "r8_value_error")
+    }
+    r8_abort(
+      "A value that is compared was ",
+      res[["message"]],
+      " [declaration_changed].",
+      class = c("r8_other_declaration_error", "r8_value_error")
+    )
+  }
+  res
 } # /R8::r8_equal
 
 
@@ -114,7 +126,7 @@ Ops.r8_value <- function(e1, e2) {
     return(if (op == "==") eq else !eq)
   }
   if (op %in% c("<", "<=", ">", ">=")) {
-    if (!identical(attr(e1, "r8_type"), attr(e2, "r8_type"))) {
+    if (!identical(value_type(e1), value_type(e2))) {
       r8_abort(
         "`",
         op,
@@ -122,7 +134,7 @@ Ops.r8_value <- function(e1, e2) {
         class = "r8_dispatch_error"
       )
     }
-    o <- ordering(r8_partial_cmp(e1, e2), attr(e1, "r8_type"))
+    o <- ordering(r8_partial_cmp(e1, e2), value_type(e1))
     if (is.na(o)) {
       return(FALSE)
     }
@@ -163,8 +175,8 @@ Ops.r8_value <- function(e1, e2) {
 #'
 #' @export
 r8_size <- function(x) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  if (!is_value(x)) {
+    value_required(x)
   }
   parts <- r8_rust_stored_parts(x)
   if (is.null(parts)) {

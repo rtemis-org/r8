@@ -736,123 +736,6 @@ fn table<C: rtemis_r8::ir::Column>(x: SEXP, columns: &[C]) -> Result<Option<Robj
 
 pub(crate) use crate::values::errors_list;
 
-/// The attribute vectors every value of one type, or of one enum variant,
-/// carries: preserved, marked not mutable, and shared by the values, so a
-/// value allocates none. Rebuilt after every change to the registry.
-#[derive(Clone, Copy)]
-pub(crate) struct SharedAttributes {
-    names: SEXP,
-    class: SEXP,
-    r8_type: SEXP,
-    r8_version: SEXP,
-    r8_variant: SEXP,
-}
-
-// SAFETY: R8's native functions run on R's main thread only; the cache that
-// holds these objects is never read from another thread.
-unsafe impl Send for SharedAttributes {}
-
-/// A new preserved vector, marked not mutable.
-unsafe fn kept(x: SEXP) -> SEXP {
-    unsafe {
-        extendr_ffi::R_PreserveObject(x);
-        extendr_ffi::MARK_NOT_MUTABLE(x);
-    }
-    x
-}
-
-/// The class vector of a value of the type `qname`: the type, its
-/// ancestors through `extends`, the nearest first, and `r8_value`.
-pub(crate) fn value_class(qname: &str) -> Vec<String> {
-    let mut out = vec![qname.to_string()];
-    if let Ok(q) = rtemis_r8::name::QualifiedName::parse(qname) {
-        let docs = crate::declare::snapshot().map(|d| d.ancestors(&q));
-        out.extend(docs.unwrap_or_default().iter().map(|a| a.to_string()));
-    }
-    out.push("r8_value".to_string());
-    out
-}
-
-/// The shared attribute vectors of values of `qname` (and `variant`), whose
-/// fields are `names`, at the type's `version`.
-pub(crate) fn shared_attributes(
-    qname: &str,
-    version: u32,
-    variant: Option<&str>,
-    names: &[&str],
-) -> SharedAttributes {
-    type ByVariant = HashMap<Box<str>, SharedAttributes>;
-    type ByType = HashMap<Box<str>, ByVariant>;
-    static CACHE: OnceLock<Mutex<(u64, ByType)>> = OnceLock::new();
-    let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
-    let g = GENERATION.load(Ordering::Relaxed);
-    let v = variant.unwrap_or("");
-    {
-        let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.0 != g {
-            for a in guard.1.values().flat_map(|v| v.values()) {
-                unsafe {
-                    for x in [a.names, a.class, a.r8_type, a.r8_version, a.r8_variant] {
-                        if x != extendr_ffi::R_NilValue {
-                            extendr_ffi::R_ReleaseObject(x);
-                        }
-                    }
-                }
-            }
-            guard.1.clear();
-            guard.0 = g;
-        }
-        if let Some(a) = guard.1.get(qname).and_then(|m| m.get(v)) {
-            return *a;
-        }
-    }
-    // The vectors are R allocations, from which R may jump: no lock is held.
-    let classes = value_class(qname);
-    let a = unsafe {
-        let names_v = kept(character(names).get());
-        let qchar = mkchar(qname);
-        let class = kept(Rf_allocVector(SEXPTYPE::STRSXP, classes.len() as isize));
-        for (i, c) in classes.iter().enumerate() {
-            SET_STRING_ELT(class, i as isize, mkchar(c));
-        }
-        let ty = kept(Rf_allocVector(SEXPTYPE::STRSXP, 1));
-        SET_STRING_ELT(ty, 0, qchar);
-        let ver = kept(Rf_allocVector(SEXPTYPE::INTSXP, 1));
-        *INTEGER(ver) = version as i32;
-        let var = match variant {
-            Some(v) => {
-                let s = kept(Rf_allocVector(SEXPTYPE::STRSXP, 1));
-                SET_STRING_ELT(s, 0, mkchar(v));
-                s
-            }
-            None => extendr_ffi::R_NilValue,
-        };
-        SharedAttributes {
-            names: names_v,
-            class,
-            r8_type: ty,
-            r8_version: ver,
-            r8_variant: var,
-        }
-    };
-    let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
-    guard.1.entry(qname.into()).or_default().insert(v.into(), a);
-    a
-}
-
-/// Sets the attributes of a value from its type's shared vectors.
-pub(crate) unsafe fn set_value_attributes(out: SEXP, a: SharedAttributes) {
-    unsafe {
-        Rf_setAttrib(out, sym_names(), a.names);
-        Rf_setAttrib(out, sym_class(), a.class);
-        Rf_setAttrib(out, sym_r8_type(), a.r8_type);
-        Rf_setAttrib(out, crate::rview::sym_r8_version(), a.r8_version);
-        if a.r8_variant != extendr_ffi::R_NilValue {
-            Rf_setAttrib(out, sym_r8_variant(), a.r8_variant);
-        }
-    }
-}
-
 /// Assembles a value of the type `q` from validated fields: each field in
 /// declaration order, in its stored form, an absent field with a default
 /// given its default.
@@ -865,8 +748,8 @@ pub(crate) fn assemble(
     let def = lookup
         .find(q)
         .ok_or_else(|| fail(format!("`{q}` is not registered")))?;
-    let (defs, version, variant): (&[FieldDef], u32, Option<&str>) = match def {
-        TypeDef::Struct(s) => (&s.fields, s.version, None),
+    let (defs, variant): (&[FieldDef], Option<&str>) = match def {
+        TypeDef::Struct(s) => (&s.fields, None),
         TypeDef::Enum(e) => {
             let kind = e
                 .variants
@@ -881,7 +764,7 @@ pub(crate) fn assemble(
                 },
                 _ => &[],
             };
-            (defs, e.version, Some(variant))
+            (defs, Some(variant))
         }
     };
     let n = defs.len();
@@ -908,25 +791,24 @@ pub(crate) fn assemble(
             };
             SET_VECTOR_ELT(out, k as R_xlen_t, value);
         }
-        let qname = q.to_string();
-        let field_names: Vec<&str> = defs.iter().map(|f| f.name.as_str()).collect();
-        set_value_attributes(
-            out,
-            shared_attributes(&qname, version, variant, &field_names),
-        );
+        let id = crate::value::identity(q, variant, lookup).map_err(|(_, m)| fail(m))?;
         // A Rust-stored type's value is the codec's state behind an ALTLIST
-        // with the same attributes (`rust_stored.rs`).
-        let r = match (def, crate::exports::codec(&q.to_string())) {
+        // (`rust_stored.rs`).
+        let r = match (
+            def,
+            crate::exports::codec(&q.to_string())
+                .map_err(|m| fail(format!("{m} [declaration_changed]")))?,
+        ) {
             (TypeDef::Struct(_), Some(vt)) => {
                 let state = crate::rust_stored::from_fields(vt, out).map_err(fail)?;
-                own(crate::rust_stored::wrap(vt, state, out))
+                own(crate::rust_stored::wrap(vt, state, id))
             }
             (TypeDef::Enum(_), Some(vt)) => {
                 let name = variant.unwrap_or_default();
                 let state = crate::rust_stored::from_variant(vt, name, out).map_err(fail)?;
-                own(crate::rust_stored::wrap(vt, state, out))
+                own(crate::rust_stored::wrap(vt, state, id))
             }
-            _ => own(out),
+            _ => own(crate::value::new(out, id)),
         };
         Rf_unprotect(1);
         drop(created);
@@ -1040,8 +922,8 @@ fn r8_set_fields(x: Robj, names: Robj, values: Robj) -> Result<Robj> {
 
 /// A new value of the R8 value `x` with each field of `changes` replaced: the
 /// fields are validated against their types, and the type's rules that read
-/// any of them run once, on the new value. The other fields and the
-/// attributes are shared with `x`.
+/// any of them run once, on the new value. The other fields are shared with
+/// `x`.
 ///
 /// Returns the new value; `list(errors = <problems>)`, of every field, with
 /// the class `r8_problems`; or `NULL` when a name is not a field.
@@ -1106,9 +988,9 @@ pub(crate) fn with_fields(
 /// [`replace_fields`], its outcome as Rust values.
 fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
     let xs = unsafe { x.get() };
-    let type_name = attr_string(xs, sym_r8_type()).ok_or_else(|| fail("not an R8 value"))?;
+    let type_name = crate::value::type_name(xs).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let variant = attr_string(xs, sym_r8_variant());
+    let variant = crate::value::variant(xs);
     let docs = registry().snapshot();
     let lookup: &dyn TypeLookup = &*docs;
     let def = lookup
@@ -1133,6 +1015,26 @@ fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
             }
         }
     };
+    // A value made under another declaration, whose fields have other positions
+    // or meanings.
+    if let Some(o) = crate::value::other(xs) {
+        return Ok(Replaced::Problems(vec![ValueError {
+            code: "declaration_changed",
+            message: format!("The value was {}.", o.message()),
+            ..Default::default()
+        }]));
+    }
+    if lookup.is_stale(&q) {
+        let parent = lookup.ancestors(&q).first().map(|p| p.to_string());
+        return Ok(Replaced::Problems(vec![ValueError {
+            code: "type_stale",
+            message: format!(
+                "`{q}` was declared against an earlier declaration of `{}`; declare `{q}` again, or reload or reinstall the package that declares it.",
+                parent.unwrap_or_default()
+            ),
+            ..Default::default()
+        }]));
+    }
     // Each field's new value: validated, in its stored form, or its default.
     let mut created: Vec<Robj> = Vec::new();
     let mut stored: Vec<(usize, SEXP)> = Vec::with_capacity(changes.len());
@@ -1203,6 +1105,7 @@ fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
     if !errors.is_empty() {
         return Ok(Replaced::Problems(errors));
     }
+    let id = crate::value::identity(&q, variant.as_deref(), lookup).map_err(|(_, m)| fail(m))?;
     // A Rust-stored value: the codec builds the new state, one field at a
     // time, and the new value reads its fields from it on demand, keeping the
     // fields the old value has read, except the replaced ones; the rules then
@@ -1217,7 +1120,7 @@ fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
             value = own(crate::rust_stored::wrap_from(
                 vt,
                 new_state,
-                xs,
+                id,
                 from,
                 *k as R_xlen_t,
             ));
@@ -1232,25 +1135,14 @@ fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
     let n = xlen(xs);
     let out = unsafe {
         let out = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
+        let held = crate::value::fields(xs);
         for i in 0..n {
-            SET_VECTOR_ELT(out, i as R_xlen_t, VECTOR_ELT(xs, i as R_xlen_t));
+            SET_VECTOR_ELT(out, i as R_xlen_t, VECTOR_ELT(held, i as R_xlen_t));
         }
         for &(k, s) in &stored {
             SET_VECTOR_ELT(out, k as R_xlen_t, s);
         }
-        for sym in [
-            sym_names(),
-            sym_class(),
-            sym_r8_type(),
-            crate::rview::sym_r8_version(),
-            sym_r8_variant(),
-        ] {
-            let a = attr(xs, sym);
-            if !is_null(a) {
-                Rf_setAttrib(out, sym, a);
-            }
-        }
-        let r = own(out);
+        let r = own(crate::value::new(out, id));
         Rf_unprotect(1);
         r
     };

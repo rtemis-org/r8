@@ -135,7 +135,7 @@ fn default_value(
             })
             .collect::<Read<Vec<_>>>()
             .map(|v| Tree::Array(v.into_boxed_slice())),
-        FieldType::Named { .. } if !inherits(x, "r8_value") => {
+        FieldType::Named { .. } if !crate::value::is_value(x) => {
             Err(built(path, BuildError::DefaultNotValue))
         }
         FieldType::HostClass { .. } => {

@@ -14,7 +14,7 @@
 #' Generate the R declarations of types declared in Rust
 #'
 #' Writes `R/r8-types.R`, the R declaration of each type and trait that a
-#' package declares in Rust and lists in its compiled exports (`R8.h`): one
+#' package declares in Rust and lists in its compiled exports: one
 #' `new_struct()` or `new_enum()` call per type, Rust-stored types with
 #' `storage = "rust"`, and one `generic()` or `new_trait()` call per trait, with
 #' a binding for each of a trait's generics, with roxygen comments from the

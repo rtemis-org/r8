@@ -5,7 +5,7 @@ Language-neutral test cases that every R8 host runs: the R package, `rtemis-r8`'
 ## Files
 
 - `corpus.schema.json`: the JSON Schema (draft 2020-12) of a suite file. A runner validates each file against it before running the cases.
-- `<area>/<suite>.json`: one suite per file, grouped by area (`declare/`, `decode/`, `canonical/`, and `hash/`).
+- `<area>/<suite>.json`: one suite per file, grouped by area (`declare/`, `decode/`, `canonical/`, `hash/`, `dispatch/`, `refine/`, and `update/`).
 - `tools/reference-canonical.mjs`: an independent JavaScript implementation of the canonical form and the content hash, written from the specification in `rust/crates/rtemis-r8/src/canonical.rs`, which writes the expected results of the `canonical` and `hash` cases (`node conformance/tools/reference-canonical.mjs <suite>...`).
 
 A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compared as RFC 8785 text: the declaration hash reads that form. `R8_UPDATE_CORPUS=1 cargo test -p rtemis-r8 --all-features --test conformance`, run in `rust/`, rewrites it.
@@ -34,6 +34,8 @@ A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compa
 | `canonical` | a value's JSON document | the qualified type | `{"json": "<exact text>"}`: the RFC 8785 canonical form, compared byte for byte |
 | `hash` | a value's JSON document | the qualified type | `{"hash": "sha256:<hex>"}`; `options.hash_key` selects HMAC |
 | `dispatch` | the types of a call's dispatched arguments, in order: a qualified type name, `{"classes": [...]}` for an object of a host class, or `null` for a value no type names | the qualified trait | `{"impl": [...]}`, the dispatched positions of the providing impl (a qualified type, a class, or `any`); `{"default": true}` when no impl applies; `{"ambiguous": [[...], [...]]}`, the two most specific applicable impls; `{"stale": "ns::T"}` for a stale argument type |
+| `refine` | the IR document of the registered declarations; the suite's `ir` holds the compiled ones | the qualified type | `{"refines": true}`, or `{"differences": [{"code": "...", "type": "ns::T"}]}`, compared as a multiset |
+| `update` | the IR document of the registered declarations; the suite's `ir` holds those that a value was made under, which the runner reads back from their hashed text | the qualified type | `{"same": true}`, or `{"changes": [{"code": "...", "type": "ns::T", "effect": "..."}]}`, compared as a multiset; the effect on the value is `none`, `form`, or `meaning` |
 
 An error is `{"code": "...", "path": "...", "rule": "..."}`: the stable code, a JSON Pointer into `input`, and, for a rule violation, the rule ID, or `"rule_index"`, the rule's 0-based position among its scope's rules, for a rule without an ID. Messages are not compared. A host reports every error, and a runner compares the reported and expected lists as multisets, after sorting both by path, then code, then rule; an empty list means the input passes.
 

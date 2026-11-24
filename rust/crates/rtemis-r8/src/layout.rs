@@ -99,7 +99,8 @@ fn header_spans<'a, A: Access<'a>>(v: A, ty: &QualifiedName, lookup: &dyn TypeLo
 }
 
 /// The fields of the value of the named type `ty`, of its variant for an
-/// enum, as lines indented `depth` levels.
+/// enum, as lines indented `depth` levels. The value of a field declared
+/// `sensitive` is withheld.
 fn fields<'a, A: Access<'a>>(
     v: A,
     ty: &QualifiedName,
@@ -131,6 +132,15 @@ fn fields<'a, A: Access<'a>>(
     };
     for (i, f) in defs.iter().enumerate() {
         let x = v.member_at(i, f.name.as_str());
+        if f.sensitive && !x.is_absent() {
+            let line = vec![
+                Span::new(f.name.to_string(), Role::FieldName),
+                Span::new(": ", Role::Plain),
+                Span::new("<sensitive>", Role::Muted),
+            ];
+            lines.push(Line::new(depth, line));
+            continue;
+        }
         field_lines(
             Span::new(f.name.to_string(), Role::FieldName),
             &f.ty,
@@ -826,12 +836,14 @@ mod tests {
                 {"name": "name", "type": {"kind": "character"}, "description": ""},
                 {"name": "coef", "type": {"kind": "vec", "element": {"kind": "double"}}, "description": ""},
                 {"name": "k", "type": {"kind": "option", "inner": {"kind": "integer"}}, "description": ""},
+                {"name": "token", "type": {"kind": "character"}, "description": "", "sensitive": true},
                 {"name": "kernel", "type": {"kind": "named", "name": "demo::Kernel"}, "description": ""}]}]}"#,
         )
         .expect("the document reads");
         let set = DocumentSet::from(vec![doc]);
         let v: serde_json::Value = serde_json::from_str(
             r#"{"name": "a", "coef": [0.1, 0.25, 1, 2, 3, 4, 5, 6, 7, 8],
+                "token": "s3cret",
                 "kernel": {"type": "Rbf", "gamma": 0.5}}"#,
         )
         .expect("the value reads");
@@ -847,14 +859,14 @@ mod tests {
         );
         assert_eq!(
             crate::text::encode_plain(&t),
-            "<demo::Fit> 1.00 KiB\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  kernel: <demo::Kernel@Rbf>\n    gamma: 0.5"
+            "<demo::Fit> 1.00 KiB\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  token: <sensitive>\n  kernel: <demo::Kernel@Rbf>\n    gamma: 0.5"
         );
         assert_eq!(t.lines[0].spans[1], Span::new("demo::", Role::Muted));
-        assert_eq!(t.lines[4].spans[5], Span::new("@", Role::Bracket));
+        assert_eq!(t.lines[5].spans[5], Span::new("@", Role::Bracket));
         assert_eq!(t.lines[2].spans[2], Span::new("double", Role::TypeNumber));
         assert_eq!(t.lines[2].spans[3], Span::new("[10]", Role::Summary));
         let depths: Vec<usize> = t.lines.iter().map(|l| l.depth).collect();
-        assert_eq!(depths, [0, 1, 1, 1, 1, 2]);
+        assert_eq!(depths, [0, 1, 1, 1, 1, 1, 2]);
         let mut calls = Vec::new();
         let shown = layout_with(
             Json::new(&v),
@@ -874,7 +886,7 @@ mod tests {
         assert_eq!(calls, ["demo::Kernel"]);
         assert_eq!(
             crate::text::encode_plain(&shown),
-            "<demo::Fit>\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  kernel: RBF kernel\n      gamma = 0.5"
+            "<demo::Fit>\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  token: <sensitive>\n  kernel: RBF kernel\n      gamma = 0.5"
         );
     }
 

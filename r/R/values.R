@@ -6,10 +6,202 @@
 # paths read, for the message of an unknown type.
 .r8_providers <- new.env(parent = emptyenv())
 
-# An R8 value in R is a named list of its fields, of classes
-# c("ns::Type", "r8_value"), with the attributes `r8_type`, `r8_version`, and,
-# for an enum value, `r8_variant`. Values are immutable: `$<-`, `[[<-`, and
-# `[<-` return a new value, validated.
+# An R8 value in R is a named list of its fields, an ALTREP object
+# (`src/value.c`) whose data slots hold the fields and the identity of the
+# value: its type, its variant, and its declaration. Its attributes are `names`
+# and `class`, c("ns::Type", "r8_value"), with "ns::Type@Variant" first for an
+# enum value, which S3 methods read and R8 does not. Values are immutable:
+# `$<-`, `[[<-`, and `[<-` return a new value, validated.
+
+# The native symbols of the C routines `type`, `variant_of`, `is_value`,
+# `names`, and `require`, bound when the package loads.
+.r8_c_type <- NULL
+.r8_c_variant_of <- NULL
+.r8_c_is_value <- NULL
+.r8_c_names <- NULL
+.r8_c_require <- NULL
+
+
+# %% is_value ----
+#' Whether an object is an R8 value
+#'
+#' The identity decides, which R code does not reach; `inherits(x,
+#' "r8_value")` reads the class vector, which any object can have.
+#'
+#' @param x An object.
+#'
+#' @return Logical.
+#'
+#' @keywords internal
+#' @noRd
+is_value <- function(x) .Call(.r8_c_is_value, x)
+
+
+# %% value_type ----
+#' The type of an R8 value, its variant, and the names of its fields
+#'
+#' @param x An object.
+#'
+#' @return `value_type()`: Character, the qualified name. `value_variant()`:
+#'   Character, the variant of an enum value. `value_names()`: Character. Each
+#'   is `NULL` for an object that is not an R8 value, and `value_variant()` for
+#'   a struct's value.
+#'
+#' @keywords internal
+#' @noRd
+value_type <- function(x) .Call(.r8_c_type, x)
+
+value_variant <- function(x) .Call(.r8_c_variant_of, x)
+
+value_names <- function(x) .Call(.r8_c_names, x)
+
+
+# %% not_value_text ----
+#' What an object is that has the class of an R8 value and is not one
+#'
+#' @param x An object that inherits from `r8_value`.
+#'
+#' @return Character: A sentence without its subject.
+#'
+#' @keywords internal
+#' @noRd
+not_value_text <- function(x) {
+  paste0(
+    "has the class of an R8 value and is not one: it is a list, as `dput()`, ",
+    "copied attributes, and a write of its elements in C code give. ",
+    "Construct the value with its type."
+  )
+} # /R8::not_value_text
+
+
+# %% require_current ----
+#' Check that a value is of the registered declaration of its type
+#'
+#' @param x An R8 value.
+#'
+#' @return `NULL`, invisibly; a value of another declaration raises
+#'   `r8_other_declaration_error`.
+#'
+#' @keywords internal
+#' @noRd
+require_current <- function(x) invisible(.Call(.r8_c_require, x))
+
+
+# %% other_abort ----
+#' Signal that a value is of another declaration than the registered one
+#'
+#' Called by the C routine `require`.
+#'
+#' @param x The value.
+#' @param ... Not used.
+#' @param what Character: The value, as the message names it.
+#' @param class Character: Further condition classes.
+#'
+#' @return `NULL` for a value whose type is not registered; otherwise does not
+#'   return.
+#'
+#' @keywords internal
+#' @noRd
+other_abort <- function(
+  x,
+  ...,
+  what = "The value",
+  class = "r8_value_error"
+) {
+  other <- r8_value_other(x)
+  if (!is.null(other)) {
+    r8_abort(
+      what,
+      " was ",
+      other[["message"]],
+      " [declaration_changed].",
+      class = c("r8_other_declaration_error", class)
+    )
+  }
+  invisible(NULL)
+} # /R8::other_abort
+
+
+# %% r8_update ----
+#' Convert a value to the registered declaration of its type
+#'
+#' A value belongs to the declaration of its type that it was made under, which
+#' it carries with it. After the declaration changes, when a package is updated
+#' or a type is declared again at the console, a value made before, such as one
+#' read from a file, can be looked at. It prints, gives its fields, and is refused
+#' where it is used: as a field or an argument, in a method call, and in an assignment,
+#' comparison, hash, or document. `r8_update()` gives its value under the
+#' registered declaration where its fields mean the same under both, validated.
+#'
+#' The fields mean the same when each is declared under the same name, as the
+#' same kind of type, in the same unit, and with its factor levels in the same
+#' order, and every field that the registered declaration adds is optional or has
+#' a default, which it takes. A change of bounds, of rules, or of the order of
+#' fields, and a factor level that is added or removed, do not change the meaning; a
+#' value that the registered declaration
+#' does not admit is an error that lists its problems. A value of another
+#' version of its type is refused, since raising a version states that the
+#' meaning changed. The values that the fields hold are converted in the same
+#' way.
+#'
+#' A type whose values Rust holds (`storage = "rust"`) reads a value from a file
+#' under the declaration it was saved with; such a value is made again from its
+#' source.
+#'
+#' @param x An R8 value, or a list that holds R8 values.
+#'
+#' @return The value or the list, in which every R8 value is of the registered
+#'   declaration of its type; `x` itself when each is. A value whose fields may
+#'   mean something else raises `r8_other_declaration_error`.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Visit <- new_struct("Visit", fields = list(age = type_integer()))
+#' v <- Visit(age = 40L)
+#' Visit <- new_struct("Visit", fields = list(
+#'   age = type_integer(min = 0L),
+#'   site = option(type_character())
+#' ))
+#' try(r8_to_json(v))
+#' r8_update(v)
+#' options(op)
+#'
+#' @export
+r8_update <- function(x) {
+  if (!is_value(x) && (!is.list(x) || inherits(x, "r8_value"))) {
+    value_required(x)
+  }
+  res <- r8_updated_value(x)
+  if (!is.null(res[["message"]])) {
+    r8_abort(
+      "Cannot update the value: ",
+      res[["message"]],
+      " [declaration_changed].",
+      class = c("r8_other_declaration_error", "r8_value_error")
+    )
+  }
+  if (!is.null(res[["errors"]])) {
+    value_abort("Cannot update to", res[["of"]], res[["errors"]])
+  }
+  res[["value"]]
+} # /R8::r8_update
+
+
+# %% value_required ----
+#' Signal that an argument is not an R8 value
+#'
+#' @param x The argument, `x` of the caller.
+#'
+#' @return Does not return; signals `r8_type_error`.
+#'
+#' @keywords internal
+#' @noRd
+value_required <- function(x) {
+  if (inherits(x, "r8_value")) {
+    r8_abort("`x` ", not_value_text(x), class = "r8_type_error")
+  }
+  r8_abort("`x` is an R8 value.", class = "r8_type_error")
+} # /R8::value_required
 
 # %% problems_message ----
 #' The message of a list of problems
@@ -780,8 +972,11 @@ as.list.r8_value <- function(x, ...) {
   if (missing(i)) {
     fields_refused(x, NULL, value)
   }
+  if (!is_value(x)) {
+    r8_abort("`x` ", not_value_text(x), class = "r8_value_error")
+  }
   res <- .Call(wrap__r8_set_fields, x, i, value)
-  if (is.null(attr(res, "r8_type", exact = TRUE))) {
+  if (!is_value(res)) {
     fields_refused(x, i, value, res)
   }
   res
@@ -819,13 +1014,13 @@ field_get <- function(x, name) {
 #' @keywords internal
 #' @noRd
 unknown_field <- function(x, name) {
-  variant <- attr(x, "r8_variant")
+  variant <- value_variant(x)
   fields <- attr(x, "names", exact = TRUE)
   r8_abort(
     "`",
     name,
     "` is not a field of `",
-    attr(x, "r8_type"),
+    value_type(x),
     if (!is.null(variant)) paste0("@", variant),
     "`",
     if (length(fields) == 0L) {
@@ -850,22 +1045,25 @@ unknown_field <- function(x, name) {
 #' @keywords internal
 #' @noRd
 field_set <- function(x, name, value) {
+  if (!is_value(x)) {
+    r8_abort("`x` ", not_value_text(x), class = "r8_value_error")
+  }
   res <- .Call(wrap__r8_set_field, x, name, value)
   if (is.null(res)) {
     r8_abort(
       "`",
       name,
       "` is not a field of `",
-      attr(x, "r8_type"),
+      value_type(x),
       "`.",
       class = "r8_value_error"
     )
   }
   if (inherits(res, "r8_problems")) {
-    variant <- attr(x, "r8_variant")
+    variant <- value_variant(x)
     construct_error(
       res,
-      attr(x, "r8_type"),
+      value_type(x),
       if (is.null(variant)) "" else variant,
       inputs = structure(list(value), names = name),
       assignment = paste0("x$", name, " <- value")
@@ -935,8 +1133,8 @@ fields_refused <- function(x, fields, values, res = NULL) {
   )
   construct_error(
     res,
-    attr(x, "r8_type"),
-    attr(x, "r8_variant") %||% "",
+    value_type(x),
+    value_variant(x) %||% "",
     inputs = structure(values, names = fields),
     assignment = paste0(
       "x[",
@@ -1030,12 +1228,12 @@ guard <- function(what) {
 #'
 #' @export
 r8_to_json <- function(x) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  if (!is_value(x)) {
+    value_required(x)
   }
   res <- r8_value_to_document(x)
   if (!is.null(res[["errors"]])) {
-    value_abort("Cannot write", attr(x, "r8_type"), res[["errors"]])
+    value_abort("Cannot write", value_type(x), res[["errors"]])
   }
   res[["json"]]
 } # /R8::r8_to_json

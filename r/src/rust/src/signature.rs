@@ -188,11 +188,9 @@ fn char_bytes<'a>(c: SEXP) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(R_CHAR(c).cast::<u8>(), LENGTH(c) as usize) }
 }
 
-/// The qualified type name that `x` carries, one string.
+/// The type name of the value `x`, of the registered declaration.
 fn type_of<'a>(x: SEXP) -> Option<&'a [u8]> {
-    let a = attr(x, sym_r8_type());
-    (sexptype(a) == SEXPTYPE::STRSXP && xlen(a) == 1)
-        .then(|| char_bytes(unsafe { STRING_ELT(a, 0) }))
+    crate::value::usable_type(x).map(char_bytes)
 }
 
 /// A typed parameter: its position among the forced parameters, its name,

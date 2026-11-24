@@ -369,17 +369,13 @@ r8_exports_document <- function(ptr, ns) .Call(wrap__r8_exports_document, ptr, n
 #' which the hash excludes: the Rust hash reads
 #' the registry with the record's types in place of its namespace's types
 #' of the same names, and the R hash reads the registry alone. A codec whose
-#' type has no declaration in the record compares the hash it pins
-#' (`declaration_hash`) with the registry's.
+#' type has no declaration in the record is an error.
 #'
 #' @param ptr The external pointer that `r8_exports` returned.
 #' @param ns Character: The package's namespace.
-#' @return List: `type_name`, the qualified names; `status`, for a type or
-#'   a trait of the record `"same"`, `"differs"`, or `"missing"` (no registered
-#'   declaration), and for a codec's type outside the record `"same"`,
-#'   `"stale"` (the pinned hash differs), `"unpinned"` (no pinned hash), or
-#'   `"undeclared"`; `codec`, whether the table carries the type's codec; and
-#'   `hash`, the registered declaration's hash, `""` without one.
+#' @return List: `type_name`, the qualified names of the types and traits of
+#'   the record; `status`, `"same"`, `"differs"`, or `"missing"` (no registered
+#'   declaration); and `codec`, whether the table carries the type's codec.
 #' @keywords internal
 #' @noRd
 r8_exports_compare <- function(ptr, ns) .Call(wrap__r8_exports_compare, ptr, ns)
@@ -415,8 +411,9 @@ r8_exports_signatures <- function(ptr, package) .Call(wrap__r8_exports_signature
 #' @param package Character: The registering package.
 #' @param ns Character: The package's namespace.
 #' @return List: of each impl function, `trait_name`; `tuple`, the key of its
-#'   positions; `method`; and `s4`, the S4 classes of its positions, each a
-#'   list of `class` and `package`.
+#'   positions; and `method`. `changed` holds the types of other packages whose
+#'   registered declarations do not refine those that the code was compiled
+#'   against: `type_name`, and `message`, of each difference.
 #' @keywords internal
 #' @noRd
 r8_register_exports <- function(ptr, package, ns) .Call(wrap__r8_register_exports, ptr, package, ns)
@@ -745,6 +742,28 @@ r8_css_text <- function(theme, named) .Call(wrap__r8_css_text, theme, named)
 #' @noRd
 r8_determine_output <- function(facts) .Call(wrap__r8_determine_output, facts)
 
+#' What differs between the declaration that a value was made under and the
+#' registered one.
+#'
+#' @param x An R8 value.
+#' @return List: `message`, character; `changes`, character, what differs;
+#'   `keeps_meaning`, logical, whether `r8_update()` converts the value; or
+#'   `NULL` for a value of the registered declaration and for one whose type is
+#'   not registered.
+#' @keywords internal
+#' @noRd
+r8_value_other <- function(x) .Call(wrap__r8_value_other, x)
+
+#' The value of `x` under the registered declarations of its type and of the
+#' types that it holds.
+#'
+#' @param x An R8 value, or a list that holds some.
+#' @return List: `value`; or `message`, or `errors` and `of`, the type, why the value
+#'   is not converted.
+#' @keywords internal
+#' @noRd
+r8_updated_value <- function(x) .Call(wrap__r8_updated_value, x)
+
 #' Resolves a struct value: given its fields, with context fields filled by
 #' the caller, evaluates each absent computed field in dependency order over
 #' the R objects in place, then constructs the value in place.
@@ -770,7 +789,9 @@ r8_value_identity <- function(x) .Call(wrap__r8_value_identity, x)
 #' and identical host-only fields, compared in place.
 #'
 #' @param x,y R8 values.
-#' @return Logical: One value.
+#' @return Logical: One value; `list(message = )` when a value, or one that it
+#'   holds, is of another declaration than the registered one, and
+#'   `list(stale = )`, the parent, for a stale type.
 #' @keywords internal
 #' @noRd
 r8_values_equal <- function(x, y) .Call(wrap__r8_values_equal, x, y)

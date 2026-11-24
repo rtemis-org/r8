@@ -21,8 +21,8 @@ A function that a declaration is written with takes no prefix:
 \code{\link[=generic]{generic()}}, \code{\link[=params]{params()}}, \code{\link[=arg]{arg()}}, and the standard traits. A function that operates on values,
 types, or packages takes the prefix \code{r8_}: \code{\link[=r8_to_json]{r8_to_json()}}, \code{\link[=r8_hash]{r8_hash()}},
 \code{\link[=r8_validate]{r8_validate()}}, \code{\link[=r8_register]{r8_register()}}. S3 classes, condition classes, and value
-attributes take the prefix \code{r8_}; \code{R8_} prefixes the constants of the C
-header \code{R8.h} and the environment variable \code{R8_OUTPUT_TYPE}.
+attributes take the prefix \code{r8_}; \code{R8_} prefixes the environment
+variable \code{R8_OUTPUT_TYPE}.
 }
 
 \section{Conditions}{
@@ -44,12 +44,28 @@ names a type no loaded package declares.
 \item \code{r8_dispatch_error}: a generic or trait method with no impl for the
 value's type, a conversion without a \code{From} impl, or \code{r8_next_impl()}
 without a next impl.
+\item \code{r8_other_declaration_error}, beside \code{r8_value_error} or
+\code{r8_dispatch_error}: a value made under another declaration of its type
+than the registered one, which \code{\link[=r8_update]{r8_update()}} converts or refuses.
 \item \code{r8_text_error}: text output given invalid arguments.
 }
 
-Every warning R8 signals has the class \code{r8_warning}; \code{r8_stale_warning} is
-a declaration that leaves structs stale, which extend an earlier
-declaration of their parent.
+Every warning R8 signals has the class \code{r8_warning}:
+\itemize{
+\item \code{r8_stale_warning}: a declaration that leaves structs stale, which extend an
+earlier declaration of their parent.
+\item \code{r8_declaration_warning}: a package whose compiled code was compiled against
+another declaration of a type of another package, and may not read it
+(\code{\link[=r8_register]{r8_register()}}).
+}
+}
+
+\section{Types that other packages use}{
+
+A package does not change a type that other packages use without coordinating
+the change with them, with a minimum version of the declaring package in their
+\code{DESCRIPTION}: see the section "Changing a type that other packages use" of
+\code{\link[=new_struct]{new_struct()}}.
 }
 
 \seealso{

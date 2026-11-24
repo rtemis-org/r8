@@ -4,6 +4,9 @@
 use std::ffi::CStr;
 use std::ops::Deref;
 
+use rtemis_r8::derive::Encode;
+use rtemis_r8::rules::DocumentSet;
+
 use crate::api::Result;
 use crate::call::{Receiver, Sexp};
 use crate::rust_stored::RustStored;
@@ -29,6 +32,9 @@ pub trait Position: Sized + 'static {
     /// What the position names.
     const ENTRY: PositionEntry;
 
+    /// Adds the declaration of the type that the position names.
+    fn register(_set: &mut DocumentSet) {}
+
     /// The argument of a call.
     type Arg<'a>: Deref<Target = Self>;
 
@@ -43,6 +49,10 @@ pub trait Position: Sized + 'static {
 
 impl<T: RustStored> Position for T {
     const ENTRY: PositionEntry = PositionEntry::Type(T::TYPE_NAME);
+
+    fn register(set: &mut DocumentSet) {
+        <T as Encode>::register(set);
+    }
 
     type Arg<'a> = Receiver<'a, T>;
 

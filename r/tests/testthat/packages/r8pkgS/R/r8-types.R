@@ -83,3 +83,36 @@ cells <- R8::generic(
   description = "The number of cells in the extent, and the band that the extent is.",
   return_type = R8::type_character()
 )
+
+#' peak
+#'
+#' The peak of a signal, a value of r8pkgR's type, in the extent of a grid.
+#'
+#' The generic `pkgs::peak`, declared in Rust.
+#'
+#' @param x A value, whose type selects the method.
+#' @param y The signal.
+#' @return The result of the method: double.
+#' @export
+peak <- R8::generic(
+  "peak",
+  R8::params(x, y = R8::arg(r8pkgR::Signal)),
+  description = "The peak of a signal, a value of r8pkgR's type, in the extent of a grid.",
+  return_type = R8::type_double()
+)
+
+#' side
+#'
+#' The side of the square that the figure of a grid is, if it is one; the type is named in no field and no signature of this crate.
+#'
+#' The generic `pkgs::side`, declared in Rust.
+#'
+#' @param x A value, whose type selects the method.
+#' @return The result of the method: optional double.
+#' @export
+side <- R8::generic(
+  "side",
+  R8::params(x),
+  description = "The side of the square that the figure of a grid is, if it is one; the type is named in no field and no signature of this crate.",
+  return_type = R8::option(R8::type_double())
+)

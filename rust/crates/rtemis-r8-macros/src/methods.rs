@@ -184,6 +184,7 @@ pub fn expand(args: &Args, item: syn::Item) -> Result<Tokens> {
     let params: Vec<Ident> = positions.iter().map(|(p, _)| p.ident.clone()).collect();
     let fns = methods.iter().map(|m| &m.function);
     let rows = methods.iter().map(|m| &m.row);
+    let pins = methods.iter().map(|m| &m.pins);
     let bounds: Vec<_> = methods.iter().flat_map(|m| &m.predicates).collect();
     let tag = option(args.tag.as_ref());
     let provided: TraitItem = syn::parse_quote! {
@@ -206,6 +207,11 @@ pub fn expand(args: &Args, item: syn::Item) -> Result<Tokens> {
                 methods: __r8_rows,
                 tag: #tag,
                 required_fields: ::std::vec![#(#fields),*],
+                register: |__r8_set| {
+                    <Self as #api::Position>::register(__r8_set);
+                    #(<#params as #api::Position>::register(__r8_set);)*
+                    #(#pins)*
+                },
             }
         }
     };
@@ -344,6 +350,9 @@ struct Method {
     identifier: String,
     /// Its declaration.
     def: Tokens,
+    /// The statements that add the declarations of the types of its
+    /// parameters and its result, for an impl.
+    pins: Tokens,
     /// The registration of the types that it names.
     register: Tokens,
     /// Why Rust does not declare it.
@@ -751,6 +760,19 @@ fn method(of: &Trait, f: &syn::TraitItemFn, attrs: &MethodAttrs) -> Result<Metho
         .iter()
         .filter(|a| a.path().is_ident("cfg"))
         .collect();
+    let pins = {
+        let of_result = returned.map(|t| {
+            let t = unbound(t.to_token_stream());
+            quote! { <#t as #api::IntoR>::register(__r8_set); }
+        });
+        quote! {
+            #(#cfg)*
+            {
+                #(#register)*
+                #of_result
+            }
+        }
+    };
     let function = quote! {
         #(#cfg)*
         unsafe extern "C" fn #ident<
@@ -789,13 +811,12 @@ fn method(of: &Trait, f: &syn::TraitItemFn, attrs: &MethodAttrs) -> Result<Metho
         __r8_rows.push(#api::MethodRow {
             name: #name_c,
             call: #ident::<#(#generic_params,)* Self>,
-            n_params: #n_params,
-            signature: ::std::option::Option::Some(#sign::method(
+            signature: #sign::method(
                 #r_name,
                 "",
                 ::std::vec![#sign::dispatched(#stated, #marked, "") #(, #params)*],
                 #signed,
-            )),
+            ),
         });
     };
     if !cfg.is_empty() {
@@ -847,6 +868,7 @@ fn method(of: &Trait, f: &syn::TraitItemFn, attrs: &MethodAttrs) -> Result<Metho
         predicates,
         identifier,
         def,
+        pins,
         register: quote! { #(#register)* },
         undeclared,
     })

@@ -724,29 +724,31 @@ impl Encoder<'_> {
     }
 
     fn named(&mut self, x: &Robj, name: &QualifiedName, path: &str) -> Value {
-        let qname = name.to_string();
+        let xs = unsafe { x.get() };
         // A field of a named type admits exactly that type: a descendant's
         // class vector also names its ancestors.
-        let exact = x
-            .get_attrib("r8_type")
-            .and_then(|t| t.as_str().map(|t| t == qname))
-            .unwrap_or(false);
-        if !x.inherits("r8_value") || !exact {
-            // A descendant's class vector names the field's type.
-            let descendant = x.inherits(&qname).then(|| {
-                x.get_attrib("r8_type")
-                    .and_then(|t| t.as_str().map(str::to_string))
-            });
-            let message = match descendant.flatten() {
-                Some(child) => format!(
-                    "expected a value of `{qname}`, found one of its descendant `{child}`; r8_upcast() gives its value of `{qname}`"
-                ),
-                None => format!("expected a value of `{qname}`"),
-            };
-            return self.err("r_type", path, message);
+        if !crate::rview::is_type(xs, name) {
+            return self.err(
+                "r_type",
+                path,
+                crate::rview::not_named_message(Some(xs), name),
+            );
         }
+        let variant = crate::value::variant(xs).unwrap_or_default();
+        self.members(x, name, &variant, path)
+    }
+
+    /// The JSON form of the fields of `x`, a named list, as those of a value of
+    /// the type `name`, of the variant `variant` for an enum.
+    pub(crate) fn members(
+        &mut self,
+        x: &Robj,
+        name: &QualifiedName,
+        variant: &str,
+        path: &str,
+    ) -> Value {
         let Some(def) = self.lookup.find(name).cloned() else {
-            return self.err("unknown_type", path, format!("`{qname}` is not registered"));
+            return self.err("unknown_type", path, format!("`{name}` is not registered"));
         };
         let list = x.as_list();
         let get = |n: &str| -> Robj {
@@ -770,10 +772,6 @@ impl Encoder<'_> {
                 Value::Object(m)
             }
             TypeDef::Enum(e) => {
-                let variant: String = x
-                    .get_attrib("r8_variant")
-                    .and_then(|v| v.as_str().map(str::to_string))
-                    .unwrap_or_default();
                 let unit_only = e
                     .variants
                     .iter()
@@ -812,9 +810,7 @@ impl Encoder<'_> {
     /// or `"$type"` with the qualified name, beside the value's members; a
     /// unit-only enum is an object of the type member and its own tag.
     fn dynamic(&mut self, x: &Robj, ft: &FieldType, path: &str) -> Value {
-        let ty = x
-            .get_attrib("r8_type")
-            .and_then(|t| t.as_str().map(str::to_string));
+        let ty = crate::value::type_name(unsafe { x.get() });
         let Some(q) = ty.and_then(|t| QualifiedName::parse(&t).ok()) else {
             return self.err(
                 "r_type",
@@ -1301,26 +1297,18 @@ impl Decoder<'_> {
                     .map(|(_, x)| x)
             })
         };
-        let fields_of = |fields: &[FieldDef]| -> Result<(Vec<String>, Vec<Robj>)> {
-            let mut names = Vec::new();
-            let mut values = Vec::new();
-            for f in fields {
-                names.push(f.name.to_string());
-                values.push(match carry(f) {
-                    Some(x) => x,
-                    None => match v.get(f.name.as_str()) {
-                        Some(x) => self.value(x, &f.ty)?,
-                        None => ().into(),
-                    },
-                });
-            }
-            Ok((names, values))
+        let fields_of = |fields: &[FieldDef]| -> Result<Vec<Robj>> {
+            fields
+                .iter()
+                .map(|f| match (carry(f), v.get(f.name.as_str())) {
+                    (Some(x), _) => Ok(x),
+                    (None, Some(x)) => self.value(x, &f.ty),
+                    (None, None) => Ok(().into()),
+                })
+                .collect()
         };
-        let (names, values, variant, version) = match &def {
-            TypeDef::Struct(s) => {
-                let (n, vals) = fields_of(&s.fields)?;
-                (n, vals, None, s.version)
-            }
+        let (values, variant) = match &def {
+            TypeDef::Struct(s) => (fields_of(&s.fields)?, None),
             TypeDef::Enum(e) => {
                 let unit_only = e
                     .variants
@@ -1349,30 +1337,25 @@ impl Decoder<'_> {
                     },
                     _ => Vec::new(),
                 };
-                let (n, vals) = fields_of(&fields)?;
-                (n, vals, Some(variant), e.version)
+                (fields_of(&fields)?, Some(variant))
             }
         };
-        let mut r: Robj = List::from_values(values).into();
-        r.set_names(names)?;
-        let qname = name.to_string();
-        r.set_class(crate::construct::value_class(&qname))?;
-        r.set_attrib("r8_type", qname.as_str())?;
-        r.set_attrib("r8_version", version as i32)?;
-        if let Some(var) = &variant {
-            r.set_attrib("r8_variant", var.as_str())?;
-        }
-        // The codec of a Rust-stored type builds the state from the fields.
-        let Some(vt) = crate::exports::codec(&qname) else {
-            return Ok(r);
-        };
+        let r: Robj = List::from_values(values).into();
         let fields = unsafe { r.get() };
+        let id = crate::value::identity(name, variant.as_deref(), self.lookup)
+            .map_err(|(_, m)| fail(m))?;
+        // The codec of a Rust-stored type builds the state from the fields.
+        let Some(vt) = crate::exports::codec(&name.to_string())
+            .map_err(|m| fail(format!("{m} [declaration_changed]")))?
+        else {
+            return Ok(unsafe { Robj::from_sexp(crate::value::new(fields, id)) });
+        };
         let state = match &variant {
             None => crate::rust_stored::from_fields(vt, fields),
             Some(v) => crate::rust_stored::from_variant(vt, v, fields),
         }
         .map_err(fail)?;
-        Ok(unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, fields)) })
+        Ok(unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, id)) })
     }
 }
 
@@ -1707,31 +1690,43 @@ fn r8_value_hash(x: Robj) -> Result<Robj> {
 /// and identical host-only fields, compared in place.
 ///
 /// @param x,y R8 values.
-/// @return Logical: One value.
+/// @return Logical: One value; `list(message = )` when a value, or one that it
+///   holds, is of another declaration than the registered one, and
+///   `list(stale = )`, the parent, for a stale type.
 /// @keywords internal
 /// @noRd
 #[extendr]
 fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
     let (xs, ys) = unsafe { (x.get(), y.get()) };
     let (q, docs) = value_type(xs)?;
-    if crate::rview::attr_string(ys, crate::rview::sym_r8_type()).as_deref() != Some(&q.to_string())
-    {
+    if crate::value::type_name(ys).as_deref() != Some(&q.to_string()) {
         return Ok(false.into());
     }
+    if let Some(o) = crate::value::other(xs).or_else(|| crate::value::other(ys)) {
+        return Ok(list!(message = o.message()).into());
+    }
     let lookup: &dyn TypeLookup = &*docs;
-    let eq = rtemis_r8::equal::equal_access(
-        &q,
-        crate::rview::RView::Whole(xs),
-        crate::rview::RView::Whole(ys),
-        lookup,
-    );
+    if lookup.is_stale(&q) {
+        let parent = lookup.ancestors(&q).first().map(|p| p.to_string());
+        return Ok(list!(stale = parent.unwrap_or_default()).into());
+    }
+    let (eq, met) = crate::value::meeting(|| {
+        rtemis_r8::equal::equal_access(
+            &q,
+            crate::rview::RView::Whole(xs),
+            crate::rview::RView::Whole(ys),
+            lookup,
+        )
+    });
+    if let Some(o) = met.and_then(crate::value::other) {
+        return Ok(list!(message = o.message()).into());
+    }
     Ok(eq.into())
 }
 
 /// The qualified type of an R8 value, with a snapshot of the registry.
 fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::Arc<DocumentSet>)> {
-    let type_name = crate::rview::attr_string(x, crate::rview::sym_r8_type())
-        .ok_or_else(|| fail("not an R8 value"))?;
+    let type_name = crate::value::type_name(x).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry().snapshot();
     Ok((q, docs))
@@ -1782,13 +1777,11 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     let v = rtemis_r8::tree::TreeRef::new(&tree);
     let lookup: &dyn TypeLookup = &*docs;
     // A Rust-stored struct or enum: the codec builds the state from the
-    // read value through `from_reader` when its table has it, and otherwise
-    // from the validated fields as R values (`Decoder::named()`); the state's
-    // variant is checked against the document's, and the codec receives no
-    // JSON text.
-    if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name))
-        && crate::rust_stored::has_from_reader(vt)
-    {
+    // read value through `from_reader`; the state's variant is checked against
+    // the document's, and the codec receives no JSON text.
+    let codec =
+        crate::exports::codec(type_name).map_err(|m| fail(format!("{m} [declaration_changed]")))?;
+    if let (Some(def), Some(vt)) = (lookup.find(&q), codec) {
         let values = Values { lookup };
         let lent = rtemis_r8::reader::TreeReader::new(&values);
         let reader = lent.table();
@@ -1817,22 +1810,14 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
                 )));
             }
         }
-        let Some((names, version)) =
-            crate::rust_stored::value_fields(def, variant.as_deref(), lookup)
-        else {
+        let Ok(id) = crate::value::identity(&q, variant.as_deref(), lookup) else {
             drop_state();
             return Err(fail(format!(
                 "the codec of `{q}` built a state of the undeclared variant `{}` [codec_variant]",
                 variant.unwrap_or_default()
             )));
         };
-        let value = unsafe {
-            let like =
-                crate::rust_stored::template(&q.to_string(), &names, version, variant.as_deref());
-            let r = Robj::from_sexp(crate::rust_stored::wrap(vt, state, like));
-            extendr_ffi::Rf_unprotect(1);
-            r
-        };
+        let value = unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, id)) };
         return Ok(list!(value = value));
     }
     Ok(list!(

@@ -22,8 +22,7 @@
 #' an R8 generic or an S3 generic, and otherwise to the Rd file of the type. A roxygen block above the call
 #' adds its `@param` entries to that file; a call without a block is found by
 #' scanning `R/`, and is left out when neither the generic nor the type has an
-#' Rd file in the package. A method the package implements in compiled code
-#' (`R8.h`), registered when roxygen2 loads the package, takes an entry by the
+#' Rd file in the package. A method the package implements in Rust, registered when roxygen2 loads the package, takes an entry by the
 #' same rules, with the formals of the trait's method. A replacement method
 #' is written as its call, `labels(x) <- value`. A method of a converter
 #' from `r8_converter()`, `implement(as_target, "character") <- function(x)

@@ -94,9 +94,10 @@ fn exported_schemas_agree_with_validation() {
             one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
-        // Value cases; a `dispatch` case names a trait.
+        // Value cases; a `dispatch` case names a trait, and the input of a
+        // `refine` and an `update` case are declarations.
         for case in suite["cases"].as_array().unwrap() {
-            if case["op"] == "dispatch" {
+            if ["dispatch", "refine", "update"].contains(&case["op"].as_str().unwrap_or_default()) {
                 continue;
             }
             let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
@@ -181,9 +182,10 @@ fn closed_schemas_list_the_registered_implementors() {
             one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
-        // Value cases; a `dispatch` case names a trait.
+        // Value cases; a `dispatch` case names a trait, and the input of a
+        // `refine` and an `update` case are declarations.
         for case in suite["cases"].as_array().unwrap() {
-            if case["op"] == "dispatch" {
+            if ["dispatch", "refine", "update"].contains(&case["op"].as_str().unwrap_or_default()) {
                 continue;
             }
             let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();

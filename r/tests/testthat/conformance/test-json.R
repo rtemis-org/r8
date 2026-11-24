@@ -39,7 +39,13 @@ test_that("serialize() and saveRDS() round trip to an equal value", {
   p <- conformance_provider()
   x <- conform_value(p)
   expect_true(r8_equal(unserialize(serialize(x, NULL)), x))
-  expect_true(r8_equal(unserialize(serialize(x, NULL, version = 2)), x))
+  # Version 2 of R's format, which R has not written by default since 3.6.0,
+  # holds a list of the fields.
+  expect_error(
+    r8_validate(unserialize(serialize(x, NULL, version = 2))),
+    "is not one",
+    class = "r8_type_error"
+  )
   path <- tempfile(fileext = ".rds")
   on.exit(unlink(path))
   saveRDS(x, path)

@@ -574,8 +574,8 @@ tuple_ir <- function(positions) {
 #' @keywords internal
 #' @noRd
 dispatch_key <- function(x) {
-  type <- attr(x, "r8_type", exact = TRUE)
-  if (is.character(type) && length(type) == 1L) {
+  type <- value_type(x)
+  if (!is.null(type)) {
     return(type)
   }
   cls <- attr(x, "class", exact = TRUE)
@@ -623,18 +623,36 @@ dispatch_key <- function(x) {
 #' @keywords internal
 #' @noRd
 select_tuple <- function(trait_name, method, args, above = NULL) {
+  for (x in args) {
+    if (is_value(x)) {
+      other_abort(
+        x,
+        what = paste0(
+          "An argument of the call of `",
+          trait_name,
+          "` (method `",
+          method,
+          "`)"
+        ),
+        class = "r8_dispatch_error"
+      )
+    } else if (inherits(x, "r8_value")) {
+      r8_abort(
+        "An argument of the call of `",
+        trait_name,
+        "` (method `",
+        method,
+        "`) ",
+        not_value_text(x),
+        class = "r8_dispatch_error"
+      )
+    }
+  }
   if (length(args) == 1L) {
     x <- args[[1L]]
-    if (inherits(x, "r8_value")) {
+    if (is_value(x)) {
       r8 <- TRUE
-      types <- attr(x, "r8_type") %||% NA_character_
-      if (!is.character(types) || length(types) != 1L) {
-        r8_abort(
-          "A value of class `r8_value` carries its type's qualified name as ",
-          "the attribute `r8_type`, one string.",
-          class = "r8_dispatch_error"
-        )
-      }
+      types <- value_type(x)
       chains <- list(NULL)
     } else {
       r8 <- FALSE
@@ -642,10 +660,10 @@ select_tuple <- function(trait_name, method, args, above = NULL) {
       chains <- list(.class2(x))
     }
   } else {
-    r8 <- vapply(args, inherits, logical(1), "r8_value")
+    r8 <- vapply(args, is_value, logical(1))
     types <- ifelse(
       r8,
-      vapply(args, function(a) attr(a, "r8_type") %||% NA_character_, ""),
+      vapply(args, function(a) value_type(a) %||% NA_character_, ""),
       NA_character_
     )
     chains <- lapply(seq_along(args), function(i) {

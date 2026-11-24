@@ -43,7 +43,7 @@ pending_fields <- function(x) {
 #'
 #' @export
 r8_resolve <- function(x, context = list()) {
-  if (!inherits(x, "r8_value") || !is.null(attr(x, "r8_variant"))) {
+  if (!is_value(x) || !is.null(value_variant(x))) {
     r8_abort("`x` is an R8 struct value.", class = "r8_type_error")
   }
   if (!is.list(context) || (length(context) > 0L && is.null(names(context)))) {
@@ -52,6 +52,7 @@ r8_resolve <- function(x, context = list()) {
       class = "r8_type_error"
     )
   }
+  require_current(x)
   pending <- pending_fields(x)
   unknown <- setdiff(names(context), names(pending[pending == "context"]))
   if (length(unknown) > 0L) {
@@ -65,7 +66,7 @@ r8_resolve <- function(x, context = list()) {
         "are not absent context fields"
       },
       " of `",
-      attr(x, "r8_type"),
+      value_type(x),
       "`.",
       class = "r8_value_error"
     )
@@ -75,9 +76,9 @@ r8_resolve <- function(x, context = list()) {
   for (n in names(context)) {
     fields[n] <- list(context[[n]])
   }
-  res <- r8_resolve_value(fields, attr(x, "r8_type"))
+  res <- r8_resolve_value(fields, value_type(x))
   if (!is.null(res[["errors"]])) {
-    value_abort("Cannot resolve", attr(x, "r8_type"), res[["errors"]])
+    value_abort("Cannot resolve", value_type(x), res[["errors"]])
   }
   res[["value"]]
 } # /R8::r8_resolve
@@ -108,19 +109,19 @@ r8_resolve <- function(x, context = list()) {
 #'
 #' @export
 r8_validate <- function(x, complete = FALSE) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  if (!is_value(x)) {
+    value_required(x)
   }
   res <- r8_value_check(x)
   if (!is.null(res)) {
-    value_abort("Invalid", attr(x, "r8_type"), res[["errors"]])
+    value_abort("Invalid", value_type(x), res[["errors"]])
   }
   if (isTRUE(complete)) {
     pending <- pending_fields(x)
     if (length(pending) > 0L) {
       r8_abort(
         "`",
-        attr(x, "r8_type"),
+        value_type(x),
         "` has pending fields: ",
         paste0("`", names(pending), "` (", pending, ")", collapse = ", "),
         ". r8_resolve() fills them.",

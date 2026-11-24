@@ -106,7 +106,7 @@ other_variant <- function(x, variant) {
       class = "r8_type_error"
     )
   }
-  qname <- attr(x, "r8_type")
+  qname <- value_type(x)
   declared <- .r8_variants[[qname]]
   if (is.null(declared)) {
     if (!r8_is_registered(qname)) {
@@ -134,8 +134,8 @@ other_variant <- function(x, variant) {
 variant_abort <- function(x, ...) {
   r8_abort(
     "`x` is an R8 enum value",
-    if (inherits(x, "r8_value")) {
-      paste0("; `", attr(x, "r8_type"), "` is a struct")
+    if (is_value(x)) {
+      paste0("; `", value_type(x), "` is a struct")
     },
     ".",
     class = "r8_type_error"

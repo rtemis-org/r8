@@ -800,6 +800,7 @@ register_s3_method <- function(entry) {
   if (endsWith(entry[["name"]], "<-")) {
     fn <- replacement_method(fn, paste(trait_name, entry[["name"]], sep = "|"))
   }
+  fn <- checked_s3_method(fn)
   if (nzchar(entry[["package"]])) {
     registerS3method(
       entry[["name"]],

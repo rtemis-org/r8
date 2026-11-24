@@ -66,7 +66,7 @@ text of an R8 value is its type's \code{Display} impl's, or its default layout
 (\code{r8_layout()}); a \code{Print} impl replaces the output of \code{print()}, and a
 \code{Debug} impl the output of \code{str()}. The default \code{str()} adds to the size
 of a Rust-stored value the fields read into R that are not views of its
-state, which together make \code{r8_size(x)}: \verb{<pkgc::Signal> 7.63 MiB + 112 B read}.
+state, which together make \code{r8_size(x)}: \verb{<pkgr::Signal> 7.63 MiB + 112 B read}.
 }
 \examples{
 GBM <- new_struct("GBM", fields = list(n_trees = type_integer()))

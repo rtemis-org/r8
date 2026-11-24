@@ -317,15 +317,35 @@ fn strip(def: &mut TypeDef) {
     }
 }
 
+/// Whether two declarations of a type are the same: equal without what the
+/// declaration hash excludes. The types that they reach are not compared.
+pub fn same_declaration(a: &TypeDef, b: &TypeDef) -> bool {
+    let stripped = |t: &TypeDef| {
+        let mut t = t.clone();
+        strip(&mut t);
+        canonical_text(&serde_json::to_value(&t).expect("a declaration serializes"))
+    };
+    a == b || stripped(a) == stripped(b)
+}
+
 /// The declaration hash of a type: the SHA-256 of the canonical text of an
 /// object mapping the qualified name of the type and of every named type it
 /// reaches to its declaration, with descriptions emptied, and extensions,
 /// `extends`, and `inherited_from` removed. A reached type outside the
 /// lookup maps to `null`.
 pub fn declaration_hash(ty: &QualifiedName, lookup: &dyn TypeLookup) -> String {
+    text_hash(&hashed_declaration(ty, lookup))
+}
+
+/// The text whose SHA-256 is the declaration hash of a type.
+pub fn declaration_text(ty: &QualifiedName, lookup: &dyn TypeLookup) -> String {
+    canonical_text(&hashed_declaration(ty, lookup))
+}
+
+fn hashed_declaration(ty: &QualifiedName, lookup: &dyn TypeLookup) -> Value {
     let mut seen = std::collections::BTreeMap::new();
     reachable(ty, lookup, &mut seen);
-    text_hash(&Value::Object(seen.into_iter().collect()))
+    Value::Object(seen.into_iter().collect())
 }
 
 /// The content hash of a valid value, `sha256:<hex>`.

@@ -36,10 +36,10 @@ type_text <- function(type) {
 #' @keywords internal
 #' @noRd
 default_text <- function(x) {
-  if (inherits(x, "r8_value")) {
-    variant <- attr(x, "r8_variant")
+  if (is_value(x)) {
+    variant <- value_variant(x)
     return(paste0(
-      attr(x, "r8_type"),
+      value_type(x),
       if (!is.null(variant)) paste0("@", variant),
       if (length(attr(x, "names", exact = TRUE)) > 0L) "(...)"
     ))

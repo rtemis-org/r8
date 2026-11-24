@@ -4,6 +4,7 @@
 //! that `#[r8::methods]` generates call.
 
 use std::any::TypeId;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_void};
 use std::ops::Deref;
@@ -217,7 +218,13 @@ impl<T> Receiver<'_, T> {
         if status == OK {
             return Ok(Receiver::Borrowed(unsafe { &*state.cast::<T>() }));
         }
-        let e = Error::from_abi(&err);
+        let mut e = Error::from_abi(&err);
+        if e.code == "not_pinned" {
+            pin::<T>()?;
+            err = api::blank();
+            unsafe { f(x, T::TYPE_NAME.as_ptr(), module(), &mut state, &mut err) };
+            e = Error::from_abi(&err);
+        }
         match e.code.as_str() {
             "not_lent" => {}
             "type_mismatch" => {
@@ -228,14 +235,88 @@ impl<T> Receiver<'_, T> {
             }
             _ => return Err(Error::new(e.code, format!("`{name}`: {}", e.message))),
         }
-        // A field read of a value of another package's codec may raise an R
-        // error.
-        let n = unsafe { sys::Rf_xlength(x) };
-        let fields = (0..n)
-            .map(|i| api::protect(&|| unsafe { sys::VECTOR_ELT(x, i) }))
-            .collect::<std::result::Result<Vec<SEXP>, Jumped>>()
-            .map_err(Jumped::into_error)?;
-        unsafe { T::from_value(x, &fields) }.map(Receiver::Built)
+        unsafe { T::from_value(x) }
+            .map(Receiver::Built)
+            .map_err(|e| Error::new(e.code, format!("`{name}`: {}", e.message)))
+    }
+}
+
+/// Gives R8 the declarations that this package was compiled against of `T` and
+/// the types that it reaches, as the record of its exports does of the types
+/// that its declarations and its signatures name.
+fn pin<T: RustStored>() -> Result<()> {
+    use rtemis_r8::record::{self, DeclarationRef};
+    let f = api::api()?
+        .pin
+        .ok_or_else(|| Error::new("no_api", "R8's API has no `pin`"))?;
+    let docs = T::declarations().into_documents();
+    let bytes = record::encode(docs.iter().flat_map(|d| {
+        d.types
+            .iter()
+            .map(|t| (&d.namespace, DeclarationRef::Type(t)))
+    }));
+    let mut err = api::blank();
+    if unsafe { f(module(), bytes.as_ptr(), bytes.len(), &mut err) } == OK {
+        Ok(())
+    } else {
+        Err(Error::from_abi(&err))
+    }
+}
+
+/// The fields of the value `x` that `names` gives, in the order of `names`.
+/// Each is looked for at its own position first, which is where a value of a
+/// type that is declared as it was compiled has it.
+///
+/// # Safety
+///
+/// On R's main thread, with a valid `x`.
+#[doc(hidden)]
+pub unsafe fn fields_by_name(
+    x: SEXP,
+    names: impl FnOnce(&mut dyn FnMut(&'static CStr)),
+) -> Result<Vec<SEXP>> {
+    let mut wanted: Vec<&'static CStr> = Vec::new();
+    names(&mut |n| wanted.push(n));
+    let nil = unsafe { sys::R_NilValue };
+    let out: Vec<Cell<SEXP>> = vec![Cell::new(nil); wanted.len()];
+    let missing = Cell::new(None);
+    // A field read of a value of another package's codec may raise an R error.
+    api::protect(&|| unsafe {
+        let have = sys::Rf_getAttrib(x, sys::R_NamesSymbol);
+        let n = if sys::TYPEOF(have) == sys::STRSXP {
+            sys::Rf_xlength(have).min(sys::Rf_xlength(x))
+        } else {
+            0
+        };
+        let at = |j: isize, name: &CStr| {
+            j < n && CStr::from_ptr(sys::R_CHAR(sys::STRING_ELT(have, j))) == name
+        };
+        for (i, name) in wanted.iter().enumerate() {
+            let found = if at(i as isize, name) {
+                Some(i as isize)
+            } else {
+                (0..n).find(|j| at(*j, name))
+            };
+            match found {
+                Some(j) => out[i].set(sys::VECTOR_ELT(x, j)),
+                None => {
+                    missing.set(Some(i));
+                    break;
+                }
+            }
+        }
+        nil
+    })
+    .map_err(Jumped::into_error)?;
+    match missing.get() {
+        None => Ok(out.into_iter().map(Cell::into_inner).collect()),
+        Some(i) => Err(Error::new(
+            "declaration_changed",
+            format!(
+                "the value has no field `{}`; it was made before its type was declared again",
+                wanted[i].to_string_lossy()
+            ),
+        )),
     }
 }
 
@@ -255,33 +336,35 @@ pub unsafe fn optional_arg<'a, T: RustStored>(
     unsafe { Receiver::from_named_arg(x, name) }.map(Some)
 }
 
-/// The variant of an R-stored enum value `x`, its `r8_variant` attribute.
+/// The variant of the enum value `x`.
 ///
 /// # Safety
 ///
 /// On R's main thread, with a valid `x`.
 #[doc(hidden)]
 pub unsafe fn r_variant(x: SEXP) -> Result<String> {
-    unsafe { r_string_attribute(x, c"r8_variant") }
+    let variant = unsafe { r_type(x) }?.1;
+    variant.ok_or_else(|| Error::new("no_variant", "the value has no variant"))
 }
 
-/// The attribute `name` of `x`, one string.
+/// The type of the value `x`, its qualified name, and the variant of an enum's
+/// value.
 ///
 /// # Safety
 ///
 /// On R's main thread, with a valid `x`.
-pub(crate) unsafe fn r_string_attribute(x: SEXP, name: &CStr) -> Result<String> {
-    unsafe {
-        let v = api::protect(&|| sys::Rf_getAttrib(x, sys::Rf_install(name.as_ptr())))
-            .map_err(api::Jumped::into_error)?;
-        if sys::TYPEOF(v) != sys::STRSXP || sys::Rf_xlength(v) != 1 {
-            return Err(Error::new(
-                "no_attribute",
-                format!("the value has no `{}`", name.to_string_lossy()),
-            ));
-        }
-        let p = sys::Rf_translateCharUTF8(sys::STRING_ELT(v, 0));
-        Ok(CStr::from_ptr(p).to_string_lossy().into_owned())
+pub(crate) unsafe fn r_type(x: SEXP) -> Result<(String, Option<String>)> {
+    let f = api::api()?
+        .value_type
+        .ok_or_else(|| Error::new("no_api", "R8's API has no `value_type`"))?;
+    let (mut name, mut variant) = (std::ptr::null(), std::ptr::null());
+    unsafe { f(x, &mut name, &mut variant) };
+    let text = |p: *const std::ffi::c_char| {
+        (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
+    };
+    match text(name) {
+        Some(name) => Ok((name, text(variant))),
+        None => Err(Error::new("not_a_value", "the object is not an R8 value")),
     }
 }
 

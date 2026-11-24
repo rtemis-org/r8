@@ -16,7 +16,7 @@ use rtemis_r8::rules::DocumentSet;
 use serde_json::Value;
 
 use crate::api::{self, Error, Jumped, Result};
-use crate::call::{FromR, IntoR, Receiver, field_list, r_string_attribute, rust_value};
+use crate::call::{FromR, IntoR, Receiver, field_list, r_type, rust_value};
 use crate::field::Field;
 use crate::keep::{self, Token};
 use crate::reader::{Node, Reader};
@@ -60,7 +60,7 @@ impl Held {
     /// On R's main thread, with a valid `x`.
     unsafe fn new(x: SEXP) -> Result<Self> {
         let token = unsafe { Token::keep(x) }?;
-        let type_name = unsafe { r_string_attribute(x, c"r8_type") }?;
+        let type_name = unsafe { r_type(x) }?.0;
         let name =
             CString::new(type_name.as_str()).map_err(|e| Error::new("bad_name", e.to_string()))?;
         let lend = api::api()?
@@ -70,7 +70,12 @@ impl Held {
         let mut err = api::blank();
         if unsafe { lend(x, name.as_ptr(), module(), &mut state, &mut err) } != OK {
             let e = Error::from_abi(&err);
-            if e.code != "not_lent" {
+            // A state that is not lent: the value's fields are read, or
+            // refused, when the code reads the value as a type that it names.
+            if !matches!(
+                e.code.as_str(),
+                "not_lent" | "not_pinned" | "declaration_changed"
+            ) {
                 return Err(e);
             }
             state = std::ptr::null();

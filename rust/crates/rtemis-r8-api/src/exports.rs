@@ -7,22 +7,21 @@ use std::sync::OnceLock;
 use rtemis_r8::abi::{self, ABI_VERSION, MethodFn};
 use rtemis_r8::ir::{MethodDef, RequiredField, TraitDef, TypeDef};
 use rtemis_r8::name::Name;
+use rtemis_r8::rules::DocumentSet;
 
 use crate::dispatch::PositionEntry;
 use crate::keep;
+use crate::rust_stored::module;
 use crate::sys;
 
-/// One method of an impl: its name, the generated function, and the number
-/// of its parameters, `x` included and `...` counted as one.
+/// One method of an impl: its name, the generated function, and its signature.
 pub struct MethodRow {
     /// The method's name, as the trait declares it.
     pub name: &'static CStr,
     /// The generated function.
     pub call: MethodFn,
-    /// The number of parameters.
-    pub n_params: usize,
-    /// The method's signature, `None` for a conversion.
-    pub signature: Option<MethodDef>,
+    /// The method's signature.
+    pub signature: MethodDef,
 }
 
 /// The methods of one impl, which the function that `#[r8::methods]` adds
@@ -39,20 +38,15 @@ pub struct ImplSet {
     pub tag: Option<&'static str>,
     /// The fields that the trait's accessors give.
     pub required_fields: Vec<RequiredField>,
+    /// Adds the declarations of the types of the impl's positions, parameters,
+    /// and results.
+    pub register: fn(&mut DocumentSet),
 }
 
-/// The declaration record of the signatures of an impl's methods; no bytes
-/// for an impl that states none.
+/// The declaration record of the signatures of an impl's methods.
 fn signature(set: &mut ImplSet, ns: &Name) -> &'static [u8] {
     use rtemis_r8::record::{self, DeclarationRef};
-    let methods: Vec<MethodDef> = set
-        .methods
-        .iter_mut()
-        .filter_map(|m| m.signature.take())
-        .collect();
-    if methods.is_empty() {
-        return &[];
-    }
+    let methods: Vec<MethodDef> = set.methods.iter().map(|m| m.signature.clone()).collect();
     let name = set.trait_name.to_str().unwrap_or_default();
     let base = name.split_once("::").map_or(name, |(_, b)| b);
     let t = crate::signature::trait_def(
@@ -81,9 +75,10 @@ fn position(p: &PositionEntry) -> abi::Position {
 }
 
 /// The package's exports table, built on first use: the declaration record
-/// of `declarations` (the types, and the traits declared in Rust), the codec
-/// tables `codecs`, and the entries of the impls that `impls` give, from which R8
-/// builds the impl declarations.
+/// of the types that `types` adds and of `traits`, the traits declared in Rust,
+/// with the types of other namespaces that they and the impls reach; the codec
+/// tables `codecs`; and the entries of the impls that `impls` give, from which
+/// R8 builds the impl declarations.
 ///
 /// # Panics
 ///
@@ -95,25 +90,42 @@ pub fn table(
     package: &'static CStr,
     namespace: &str,
     codecs: &'static [abi::Codec],
-    declarations: impl FnOnce() -> (Vec<TypeDef>, Vec<TraitDef>),
+    types: impl FnOnce(&mut DocumentSet),
+    traits: &[fn() -> TraitDef],
     impls: &'static [fn() -> ImplSet],
 ) -> *const abi::Exports {
     *cell.get_or_init(|| {
         use rtemis_r8::record::{self, DeclarationRef};
         let ns = Name::new(namespace).expect("the macro checks the namespace");
-        let (types, traits) = declarations();
+        let mut set = DocumentSet::default();
+        types(&mut set);
+        // The namespace's own types are those that the listed types and traits
+        // reach; a signature adds types of other namespaces only.
+        let own: Vec<TypeDef> = set
+            .namespace(&ns)
+            .map(|d| d.types.clone())
+            .unwrap_or_default();
+        let traits: Vec<TraitDef> = traits.iter().map(|t| t()).collect();
+        let sets: Vec<ImplSet> = impls.iter().map(|f| f()).collect();
+        for s in &sets {
+            (s.register)(&mut set);
+        }
+        let foreign = set.into_documents();
         let bytes = record::encode(
-            types
-                .iter()
+            own.iter()
                 .map(DeclarationRef::Type)
                 .chain(traits.iter().map(DeclarationRef::Trait))
-                .map(|d| (&ns, d)),
+                .map(|d| (&ns, d))
+                .chain(foreign.iter().filter(|d| d.namespace != ns).flat_map(|d| {
+                    d.types
+                        .iter()
+                        .map(|t| (&d.namespace, DeclarationRef::Type(t)))
+                })),
         );
         let ir: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-        let entries: Vec<abi::ImplEntry> = impls
-            .iter()
-            .flat_map(|set| {
-                let mut set = set();
+        let entries: Vec<abi::ImplEntry> = sets
+            .into_iter()
+            .flat_map(|mut set| {
                 let signature = signature(&mut set, &ns);
                 let positions: &'static [abi::Position] =
                     Box::leak(set.positions.iter().map(position).collect());
@@ -123,12 +135,7 @@ pub fn table(
                     n_positions: positions.len(),
                     method: m.name.as_ptr(),
                     call: Some(m.call),
-                    n_params: m.n_params,
-                    signature: if signature.is_empty() {
-                        std::ptr::null()
-                    } else {
-                        signature.as_ptr()
-                    },
+                    signature: signature.as_ptr(),
                     signature_len: signature.len(),
                 })
             })
@@ -138,6 +145,7 @@ pub fn table(
             abi_version: ABI_VERSION,
             size: std::mem::size_of::<abi::Exports>() as u32,
             package: package.as_ptr(),
+            module: module(),
             ir_record: ir.as_ptr(),
             ir_record_len: ir.len(),
             types: codecs.as_ptr(),

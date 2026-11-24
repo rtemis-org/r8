@@ -26,7 +26,7 @@ use rtemis_r8::abi::{
     Position,
 };
 use rtemis_r8::exports::ImplRow;
-use rtemis_r8::ir::{ClassSystem, IrDocument, TraitDef, TypeDef, TypeRef};
+use rtemis_r8::ir::{IrDocument, TraitDef, TypeDef, TypeRef};
 use rtemis_r8::name::{Name, QualifiedName};
 
 fn fail(message: impl Into<String>) -> Error {
@@ -44,7 +44,12 @@ struct ImplFn {
 
 /// A registered codec of a Rust-stored type.
 #[derive(Clone, Copy)]
-struct CodecPtr(*const Codec);
+struct CodecPtr {
+    table: *const Codec,
+    /// The generation of the registry at which the type's declaration was the
+    /// one that the codec was compiled against.
+    current: Option<u64>,
+}
 
 // The tables are static data of loaded shared objects, read on R's main
 // thread only.
@@ -76,9 +81,24 @@ fn compiled() -> &'static Mutex<Compiled> {
     COMPILED.get_or_init(|| Mutex::new(Compiled::default()))
 }
 
-/// The codec of the Rust-stored type `name`, when a package registered one.
-pub(crate) fn codec(name: &str) -> Option<*const Codec> {
-    compiled().lock().ok()?.types.get(name).map(|v| v.0)
+/// The codec of the Rust-stored type `name`, when a package registered one. A
+/// type that was declared otherwise after that has no codec to build a value
+/// with, which the error says.
+pub(crate) fn codec(name: &str) -> std::result::Result<Option<*const Codec>, String> {
+    let mut c = compiled().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(v) = c.types.get_mut(name) else {
+        return Ok(None);
+    };
+    let now = crate::construct::GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+    if v.current != Some(now) {
+        if !crate::pins::is_current(unsafe { (*v.table).module }, name) {
+            return Err(format!(
+                "`{name}` was declared again after its package registered its compiled code; load the package again"
+            ));
+        }
+        v.current = Some(now);
+    }
+    Ok(Some(v.table))
 }
 
 /// The package that registered the codec of the Rust-stored type `name`.
@@ -106,7 +126,7 @@ fn r8_compiled_types() -> Result<List> {
     let complete: Vec<bool> = names
         .iter()
         .map(|n| {
-            let v = unsafe { &*c.types[*n].0 };
+            let v = unsafe { &*c.types[*n].table };
             v.from_fields.is_some()
                 && v.encode.is_some()
                 && v.write_state.is_some()
@@ -201,33 +221,13 @@ fn positions(entry: &ImplEntry, package: &str) -> Result<Vec<TypeRef>> {
                 })?;
                 Ok(TypeRef::Named { name })
             }
-            POSITION_CLASS => {
-                let class = text(p.name, "class name")?;
-                let of = if p.package.is_null() {
-                    String::new()
-                } else {
-                    text(p.package, "class package")?
-                };
-                let system = match text(p.system, "class system")?.as_str() {
-                    "s3" => ClassSystem::S3,
-                    "s4" => ClassSystem::S4,
-                    "implicit" => ClassSystem::Implicit,
-                    other => {
-                        return Err(fail(format!(
-                            "the class `{class}` of an impl entry of `{package}` is of the system `{other}`, none of `s3`, `s4`, and `implicit`"
-                        )));
-                    }
-                };
-                Ok(TypeRef::HostClass {
-                    host: "r".into(),
-                    package: of,
-                    class,
-                    system,
-                })
-            }
+            POSITION_CLASS => Err(fail(format!(
+                "an impl entry of `{package}` is for the class `{}` of R; the methods of a class of R are written in R",
+                text(p.name, "class name")?
+            ))),
             POSITION_ANY => Ok(TypeRef::Any),
             other => Err(fail(format!(
-                "a position of an impl entry of `{package}` is of the kind {other}, none of R8_POSITION_TYPE, R8_POSITION_CLASS, and R8_POSITION_ANY"
+                "a position of an impl entry of `{package}` is of the kind {other}, neither R8_POSITION_TYPE nor R8_POSITION_ANY"
             ))),
         })
         .collect()
@@ -284,29 +284,40 @@ fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
     Ok(e)
 }
 
-/// The declarations of an exports table's declaration record, types and
-/// traits, each of the namespace `ns`; none for a table without a record, a
-/// table written by hand in C.
-fn record_declarations(e: &Exports, ns: &str) -> Result<(Vec<TypeDef>, Vec<TraitDef>)> {
+/// The declarations of an exports table's declaration record.
+#[derive(Default)]
+struct Declarations {
+    /// The types of the package's namespace.
+    types: Vec<TypeDef>,
+    /// The traits of the package's namespace.
+    traits: Vec<TraitDef>,
+    /// The types of other namespaces that the code was compiled against.
+    foreign: Vec<(Name, TypeDef)>,
+}
+
+/// The declarations of the record of an exports table, whose package declares
+/// into the namespace `ns`.
+fn record_declarations(e: &Exports, ns: &str) -> Result<Declarations> {
     use rtemis_r8::record::{self, Declaration};
     if e.ir_record.is_null() {
-        return Ok((Vec::new(), Vec::new()));
+        return Err(fail("the exports table has no declaration record"));
     }
     let bytes = unsafe { std::slice::from_raw_parts(e.ir_record, e.ir_record_len) };
     let entries = record::decode(bytes)
         .map_err(|e| fail(format!("the exports table's record does not read: {e}")))?;
-    let mut types = Vec::with_capacity(entries.len());
-    let mut traits = Vec::new();
+    let mut out = Declarations::default();
     for entry in entries {
-        if entry.namespace.as_str() != ns {
-            return Err(fail(format!(
-                "the exports table's record declares into `{}`; the package declares into `{ns}`",
-                entry.namespace
-            )));
-        }
+        let own = entry.namespace.as_str() == ns;
         match entry.declaration {
-            Declaration::Type(t) => types.push(t),
-            Declaration::Trait(t) => traits.push(t),
+            Declaration::Type(t) if own => out.types.push(t),
+            Declaration::Type(t) => out.foreign.push((entry.namespace, t)),
+            Declaration::Trait(t) if own => out.traits.push(t),
+            Declaration::Trait(t) => {
+                return Err(fail(format!(
+                    "the exports table's record declares the trait `{}::{}`; the package declares into `{ns}`",
+                    entry.namespace, t.name
+                )));
+            }
             Declaration::Impl(i) => {
                 return Err(fail(format!(
                     "the exports table's record declares an impl of `{}`; R8 builds impl declarations from the impl entries",
@@ -315,20 +326,22 @@ fn record_declarations(e: &Exports, ns: &str) -> Result<(Vec<TypeDef>, Vec<Trait
             }
         }
     }
-    Ok((types, traits))
+    Ok(out)
 }
 
 /// The signature of an impl entry's method, and the record of its impl, read
-/// from the entry's `signature`; `None` for an entry without one. The entries
-/// of one impl have one record, which `read` keeps by its address.
+/// from the entry's `signature`. The entries of one impl have one record, which
+/// `read` keeps by its address.
 fn signature(
     entry: &ImplEntry,
     method: &str,
     read: &mut HashMap<usize, std::rc::Rc<TraitDef>>,
-) -> Result<Option<(rtemis_r8::ir::MethodDef, std::rc::Rc<TraitDef>)>> {
+) -> Result<(rtemis_r8::ir::MethodDef, std::rc::Rc<TraitDef>)> {
     use rtemis_r8::record::{self, Declaration};
     if entry.signature.is_null() {
-        return Ok(None);
+        return Err(fail(format!(
+            "the impl entry of `{method}` states no signature"
+        )));
     }
     let held = match read.get(&(entry.signature as usize)) {
         Some(t) => t.clone(),
@@ -356,7 +369,7 @@ fn signature(
                 "the signature of an impl entry holds no method `{method}`"
             ))
         })?;
-    Ok(Some((found, held)))
+    Ok((found, held))
 }
 
 /// The rows of an exports table's impl entries, with their functions.
@@ -383,19 +396,20 @@ fn read_rows(
     let mut read = HashMap::new();
     for entry in entries {
         let method = text(entry.method, "method name")?;
-        let signed = signature(entry, &method, &mut read)?;
+        let (signed, held) = signature(entry, &method, &mut read)?;
         let trait_name = text(entry.trait_name, "trait name")?;
-        if let Some((_, t)) = &signed
-            && !out.records.iter().any(|(_, r)| std::rc::Rc::ptr_eq(r, t))
+        if !out
+            .records
+            .iter()
+            .any(|(_, r)| std::rc::Rc::ptr_eq(r, &held))
         {
-            out.records.push((trait_name.clone(), t.clone()));
+            out.records.push((trait_name.clone(), held));
         }
         let row = ImplRow {
             trait_name,
             positions: positions(entry, package)?,
             method,
-            n_params: entry.n_params,
-            signature: signed.map(|(m, _)| m),
+            signature: signed,
             return_type: None,
         };
         let call = entry.call.ok_or_else(|| {
@@ -410,9 +424,6 @@ fn read_rows(
         out.calls.push(ImplFn { call });
     }
     rtemis_r8::exports::resolve_methods(&mut out.rows, reg, package).map_err(fail)?;
-    if out.records.is_empty() {
-        return Ok((out, Vec::new()));
-    }
     // A result may fit a trait that another impl of the table implements.
     let mut with = reg.clone();
     for i in rtemis_r8::exports::impls_from_rows(&out.rows, package).map_err(fail)? {
@@ -491,7 +502,7 @@ fn r8_exports_signatures(ptr: Robj, package: &str) -> Result<List> {
 #[extendr]
 fn r8_exports_document(ptr: Robj, ns: &str) -> Result<Robj> {
     let e = exports_of(&ptr)?;
-    let (types, traits) = record_declarations(e, ns)?;
+    let Declarations { types, traits, .. } = record_declarations(e, ns)?;
     let doc = IrDocument {
         ir_version: rtemis_r8::ir::IR_VERSION,
         namespace: Name::new(ns).map_err(|e| fail(e.to_string()))?,
@@ -516,34 +527,29 @@ fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
 /// which the hash excludes: the Rust hash reads
 /// the registry with the record's types in place of its namespace's types
 /// of the same names, and the R hash reads the registry alone. A codec whose
-/// type has no declaration in the record compares the hash it pins
-/// (`declaration_hash`) with the registry's.
+/// type has no declaration in the record is an error.
 ///
 /// @param ptr The external pointer that `r8_exports` returned.
 /// @param ns Character: The package's namespace.
-/// @return List: `type_name`, the qualified names; `status`, for a type or
-///   a trait of the record `"same"`, `"differs"`, or `"missing"` (no registered
-///   declaration), and for a codec's type outside the record `"same"`,
-///   `"stale"` (the pinned hash differs), `"unpinned"` (no pinned hash), or
-///   `"undeclared"`; `codec`, whether the table carries the type's codec; and
-///   `hash`, the registered declaration's hash, `""` without one.
+/// @return List: `type_name`, the qualified names of the types and traits of
+///   the record; `status`, `"same"`, `"differs"`, or `"missing"` (no registered
+///   declaration); and `codec`, whether the table carries the type's codec.
 /// @keywords internal
 /// @noRd
 #[extendr]
 fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
     let e = exports_of(&ptr)?;
-    let (types, traits) = record_declarations(e, ns)?;
+    let Declarations { types, traits, .. } = record_declarations(e, ns)?;
     let namespace = Name::new(ns).map_err(|e| fail(e.to_string()))?;
     let mut codecs = Vec::new();
     for v in type_tables(e)? {
         let name = text(unsafe { (*v).type_name }, "type name")?;
-        let pin = unsafe { (*v).declaration_hash };
-        let pin = if pin.is_null() {
-            None
-        } else {
-            Some(text(pin, "declaration hash")?)
-        };
-        codecs.push((name, pin));
+        if !types.iter().any(|t| format!("{ns}::{}", t.name()) == name) {
+            return Err(fail(format!(
+                "the codec of `{name}` has no declaration in the exports' record"
+            )));
+        }
+        codecs.push(name);
     }
     let reg = crate::declare::snapshot()?;
     let mut overlay = rtemis_r8::rules::DocumentSet::clone(&reg);
@@ -560,12 +566,10 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
     let mut names = Vec::new();
     let mut status = Vec::new();
     let mut codec = Vec::new();
-    let mut hash = Vec::new();
     for t in &types {
         let name = format!("{ns}::{}", t.name());
         let q = QualifiedName::parse(&name).map_err(|e| fail(e.to_string()))?;
-        let h = hash_r(&q);
-        let s = match &h {
+        let s = match &hash_r(&q) {
             None => "missing",
             Some(h)
                 if *h == rtemis_r8::canonical::declaration_hash(&q, lookup_rust)
@@ -575,8 +579,7 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
             }
             Some(_) => "differs",
         };
-        codec.push(codecs.iter().any(|(n, _)| *n == name));
-        hash.push(h.unwrap_or_default());
+        codec.push(codecs.contains(&name));
         names.push(name);
         status.push(s);
     }
@@ -597,30 +600,8 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
         names.push(q.to_string());
         status.push(s);
         codec.push(false);
-        hash.push(String::new());
     }
-    for (name, pin) in &codecs {
-        if names.contains(name) {
-            continue;
-        }
-        let h = QualifiedName::parse(name).ok().and_then(|q| hash_r(&q));
-        let s = match (&h, pin) {
-            (None, _) => "undeclared",
-            (Some(_), None) => "unpinned",
-            (Some(h), Some(p)) if h == p => "same",
-            (Some(_), Some(_)) => "stale",
-        };
-        codec.push(true);
-        hash.push(h.unwrap_or_default());
-        names.push(name.clone());
-        status.push(s);
-    }
-    Ok(list!(
-        type_name = names,
-        status = status,
-        codec = codec,
-        hash = hash
-    ))
+    Ok(list!(type_name = names, status = status, codec = codec))
 }
 
 /// Registers an exports table: declares the impls its impl entries make and
@@ -633,8 +614,9 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
 /// @param package Character: The registering package.
 /// @param ns Character: The package's namespace.
 /// @return List: of each impl function, `trait_name`; `tuple`, the key of its
-///   positions; `method`; and `s4`, the S4 classes of its positions, each a
-///   list of `class` and `package`.
+///   positions; and `method`. `changed` holds the types of other packages whose
+///   registered declarations do not refine those that the code was compiled
+///   against: `type_name`, and `message`, of each difference.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -646,11 +628,13 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
             "the exports table names the package `{declared}` and is registered by `{package}`"
         )));
     }
-    let in_record: Vec<String> = record_declarations(e, ns)?
-        .0
-        .iter()
-        .map(|t| format!("{ns}::{}", t.name()))
-        .collect();
+    let namespace = Name::new(ns).map_err(|e| fail(e.to_string()))?;
+    let held = record_declarations(e, ns)?;
+    if e.module.is_null() {
+        return Err(fail(format!(
+            "the exports table of `{package}` names no module"
+        )));
+    }
     // Codecs, checked against the registered declarations of their types.
     let reg = crate::declare::snapshot()?;
     let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
@@ -663,13 +647,19 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
                 "the codec of `{name}` of `{package}` names a type of another namespace than `{ns}`"
             )));
         }
-        if in_record.contains(&name) && !unsafe { (*v).declaration_hash }.is_null() {
+        if unsafe { (*v).module } != e.module {
             return Err(fail(format!(
-                "the codec of `{name}` of `{package}` sets `declaration_hash`, and its type is declared in the exports' record, which pins it"
+                "the codec of `{name}` of `{package}` names another module than the exports table"
             )));
         }
         rtemis_r8::exports::check_codec(&q, unsafe { &*v }, lookup, package).map_err(fail)?;
-        types.push((name, CodecPtr(v)));
+        types.push((
+            name,
+            CodecPtr {
+                table: v,
+                current: None,
+            },
+        ));
     }
     // Impl functions, whose rows make the impl declarations.
     let (Rows { rows, calls, .. }, problems) = read_rows(e, package, &reg)?;
@@ -699,21 +689,16 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
             )
         })
         .collect();
-    let s4: Vec<Robj> = rows
-        .iter()
-        .map(|r| {
-            let classes = r.positions.iter().filter_map(|p| match p {
-                TypeRef::HostClass {
-                    class,
-                    package,
-                    system: ClassSystem::S4,
-                    ..
-                } => Some(list!(class = class.as_str(), package = package.as_str()).into()),
-                _ => None,
-            });
-            List::from_values(classes.collect::<Vec<Robj>>()).into()
-        })
-        .collect();
+    let own = held.types.into_iter().map(|t| (namespace.clone(), t));
+    crate::pins::put(package, e.module, own.chain(held.foreign).collect());
+    let mut changed_type = Vec::new();
+    let mut changed_message = Vec::new();
+    for (name, found) in crate::pins::changed(e.module, &namespace) {
+        for d in found {
+            changed_type.push(name.clone());
+            changed_message.push(d.message);
+        }
+    }
     let mut c = compiled()
         .lock()
         .map_err(|_| fail("the registry of compiled exports is unavailable"))?;
@@ -746,7 +731,7 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
         trait_name = trait_names,
         tuple = tuples,
         method = methods,
-        s4 = List::from_values(s4)
+        changed = list!(type_name = changed_type, message = changed_message)
     ))
 }
 

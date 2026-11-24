@@ -115,15 +115,6 @@ pub(crate) fn sym_tzone() -> SEXP {
 pub(crate) fn sym_row_names() -> SEXP {
     symbol!(c"row.names")
 }
-pub(crate) fn sym_r8_type() -> SEXP {
-    symbol!(c"r8_type")
-}
-pub(crate) fn sym_r8_version() -> SEXP {
-    symbol!(c"r8_version")
-}
-pub(crate) fn sym_r8_variant() -> SEXP {
-    symbol!(c"r8_variant")
-}
 fn sym_dim_cap() -> SEXP {
     symbol!(c"Dim")
 }
@@ -637,7 +628,7 @@ impl<'a> RView<'a> {
         }
     }
 
-    fn sexp(self) -> Option<SEXP> {
+    pub(crate) fn sexp(self) -> Option<SEXP> {
         match self {
             RView::Whole(x) | RView::Draft(x, _) => Some(x),
             _ => None,
@@ -704,27 +695,47 @@ impl<'a> RView<'a> {
     }
 }
 
-/// Whether the R8 value `x` is of the type `name` itself, as its `r8_type`
-/// attribute names it; a descendant's class vector also names its
-/// ancestors, so `inherits()` does not decide it.
-fn is_type(x: SEXP, name: &QualifiedName) -> bool {
-    attr_string(x, sym_r8_type()).is_some_and(|t| *t == *name.to_string().as_str())
+/// Whether `x` is a value of the type `name` itself, of the registered
+/// declaration; a descendant's class
+/// vector also names its ancestors, so `inherits()` does not decide it.
+pub(crate) fn is_type(x: SEXP, name: &QualifiedName) -> bool {
+    crate::value::type_name(x).is_some_and(|t| *t == *name.to_string().as_str())
+        && crate::value::usable(x)
 }
 
-/// The error of a value that is not of the named type `name`; a value of a
-/// descendant, whose class vector names `name`, is named with the upcast
-/// that gives its value of `name`.
-fn not_named(x: Option<SEXP>, name: &QualifiedName) -> Form {
-    let qname = name.to_string();
-    let child = x
-        .filter(|&x| inherits(x, "r8_value") && inherits(x, &qname))
-        .and_then(|x| attr_string(x, sym_r8_type()));
-    match child {
-        Some(child) => r_type(format!(
-            "expected a value of `{qname}`, found one of its descendant `{child}`; r8_upcast() gives its value of `{qname}`"
-        )),
-        None => r_type(format!("expected a value of `{qname}`")),
+/// The message of an object that is not a value of the named type `name`; a
+/// value of a descendant is named with the upcast that gives its value of
+/// `name`, and an object that has the class of a value without being one, with
+/// what makes such an object.
+pub(crate) fn not_named_message(x: Option<SEXP>, name: &QualifiedName) -> String {
+    if let Some(x) = x
+        && crate::value::type_name(x).is_some_and(|t| *t == *name.to_string().as_str())
+        && let Some(o) = crate::value::other(x)
+    {
+        return format!("expected a value of `{name}`, found one {}", o.message());
     }
+    let classed = x.filter(|&x| inherits(x, "r8_value"));
+    match classed.map(|x| (x, crate::value::type_name(x))) {
+        Some((x, Some(child))) if inherits(x, &name.to_string()) => format!(
+            "expected a value of `{name}`, found one of its descendant `{child}`; r8_upcast() gives its value of `{name}`"
+        ),
+        Some((_, None)) => format!(
+            "expected a value of `{name}`, found a list with the class of one, as dput() and a write of its elements in C code give it; construct the value with its type"
+        ),
+        _ => format!("expected a value of `{name}`"),
+    }
+}
+
+/// The error of a value that is not of the named type `name`.
+fn not_named(x: Option<SEXP>, name: &QualifiedName) -> Form {
+    let message = not_named_message(x, name);
+    if x.and_then(crate::value::other).is_some()
+        && let Some(kind) = message.strip_prefix("expected ")
+    {
+        let problem = rtemis_r8::problem::Problem::Kind(kind.to_string());
+        return Form::problem("declaration_changed", problem, None);
+    }
+    r_type(message)
 }
 
 impl<'a> Access<'a> for RView<'a> {
@@ -1258,13 +1269,7 @@ impl<'a> Access<'a> for RView<'a> {
     fn record(self, name: &QualifiedName) -> Read<()> {
         match self {
             RView::Draft(..) => Ok(()),
-            RView::Whole(x)
-                if sexptype(x) == SEXPTYPE::VECSXP
-                    && inherits(x, "r8_value")
-                    && is_type(x, name) =>
-            {
-                Ok(())
-            }
+            RView::Whole(x) if is_type(x, name) => Ok(()),
             other => Err(not_named(other.sexp(), name)),
         }
     }
@@ -1306,15 +1311,10 @@ impl<'a> Access<'a> for RView<'a> {
     fn variant(self, name: &QualifiedName, _def: &EnumDef) -> Read<Cow<'a, str>> {
         match self {
             RView::Draft(_, v) => Ok(Cow::Borrowed(v)),
-            RView::Whole(x) if inherits(x, "r8_value") && is_type(x, name) => {
-                attr_string(x, sym_r8_variant()).ok_or_else(|| {
-                    Form::new(
-                        "missing_tag",
-                        format!("a `{name}` value names its variant in `r8_variant`"),
-                    )
-                })
-            }
-            _ => Err(r_type(format!("expected a value of `{name}`"))),
+            RView::Whole(x) if is_type(x, name) => crate::value::variant(x).ok_or_else(|| {
+                Form::new("missing_tag", format!("the `{name}` value has no variant"))
+            }),
+            other => Err(not_named(other.sexp(), name)),
         }
     }
 
@@ -1327,7 +1327,8 @@ impl<'a> Access<'a> for RView<'a> {
     }
 
     fn named_type(self) -> Result<(QualifiedName, Option<String>), Unnamed> {
-        let ty = self.sexp().and_then(|x| attr_string(x, sym_r8_type()));
+        let ty = self.sexp().and_then(crate::value::type_name);
+        self.sexp().into_iter().for_each(crate::value::meet);
         ty.and_then(|t| QualifiedName::parse(&t).ok())
             .map(|q| (q, None))
             .ok_or_else(|| Unnamed::NotValue(self.described()))

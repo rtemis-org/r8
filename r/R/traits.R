@@ -440,6 +440,37 @@ replacement_method <- function(fn, key) {
 } # /R8::replacement_method
 
 
+# %% checked_s3_method ----
+#' The S3 method of an impl for an R8 type, with the check of its value
+#'
+#' S3 dispatch reads the class vector of a value; the check, the first
+#' statement of the method, reads its declaration.
+#'
+#' @param fn Function: The method.
+#'
+#' @return Function: `fn` with the check before its body, its formals,
+#'   environment, and attributes kept.
+#'
+#' @keywords internal
+#' @noRd
+checked_s3_method <- function(fn) {
+  first <- names(formals(fn))[[1L]]
+  if (identical(first, "...")) {
+    return(fn)
+  }
+  check <- as.call(list(
+    quote(.Call),
+    call("$", asNamespace("R8"), quote(.r8_c_require)),
+    as.name(first)
+  ))
+  kept <- attributes(fn)
+  kept[["srcref"]] <- NULL
+  body(fn) <- call("{", check, body(fn))
+  attributes(fn) <- kept
+  fn
+} # /R8::checked_s3_method
+
+
 # %% replacement_abort ----
 #' Signal that a replacement method returned a value of another type
 #'
@@ -457,15 +488,15 @@ replacement_abort <- function(key, x, out) {
   at <- regexpr("|", key, fixed = TRUE)
   trait_name <- substr(key, 1L, at - 1L)
   method <- substr(key, at + 1L, nchar(key))
-  r8 <- inherits(x, "r8_value")
-  type <- if (r8) attr(x, "r8_type") else class(x)[1L]
+  r8 <- is_value(x)
+  type <- if (r8) value_type(x) else class(x)[1L]
   fn <- tryCatch(
     impl_in_chain(trait_name, method, type, r8 = r8),
     error = function(e) NULL
   )
   provider <- attr(fn, "r8_provider")[3L]
-  got <- if (inherits(out, "r8_value")) {
-    paste0("a value of `", attr(out, "r8_type"), "`")
+  got <- if (is_value(out)) {
+    paste0("a value of `", value_type(out), "`")
   } else {
     paste0(
       "an object of class ",
@@ -861,7 +892,7 @@ r8_find_impl <- function(
 #' @keywords internal
 #' @noRd
 value_type_text <- function(x) {
-  if (inherits(x, "r8_value")) attr(x, "r8_type") else class(x)[1L]
+  if (is_value(x)) value_type(x) else class(x)[1L]
 } # /R8::value_type_text
 
 
@@ -1597,6 +1628,9 @@ register_method <- function(t, m, key, fn) {
       fn <- display_method(fn)
     } else if (endsWith(m, "<-")) {
       fn <- replacement_method(fn, paste(t[["name"]], m, sep = "|"))
+    }
+    if (!is_host_key(key) && !t[["name"]] %in% c("R8::Print", "R8::Display")) {
+      fn <- checked_s3_method(fn)
     }
     registerS3method(m, s3_class, fn, envir = s3_envir(generic))
   }

@@ -170,8 +170,8 @@ self_abort <- function(key, x, out) {
           "The value must be a value of `",
           value_type_text(x),
           "`, the type of the first dispatched argument; found ",
-          if (inherits(value, "r8_value")) {
-            paste0("a value of `", attr(value, "r8_type"), "`")
+          if (is_value(value)) {
+            paste0("a value of `", value_type(value), "`")
           } else {
             paste0(
               "an object of class ",

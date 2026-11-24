@@ -102,7 +102,7 @@ as_r8_text <- function(x) {
   if (inherits(x, "r8_text")) {
     return(x)
   }
-  if (inherits(x, "r8_value")) {
+  if (is_value(x)) {
     return(value_text(x))
   }
   lines <- as.character(unlist(strsplit(as.character(x), "\n", fixed = TRUE)))
@@ -323,7 +323,7 @@ display_types <- function() {
 #' @keywords internal
 #' @noRd
 display_impl <- function(x) {
-  .r8_impls[[paste("R8::Display", "format", attr(x, "r8_type"), sep = "|")]]
+  .r8_impls[[paste("R8::Display", "format", value_type(x), sep = "|")]]
 } # /R8::display_impl
 
 
@@ -341,6 +341,25 @@ display_impl <- function(x) {
 #' @keywords internal
 #' @noRd
 value_text <- function(x, summary = NULL) {
+  if (!is_value(x)) {
+    return(as_r8_text(c(
+      paste("This object", not_value_text(x)),
+      utils::capture.output(print(unclass(x)))
+    )))
+  }
+  other <- r8_value_other(x)
+  if (!is.null(other)) {
+    note <- sub("^made", "Made", other[["message"]])
+    # The fields of a saved Rust-stored value read under its own declaration only.
+    layout <- tryCatch(
+      layout_value(x, summary = summary),
+      error = function(e) r8_text("<", value_type(x), ">")
+    )
+    return(c(
+      layout,
+      r8_text(r8_span(paste0(note, "."), "summary"))
+    ))
+  }
   f <- display_impl(x)
   if (!is.null(f)) {
     return(as_r8_text(f(x)))
@@ -426,7 +445,7 @@ r8_layout <- function(x, head = 8L) {
   if (!is.numeric(head) || length(head) != 1L || is.na(head) || head < 0) {
     r8_abort("`head` is one non-negative integer.", class = "r8_text_error")
   }
-  if (inherits(x, "r8_value")) {
+  if (is_value(x)) {
     return(layout_value(x, head = head))
   }
   if (is.data.frame(x) || (is.list(x) && !is.object(x))) {
@@ -829,7 +848,7 @@ with_print_state <- function(determined, theme, expr) {
 #' (`r8_layout()`); a `Print` impl replaces the output of `print()`, and a
 #' `Debug` impl the output of `str()`. The default `str()` adds to the size
 #' of a Rust-stored value the fields read into R that are not views of its
-#' state, which together make `r8_size(x)`: `<pkgc::Signal> 7.63 MiB + 112 B
+#' state, which together make `r8_size(x)`: `<pkgr::Signal> 7.63 MiB + 112 B
 #' read`.
 #'
 #' @param x,object An R8 value or an `r8_text` object.
@@ -935,6 +954,10 @@ print.r8_value <- function(x, output_type = NULL, theme = NULL, ...) {
 #' @rdname r8_value_text
 #' @export
 str.r8_value <- function(object, ...) {
+  if (!is_value(object)) {
+    print(value_text(object))
+    return(invisible(NULL))
+  }
   parts <- r8_rust_stored_parts(object)
   summary <- NULL
   if (!is.null(parts)) {
@@ -976,7 +999,7 @@ display_method <- function(f) {
     ...
   ) {
     format(
-      as_r8_text(f(x, ...)),
+      if (is.null(r8_value_other(x))) as_r8_text(f(x, ...)) else value_text(x),
       output_type = output_type,
       theme = theme,
       inline = inline,
@@ -1003,6 +1026,10 @@ display_method <- function(f) {
 print_method <- function(f) {
   force(f)
   function(x, output_type = NULL, theme = NULL, ...) {
+    if (!is.null(r8_value_other(x))) {
+      print(value_text(x), output_type = output_type, theme = theme)
+      return(invisible(x))
+    }
     determined <- determine_output(output_type)
     with_print_state(determined, theme, {
       out <- f(x, ...)

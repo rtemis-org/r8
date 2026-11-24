@@ -109,7 +109,9 @@
             "decode",
             "canonical",
             "hash",
-            "dispatch"
+            "dispatch",
+            "refine",
+            "update"
           ]
         },
         "type": {
@@ -336,6 +338,130 @@
                   "properties": {
                     "stale": {
                       "$ref": "#/$defs/qualified"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "refine"
+            },
+            "input": {
+              "type": "object"
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "refines"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "refines": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "differences"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "differences": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "code",
+                          "type"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "code": {
+                            "$ref": "#/$defs/error/properties/code"
+                          },
+                          "type": {
+                            "$ref": "#/$defs/qualified"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "update"
+            },
+            "input": {
+              "type": "object"
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "same"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "same": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "changes"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "changes": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "code",
+                          "type",
+                          "effect"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "code": {
+                            "$ref": "#/$defs/error/properties/code"
+                          },
+                          "type": {
+                            "$ref": "#/$defs/qualified"
+                          },
+                          "effect": {
+                            "enum": [
+                              "none",
+                              "form",
+                              "meaning"
+                            ]
+                          }
+                        }
+                      }
                     }
                   }
                 }

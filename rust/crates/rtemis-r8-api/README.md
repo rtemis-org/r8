@@ -10,6 +10,10 @@ R8's C services for an R package's Rust code. With it, a package declares Rust-s
 
 The crate declares the entry points of R's C API it calls and links R through the package's build, as R packages do. Every R function that can jump runs inside `R8Api.protect`, so a jump skips no Rust destructor. `examples/signal.rs` shows a struct and two impls.
 
+## Types of other packages
+
+A crate that depends on the crate of another package reads the values of that package's types in the declaration that it was compiled against. R8 finds the fields by name, and refuses a read when the registered declaration admits a value that the compiled one does not: a field removed or renamed, another type, unit, or version, a loosened bound, or a removed rule. A package does not change a type that others use without coordinating the change with them: it raises the type's version and its own, and the packages that use the type require the new version in `DESCRIPTION` (`Imports: pa (>= 2.0.0)`) and in `Cargo.toml`, vendor the crate again, and release with it.
+
 ## Stability
 
 The crate is at version 0.2, with the C interface it builds on (`R8.h`, `rtemis_r8::abi`); both are unstable until the release that adds Rust-stored values.

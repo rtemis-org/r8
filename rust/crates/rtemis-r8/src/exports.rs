@@ -1,6 +1,6 @@
 //! The host-neutral checks of a package's compiled exports (`R8Exports`):
-//! the method of its trait that an impl entry names, with the number of its
-//! parameters, the impl declarations that the entries make, and the codec of
+//! the method of its trait that an impl entry names, with its signature, the
+//! impl declarations that the entries make, and the codec of
 //! a Rust-stored type against its type's declaration.
 //!
 //! A host binding reads the table's pointers and owns the registry; it
@@ -26,32 +26,33 @@ pub struct ImplRow {
     /// The method's name, as the trait declares it or as its identifier in
     /// the hosts other than R ([`MethodName::host_identifier`]).
     pub method: String,
-    /// The number of the method's parameters, `x` included and `...`
-    /// counted as one.
-    pub n_params: usize,
-    /// The method's signature, when the compiled code states it.
-    pub signature: Option<MethodDef>,
+    /// The method's signature, as the compiled code states it.
+    pub signature: MethodDef,
     /// The type that the method returns, when it is narrower than its trait
     /// declares.
     pub return_type: Option<FieldType>,
 }
 
+/// The positions of an impl as a message writes them: a single type bare,
+/// several in parentheses.
+fn target_text(positions: &[TypeRef]) -> String {
+    match positions {
+        [one] => format!("`{one}`"),
+        many => format!("({})", tuple_text(many)),
+    }
+}
+
 impl ImplRow {
-    /// The impl's positions as a message writes them: a single type bare,
-    /// several in parentheses.
+    /// The impl's positions as a message writes them.
     fn target(&self) -> String {
-        match &self.positions[..] {
-            [one] => format!("`{one}`"),
-            many => format!("({})", tuple_text(many)),
-        }
+        target_text(&self.positions)
     }
 }
 
 /// Reads each row's method as the one its trait declares: the method of that
 /// name, or the one whose identifier in the hosts other than R it is, such as
-/// `labels<-` for `with_labels`. The trait is declared, and its method has as
-/// many parameters as the row's function, which a row with a signature leaves
-/// to [`check_signatures`].
+/// `labels<-` for `with_labels`. The trait is declared. [`check_signatures`]
+/// compares the parameters and the result.
 pub fn resolve_methods(
     rows: &mut [ImplRow],
     set: &DocumentSet,
@@ -86,16 +87,6 @@ pub fn resolve_methods(
                     r.method, r.trait_name
                 ));
             }
-            Some(m) if r.signature.is_none() && m.params.len() != r.n_params => {
-                return Err(format!(
-                    "the impl function `{}` of `{}` for {} takes {} parameters, and the trait declares {}",
-                    r.method,
-                    r.trait_name,
-                    r.target(),
-                    r.n_params,
-                    m.params.len()
-                ));
-            }
             Some(m) => r.method = m.name.to_string(),
         }
     }
@@ -124,7 +115,8 @@ pub struct SignatureProblem {
 pub fn check_signatures(rows: &mut [ImplRow], set: &DocumentSet) -> Vec<SignatureProblem> {
     let mut out = Vec::new();
     for r in rows {
-        let (Some(have), Some(target)) = (&r.signature, r.positions.first()) else {
+        let have = &r.signature;
+        let Some(target) = r.positions.first() else {
             continue;
         };
         let Some(want) = QualifiedName::parse(&r.trait_name)
@@ -228,13 +220,9 @@ pub fn impls_from_rows(rows: &[ImplRow], package: &str) -> Result<Vec<ImplDef>, 
 }
 
 /// Checks that each impl defines every method of its trait that has no default
-/// implementation. An impl for a class of the host may take the methods that
-/// the class has, which the host checks.
+/// implementation.
 pub fn check_complete(impls: &[ImplDef], set: &DocumentSet, package: &str) -> Result<(), String> {
     for i in impls {
-        if matches!(i.target, TypeRef::HostClass { .. }) {
-            continue;
-        }
         let Some(tr) = set
             .namespace(&i.r#trait.namespace)
             .and_then(|d| d.traits.iter().find(|t| t.name == i.r#trait.name))
@@ -246,21 +234,14 @@ pub fn check_complete(impls: &[ImplDef], set: &DocumentSet, package: &str) -> Re
             .iter()
             .find(|m| !m.has_default_impl && !i.methods.iter().any(|d| d.name() == &m.name));
         if let Some(m) = missing {
-            let row = ImplRow {
-                trait_name: i.r#trait.to_string(),
-                positions: std::iter::once(&i.target)
-                    .chain(&i.type_args)
-                    .cloned()
-                    .collect(),
-                method: m.name.to_string(),
-                n_params: 0,
-                signature: None,
-                return_type: None,
-            };
+            let positions: Vec<TypeRef> = std::iter::once(&i.target)
+                .chain(&i.type_args)
+                .cloned()
+                .collect();
             return Err(format!(
                 "the impl of `{}` for {} of `{package}` defines `{}`, which has no default implementation",
-                row.trait_name,
-                row.target(),
+                i.r#trait,
+                target_text(&positions),
                 m.name
             ));
         }
@@ -274,9 +255,9 @@ fn has_enum_members(v: &Codec) -> bool {
 }
 
 /// Checks the codec of the Rust-stored type `name` against the type's
-/// declaration in `lookup`: the codec names its module, a struct's codec sets `from_fields` and neither
-/// `variant` nor `from_variant`, an enum's sets both and not `from_fields`,
-/// and no field of the type, in any variant, is host-only, since the
+/// declaration in `lookup`: the codec names its module and sets `from_reader`, a
+/// struct's codec sets `from_fields` and neither `variant` nor `from_variant`, an
+/// enum's sets both and not `from_fields`, and no field of the type, in any variant, is host-only, since the
 /// codec's state holds every field.
 pub fn check_codec(
     name: &QualifiedName,
@@ -300,6 +281,11 @@ pub fn check_codec(
             v.variant.is_some() && v.from_variant.is_some() && v.from_fields.is_none()
         }
     };
+    if v.from_reader.is_none() {
+        return Err(format!(
+            "the codec of `{name}` of `{package}` sets no `from_reader`, which reads a document"
+        ));
+    }
     if !shape_ok {
         return Err(format!(
             "the codec of `{name}` of `{package}` does not match its type: a struct's codec sets `from_fields` and neither `variant` nor `from_variant`, and an enum's sets `variant` and `from_variant` and not `from_fields`"
@@ -348,8 +334,8 @@ mod tests {
             trait_name: t.into(),
             positions: vec![named(ty)],
             method: m.into(),
-            n_params: 1,
-            signature: None,
+            signature: serde_json::from_value(serde_json::json!({"name": "m", "params": ["x"]}))
+                .unwrap(),
             return_type: None,
         }
     }
@@ -419,15 +405,6 @@ mod tests {
             e.contains("for `p::Point`") && e.contains("defines `as.text`"),
             "{e}"
         );
-        // A class of the host may have the method.
-        let mut host = row("p::Label", "p::Point", "labels<-");
-        host.positions = vec![TypeRef::HostClass {
-            host: "r".into(),
-            package: String::new(),
-            class: "data.frame".into(),
-            system: crate::ir::ClassSystem::S3,
-        }];
-        assert_eq!(with(&[host]), Ok(()));
     }
 
     fn declared() -> DocumentSet {
@@ -470,15 +447,12 @@ mod tests {
         .unwrap();
         let set = DocumentSet::from(vec![doc]);
         let with = |by: &str| ImplRow {
-            n_params: 2,
-            signature: Some(
-                serde_json::from_value(serde_json::json!({
-                    "name": "near",
-                    "params": ["", {"name": "by", "type": {"kind": by}}],
-                    "return_type": {"kind": "named", "name": "p::Dot"},
-                }))
-                .unwrap(),
-            ),
+            signature: serde_json::from_value(serde_json::json!({
+                "name": "near",
+                "params": ["", {"name": "by", "type": {"kind": by}}],
+                "return_type": {"kind": "named", "name": "p::Dot"},
+            }))
+            .unwrap(),
             ..row("p::Near", "p::Point", "near")
         };
         let mut rows = [with("double")];
@@ -499,25 +473,13 @@ mod tests {
 
     #[test]
     fn a_method_is_found_by_its_name_or_its_identifier() {
-        let with = |m: &str, n: usize| ImplRow {
-            n_params: n,
-            ..row("p::Label", "p::Point", m)
-        };
-        let mut rows = [
-            with("with_labels", 2),
-            with("labels<-", 2),
-            with("as_text", 1),
-        ];
+        let with = |m: &str| row("p::Label", "p::Point", m);
+        let mut rows = [with("with_labels"), with("labels<-"), with("as_text")];
         resolve_methods(&mut rows, &declared(), "q").unwrap();
         let found: Vec<&str> = rows.iter().map(|r| r.method.as_str()).collect();
         assert_eq!(found, ["labels<-", "labels<-", "as.text"]);
-        let e = resolve_methods(&mut [with("labels", 2)], &declared(), "q").unwrap_err();
+        let e = resolve_methods(&mut [with("labels")], &declared(), "q").unwrap_err();
         assert!(e.contains("declares no such method"), "{e}");
-        let e = resolve_methods(&mut [with("as_text", 2)], &declared(), "q").unwrap_err();
-        assert!(
-            e.contains("takes 2 parameters, and the trait declares 1"),
-            "{e}"
-        );
         let mut other = [row("p::Other", "p::Point", "m")];
         let e = resolve_methods(&mut other, &declared(), "q").unwrap_err();
         assert!(e.contains("`p::Other`, which is not registered"), "{e}");

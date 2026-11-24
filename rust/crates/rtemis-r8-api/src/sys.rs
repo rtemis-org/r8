@@ -46,6 +46,7 @@ unsafe extern "C" {
     pub fn INTEGER_ELT(x: SEXP, i: R_xlen_t) -> c_int;
     pub fn LOGICAL_ELT(x: SEXP, i: R_xlen_t) -> c_int;
     pub fn STRING_ELT(x: SEXP, i: R_xlen_t) -> SEXP;
+    pub fn R_CHAR(x: SEXP) -> *const c_char;
     pub fn SET_STRING_ELT(x: SEXP, i: R_xlen_t, v: SEXP);
     pub fn VECTOR_ELT(x: SEXP, i: R_xlen_t) -> SEXP;
     pub fn SET_VECTOR_ELT(x: SEXP, i: R_xlen_t, v: SEXP) -> SEXP;

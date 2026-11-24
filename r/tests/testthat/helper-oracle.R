@@ -26,6 +26,27 @@ oracle_new_value <- function(fields, type_name, variant) {
   .Call("wrap__r8_new_value_json", fields, type_name, variant, PACKAGE = "R8")
 }
 
+# An R-stored value of any type and fields, as another declaration of the type
+# made it, or of a type whose values Rust holds.
+oracle_any_value <- function(fields, type, variant = "", declaration = "") {
+  .Call(
+    "wrap__r8_any_value",
+    fields,
+    type,
+    variant,
+    declaration,
+    PACKAGE = "R8"
+  )
+}
+
+# The source of `r_stored()`, for the R sessions of the package tests: an
+# R-stored value with the fields of `x`.
+R_STORED <- c(
+  "r_stored <- function(x, fields = as.list(x)) {",
+  "  .Call('wrap__r8_any_value', fields, R8:::value_type(x), '', '', PACKAGE = 'R8')",
+  "}"
+)
+
 oracle_document_identity <- function(text, type_name) {
   .Call("wrap__r8_document_identity", text, type_name, PACKAGE = "R8")
 }

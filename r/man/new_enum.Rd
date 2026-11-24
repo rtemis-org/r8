@@ -31,7 +31,7 @@ an implementor's type.}
 
 \item{storage}{Character \{"r", "rust"\}: Where values hold their fields.
 \code{"rust"}: a Rust-stored type, whose values, unit variants included, the
-codec in the package's compiled exports builds and holds (\code{R8.h}). Its
+codec in the package's compiled exports builds and holds. Its
 variant constructors and unit variants signal \code{r8_codec_missing_error}
 until the codec is registered.}
 
@@ -45,7 +45,8 @@ until the codec is registered.}
 A sum type of unit, struct, and newtype variants. An enum of unit variants
 is written as the variant name; an enum with another variant as an object
 whose \code{tag} member names the variant. \code{Kernel@Linear} is a unit variant's
-value.
+value. An exported enum changes as an exported struct does: see the section
+"Changing a type that other packages use" of \code{\link[=new_struct]{new_struct()}}.
 }
 \examples{
 op <- options(r8.namespace = "demo")

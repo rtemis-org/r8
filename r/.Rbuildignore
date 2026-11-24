@@ -19,6 +19,7 @@
 ^CRAN-SUBMISSION$
 ^tools/check-rd-sections\.sh$
 ^tools/document\.R$
+^tools/scenarios\.R$
 ^tools/rust-attribution\.R$
 ^tools/notices$
 ^src/\.cargo$

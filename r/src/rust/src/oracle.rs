@@ -9,7 +9,6 @@
 use extendr_api::Result;
 use extendr_api::prelude::*;
 use rtemis_r8::canonical::read_document;
-use rtemis_r8::ir::FieldType;
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::DocumentSet;
 use rtemis_r8::validate::{ValueError, validate};
@@ -18,13 +17,15 @@ use serde_json::Value;
 use crate::declare::registry;
 use crate::values::{Decoder, Encoder, errors_list, fail};
 
-/// Encodes an R value of a named type to its JSON form and validates it.
+/// Encodes the fields `x` of a value of a named type to their JSON form and
+/// validates it.
 fn encode_and_validate(
     x: &Robj,
     name: &QualifiedName,
+    variant: &str,
     docs: &DocumentSet,
 ) -> std::result::Result<Value, Vec<ValueError>> {
-    encode_with_runtime(x, name, docs).map(|(v, _)| v)
+    encode_with_runtime(x, name, variant, docs).map(|(v, _)| v)
 }
 
 /// Encodes and validates, also returning the paths of host-only fields
@@ -32,6 +33,7 @@ fn encode_and_validate(
 fn encode_with_runtime(
     x: &Robj,
     name: &QualifiedName,
+    variant: &str,
     docs: &DocumentSet,
 ) -> std::result::Result<(Value, Vec<String>), Vec<ValueError>> {
     let mut enc = Encoder {
@@ -39,8 +41,7 @@ fn encode_with_runtime(
         errors: Vec::new(),
         host_only: Vec::new(),
     };
-    let ft = FieldType::Named { name: name.clone() };
-    let v = enc.value(x, &ft, "");
+    let v = enc.members(x, name, variant, "");
     if !enc.errors.is_empty() {
         return Err(enc.errors);
     }
@@ -70,17 +71,11 @@ fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<Lis
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = crate::declare::snapshot()?;
     let docs: &DocumentSet = &docs;
-    let mut input = fields.duplicate();
-    input.set_class([type_name, "r8_value"])?;
-    input.set_attrib("r8_type", type_name)?;
-    if !variant.is_empty() {
-        input.set_attrib("r8_variant", variant)?;
-    }
-    match encode_and_validate(&input, &q, docs)
+    match encode_and_validate(&fields, &q, variant, docs)
         .and_then(|v| rtemis_r8::canonical::normalize(&v, &q, docs))
     {
         Ok(v) => {
-            let value = Decoder { lookup: docs }.named(&v, &q, Some(&input))?;
+            let value = Decoder { lookup: docs }.named(&v, &q, Some(&fields))?;
             Ok(list!(value = value))
         }
         Err(errors) => Ok(list!(errors = errors_list(&errors))),
@@ -111,8 +106,51 @@ fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
     }
 }
 
+/// The declaration hash of a registered type, for the tests of the binary
+/// interface, whose `value_of_fields` takes it.
+///
+/// @param type_name Character: The qualified type name.
+/// @return Character: The hash.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_declaration_hash(type_name: &str) -> Result<String> {
+    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+    let docs = registry().snapshot();
+    Ok(rtemis_r8::canonical::declaration_hash(&q, &*docs))
+}
+
+/// An R-stored value of any type over any fields, unchecked, as one that another
+/// declaration of the type made, or one of a type whose values Rust holds.
+///
+/// @param fields List: The fields, by name.
+/// @param type_name Character: The qualified type name.
+/// @param variant Character: The enum variant, or `""` for a struct.
+/// @param declaration Character: The text that names the declaration, or `""`
+///   for the registered one.
+/// @return The value.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_any_value(fields: List, type_name: &str, variant: &str, declaration: &str) -> Result<Robj> {
+    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+    let variant = (!variant.is_empty()).then_some(variant);
+    let text = if declaration.is_empty() {
+        crate::value::declaration(&q, &*registry().snapshot())
+    } else {
+        declaration.to_string()
+    };
+    let names: Vec<&str> = fields.names().map(Iterator::collect).unwrap_or_default();
+    let class = [type_name, "r8_value"];
+    let id = crate::value::other_identity(&q, variant, &names, &class, &text);
+    let plain = List::from_values(fields.values());
+    Ok(unsafe { Robj::from_sexp(crate::value::new(plain.get(), id)) })
+}
+
 extendr_module! {
     mod oracle;
+    fn r8_any_value;
     fn r8_new_value_json;
     fn r8_document_identity;
+    fn r8_declaration_hash;
 }

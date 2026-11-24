@@ -5,9 +5,9 @@
 //! one; and `pkgs::Grid`, whose fields hold values of r8pkgR's types. Each
 //! shared object has its own compilation of `Interval`.
 
-use r8pkgr::Resampler;
+use r8pkgr::{Resampler, Signal};
 use r8pkgr::interval::{Band, Interval, IntervalLike, Meets, Shifted, Total};
-use r8pkgr::open::Figure;
+use r8pkgr::open::{Figure, Square};
 use rtemis_r8::R8;
 use rtemis_r8_api as r8;
 
@@ -73,6 +73,38 @@ impl Cells for Grid {
     }
 }
 
+/// The peak of a signal, a value of r8pkgR's type, in the extent of a grid.
+#[r8::methods(trait = "pkgs::peak")]
+pub trait Peak {
+    fn peak(
+        &self,
+        /// The signal.
+        y: &Signal,
+    ) -> f64;
+}
+
+impl Peak for Grid {
+    fn peak(&self, y: &Signal) -> f64 {
+        y.values.iter().copied().fold(f64::NAN, f64::max)
+    }
+}
+
+/// The side of the square that the figure of a grid is, if it is one; the type
+/// is named in no field and no signature of this crate.
+#[r8::methods(trait = "pkgs::side")]
+pub trait Side {
+    fn side(&self) -> r8::Result<Option<f64>>;
+}
+
+impl Side for Grid {
+    fn side(&self) -> r8::Result<Option<f64>> {
+        let Some(f) = &self.figure else {
+            return Ok(None);
+        };
+        Ok(f.downcast_ref::<Square>()?.map(|s| s.side))
+    }
+}
+
 /// The Rust side of the generic `pkgs::lower`, whose result is a value of
 /// r8pkgR's type, which this library does not build.
 #[r8::methods(trait = "pkgs::lower")]
@@ -129,13 +161,15 @@ r8::exports! {
     package = "r8pkgS",
     namespace = "pkgs",
     types = [Tile, Grid],
-    traits = [Cells],
+    traits = [Cells, Peak, Side],
     impls = [
         Tile: Shifted,
         Tile: Total,
         Tile: Lower,
         Tile: Noted,
         Grid: Cells,
+        Grid: Peak,
+        Grid: Side,
         Tile: Gap,
         Tile: Meets<Interval>,
         Tile: Meets<Band>,

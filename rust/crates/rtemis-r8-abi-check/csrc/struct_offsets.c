@@ -1,6 +1,7 @@
 /* The size of every struct and the offset of every field of R8.h, in the
  * order of `rtemis_r8::abi::struct_offsets()`. */
 
+#define R8_INTERNAL_ABI
 #include <R8.h>
 
 #define SIZE(t) sizeof(t)
@@ -16,8 +17,7 @@ static const size_t struct_offsets[] = {
   OFFSET(R8Codec, get_field), OFFSET(R8Codec, with_field),
   OFFSET(R8Codec, drop), OFFSET(R8Codec, owned_bytes),
   OFFSET(R8Codec, variant), OFFSET(R8Codec, from_variant),
-  OFFSET(R8Codec, from_reader), OFFSET(R8Codec, declaration_hash),
-  OFFSET(R8Codec, upcast),
+  OFFSET(R8Codec, from_reader), OFFSET(R8Codec, upcast),
   SIZE(R8Reader), OFFSET(R8Reader, context), OFFSET(R8Reader, kind), OFFSET(R8Reader, member),
   OFFSET(R8Reader, item), OFFSET(R8Reader, length), OFFSET(R8Reader, logical),
   OFFSET(R8Reader, number), OFFSET(R8Reader, string), OFFSET(R8Reader, doubles),
@@ -25,17 +25,18 @@ static const size_t struct_offsets[] = {
   SIZE(R8Position), OFFSET(R8Position, name), OFFSET(R8Position, package),
   OFFSET(R8Position, system),
   SIZE(R8ImplEntry), OFFSET(R8ImplEntry, positions), OFFSET(R8ImplEntry, n_positions),
-  OFFSET(R8ImplEntry, method), OFFSET(R8ImplEntry, call), OFFSET(R8ImplEntry, n_params),
+  OFFSET(R8ImplEntry, method), OFFSET(R8ImplEntry, call),
   OFFSET(R8ImplEntry, signature), OFFSET(R8ImplEntry, signature_len),
   SIZE(R8Exports), OFFSET(R8Exports, size), OFFSET(R8Exports, package),
-  OFFSET(R8Exports, ir_record), OFFSET(R8Exports, ir_record_len), OFFSET(R8Exports, types),
+  OFFSET(R8Exports, module), OFFSET(R8Exports, ir_record), OFFSET(R8Exports, ir_record_len), OFFSET(R8Exports, types),
   OFFSET(R8Exports, n_types), OFFSET(R8Exports, impls), OFFSET(R8Exports, n_impls),
   OFFSET(R8Exports, impl_size),
   SIZE(R8Api), OFFSET(R8Api, size), OFFSET(R8Api, new_value), OFFSET(R8Api, value_state),
   OFFSET(R8Api, upcast_state),
   OFFSET(R8Api, view_doubles), OFFSET(R8Api, view_integers), OFFSET(R8Api, view_logicals),
   OFFSET(R8Api, view_bytes), OFFSET(R8Api, protect),
-  OFFSET(R8Api, value_of_fields), OFFSET(R8Api, with_fields),
+  OFFSET(R8Api, value_of_fields), OFFSET(R8Api, with_fields), OFFSET(R8Api, pin),
+  OFFSET(R8Api, value_type),
 };
 
 /* Copies the sizes and offsets into `out`, up to `cap` entries, and returns the number

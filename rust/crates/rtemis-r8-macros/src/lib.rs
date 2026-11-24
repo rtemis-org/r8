@@ -831,6 +831,7 @@ fn rust_stored_enum_impl(
     let mut read = Vec::new();
     let mut bytes = Vec::new();
     let mut count = Vec::new();
+    let mut names_of = Vec::new();
     let mut each = Vec::new();
     for (k, v) in e.variants.iter().enumerate() {
         let vid = &v.ident;
@@ -944,6 +945,7 @@ fn rust_stored_enum_impl(
                 });
                 count.push(quote! { Self::#vid { .. } => #n });
                 let names_c: Vec<Tokens> = names.iter().map(|n| c_str(n)).collect();
+                names_of.push(quote! { #vname => { #(f(#names_c);)* } });
                 each.push(quote! {
                     Self::#vid { #(#idents: #vars),* } => {
                         #(f(#names_c, #api::Field::to_r(#vars, owner)?)?;)*
@@ -978,6 +980,7 @@ fn rust_stored_enum_impl(
                 );
                 count
                     .push(quote! { Self::#vid(_) => <#inner as #api::RustStoredStruct>::N_FIELDS });
+                names_of.push(quote! { #vname => <#inner as #api::RustStoredStruct>::names(f) });
                 each.push(quote! {
                     Self::#vid(inner) => <#inner as #api::RustStoredStruct>::fields(inner, owner, f)
                 });
@@ -994,9 +997,12 @@ fn rust_stored_enum_impl(
         impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::enum_codec::<Self>();
-            unsafe fn from_value(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+            unsafe fn from_value(x: #api::sys::SEXP) -> #api::Result<Self> {
                 let variant = unsafe { #api::call::r_variant(x) }?;
-                unsafe { <Self as #api::RustStoredEnum>::from_variant(&variant, fields) }
+                let fields = unsafe {
+                    #api::call::fields_by_name(x, |f| <Self as #api::RustStoredEnum>::names(&variant, f))
+                }?;
+                unsafe { <Self as #api::RustStoredEnum>::from_variant(&variant, &fields) }
             }
             #of_kind
             fn variant_name(&self) -> ::std::option::Option<&'static ::core::ffi::CStr> {
@@ -1013,6 +1019,12 @@ fn rust_stored_enum_impl(
                 match variant {
                     #(#from,)*
                     _ => Err(#api::Error::new("unknown_variant", format!("`{}` has no variant `{}`", #qualified, variant))),
+                }
+            }
+            fn names(variant: &str, f: &mut dyn FnMut(&'static ::core::ffi::CStr)) {
+                match variant {
+                    #(#names_of,)*
+                    _ => {}
                 }
             }
             fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
@@ -1182,9 +1194,11 @@ fn rust_stored_impl(
         impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::codec::<Self>();
-            unsafe fn from_value(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
-                let n = <Self as #api::RustStoredStruct>::N_FIELDS.min(fields.len());
-                unsafe { <Self as #api::RustStoredStruct>::from_fields(&fields[..n]) }
+            unsafe fn from_value(x: #api::sys::SEXP) -> #api::Result<Self> {
+                let fields = unsafe {
+                    #api::call::fields_by_name(x, <Self as #api::RustStoredStruct>::names)
+                }?;
+                unsafe { <Self as #api::RustStoredStruct>::from_fields(&fields) }
             }
             #of_kind
             fn variant_name(&self) -> ::std::option::Option<&'static ::core::ffi::CStr> {
@@ -1210,6 +1224,10 @@ fn rust_stored_impl(
                     #(#base: unsafe { <#base_ty as #api::RustStoredStruct>::from_fields(__r8_inherited) }?,)*
                     #(#from),*
                 })
+            }
+            fn names(f: &mut dyn FnMut(&'static ::core::ffi::CStr)) {
+                #(<#base_ty as #api::RustStoredStruct>::names(f);)*
+                #(f(#names_c);)*
             }
             fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
                 Ok(Self {

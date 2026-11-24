@@ -10,6 +10,7 @@ use crate::call::{self, Dots, IntoR, Receiver, Sexp};
 use crate::dispatch::Position;
 use crate::exports::{ImplSet, MethodRow};
 use crate::rust_stored::RustStored;
+use crate::signature;
 
 /// `R8::Display`: the text of a value, `format(x, ...)`.
 #[methods(trait = "R8::Display", dyn)]
@@ -100,11 +101,19 @@ pub trait From<Source>: Sized {
             methods: vec![MethodRow {
                 name: c"from",
                 call: from::<Source, Self>,
-                n_params: 1,
-                signature: None,
+                signature: signature::method(
+                    "from",
+                    "",
+                    vec![signature::dispatched("", false, "")],
+                    None,
+                ),
             }],
             tag: None,
             required_fields: Vec::new(),
+            register: |set| {
+                <Self as Position>::register(set);
+                <Source as Position>::register(set);
+            },
         }
     }
 }

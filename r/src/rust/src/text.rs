@@ -29,8 +29,8 @@ use rtemis_r8::text::{
 };
 
 use crate::rview::{
-    RView, attr, attr_string, attributes_checked, attributes_unchecked, inherits, is_null, nil,
-    sexptype, string_elt, strings, sym_class, sym_dim, sym_names, sym_r8_type, table_rows, xlen,
+    RView, attr, attributes_checked, attributes_unchecked, inherits, is_null, nil, sexptype,
+    string_elt, strings, sym_class, sym_dim, sym_names, table_rows, xlen,
 };
 
 fn fail(message: impl Into<String>) -> Error {
@@ -176,7 +176,8 @@ fn display_set(display_types: &Robj) -> Result<HashSet<String>> {
         .collect())
 }
 
-/// The text of a nested value whose type is in `shown`, the lists of an
+/// The text of a nested value of the registered declaration whose type is in
+/// `shown`, the lists of an
 /// `r8_text` that the R function `display` returns for it; the first error
 /// goes to `failure`, and the layout of every later value is the default.
 fn display_text<'f, 'a>(
@@ -185,7 +186,11 @@ fn display_text<'f, 'a>(
     failure: &'f mut Option<Error>,
 ) -> impl FnMut(RView<'a>, &QualifiedName) -> Option<Text> + 'f {
     move |v: RView<'a>, name: &QualifiedName| {
-        if failure.is_some() || !shown.contains(&name.to_string()) {
+        let current = v
+            .sexp()
+            .and_then(crate::value::id)
+            .is_some_and(crate::value::current);
+        if failure.is_some() || !current || !shown.contains(&name.to_string()) {
             return None;
         }
         let result = v
@@ -234,9 +239,15 @@ fn r8_layout_value(
     head: i32,
 ) -> Result<List> {
     let xs = unsafe { x.get() };
-    let type_name = attr_string(xs, sym_r8_type()).ok_or_else(|| fail("`x` is not an R8 value"))?;
+    let type_name = crate::value::type_name(xs).ok_or_else(|| fail("`x` is not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = crate::declare::snapshot()?;
+    // A value of another declaration is shown as of its own.
+    let id = crate::value::id(xs).filter(|&id| !crate::value::current(id));
+    let made = id.and_then(crate::value::made_under);
+    let docs = match &made {
+        Some(m) => m.clone(),
+        None => crate::declare::snapshot()?,
+    };
     let lookup: &dyn TypeLookup = &*docs;
     let shown = display_set(&display_types)?;
     let options = LayoutOptions {
@@ -248,13 +259,20 @@ fn r8_layout_value(
         ..LayoutOptions::default()
     };
     let mut failure: Option<Error> = None;
-    let text = layout_with(
-        RView::Whole(xs),
-        &q,
-        lookup,
-        &options,
-        &mut display_text(&shown, &display, &mut failure),
-    );
+    let mut layout = || {
+        layout_with(
+            RView::Whole(xs),
+            &q,
+            lookup,
+            &options,
+            &mut display_text(&shown, &display, &mut failure),
+        )
+    };
+    let text = if id.is_some() {
+        crate::value::looking(layout).ok_or_else(|| fail("the fields of `x` do not read"))?
+    } else {
+        layout()
+    };
     match failure {
         Some(e) => Err(e),
         None => Ok(text_to_r(&text)),
@@ -277,11 +295,10 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
     if is_null(x) {
         return FieldType::Json;
     }
-    if inherits(x, "r8_value") {
-        return attr_string(x, sym_r8_type())
-            .and_then(|t| QualifiedName::parse(&t).ok())
+    if let Some(t) = crate::value::type_name(x) {
+        return QualifiedName::parse(&t)
             .map(|name| FieldType::Named { name })
-            .unwrap_or_else(|| other("r8_value", ClassSystem::S3));
+            .unwrap_or_else(|_| other("r8_value", ClassSystem::S3));
     }
     if inherits(x, "factor") {
         return FieldType::Factor {

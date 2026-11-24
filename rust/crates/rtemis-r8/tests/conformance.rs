@@ -318,6 +318,8 @@ fn conformance_corpus() {
                 "dispatch" => {
                     run_dispatch(ir.as_ref(), &case["type"], &case["input"], &case["expect"])
                 }
+                "update" => run_update(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
+                "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 op @ ("canonical" | "hash") => run_canonical(
                     op,
                     ir.as_ref(),
@@ -347,6 +349,76 @@ fn conformance_corpus() {
     println!("conformance: {passed} passed, {skipped} skipped");
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(passed > 0, "no conformance case ran");
+}
+
+fn run_refine(
+    ir: Option<&DocumentSet>,
+    ty: &Value,
+    input: &Value,
+    expect: &Value,
+) -> Option<String> {
+    let Some(compiled) = ir else {
+        return Some("a `refine` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(ty.as_str()?).ok()?;
+    let registered = match IrDocument::from_json(&input.to_string()) {
+        Ok(d) => DocumentSet::from(vec![d]),
+        Err(e) => return Some(format!("the input does not read: {e}")),
+    };
+    let mut got: Vec<Value> = rtemis_r8::refine::differences(&ty, compiled, &registered)
+        .iter()
+        .map(|d| serde_json::json!({"code": d.code, "type": d.type_name}))
+        .collect();
+    let mut want = match expect.get("differences") {
+        Some(Value::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    got.sort_by_key(ToString::to_string);
+    want.sort_by_key(ToString::to_string);
+    (got != want).then(|| format!("expected {want:?}, got {got:?}"))
+}
+
+fn run_update(
+    ir: Option<&DocumentSet>,
+    ty: &Value,
+    input: &Value,
+    expect: &Value,
+) -> Option<String> {
+    use rtemis_r8::update::{Effect, changes, read_declarations};
+    let Some(made) = ir else {
+        return Some("an `update` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(ty.as_str()?).ok()?;
+    let text = rtemis_r8::canonical::declaration_text(&ty, made);
+    let hash = rtemis_r8::canonical::declaration_hash(&ty, made);
+    let Some(read) = read_declarations(&text, &hash) else {
+        return Some("the hashed text of the declarations does not read".into());
+    };
+    if read_declarations(&text, "sha256:other").is_some() {
+        return Some("a text with another hash reads".into());
+    }
+    let registered = match IrDocument::from_json(&input.to_string()) {
+        Ok(d) => DocumentSet::from(vec![d]),
+        Err(e) => return Some(format!("the input does not read: {e}")),
+    };
+    let mut got: Vec<Value> = changes(&ty, &read, &registered)
+        .iter()
+        .map(|c| {
+            let effect = match c.effect {
+                Effect::None => "none",
+                Effect::Form => "form",
+                Effect::Meaning => "meaning",
+            };
+            serde_json::json!({"code": c.code, "type": c.type_name, "effect": effect})
+        })
+        .collect();
+    let mut want = match expect.get("changes") {
+        Some(Value::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    got.sort_by_key(ToString::to_string);
+    want.sort_by_key(ToString::to_string);
+    (got != want).then(|| format!("expected {want:?}, got {got:?}"))
 }
 
 /// The suite's IR as a lookup.

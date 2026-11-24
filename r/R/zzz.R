@@ -227,18 +227,21 @@ r8_convert <- function(x, type) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
   target <- attr(type, "r8_name")
-  r8 <- inherits(x, "r8_value")
-  if (r8 && identical(attr(x, "r8_type"), target)) {
+  r8 <- is_value(x)
+  if (r8) {
+    require_current(x)
+  }
+  if (r8 && identical(value_type(x), target)) {
     return(x)
   }
-  struct <- r8 && is.null(attr(x, "r8_variant"))
+  struct <- r8 && is.null(value_variant(x))
   ancestors <- if (struct) r8_ancestors(x) else character()
   # A child converts to an ancestor by upcast.
   if (target %in% ancestors) {
     return(r8_upcast(x, type))
   }
   sources <- if (r8) {
-    c(attr(x, "r8_type"), ancestors)
+    c(value_type(x), ancestors)
   } else {
     .class2(x)
   }
@@ -246,17 +249,15 @@ r8_convert <- function(x, type) {
     fn <- .r8_impls[[paste("R8::From", s, target, sep = "|")]]
     if (!is.null(fn)) {
       out <- fn(x)
-      if (
-        !inherits(out, "r8_value") || !identical(attr(out, "r8_type"), target)
-      ) {
+      if (!is_value(out) || !identical(value_type(out), target)) {
         r8_abort(
           "The From(",
           from_text(s),
           ") impl of `",
           target,
           "` returned ",
-          if (inherits(out, "r8_value")) {
-            paste0("a value of `", attr(out, "r8_type"), "`")
+          if (is_value(out)) {
+            paste0("a value of `", value_type(out), "`")
           } else {
             paste0(
               "an object of class ",
@@ -442,6 +443,11 @@ declare_conversion <- function(converter, source, fn, env) {
   assign(".r8_c_result", .r8_native[["result"]], envir = ns)
   assign(".r8_c_variant", .r8_native[["variant"]], envir = ns)
   assign(".r8_c_is_variant", .r8_native[["is_variant"]], envir = ns)
+  assign(".r8_c_type", .r8_native[["type"]], envir = ns)
+  assign(".r8_c_variant_of", .r8_native[["variant_of"]], envir = ns)
+  assign(".r8_c_is_value", .r8_native[["is_value"]], envir = ns)
+  assign(".r8_c_names", .r8_native[["names"]], envir = ns)
+  assign(".r8_c_require", .r8_native[["require"]], envir = ns)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Shape, PartialOrd, Print)) {
     register_trait(t, "R8")

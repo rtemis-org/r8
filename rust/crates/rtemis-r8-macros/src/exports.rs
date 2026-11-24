@@ -148,21 +148,13 @@ pub fn expand(a: &Args) -> Result<Tokens> {
                 #package_c,
                 #namespace,
                 &__R8_CODECS.0,
-                // The listed types and every type of the namespace that they
-                // and the listed traits reach, such as the struct of a
-                // newtype variant; and the listed traits.
-                || {
-                    let mut set = #api::rtemis_r8::rules::DocumentSet::default();
-                    #(<#types as #api::rtemis_r8::derive::Encode>::register(&mut set);)*
-                    #((#traits.register)(&mut set);)*
-                    let types = set
-                        .into_documents()
-                        .into_iter()
-                        .find(|d| d.namespace.as_str() == #namespace)
-                        .map(|d| d.types)
-                        .unwrap_or_default();
-                    (types, ::std::vec![#((#traits.def)()),*])
+                // The listed types and every type that they and the listed
+                // traits reach, such as the struct of a newtype variant.
+                |_set| {
+                    #(<#types as #api::rtemis_r8::derive::Encode>::register(_set);)*
+                    #((#traits.register)(_set);)*
                 },
+                &[#(#traits.def),*],
                 &__R8_IMPLS,
             )
         }
