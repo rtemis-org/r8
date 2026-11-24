@@ -52,6 +52,7 @@ Collate:
     'integrate.R'
     'types.R'
     'params.R'
+    'rds.R'
     'register.R'
     'resolve.R'
     'roclet.R'

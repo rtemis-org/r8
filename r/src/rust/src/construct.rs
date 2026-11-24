@@ -133,20 +133,45 @@ pub(crate) fn registry_declaration_hash(
     q: &QualifiedName,
     lookup: &dyn TypeLookup,
 ) -> std::sync::Arc<str> {
-    type Hashes = HashMap<QualifiedName, std::sync::Arc<str>>;
-    static CACHE: OnceLock<Mutex<(u64, Hashes)>> = OnceLock::new();
-    let m = CACHE.get_or_init(|| Mutex::new((0, HashMap::new())));
+    static CACHE: Hashes = OnceLock::new();
+    registry_hash(&CACHE, q, || {
+        rtemis_r8::canonical::declaration_hash(q, lookup)
+    })
+}
+
+/// The value declaration hash of a registered type, which documents hold, kept
+/// as [`registry_declaration_hash`] keeps its own.
+pub(crate) fn registry_value_hash(
+    q: &QualifiedName,
+    lookup: &dyn TypeLookup,
+) -> std::sync::Arc<str> {
+    static CACHE: Hashes = OnceLock::new();
+    registry_hash(&CACHE, q, || {
+        rtemis_r8::canonical::value_declaration_hash(q, lookup)
+    })
+}
+
+/// The hashes of registered types, at a generation of the registry.
+type Hashes = OnceLock<Mutex<(u64, HashMap<QualifiedName, std::sync::Arc<str>>)>>;
+
+fn registry_hash(
+    cache: &Hashes,
+    q: &QualifiedName,
+    hash: impl FnOnce() -> String,
+) -> std::sync::Arc<str> {
+    let m = cache.get_or_init(|| Mutex::new((0, HashMap::new())));
     let mut guard = m.lock().unwrap_or_else(|e| e.into_inner());
     let g = GENERATION.load(Ordering::Relaxed);
     if guard.0 != g {
         guard.1.clear();
         guard.0 = g;
     }
-    guard
-        .1
-        .entry(q.clone())
-        .or_insert_with(|| rtemis_r8::canonical::declaration_hash(q, lookup).into())
-        .clone()
+    if let Some(h) = guard.1.get(q) {
+        return h.clone();
+    }
+    let h: std::sync::Arc<str> = hash().into();
+    guard.1.insert(q.clone(), h.clone());
+    h
 }
 
 fn fail(message: impl Into<String>) -> Error {

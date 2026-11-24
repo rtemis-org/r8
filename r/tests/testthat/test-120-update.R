@@ -360,3 +360,73 @@ test_that("a value of another declaration inside another shows without its own t
   })
   expect_no_match(format(h), "its own text")
 })
+
+test_that("a document of another declaration is refused unless it shows the same meaning", {
+  struct <- function(...) {
+    a <- field(...)
+    declare_in("up16", new_struct("S", fields = list(a = a)))
+  }
+  S <- struct(type_double(min = 0), unit = "mg")
+  x <- S(a = 1)
+  short <- r8_to_json(x)
+  full <- r8_to_json(x, declarations = TRUE)
+  expect_match(short, "\"$declarations\":{\"up16::S\":\"sha256:", fixed = TRUE)
+  expect_no_match(short, "$ir", fixed = TRUE)
+  expect_match(full, "\"unit\":\"mg\"", fixed = TRUE)
+  expect_identical(r8_from_json(S, short), x)
+  expect_identical(r8_from_json(S, full), x)
+  # What has no part in a value.
+  S <- struct(
+    type_double(min = 0),
+    unit = "mg",
+    default = 4,
+    description = "A."
+  )
+  expect_identical(r8_from_json(S, short)$a, 1)
+  # A bound.
+  S <- struct(type_double(), unit = "mg")
+  expect_error(
+    r8_from_json(S, short),
+    "another declaration of `up16::S` than the registered.*declaration = \"any\"",
+    class = "r8_value_error"
+  )
+  expect_identical(r8_from_json(S, full)$a, 1)
+  expect_identical(r8_from_json(S, short, declaration = "any")$a, 1)
+  # A unit.
+  S <- struct(type_double(), unit = "mg/kg")
+  expect_error(
+    r8_from_json(S, short),
+    "declaration_changed",
+    class = "r8_value_error"
+  )
+  expect_error(
+    r8_from_json(S, full),
+    "`a` was in `mg`, and is in `mg/kg`",
+    class = "r8_value_error"
+  )
+  expect_identical(r8_from_json(S, full, declaration = "any")$a, 1)
+  # Written by hand.
+  hand <- "{\"$type\":\"up16::S\",\"$types\":{\"up16::S\":1},\"a\":2}"
+  expect_identical(r8_from_json(S, hand)$a, 2)
+  expect_error(
+    r8_from_json(S, hand, declaration = "none"),
+    class = "r8_type_error"
+  )
+  expect_error(r8_to_json(x, declarations = 1), class = "r8_type_error")
+})
+
+test_that("a document of a dyn() field holds the declaration of what it holds", {
+  out <- declare_in("up17", {
+    Sized <- new_trait("Sized", methods = list(size = trait_method(params(x))))
+    X <- new_struct("X", fields = list(n = type_double(min = 0)))
+    impl(Sized, X, methods = list(size = function(x) x$n))
+    D <- new_struct("D", fields = list(d = dyn(Sized)))
+    list(X = X, D = D)
+  })
+  json <- r8_to_json(out$D(d = out$X(n = 1)))
+  expect_match(json, "\"up17::X\":\"sha256:", fixed = TRUE)
+  declare_in("up17", {
+    new_struct("X", fields = list(n = field(type_double(min = 0), unit = "mg")))
+  })
+  expect_error(r8_from_json(out$D, json), "`up17::X`", class = "r8_value_error")
+})

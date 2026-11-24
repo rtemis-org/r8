@@ -31,7 +31,7 @@ pub use decl::{
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use fit::fits;
 pub use logic::{Logic, Operator};
-pub use lower::{InheritedChange, check_defaults, check_extends, extend};
+pub use lower::{InheritedChange, check_default_cycles, check_defaults, check_extends, extend};
 pub use number::{EXACT_DOUBLE, Number};
 pub use tags::check_tags;
 pub use types::{Bound, CharacterType, DoubleType, FieldType, IntegerType, Resolve};

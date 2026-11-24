@@ -89,6 +89,9 @@
 - The class vector of an enum value begins with its variant, `ns::Type@Variant`.
 - A value made under another declaration of its type than the registered one prints and gives its fields, and every use of it is an error that lists what differs (`r8_other_declaration_error`, or `r8_value_error` with the code `declaration_changed`); `r8_update()` gives its value under the registered declaration where its fields mean the same. A change of descriptions, of defaults, or of a rule's ID or message leaves the values made before as they are.
 - A value saved with an earlier R8 is read again from its source or its document.
+- `r8_to_json()` writes `$declarations`, the hash of what each declaration says about a value, and, with `declarations = TRUE`, the declarations themselves. `r8_from_json()` refuses a document of another declaration than the registered one, unless the declarations it holds give its fields the same meaning, or `declaration = "any"` is passed.
+- A value, a field type, and a rule's expression nest at most 100 levels (`too_deep`), and a default that holds itself is a declaration error (`default_recursive`).
+- `r8_save_rds()` and `r8_read_rds()` write and read an RDS file with a checksum: a damaged file is an `r8_file_error`.
 - `print()`, `format()`, and `str()` of a value show `<sensitive>` for a field declared `sensitive = TRUE`.
 - A constructor builds a default that is a value of another package's type from the registered declaration of that type.
 - A value of a struct that its parent's change left stale refuses a field write and a comparison.

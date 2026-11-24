@@ -401,6 +401,9 @@ SEXP r8_value_of_fields(const char *type_name, SEXP fields, R8Error *err);
 // its fields only.
 // spec: R8/class-system#inheritance
 static SEXP r8_upcast(SEXP x, SEXP type) {
+  if (TYPEOF(type) != STRSXP || XLENGTH(type) != 1) {
+    Rf_error("a type is named by one string");
+  }
   const char *target = CHAR(STRING_ELT(type, 0));
   SEXP own = r8_c_type(x);
   int n = own == R_NilValue || !r8_identity_current(r8_value_id(x)) ? -1 : r8_inherited_fields(CHAR(STRING_ELT(own, 0)), target);
@@ -438,6 +441,9 @@ static SEXP generic_call(void) {
 // caught. R calls it through `.Call()` on a native symbol, so the jump
 // continues from a C frame.
 static SEXP r8_invoke(SEXP fn, SEXP args) {
+  if (TYPEOF(fn) != EXTPTRSXP || TYPEOF(args) != VECSXP) {
+    Rf_error("a compiled method calls R8 with its function and its arguments");
+  }
   R8MethodFn call = (R8MethodFn) R_ExternalPtrAddrFn(fn);
   if (call == NULL) {
     Rf_error("the package of this compiled method is unloaded; load it again");
@@ -465,6 +471,8 @@ static SEXP r8_invoke(SEXP fn, SEXP args) {
   return R_NilValue;
 }
 
+void r8_pin_library(const void *address);
+
 // The exports table of the package `pkg`, which it registered with
 // R_RegisterCCallable(pkg, "r8_exports", fn), as an external pointer tagged
 // `r8_exports`. R_GetCCallable() raises an error for a package that
@@ -478,6 +486,7 @@ static SEXP r8_package_exports(SEXP pkg) {
   if (e == NULL) {
     return R_NilValue;
   }
+  r8_pin_library(e);
   return R_MakeExternalPtr((void *) e, Rf_install("r8_exports"), R_NilValue);
 }
 
@@ -508,16 +517,16 @@ SEXP r8_get_var(SEXP sym, SEXP env, SEXP absent) {
 SEXP wrap__r8_new_value(SEXP fields, SEXP type_name, SEXP variant);
 
 // Whether `x` is a value of another declaration than the registered one, or a
-// list without a class that holds one.
-static int holds_other(SEXP x) {
+// list without a class that holds one, within `levels` lists.
+static int holds_other(SEXP x, int levels) {
   SEXP id = r8_value_id(x);
   if (id != R_NilValue) {
     return !r8_identity_current(id);
   }
-  if (TYPEOF(x) == VECSXP && !ALTREP(x) && !Rf_isObject(x)) {
+  if (TYPEOF(x) == VECSXP && !ALTREP(x) && !Rf_isObject(x) && levels > 0) {
     R_xlen_t n = XLENGTH(x);
     for (R_xlen_t i = 0; i < n; i++) {
-      if (holds_other(VECTOR_ELT(x, i))) {
+      if (holds_other(VECTOR_ELT(x, i), levels - 1)) {
         return 1;
       }
     }
@@ -542,6 +551,10 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
     test = Rf_lang2(Rf_install("missing"), R_NilValue);
     R_PreserveObject(test);
   }
+  if (TYPEOF(env) != ENVSXP || TYPEOF(names) != STRSXP || TYPEOF(required) != LGLSXP ||
+      XLENGTH(required) != XLENGTH(names)) {
+    Rf_error("a constructor calls R8 with its frame and its fields");
+  }
   R_xlen_t n = Rf_xlength(names);
   SEXP fields = PROTECT(Rf_allocVector(VECSXP, n));
   for (R_xlen_t i = 0; i < n; i++) {
@@ -556,7 +569,7 @@ static SEXP r8_construct_frame(SEXP env, SEXP names, SEXP required, SEXP type_na
       SET_VECTOR_ELT(fields, i, v);
       // A default that is a value, made when the package of the constructor was
       // installed, is built from the registered declarations.
-      if (LOGICAL(required)[i] != 1 && holds_other(v)) {
+      if (LOGICAL(required)[i] != 1 && holds_other(v, 100)) {
         SETCADR(test, sym);
         if (Rf_asLogical(Rf_eval(test, env)) == 1) {
           SET_VECTOR_ELT(fields, i, R_NilValue);
@@ -679,6 +692,10 @@ static SEXP r8_namespace(SEXP dispatch) {
 // installed symbols.
 // spec: R8/class-system#traits-equality-and-conformance-in-r
 static SEXP find_n(SEXP *args, int n, SEXP key, SEXP dispatch) {
+  if (TYPEOF(key) != SYMSXP || TYPEOF(dispatch) != ENVSXP ||
+      strchr(CHAR(PRINTNAME(key)), '|') == NULL) {
+    Rf_error("a generic calls R8 with its key and the dispatch cache");
+  }
   static SEXP select_sym = NULL;
   if (select_sym == NULL) {
     select_sym = Rf_install("dispatch_select");
@@ -936,6 +953,9 @@ static SEXP r8_result(SEXP visible, SEXP f, SEXP key, SEXP x, SEXP dispatch) {
 // The routine keeps no SEXP beyond installed symbols.
 // spec: R8/class-system#replacement-methods
 static SEXP r8_replaced(SEXP x, SEXP out, SEXP key) {
+  if (TYPEOF(key) != SYMSXP) {
+    Rf_error("a replacement generic calls R8 with its key");
+  }
   if (same_type(x, out)) {
     return out;
   }

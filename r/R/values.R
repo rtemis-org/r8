@@ -176,8 +176,13 @@ r8_update <- function(x) {
     r8_abort(
       "Cannot update the value: ",
       res[["message"]],
-      " [declaration_changed].",
-      class = c("r8_other_declaration_error", "r8_value_error")
+      " [",
+      res[["code"]] %||% "declaration_changed",
+      "].",
+      class = c(
+        if (is.null(res[["code"]])) "r8_other_declaration_error",
+        "r8_value_error"
+      )
     )
   }
   if (!is.null(res[["errors"]])) {
@@ -1214,9 +1219,13 @@ guard <- function(what) {
 #' Write an R8 value as JSON
 #'
 #' The value's document: `"$type"`, `"$types"` (the version of every type it
-#' contains), then its fields in declaration order.
+#' contains), `"$declarations"` (the hash of what the declaration of each says about
+#' a value), then its fields in declaration order.
 #'
 #' @param x An R8 value.
+#' @param declarations Logical: Write the declarations of the types too, as IR
+#'   documents in `"$ir"`, so that [r8_from_json()] can tell what differs after a
+#'   declaration changes, and read the document where its fields mean the same.
 #'
 #' @return Character: The JSON document.
 #'
@@ -1227,11 +1236,14 @@ guard <- function(what) {
 #' options(op)
 #'
 #' @export
-r8_to_json <- function(x) {
+r8_to_json <- function(x, declarations = FALSE) {
   if (!is_value(x)) {
     value_required(x)
   }
-  res <- r8_value_to_document(x)
+  if (!isTRUE(declarations) && !isFALSE(declarations)) {
+    r8_abort("`declarations` is TRUE or FALSE.", class = "r8_type_error")
+  }
+  res <- r8_value_to_document(x, declarations)
   if (!is.null(res[["errors"]])) {
     value_abort("Cannot write", value_type(x), res[["errors"]])
   }
@@ -1242,8 +1254,8 @@ r8_to_json <- function(x) {
 # %% r8_from_json ----
 #' Read an R8 value from JSON
 #'
-#' Reads a document of `type`: checks `"$type"` and the versions in
-#' `"$types"`, validates the value, and returns it. A type the document names
+#' Reads a document of `type`: checks `"$type"`, the versions in `"$types"`, and
+#' the declarations in `"$declarations"`, validates the value, and returns it. A type the document names
 #' is looked up among the registered types only; the document never selects code
 #' to load.
 #'
@@ -1252,6 +1264,12 @@ r8_to_json <- function(x) {
 #' @param load Optional Character: Packages to load, with `loadNamespace()`,
 #'   before the read, such as the package that declares an implementor of a
 #'   `dyn()` field.
+#' @param declaration Character \{"registered", "any"\}: `"registered"` refuses a
+#'   document that was written under another declaration of a type than the
+#'   registered one, unless it holds the declarations
+#'   (`r8_to_json(declarations = TRUE)`) and its fields mean the same under both, as
+#'   [r8_update()] states. `"any"` reads it as one of the registered declaration.
+#'   A document without `"$declarations"`, as one written by hand, claims none.
 #'
 #' @return An R8 value. A document that names types no loaded package declares
 #'   raises `r8_unknown_type_error`, which names each namespace and the
@@ -1264,9 +1282,15 @@ r8_to_json <- function(x) {
 #' options(op)
 #'
 #' @export
-r8_from_json <- function(type, json, load = NULL) {
+r8_from_json <- function(type, json, load = NULL, declaration = "registered") {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
+  }
+  if (!identical(declaration, "registered") && !identical(declaration, "any")) {
+    r8_abort(
+      "`declaration` is \"registered\" or \"any\".",
+      class = "r8_type_error"
+    )
   }
   load_packages(load)
   ensure_registered(type)
@@ -1275,16 +1299,43 @@ r8_from_json <- function(type, json, load = NULL) {
   }
   res <- r8_value_from_document(
     paste(json, collapse = "\n"),
-    attr(type, "r8_name")
+    attr(type, "r8_name"),
+    identical(declaration, "any")
   )
   if (!is.null(res[["errors"]])) {
     if ("unknown_type" %in% res[["errors"]][["code"]]) {
       unknown_type_abort(json)
     }
-    value_abort("Cannot read", attr(type, "r8_name"), res[["errors"]])
+    value_abort(
+      "Cannot read",
+      attr(type, "r8_name"),
+      declaration_hint(res[["errors"]])
+    )
   }
   res[["value"]]
 } # /R8::r8_from_json
+
+
+# %% declaration_hint ----
+#' What reads a document of another declaration, in its problems
+#'
+#' @param errors List: The problems of a document.
+#'
+#' @return List: `errors`, with a sentence after the message of a document that
+#'   does not hold its declarations.
+#'
+#' @keywords internal
+#' @noRd
+declaration_hint <- function(errors) {
+  at <- errors[["code"]] == "declaration_changed" &
+    errors[["path"]] == "/$declarations"
+  errors[["message"]][at] <- paste0(
+    errors[["message"]][at],
+    "; `r8_to_json(x, declarations = TRUE)` writes one that does, and ",
+    "`r8_from_json(declaration = \"any\")` reads it as one of the registered"
+  )
+  errors
+} # /R8::declaration_hint
 
 
 # %% load_packages ----

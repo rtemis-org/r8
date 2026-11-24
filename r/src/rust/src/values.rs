@@ -1735,11 +1735,12 @@ fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::Arc<DocumentSet>)> {
 /// Writes an R8 value as a document, from the R objects in place.
 ///
 /// @param x An R8 value.
+/// @param declarations Logical: The document holds the declarations.
 /// @return List: `list(json = <text>)` or `list(errors = <problems>)`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_value_to_document(x: Robj) -> Result<List> {
+fn r8_value_to_document(x: Robj, declarations: bool) -> Result<List> {
     let xs = unsafe { x.get() };
     let (q, docs) = value_type(xs)?;
     let lookup: &dyn TypeLookup = &*docs;
@@ -1750,8 +1751,9 @@ fn r8_value_to_document(x: Robj) -> Result<List> {
     if !errors.is_empty() {
         return Ok(list!(errors = errors_list(&errors)));
     }
+    let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, lookup);
     Ok(list!(
-        json = rtemis_r8::canonical::document_access(v, &q, lookup)
+        json = rtemis_r8::canonical::document_with(v, &q, lookup, declarations, &hash)
     ))
 }
 
@@ -1759,17 +1761,24 @@ fn r8_value_to_document(x: Robj) -> Result<List> {
 ///
 /// @param text Character: The document.
 /// @param type_name Character: The qualified type name.
+/// @param any Logical: A document of other declarations than the registered ones
+///   is read as one of these.
 /// @return List: `list(value = <R8 value>)` or `list(errors = <problems>)`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
+fn r8_value_from_document(text: &str, type_name: &str, any: bool) -> Result<List> {
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = crate::declare::snapshot()?;
     // The value as a compact tree, which holds a run of numbers in 8 B an
     // item; the conversion to R and a codec's reader read it in place.
+    let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, &*docs);
+    let options = rtemis_r8::canonical::ReadOptions {
+        any_declaration: any,
+        hash: &hash,
+    };
     let tree = match crate::construct::with_cache(|cache| {
-        rtemis_r8::canonical::read_tree_cached(text, &q, &*docs, cache)
+        rtemis_r8::canonical::read_tree_with(text, &q, &*docs, cache, options)
     }) {
         Ok(t) => t,
         Err(errors) => return Ok(list!(errors = errors_list(&errors))),

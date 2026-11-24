@@ -109,6 +109,34 @@ pub struct Names<A> {
     pub len: usize,
 }
 
+/// Whether the arrays and objects of a JSON value nest at most `levels` deep.
+fn node_fits<'a, N: Node<'a>>(n: N, levels: u32) -> bool {
+    if n.f64_slice().is_some() {
+        return levels > 0;
+    }
+    if let Some(len) = n.array_len() {
+        return levels > 0
+            && (0..len)
+                .filter_map(|i| n.item(i))
+                .all(|x| node_fits(x, levels - 1));
+    }
+    match n.entries() {
+        Some(m) => levels > 0 && m.into_iter().all(|(_, x)| node_fits(x, levels - 1)),
+        None => true,
+    }
+}
+
+/// The problem of a value that nests deeper than a value may.
+pub fn too_deep() -> Form {
+    let max = crate::validate::MAX_NESTING;
+    Form::new(
+        "too_deep",
+        format!(
+            "a value nests at most {max} levels deep, so that every JSON parser reads its document; hold a longer chain in a vec()"
+        ),
+    )
+}
+
 impl<'a, A: Access<'a>> Names<A> {
     /// Calls `f` with consecutive blocks of at most 4096 names, in order.
     pub fn each_block(&self, mut f: impl FnMut(&[Cow<'a, str>])) {
@@ -421,8 +449,8 @@ pub trait Access<'a>: Copy + 'a {
     fn raw(self) -> Read<()>;
     /// The bytes of a `type_raw()` value.
     fn bytes(self) -> Read<Cow<'a, [u8]>>;
-    /// A value of `type_json()`.
-    fn json(self) -> Read<()>;
+    /// A value of `type_json()`, whose lists nest at most `levels` deep.
+    fn json(self, levels: u32) -> Read<()>;
     /// A present value of a host-only field, an object of the class `class`
     /// of the host `host`.
     fn host_class(self, host: &str, class: &str) -> Read<()>;
@@ -1160,8 +1188,11 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         Ok(Cow::Owned(base64_decode(s)))
     }
 
-    fn json(self) -> Read<()> {
-        Ok(())
+    fn json(self, levels: u32) -> Read<()> {
+        match self.val() {
+            Some(n) if !node_fits(n, levels) => Err(too_deep()),
+            _ => Ok(()),
+        }
     }
 
     fn host_class(self, _host: &str, _class: &str) -> Read<()> {

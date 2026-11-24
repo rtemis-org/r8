@@ -828,9 +828,9 @@ impl<'a> Access<'a> for RView<'a> {
         Ok(Cow::Owned(out))
     }
 
-    fn json(self) -> Read<()> {
+    fn json(self, levels: u32) -> Read<()> {
         match self.sexp() {
-            Some(x) => json_form(x, ""),
+            Some(x) => json_form(x, "", levels),
             None => Err(Form::new(
                 "r_json",
                 "a JSON value in R is a list, a length-one atomic vector, or NULL",
@@ -1502,10 +1502,13 @@ pub(crate) fn infer_column(col: SEXP) -> Option<FieldType> {
 
 /// The JSON form of a `type_json()` value in R: `NULL`, a length-one atomic
 /// vector that is not `NA` and is finite, or a list of such values.
-fn json_form(x: SEXP, suffix: &str) -> Read<()> {
+fn json_form(x: SEXP, suffix: &str, levels: u32) -> Read<()> {
     let fail = |m: &str| Err(Form::new("r_json", m).at(suffix.to_string()));
     match sexptype(x) {
         SEXPTYPE::NILSXP => Ok(()),
+        SEXPTYPE::VECSXP if levels == 0 => {
+            Err(rtemis_r8::access::too_deep().at(suffix.to_string()))
+        }
         SEXPTYPE::VECSXP => {
             let names = attr(x, sym_names());
             for i in 0..xlen(x) {
@@ -1513,7 +1516,7 @@ fn json_form(x: SEXP, suffix: &str) -> Read<()> {
                     Some(k) => format!("{suffix}/{}", k.replace('~', "~0").replace('/', "~1")),
                     None => format!("{suffix}/{i}"),
                 };
-                json_form(unsafe { VECTOR_ELT(x, i as R_xlen_t) }, &s)?;
+                json_form(unsafe { VECTOR_ELT(x, i as R_xlen_t) }, &s, levels - 1)?;
             }
             Ok(())
         }

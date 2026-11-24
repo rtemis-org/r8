@@ -742,6 +742,14 @@ r8_css_text <- function(theme, named) .Call(wrap__r8_css_text, theme, named)
 #' @noRd
 r8_determine_output <- function(facts) .Call(wrap__r8_determine_output, facts)
 
+#' The SHA-256 of a raw vector.
+#'
+#' @param x Raw.
+#' @return Raw: 32 bytes.
+#' @keywords internal
+#' @noRd
+r8_sha256 <- function(x) .Call(wrap__r8_sha256, x)
+
 #' What differs between the declaration that a value was made under and the
 #' registered one.
 #'
@@ -758,7 +766,8 @@ r8_value_other <- function(x) .Call(wrap__r8_value_other, x)
 #' types that it holds.
 #'
 #' @param x An R8 value, or a list that holds some.
-#' @return List: `value`; or `message`, or `errors` and `of`, the type, why the value
+#' @return List: `value`; or `message` and, for a list that nests too deep, its
+#'   code, or `errors` and `of`, the type, why the value
 #'   is not converted.
 #' @keywords internal
 #' @noRd
@@ -815,19 +824,22 @@ r8_value_check <- function(x) .Call(wrap__r8_value_check, x)
 #' Writes an R8 value as a document, from the R objects in place.
 #'
 #' @param x An R8 value.
+#' @param declarations Logical: The document holds the declarations.
 #' @return List: `list(json = <text>)` or `list(errors = <problems>)`.
 #' @keywords internal
 #' @noRd
-r8_value_to_document <- function(x) .Call(wrap__r8_value_to_document, x)
+r8_value_to_document <- function(x, declarations) .Call(wrap__r8_value_to_document, x, declarations)
 
 #' Reads a document of a type into an R8 value.
 #'
 #' @param text Character: The document.
 #' @param type_name Character: The qualified type name.
+#' @param any Logical: A document of other declarations than the registered ones
+#'   is read as one of these.
 #' @return List: `list(value = <R8 value>)` or `list(errors = <problems>)`.
 #' @keywords internal
 #' @noRd
-r8_value_from_document <- function(text, type_name) .Call(wrap__r8_value_from_document, text, type_name)
+r8_value_from_document <- function(text, type_name, any) .Call(wrap__r8_value_from_document, text, type_name, any)
 
 #' Version of the R8 runtime
 #'

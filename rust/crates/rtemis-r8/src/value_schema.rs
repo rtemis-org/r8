@@ -2,7 +2,7 @@
 //!
 //! [`json_schema`] writes each named type the type reaches into `$defs`,
 //! keyed by its qualified name, and the type itself as the root, which also
-//! admits the document envelope (`"$type"` and `"$types"`). A
+//! admits the document envelope (`"$type"`, `"$types"`, `"$declarations"`, and `"$ir"`). A
 //! struct is an object without other members; an absent field is `null` or
 //! an omitted member. An enum of unit variants is an `enum` of names; an enum
 //! with a struct or newtype variant is an `anyOf` of objects whose tag member
@@ -527,6 +527,11 @@ pub fn json_schema_with(ty: &QualifiedName, lookup: &dyn TypeLookup, closed: boo
             "$types",
             json!({"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}}),
         ),
+        (
+            "$declarations",
+            json!({"type": "object", "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}),
+        ),
+        ("$ir", json!({"type": "array", "items": {"type": "object"}})),
     ];
     let root = match lookup.find(ty) {
         Some(TypeDef::Struct(_)) => w.named(ty, &envelope),

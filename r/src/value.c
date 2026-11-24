@@ -332,12 +332,48 @@ static SEXP value_Serialized_state(SEXP x) {
   return out;
 }
 
+// The deepest nesting of a value, MAX_NESTING of rtemis_r8::validate.
+#define MAX_NESTING 100
+
+// Whether the values and the lists in `x` nest at most `levels` deep. The fields
+// of a Rust-stored value are in its state and are not read.
+static int fits(SEXP x, int levels) {
+  if (TYPEOF(x) != VECSXP) {
+    return 1;
+  }
+  if (ALTREP(x)) {
+    if (!R_altrep_inherits(x, value_class)) {
+      return 1;
+    }
+    x = R_altrep_data1(x);
+  }
+  if (levels == 0) {
+    return 0;
+  }
+  R_xlen_t n = XLENGTH(x);
+  for (R_xlen_t i = 0; i < n; i++) {
+    if (!fits(VECTOR_ELT(x, i), levels - 1)) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+// Whether the fields of a value, a list, nest no deeper than a value may. A value
+// that a constructor makes was validated; one read from a stream, or made from
+// the fields that compiled code gives, is checked here, so that each walk of a
+// value is within the stack.
+int r8_fields_fit(SEXP fields) { return fits(fields, MAX_NESTING + 1); }
+
 // The R-stored value of a state list(identity, fields).
 SEXP r8_value_of_state(SEXP state, SEXP attr) {
   if (TYPEOF(state) != VECSXP || XLENGTH(state) != 2 || TYPEOF(VECTOR_ELT(state, 1)) != VECSXP) {
     Rf_error("a saved R8 value is damaged");
   }
   SEXP fields = VECTOR_ELT(state, 1);
+  if (!r8_fields_fit(fields)) {
+    Rf_error("a saved R8 value nests deeper than %d levels", MAX_NESTING);
+  }
   SEXP id = PROTECT(r8_identity_of_state(VECTOR_ELT(state, 0), attr, XLENGTH(fields)));
   MARK_NOT_MUTABLE(fields);
   SEXP ans = PROTECT(R_new_altrep(value_class, fields, id));

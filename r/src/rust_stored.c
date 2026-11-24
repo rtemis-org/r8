@@ -31,6 +31,7 @@ SEXP r8_identity_state(SEXP id);
 SEXP r8_identity_of_state(SEXP state, SEXP attr, R_xlen_t n);
 void r8_set_read_attributes(SEXP ans, SEXP id, SEXP attr);
 SEXP r8_value_of_state(SEXP state, SEXP attr);
+int r8_fields_fit(SEXP fields);
 enum { ID_TYPE, ID_VARIANT, ID_NAMES, ID_DECLARATION, ID_LIKE };
 
 // The marker of a field not yet read, distinct from a NULL field.
@@ -367,6 +368,9 @@ static SEXP rust_stored_UnserializeEX(SEXP cls, SEXP kept, SEXP attr, int objf, 
   if (TYPEOF(kept) != VECSXP || XLENGTH(kept) != 4 || TYPEOF(VECTOR_ELT(kept, 1)) != STRSXP ||
       TYPEOF(VECTOR_ELT(kept, 2)) != RAWSXP) {
     Rf_error("a saved R8 value is damaged");
+  }
+  if (!r8_fields_fit(VECTOR_ELT(kept, 3))) {
+    Rf_error("a saved R8 value nests too deep");
   }
   SEXP id = PROTECT(r8_identity_of_state(VECTOR_ELT(kept, 0), attr, -1));
   SEXP codec = PROTECT(R_MakeExternalPtr(NULL, kept, R_NilValue));

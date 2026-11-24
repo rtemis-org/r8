@@ -4,17 +4,22 @@
 \alias{r8_to_json}
 \title{Write an R8 value as JSON}
 \usage{
-r8_to_json(x)
+r8_to_json(x, declarations = FALSE)
 }
 \arguments{
 \item{x}{An R8 value.}
+
+\item{declarations}{Logical: Write the declarations of the types too, as IR
+documents in \code{"$ir"}, so that \code{\link[=r8_from_json]{r8_from_json()}} can tell what differs after a
+declaration changes, and read the document where its fields mean the same.}
 }
 \value{
 Character: The JSON document.
 }
 \description{
 The value's document: \code{"$type"}, \code{"$types"} (the version of every type it
-contains), then its fields in declaration order.
+contains), \code{"$declarations"} (the hash of what the declaration of each says about
+a value), then its fields in declaration order.
 }
 \examples{
 op <- options(r8.namespace = "demo")

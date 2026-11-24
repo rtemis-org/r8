@@ -184,7 +184,7 @@ fn a_child_encodes_as_one_object_and_reads_with_its_own_defaults() {
     );
     let text = p.to_document().unwrap();
     assert!(
-        text.starts_with(r#"{"$type":"demo::Pane","$types":{"demo::Pane":1},"lo":1,"hi":4,"#),
+        text.starts_with(r#"{"$type":"demo::Pane","$types":{"demo::Pane":1},"$declarations":{"demo::Pane":"sha256:"#),
         "{text}"
     );
     assert_eq!(Pane::from_document(&text).unwrap(), p);

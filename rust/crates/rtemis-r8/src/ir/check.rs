@@ -8,6 +8,8 @@
 
 use std::collections::HashSet;
 
+use crate::validate::MAX_NESTING;
+
 use super::decl::{
     FieldDef, MethodDef, ParamDef, ReturnType, RuleDef, StructDef, TraitDef, VariantKind,
 };
@@ -232,6 +234,10 @@ impl Checker<'_> {
         );
         for (i, f) in fields.iter().enumerate() {
             let fpath = format!("{path}/{i}");
+            if !type_fits(&f.ty, MAX_NESTING) {
+                self.too_deep(&format!("{fpath}/type"));
+                continue;
+            }
             self.field_type(&f.ty, &format!("{fpath}/type"), true);
             self.extensions(
                 f.extensions.iter().flat_map(|m| m.keys()),
@@ -332,7 +338,24 @@ impl Checker<'_> {
     /// Checks rules in the scope of `scope`: distinct IDs, distinct rules
     /// without IDs, a message that is not blank, and an invariant and
     /// condition that compile against the scope.
+    /// Reports a field type or an expression that nests too deep.
+    fn too_deep(&mut self, path: &str) {
+        self.report(
+            "too_deep",
+            path,
+            format!("a field type and an expression nest at most {MAX_NESTING} levels deep"),
+        );
+    }
+
     fn rules(&mut self, rules: &[RuleDef], scope: &[FieldDef], path: &str) {
+        for (i, r) in rules.iter().enumerate() {
+            for (l, name) in [(Some(&r.invariant), "invariant"), (r.when.as_ref(), "when")] {
+                if l.is_some_and(|l| !logic_fits(l, MAX_NESTING)) {
+                    self.too_deep(&format!("{path}/{i}/{name}"));
+                    return;
+                }
+            }
+        }
         self.unique(
             rules
                 .iter()
@@ -1140,6 +1163,37 @@ impl Checker<'_> {
     }
 }
 
+/// Whether a field type nests at most `levels` deep.
+fn type_fits(ft: &FieldType, levels: u32) -> bool {
+    let Some(inner) = levels.checked_sub(1) else {
+        return false;
+    };
+    match ft {
+        FieldType::Option { inner: t } => type_fits(t, inner),
+        FieldType::Vec { element, .. }
+        | FieldType::Matrix { element, .. }
+        | FieldType::Array { element, .. }
+        | FieldType::SparseMatrix { element, .. } => type_fits(element, inner),
+        FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
+            type_fits(value, inner)
+        }
+        FieldType::Table { columns, .. } => columns.iter().all(|c| type_fits(&c.field.ty, inner)),
+        _ => true,
+    }
+}
+
+/// Whether an expression nests at most `levels` deep.
+fn logic_fits(l: &crate::ir::Logic, levels: u32) -> bool {
+    use crate::ir::Logic;
+    let Some(inner) = levels.checked_sub(1) else {
+        return false;
+    };
+    match l {
+        Logic::Array(a) | Logic::Call { args: a, .. } => a.iter().all(|x| logic_fits(x, inner)),
+        _ => true,
+    }
+}
+
 /// The problems of the type at `index` of `doc`: those that
 /// [`check_document`] reports at `/types/{index}` and below, from the
 /// type's own checks and the uniqueness of its name, in time proportional
@@ -1158,6 +1212,12 @@ pub fn check_type(doc: &IrDocument, index: usize) -> Vec<DeclError> {
     c.type_name(index);
     let path = format!("/types/{index}");
     c.type_def(t, &path);
+    let q = QualifiedName {
+        namespace: doc.namespace.clone(),
+        name: t.name().clone(),
+    };
+    c.errors
+        .extend(super::lower::check_default_cycles(&q, &path, doc));
     let prefix = format!("{path}/");
     c.errors
         .retain(|e| e.path == path || e.path.starts_with(&prefix));
@@ -1187,6 +1247,17 @@ fn check_whole(doc: &IrDocument, defaults: bool) -> Vec<DeclError> {
     c.names();
     for (i, t) in doc.types.iter().enumerate() {
         c.type_def(t, &format!("/types/{i}"));
+    }
+    if defaults {
+        for (i, t) in doc.types.iter().enumerate() {
+            let q = QualifiedName {
+                namespace: doc.namespace.clone(),
+                name: t.name().clone(),
+            };
+            let path = format!("/types/{i}");
+            c.errors
+                .extend(super::lower::check_default_cycles(&q, &path, doc));
+        }
     }
     for (i, t) in doc.traits.iter().enumerate() {
         c.trait_def(t, &format!("/traits/{i}"));

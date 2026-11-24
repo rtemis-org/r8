@@ -30,6 +30,7 @@ static HELD: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static ID: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static FIELDS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static VALUE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static FIT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// The elements of an identity (`value.c`).
 const ID_TYPE: isize = 0;
@@ -43,8 +44,9 @@ const ID_STAMP: isize = 6;
 ///
 /// # Safety
 ///
-/// `identity`, `held`, `id`, `fields`, and `value` are `r8_identity()`,
-/// `r8_held_identity()`, `r8_value_id()`, `r8_value_fields()`, and `r8_value_new()`.
+/// `identity`, `held`, `id`, `fields`, `value`, and `fit` are `r8_identity()`,
+/// `r8_held_identity()`, `r8_value_id()`, `r8_value_fields()`, `r8_value_new()`,
+/// and `r8_fields_fit()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_set_value_functions(
     identity: *mut (),
@@ -52,12 +54,14 @@ pub unsafe extern "C" fn r8_set_value_functions(
     id: *mut (),
     fields: *mut (),
     value: *mut (),
+    fit: *mut (),
 ) {
     IDENTITY.store(identity, Ordering::Release);
     HELD.store(held, Ordering::Release);
     ID.store(id, Ordering::Release);
     FIELDS.store(fields, Ordering::Release);
     VALUE.store(value, Ordering::Release);
+    FIT.store(fit, Ordering::Release);
 }
 
 fn loaded(f: &AtomicPtr<()>) -> *mut () {
@@ -110,6 +114,13 @@ pub(crate) fn names_of(id: SEXP) -> SEXP {
 pub(crate) fn fields(x: SEXP) -> SEXP {
     let f: unsafe extern "C" fn(SEXP) -> SEXP = unsafe { std::mem::transmute(loaded(&FIELDS)) };
     unsafe { f(x) }
+}
+
+/// Whether the values and lists in `fields`, the list of a value's fields, nest
+/// no deeper than a value may.
+pub(crate) fn fit(fields: SEXP) -> bool {
+    let f: unsafe extern "C" fn(SEXP) -> i32 = unsafe { std::mem::transmute(loaded(&FIT)) };
+    unsafe { f(fields) != 0 }
 }
 
 /// The value of the identity `id` over `fields`, a protected list without
@@ -593,6 +604,7 @@ fn r8_value_other(x: Robj) -> Robj {
 
 /// Why a value is not updated.
 enum Refused {
+    Deep(String),
     Other(String),
     Invalid(String, Vec<ValueError>),
 }
@@ -605,14 +617,24 @@ impl From<Error> for Refused {
 
 /// The value of `x` under the registered declarations, when it or a value that
 /// it holds was made under others; `None` for an object that holds none.
-fn updated(x: SEXP, lookup: &DocumentSet) -> std::result::Result<Option<Robj>, Refused> {
+fn updated(
+    x: SEXP,
+    lookup: &DocumentSet,
+    levels: u32,
+) -> std::result::Result<Option<Robj>, Refused> {
+    if levels == 0 {
+        return Err(Refused::Deep(format!(
+            "it nests deeper than {} levels",
+            rtemis_r8::validate::MAX_NESTING
+        )));
+    }
     let Some(id) = id(x) else {
         if crate::rview::sexptype(x) != SEXPTYPE::VECSXP || unsafe { extendr_ffi::ALTREP(x) } != 0 {
             return Ok(None);
         }
         let mut out: Option<Robj> = None;
         for i in 0..crate::rview::xlen(x) as isize {
-            if let Some(v) = updated(unsafe { VECTOR_ELT(x, i) }, lookup)? {
+            if let Some(v) = updated(unsafe { VECTOR_ELT(x, i) }, lookup, levels - 1)? {
                 let list =
                     out.get_or_insert_with(|| unsafe { Robj::from_sexp(Rf_shallow_duplicate(x)) });
                 unsafe { extendr_ffi::SET_VECTOR_ELT(list.get(), i, v.get()) };
@@ -660,7 +682,7 @@ fn updated(x: SEXP, lookup: &DocumentSet) -> std::result::Result<Option<Robj>, R
             Some(i) => unsafe { VECTOR_ELT(from, i as isize) },
             None => unsafe { R_NilValue },
         };
-        values.push(match updated(v, lookup)? {
+        values.push(match updated(v, lookup, levels - 1)? {
             Some(u) => {
                 changed = true;
                 u
@@ -688,7 +710,8 @@ fn updated(x: SEXP, lookup: &DocumentSet) -> std::result::Result<Option<Robj>, R
 /// types that it holds.
 ///
 /// @param x An R8 value, or a list that holds some.
-/// @return List: `value`; or `message`, or `errors` and `of`, the type, why the value
+/// @return List: `value`; or `message` and, for a list that nests too deep, its
+///   code, or `errors` and `of`, the type, why the value
 ///   is not converted.
 /// @keywords internal
 /// @noRd
@@ -697,11 +720,13 @@ fn r8_updated_value(x: Robj) -> Result<List> {
     let xs = unsafe { x.get() };
     let docs = crate::declare::registry().snapshot();
     // A field read of a Rust-stored value may raise an R error.
-    let read = crate::rust_stored::guarded(|| updated(xs, &docs));
+    let read =
+        crate::rust_stored::guarded(|| updated(xs, &docs, 2 * rtemis_r8::validate::MAX_NESTING));
     Ok(match read {
         None => list!(message = "its fields do not read"),
         Some(Ok(None)) => list!(value = x),
         Some(Ok(Some(v))) => list!(value = v),
+        Some(Err(Refused::Deep(message))) => list!(message = message, code = "too_deep"),
         Some(Err(Refused::Other(message))) => list!(message = message),
         Some(Err(Refused::Invalid(ty, errors))) => {
             list!(errors = crate::values::errors_list(&errors), of = ty)
@@ -709,8 +734,20 @@ fn r8_updated_value(x: Robj) -> Result<List> {
     })
 }
 
+/// The SHA-256 of a raw vector.
+///
+/// @param x Raw.
+/// @return Raw: 32 bytes.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_sha256(x: Raw) -> Raw {
+    Raw::from_bytes(&rtemis_r8::canonical::sha256(x.as_slice()))
+}
+
 extendr_module! {
     mod value;
+    fn r8_sha256;
     fn r8_value_other;
     fn r8_updated_value;
 }

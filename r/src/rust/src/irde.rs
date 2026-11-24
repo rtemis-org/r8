@@ -40,6 +40,24 @@ impl fmt::Display for Path<'_> {
     }
 }
 
+/// The deepest path into a declaration; a field type and an expression within the
+/// limit of `rtemis_r8::validate::MAX_NESTING` nest less.
+const MAX_PATH: usize = 256;
+
+impl Path<'_> {
+    /// Whether the path is longer than a declaration's.
+    fn too_deep(&self) -> bool {
+        let mut at = self;
+        for _ in 0..MAX_PATH {
+            at = match at {
+                Path::Root => return false,
+                Path::Key(p, _) | Path::Idx(p, _) => p,
+            };
+        }
+        true
+    }
+}
+
 /// An error of reading a declaration.
 #[derive(Debug)]
 pub(crate) struct Error(pub(crate) String);
@@ -370,6 +388,9 @@ impl<'de> MapAccess<'de> for Map<'_> {
     fn next_value_seed<S: DeserializeSeed<'de>>(&mut self, seed: S) -> Result<S::Value, Error> {
         let key = string_elt(self.names, self.i).unwrap_or_default();
         let path = Path::Key(self.path, &key);
+        if path.too_deep() {
+            return Err(Error("the declaration nests too deep".to_string()));
+        }
         let x = unsafe { VECTOR_ELT(self.x, self.i as isize) };
         self.i += 1;
         seed.deserialize(De {
@@ -403,6 +424,9 @@ impl<'de> SeqAccess<'de> for Seq<'_> {
             return Ok(None);
         }
         let path = Path::Idx(self.path, self.i);
+        if path.too_deep() {
+            return Err(Error("the declaration nests too deep".to_string()));
+        }
         let de = if self.list {
             De {
                 x: unsafe { VECTOR_ELT(self.x, self.i as isize) },

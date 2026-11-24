@@ -70,6 +70,11 @@ pub fn canonical_text(v: &Value) -> String {
     w.out
 }
 
+/// The SHA-256 of `bytes`.
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     let d = Sha256::digest(bytes);
     d.iter().map(|b| format!("{b:02x}")).collect()
@@ -218,6 +223,7 @@ pub fn canonical_access<'a, A: Access<'a>>(
 fn reachable(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
+    strip: fn(&mut TypeDef),
     seen: &mut std::collections::BTreeMap<String, Value>,
 ) {
     let key = ty.to_string();
@@ -250,7 +256,7 @@ fn reachable(
         }
     }
     for n in names {
-        reachable(&n, lookup, seen);
+        reachable(&n, lookup, strip, seen);
     }
 }
 
@@ -344,8 +350,67 @@ pub fn declaration_text(ty: &QualifiedName, lookup: &dyn TypeLookup) -> String {
 
 fn hashed_declaration(ty: &QualifiedName, lookup: &dyn TypeLookup) -> Value {
     let mut seen = std::collections::BTreeMap::new();
-    reachable(ty, lookup, &mut seen);
+    reachable(ty, lookup, strip, &mut seen);
     Value::Object(seen.into_iter().collect())
+}
+
+/// The hash of what a declaration says about a value: the declaration hash
+/// without defaults, `sensitive`, and the IDs and messages of rules, which have
+/// no part in a value that holds every field, as a document does.
+pub fn value_declaration_hash(ty: &QualifiedName, lookup: &dyn TypeLookup) -> String {
+    let mut seen = std::collections::BTreeMap::new();
+    reachable(ty, lookup, strip_neutral, &mut seen);
+    text_hash(&Value::Object(seen.into_iter().collect()))
+}
+
+/// Removes what [`value_declaration_hash`] excludes.
+fn strip_neutral(def: &mut TypeDef) {
+    fn rules(rs: &mut [crate::ir::RuleDef]) {
+        for r in rs {
+            r.id = None;
+            r.message = None;
+        }
+    }
+    fn ty(t: &mut FieldType) {
+        match t {
+            FieldType::Table {
+                columns, rules: rs, ..
+            } => {
+                columns
+                    .iter_mut()
+                    .for_each(|c| fields(std::slice::from_mut(&mut c.field)));
+                rules(rs);
+            }
+            FieldType::Option { inner, .. } => ty(inner),
+            _ => {}
+        }
+    }
+    fn fields(fs: &mut [FieldDef]) {
+        for f in fs {
+            f.default = None;
+            f.sensitive = false;
+            ty(&mut f.ty);
+        }
+    }
+    strip(def);
+    match def {
+        TypeDef::Struct(s) => {
+            fields(&mut s.fields);
+            rules(&mut s.rules);
+        }
+        TypeDef::Enum(e) => {
+            for v in &mut e.variants {
+                if let VariantKind::Struct {
+                    fields: fs,
+                    rules: rs,
+                } = &mut v.kind
+                {
+                    fields(fs);
+                    rules(rs);
+                }
+            }
+        }
+    }
 }
 
 /// The content hash of a valid value, `sha256:<hex>`.
@@ -422,9 +487,10 @@ fn hash_with<'a, A: Access<'a>>(
 
 // --------------------------------------------------------------- documents
 
-/// Writes a valid value as a document: the envelope first, `"$type"` and
-/// `"$types"` (the version of every named type the value contains), then the
-/// fields in declaration order, every absent field as `null`.
+/// Writes a valid value as a document: the envelope first, `"$type"`,
+/// `"$types"` (the version of every named type the value contains), and
+/// `"$declarations"` (the [`value_declaration_hash`] of each), then the fields in
+/// declaration order, every absent field as `null`.
 pub fn to_document(
     value: &Value,
     ty: &QualifiedName,
@@ -443,6 +509,24 @@ pub fn document_access<'a, A: Access<'a>>(
     ty: &QualifiedName,
     lookup: &dyn TypeLookup,
 ) -> String {
+    let hash = |q: &QualifiedName| value_declaration_hash(q, lookup).into();
+    document_with(value, ty, lookup, false, &hash)
+}
+
+/// The [`value_declaration_hash`] of a registered type, which a host keeps
+/// between documents.
+pub type HashOf<'a> = &'a dyn Fn(&QualifiedName) -> std::sync::Arc<str>;
+
+/// [`document_access`]; with `declarations`, the document also holds, as
+/// `"$ir"`, the IR documents of the types that the value contains and of those
+/// that they reach.
+pub fn document_with<'a, A: Access<'a>>(
+    value: A,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    declarations: bool,
+    hash: HashOf<'_>,
+) -> String {
     // The body first, which collects the contained types.
     let mut e = Emitter::new(lookup, String::new(), false, false);
     e.named(ty, value, None);
@@ -458,6 +542,23 @@ pub fn document_access<'a, A: Access<'a>>(
         w.number(f64::from(*v));
     }
     w.end_object();
+    let names = || {
+        e.contained
+            .keys()
+            .filter_map(|k| QualifiedName::parse(k).ok())
+    };
+    w.key("$declarations");
+    w.begin_object();
+    for q in names() {
+        w.key(&q.to_string());
+        w.string(&hash(&q));
+    }
+    w.end_object();
+    if declarations {
+        w.key("$ir");
+        let ir = ir_documents(names(), lookup);
+        w.value(&serde_json::to_value(ir).expect("a declaration serializes"));
+    }
     let mut out = w.out;
     if let Some(fields) = body.strip_prefix('{').and_then(|b| b.strip_suffix('}')) {
         if !fields.is_empty() {
@@ -472,6 +573,206 @@ pub fn document_access<'a, A: Access<'a>>(
     }
     out.push('}');
     out
+}
+
+/// The IR documents of `names` and of the types that they reach, one per
+/// namespace.
+fn ir_documents(
+    names: impl Iterator<Item = QualifiedName>,
+    lookup: &dyn TypeLookup,
+) -> Vec<crate::ir::IrDocument> {
+    let mut seen = std::collections::BTreeMap::new();
+    for q in names {
+        reachable(&q, lookup, strip, &mut seen);
+    }
+    let mut out: Vec<crate::ir::IrDocument> = Vec::new();
+    for name in seen.keys() {
+        let Ok(q) = QualifiedName::parse(name) else {
+            continue;
+        };
+        let Some(def) = lookup.find(&q) else { continue };
+        match out.iter_mut().find(|d| d.namespace == q.namespace) {
+            Some(d) => d.types.push(def.clone()),
+            None => out.push(crate::ir::IrDocument {
+                ir_version: crate::ir::IR_VERSION,
+                namespace: q.namespace.clone(),
+                types: vec![def.clone()],
+                traits: Vec::new(),
+                impls: Vec::new(),
+            }),
+        }
+    }
+    out
+}
+
+/// How a document is read.
+#[derive(Clone, Copy)]
+pub struct ReadOptions<'a> {
+    /// Reads a document written under other declarations than the registered
+    /// ones as one written under these.
+    pub any_declaration: bool,
+    /// The hashes of the registered declarations.
+    pub hash: HashOf<'a>,
+}
+
+/// The members of a document's envelope beside `$type`.
+struct Envelope<'a> {
+    /// The versions of `$types`, by type; `None` for one that is not a whole
+    /// number.
+    versions: Vec<(&'a str, Option<u64>)>,
+    /// The hashes of `$declarations`, by type, when the document holds it.
+    declarations: Option<Vec<(&'a str, Option<&'a str>)>>,
+    /// The IR documents of `$ir`.
+    ir: Option<Value>,
+}
+
+fn pointer_token(name: &str) -> String {
+    name.replace('~', "~0").replace('/', "~1")
+}
+
+impl Envelope<'_> {
+    /// The error of the version of `name`, whose registered version is
+    /// `current`.
+    fn version(&self, name: &str, current: u32) -> Option<ValueError> {
+        let path = format!("/$types/{}", pointer_token(name));
+        let listed = self.versions.iter().find(|(n, _)| *n == name);
+        let current_u64 = u64::from(current);
+        match listed.and_then(|(_, v)| *v) {
+            None => Some(document_error(
+                "version_missing",
+                &path,
+                format!("`$types` does not record the version of `{name}`"),
+            )),
+            Some(v) if v == current_u64 => None,
+            Some(v) if v < current_u64 => Some(document_error(
+                "version_older",
+                &path,
+                format!(
+                    "`{name}` is version {v} in the document and {current} in its declaration; reading it needs a migration"
+                ),
+            )),
+            Some(v) => Some(document_error(
+                "version_newer",
+                &path,
+                format!(
+                    "`{name}` is version {v} in the document, newer than its declaration, {current}; update the package that declares it"
+                ),
+            )),
+        }
+    }
+
+    /// The errors of the declarations that the document was written under: of a
+    /// type whose hash is another than the registered one's, its version, or what
+    /// differs in `$ir`, or, without `$ir`, that the declaration differs. A
+    /// document without `$declarations`, as one written by hand, claims none.
+    fn check(&self, lookup: &dyn TypeLookup, options: ReadOptions<'_>) -> Vec<ValueError> {
+        let mut errors = Vec::new();
+        let Some(listed) = &self.declarations else {
+            return errors;
+        };
+        let version = |def: &TypeDef| match def {
+            TypeDef::Struct(s) => s.version,
+            TypeDef::Enum(e) => e.version,
+        };
+        let mut other: Vec<(QualifiedName, &str)> = Vec::new();
+        for (name, hash) in listed {
+            let Some(hash) = hash else {
+                errors.push(document_error(
+                    "document_form",
+                    &format!("/$declarations/{}", pointer_token(name)),
+                    "`$declarations` holds a hash per type".to_string(),
+                ));
+                continue;
+            };
+            let Ok(q) = QualifiedName::parse(name) else {
+                continue;
+            };
+            let Some(def) = lookup.find(&q) else {
+                continue;
+            };
+            if *(options.hash)(&q) == **hash {
+                continue;
+            }
+            match self.version(name, version(def)) {
+                Some(e) if e.code != "version_missing" => errors.push(e),
+                _ => other.push((q, hash)),
+            }
+        }
+        if other.is_empty() || options.any_declaration {
+            return errors;
+        }
+        let path = "/$declarations";
+        let Some(ir) = &self.ir else {
+            // A type that holds another differs when it does, so a version that
+            // differs is the reason for the rest.
+            if errors.is_empty() {
+                let names: Vec<String> = other.iter().map(|(q, _)| format!("`{q}`")).collect();
+                let of = match names.len() {
+                    1 => "another declaration",
+                    _ => "other declarations",
+                };
+                errors.push(document_error(
+                    "declaration_changed",
+                    path,
+                    format!(
+                        "the document was written under {of} of {} than the registered, and does not hold it",
+                        names.join(", ")
+                    ),
+                ));
+            }
+            return errors;
+        };
+        let docs: Option<Vec<crate::ir::IrDocument>> = ir.as_array().and_then(|a| {
+            a.iter()
+                .map(|d| crate::ir::IrDocument::from_json(&d.to_string()).ok())
+                .collect()
+        });
+        let made = docs.map(crate::rules::DocumentSet::from);
+        let Some(made) = made.filter(|m| {
+            other
+                .iter()
+                .all(|(q, hash)| value_declaration_hash(q, m) == **hash)
+        }) else {
+            errors.push(document_error(
+                "document_form",
+                "/$ir",
+                "`$ir` does not hold the declarations that `$declarations` names".to_string(),
+            ));
+            return errors;
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for (q, _) in &other {
+            for c in crate::update::changes(q, &made, lookup) {
+                let at = format!("{path}/{}", pointer_token(&c.type_name));
+                if c.effect == crate::update::Effect::Meaning
+                    && c.code != "version_changed"
+                    && seen.insert((at.clone(), c.message.clone()))
+                {
+                    errors.push(document_error("declaration_changed", &at, c.message));
+                }
+            }
+        }
+        errors
+    }
+
+    /// The errors of the named types that the value contains and the envelope
+    /// does not list, or lists at another version, but those of `errors`.
+    fn contained(&self, name: &str, current: u32, errors: &mut Vec<ValueError>) {
+        if let Some(e) = self.version(name, current)
+            && !errors.iter().any(|x| x.code == e.code && x.path == e.path)
+        {
+            errors.push(e);
+        }
+        if let Some(listed) = &self.declarations
+            && !listed.iter().any(|(n, _)| *n == name)
+        {
+            errors.push(document_error(
+                "declaration_missing",
+                &format!("/$declarations/{}", pointer_token(name)),
+                format!("`$declarations` does not record the declaration of `{name}`"),
+            ));
+        }
+    }
 }
 
 fn document_error(code: &'static str, path: &str, message: String) -> ValueError {
@@ -506,6 +807,11 @@ pub fn read_document_cached(
     lookup: &dyn TypeLookup,
     cache: &mut crate::validate::RuleCache,
 ) -> Result<Value, Vec<ValueError>> {
+    let hash = |q: &QualifiedName| value_declaration_hash(q, lookup).into();
+    let options = ReadOptions {
+        any_declaration: false,
+        hash: &hash,
+    };
     let mut doc: Value = serde_json::from_str(text).map_err(|e| {
         vec![document_error(
             "document_json",
@@ -534,7 +840,7 @@ pub fn read_document_cached(
             "a document names its type in `$type`".to_string(),
         )),
     }
-    let Some(versions) = m.get("$types").and_then(Value::as_object).cloned() else {
+    let Some(Value::Object(versions)) = m.shift_remove("$types") else {
         errors.push(document_error(
             "document_form",
             "/$types",
@@ -542,6 +848,29 @@ pub fn read_document_cached(
         ));
         return Err(errors);
     };
+    let declarations = m.shift_remove("$declarations");
+    let envelope = Envelope {
+        versions: versions
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_u64()))
+            .collect(),
+        declarations: match &declarations {
+            Some(Value::Object(d)) => {
+                Some(d.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
+            }
+            Some(_) => {
+                errors.push(document_error(
+                    "document_form",
+                    "/$declarations",
+                    "`$declarations` holds a hash per type".to_string(),
+                ));
+                None
+            }
+            None => None,
+        },
+        ir: m.shift_remove("$ir"),
+    };
+    errors.extend(envelope.check(lookup, options));
     // The value moves out of the document: `$value`, or the document itself.
     let value = match m.remove("$value") {
         Some(v) => v,
@@ -556,7 +885,6 @@ pub fn read_document_cached(
     let mut value = value;
     if let Value::Object(m) = &mut value {
         m.shift_remove("$type");
-        m.shift_remove("$types");
     }
     // A value already in normalized form, such as a document R8 wrote, is
     // used as read: the emitter's stream is compared with it, building
@@ -575,21 +903,7 @@ pub fn read_document_cached(
         (normalized, e.contained)
     };
     for (name, current) in contained {
-        let path = format!("/$types/{}", name.replace('~', "~0").replace('/', "~1"));
-        match versions.get(&name).and_then(Value::as_u64) {
-            None => errors.push(document_error("version_missing", &path, format!("`$types` does not record the version of `{name}`"))),
-            Some(v) if v == u64::from(current) => {}
-            Some(v) if v < u64::from(current) => errors.push(document_error(
-                "version_older",
-                &path,
-                format!("`{name}` is version {v} in the document and {current} in its declaration; reading it needs a migration"),
-            )),
-            Some(v) => errors.push(document_error(
-                "version_newer",
-                &path,
-                format!("`{name}` is version {v} in the document, newer than its declaration, {current}; update the package that declares it"),
-            )),
-        }
+        envelope.contained(&name, current, &mut errors);
     }
     if errors.is_empty() {
         Ok(normalized)
@@ -810,6 +1124,22 @@ pub fn read_tree_cached(
     lookup: &dyn TypeLookup,
     cache: &mut crate::validate::RuleCache,
 ) -> Result<Tree, Vec<ValueError>> {
+    let hash = |q: &QualifiedName| value_declaration_hash(q, lookup).into();
+    let options = ReadOptions {
+        any_declaration: false,
+        hash: &hash,
+    };
+    read_tree_with(text, ty, lookup, cache, options)
+}
+
+/// [`read_tree_cached`] with options.
+pub fn read_tree_with(
+    text: &str,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    cache: &mut crate::validate::RuleCache,
+    options: ReadOptions<'_>,
+) -> Result<Tree, Vec<ValueError>> {
     let doc: Tree = serde_json::from_str(text).map_err(|e| {
         vec![document_error(
             "document_json",
@@ -853,6 +1183,47 @@ pub fn read_tree_cached(
         ));
         return Err(errors);
     };
+    let declarations = take(&mut members, "$declarations");
+    let ir = take(&mut members, "$ir");
+    let envelope = Envelope {
+        versions: match &versions {
+            Tree::Object(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    let v = match v {
+                        Tree::Num(n) => n.as_u64(),
+                        _ => None,
+                    };
+                    (&**k, v)
+                })
+                .collect(),
+            _ => Vec::new(),
+        },
+        declarations: match &declarations {
+            Some(Tree::Object(m)) => Some(
+                m.iter()
+                    .map(|(k, v)| {
+                        let v = match v {
+                            Tree::Str(s) => Some(&**s),
+                            _ => None,
+                        };
+                        (&**k, v)
+                    })
+                    .collect(),
+            ),
+            Some(_) => {
+                errors.push(document_error(
+                    "document_form",
+                    "/$declarations",
+                    "`$declarations` holds a hash per type".to_string(),
+                ));
+                None
+            }
+            None => None,
+        },
+        ir: ir.map(|t| t.to_value()),
+    };
+    errors.extend(envelope.check(lookup, options));
     let mut value = match take(&mut members, "$value") {
         Some(v) => v,
         None => Tree::Object(members.into_boxed_slice()),
@@ -877,25 +1248,7 @@ pub fn read_tree_cached(
         &mut found,
     );
     for (name, current) in found {
-        let path = format!("/$types/{}", name.replace('~', "~0").replace('/', "~1"));
-        let listed = match versions.get(&name) {
-            Some(Tree::Num(n)) => n.as_u64(),
-            _ => None,
-        };
-        match listed {
-            None => errors.push(document_error("version_missing", &path, format!("`$types` does not record the version of `{name}`"))),
-            Some(v) if v == u64::from(current) => {}
-            Some(v) if v < u64::from(current) => errors.push(document_error(
-                "version_older",
-                &path,
-                format!("`{name}` is version {v} in the document and {current} in its declaration; reading it needs a migration"),
-            )),
-            Some(v) => errors.push(document_error(
-                "version_newer",
-                &path,
-                format!("`{name}` is version {v} in the document, newer than its declaration, {current}; update the package that declares it"),
-            )),
-        }
+        envelope.contained(&name, current, &mut errors);
     }
     if errors.is_empty() {
         Ok(value)

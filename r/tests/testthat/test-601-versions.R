@@ -16,7 +16,7 @@ scenario(
   "a package is updated and lists the fields of a type in another order",
   situation = "pa 2.0.0 lists the field y before x. pb, built for pa 1.0.0, is not installed again.",
   risk = "R code of pb, which names the fields, reads another one.",
-  result = "pb loads and works. A value that the user saved is read by name, and is used once r8_update() has converted it.",
+  result = "pb loads and works. A value that the user saved is read by name, and is used once r8_update() has converted it. A document that holds its declarations is read, and one that does not is refused.",
   how = "installed",
   code = {
     out <- with_pa(
@@ -26,7 +26,9 @@ scenario(
         "say('read', c(p$x, p$y))",
         "say('method', pa::mag(h))",
         "say('updated', { h <- R8::r8_update(h); c(pa::mag(h), h$p$y, names(h$p)) })",
-        "say('document', { x <- R8::r8_from_json(pa::Point, pj); c(x$x, x$y) })",
+        "say('document', { x <- R8::r8_from_json(pa::Point, pd); c(x$x, x$y) })",
+        "say('short', R8::r8_from_json(pa::Point, pj))",
+        "say('any', { x <- R8::r8_from_json(pa::Point, pj, declaration = 'any'); c(x$x, x$y) })",
         "say('write', { p$y <- 9; p })"
       )
     )
@@ -38,6 +40,8 @@ scenario(
       method = "^error: .*in the order x, y, and are in the order y, x \\(in `pa::Point`\\)",
       updated = "^103 +2 +y +x",
       document = "^3 2$",
+      short = "^error: .*another declaration of `pa::Point`.*declaration = \"any\"",
+      any = "^3 2$",
       write = "^error: .*declaration_changed"
     )
   }
@@ -48,15 +52,16 @@ scenario(
   "a package is updated and adds an optional field to a type",
   situation = "pa 2.0.0 adds a field of type option() to its type. pb is not installed again, and the user reads a saved value and a document.",
   risk = "Code of pb that does not know the field fails.",
-  result = "pb loads and works, and the document is read. A value saved before has no such field: reading it is an error that says so, and r8_update() gives the value with the field absent.",
+  result = "pb loads and works, and a document that holds its declarations is read. A value saved before has no such field: reading it is an error that says so, and r8_update() gives the value with the field absent.",
   how = "installed",
   code = {
     out <- with_pa(
       "optional",
       c(
         "say('new', first(Holder(p = pa::Point(x = 6, y = 2), label = 'a'), pa::Point(x = 1, y = 0)))",
-        "say('document', is.null(R8::r8_from_json(pa::Point, pj)$z))",
-        "say('holder', R8::r8_from_json(Holder, hj)$p$x)",
+        "say('document', is.null(R8::r8_from_json(pa::Point, pd)$z))",
+        "say('short', R8::r8_from_json(pa::Point, pj))",
+        "say('holder', R8::r8_from_json(Holder, hd)$p$x)",
         "say('saved', pa::mag(p))",
         "say('field', p$z)",
         "say('updated', { u <- R8::r8_update(list(p, h)); c(pa::mag(u[[1]]), pa::mag(u[[2]]), is.null(u[[1]]$z)) })"
@@ -67,6 +72,7 @@ scenario(
       load = "^loaded$",
       new = "^7$",
       document = "^TRUE$",
+      short = "^error: .*declaration_changed",
       holder = "^3$",
       saved = "^error: .*`z` was added as an optional field; r8_update\\(\\) gives",
       field = "^error: `z` is not a field of `pa::Point`. Fields: x, y",
@@ -346,9 +352,27 @@ scenario(
   "a document of an earlier unit is refused",
   situation = "As E11, for a JSON document that was written before.",
   risk = "A dose of 500 mg is read as 500 mg/kg.",
-  result = "The document is refused, or read as of its own declaration.",
+  result = "The document is refused: one that holds its declarations with both units, and one that does not by the hash of its declaration. A document that a person wrote, which names no declaration, is read.",
   how = "installed",
-  open = "A document holds the version of its type and not the hash of its declaration."
+  code = {
+    out <- with_pa(
+      "unit",
+      c(
+        "say('full', R8::r8_from_json(pa::Point, pd))",
+        "say('short', R8::r8_from_json(pa::Point, pj))",
+        "say('holder', R8::r8_from_json(Holder, hd))",
+        "say('hand', R8::r8_from_json(pa::Point, '{\"$type\": \"pa::Point\", \"$types\": {\"pa::Point\": 1}, \"x\": 1, \"y\": 2}')$x)"
+      )
+    )
+    unit <- "^error: .*`x` was without a unit, and is in `mg/kg`"
+    expect_said(
+      out,
+      full = unit,
+      short = "^error: .*another declaration of `pa::Point`",
+      holder = unit,
+      hand = "^1$"
+    )
+  }
 )
 
 scenario(
@@ -356,7 +380,7 @@ scenario(
   "a package is updated and rewords its type",
   situation = "pa 2.0.0 changes descriptions, the message of a rule, and the default of a field.",
   risk = "Values that a user saved are refused without need.",
-  result = "The saved values are used as before: none of these has a part in a value.",
+  result = "The saved values and documents are used as before: none of these has a part in a value.",
   how = "installed",
   code = {
     first <- install_version(write_package(
@@ -373,12 +397,22 @@ scenario(
       version = "2.0.0"
     ))
     rds <- tempfile(fileext = ".rds")
-    said(first, sprintf("saveRDS(pd::P(b = 5), %s)", deparse(rds)))
+    json <- said(
+      first,
+      c(
+        sprintf("saveRDS(pd::P(b = 5), %s)", deparse(rds)),
+        "say('json', R8::r8_to_json(pd::P(b = 5)))"
+      )
+    )[["json"]]
     out <- said(
       later,
       c(
         sprintf("x <- readRDS(%s)", deparse(rds)),
         "say('equal', R8::r8_equal(x, pd::P(a = 1, b = 5)))",
+        sprintf(
+          "say('document', R8::r8_equal(x, R8::r8_from_json(pd::P, %s)))",
+          deparse(json)
+        ),
         "say('write', { x$a <- 3; x$a })",
         "say('rule', { x$a <- 9 })"
       )
@@ -386,6 +420,7 @@ scenario(
     expect_said(
       out,
       equal = "^TRUE$",
+      document = "^TRUE$",
       write = "^3$",
       rule = "^error: .*The ends are in order"
     )

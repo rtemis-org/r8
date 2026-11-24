@@ -444,6 +444,7 @@ fn document_value(mut doc: Value) -> Value {
     }
     m.shift_remove("$type");
     m.shift_remove("$types");
+    m.shift_remove("$declarations");
     doc
 }
 

@@ -122,7 +122,12 @@ fn a_document_of_unknown_types_round_trips_unchanged() {
     let x = Axis::from_document_in(&text, &types).unwrap();
     assert_eq!(x.range.type_name().to_string(), "other::Pane");
     let written = x.to_document_in(&types).unwrap();
-    let of = |s: &str| serde_json::from_str::<Value>(s).unwrap();
+    // The text of the test names no declarations.
+    let of = |s: &str| {
+        let mut v = serde_json::from_str::<Value>(s).unwrap();
+        v.as_object_mut().unwrap().remove("$declarations");
+        v
+    };
     assert_eq!(of(&written), of(&text));
     assert_eq!(Axis::from_document_in(&written, &types).unwrap(), x);
     // The declarations that `Axis` reaches hold no `other::Pane`.
@@ -276,7 +281,12 @@ fn an_implementor_round_trips_by_its_type_and_by_its_tag() {
     let window = x.models[0].downcast::<Window>().unwrap().unwrap();
     assert_eq!(window.label, "a");
     assert_eq!(x.models[1].downcast::<Window>().unwrap(), None);
-    let of = |s: &str| serde_json::from_str::<Value>(s).unwrap();
+    // The text of the test names no declarations.
+    let of = |s: &str| {
+        let mut v = serde_json::from_str::<Value>(s).unwrap();
+        v.as_object_mut().unwrap().remove("$declarations");
+        v
+    };
     assert_eq!(of(&x.to_document_in(&types).unwrap()), of(&text));
     let made = Drawing {
         models: vec![ImplementorOf::new(&window).unwrap()],

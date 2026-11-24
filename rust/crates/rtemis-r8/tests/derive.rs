@@ -260,7 +260,7 @@ fn a_newtype_variant_is_flattened_with_the_tag() {
     let text = r.to_document().unwrap();
     assert_eq!(
         text,
-        r#"{"$type":"demo::Rows","$types":{"demo::Ranges":1,"demo::Rows":1},"start":5,"kind":"Ranged"}"#
+        r#"{"$type":"demo::Rows","$types":{"demo::Ranges":1,"demo::Rows":1},"$declarations":{"demo::Ranges":"sha256:5470bf935b42395179cbb7b6109f38213f8d6ecc62ef8c99547dcde5e5de7431","demo::Rows":"sha256:53dd3a0d902ef3d1044a91ab460aa46de4c47e8d13dbf07bf05297953f7a3fd6"},"start":5,"kind":"Ranged"}"#
     );
     assert_eq!(Rows::from_document(&text).unwrap(), r);
     let bad = Rows::Ranged(Ranges { start: -1 });

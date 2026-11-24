@@ -47,6 +47,7 @@ without a next impl.
 \item \code{r8_other_declaration_error}, beside \code{r8_value_error} or
 \code{r8_dispatch_error}: a value made under another declaration of its type
 than the registered one, which \code{\link[=r8_update]{r8_update()}} converts or refuses.
+\item \code{r8_file_error}: a damaged file (\code{\link[=r8_read_rds]{r8_read_rds()}}).
 \item \code{r8_text_error}: text output given invalid arguments.
 }
 

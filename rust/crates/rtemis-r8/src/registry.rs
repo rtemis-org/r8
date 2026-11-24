@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::ir::{
-    DeclError, ImplDef, TraitDef, TypeDef, check_defaults, check_document_records, check_extends,
-    check_tags, check_trait, check_type,
+    DeclError, ImplDef, TraitDef, TypeDef, check_default_cycles, check_defaults,
+    check_document_records, check_extends, check_tags, check_trait, check_type,
 };
 use crate::name::{Name, QualifiedName};
 use crate::record::{self, Declaration, DeclarationRef, Entry};
@@ -117,6 +117,9 @@ impl State {
         let (d, index) = (placed.document, placed.index);
         let checked = guarded(|| {
             let mut p = check_type(docs.document(d), index);
+            if p.is_empty() {
+                p = check_default_cycles(&q, &format!("/types/{index}"), &*docs);
+            }
             if p.is_empty()
                 && let TypeDef::Struct(s) = &docs.document(d).types[index]
             {

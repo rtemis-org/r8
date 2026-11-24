@@ -11,8 +11,9 @@
 //! spec: R8/class-system#inheritance
 
 use super::check::DeclError;
-use super::decl::{FieldDef, RuleDef, StructDef};
+use super::decl::{FieldDef, RuleDef, StructDef, VariantKind};
 use super::document::TypeDef;
+use super::types::FieldType;
 use crate::name::{Name, QualifiedName};
 use crate::rules::TypeLookup;
 use crate::tree::Tree;
@@ -352,6 +353,163 @@ pub fn check_extends(
         }
     }
     out
+}
+
+/// A field whose default applies: its type, its index among the fields of the
+/// struct or the variant, and the variant of an enum.
+type Applied = (QualifiedName, Option<Name>, usize);
+
+/// The fields of the struct or of the variant `variant` of an enum.
+fn fields_of<'a>(
+    q: &QualifiedName,
+    variant: Option<&str>,
+    lookup: &'a dyn TypeLookup,
+) -> &'a [FieldDef] {
+    match lookup.find(q) {
+        Some(TypeDef::Struct(s)) => &s.fields,
+        Some(TypeDef::Enum(e)) => {
+            let kind = e
+                .variants
+                .iter()
+                .find(|v| Some(v.name.as_str()) == variant)
+                .map(|v| &v.kind);
+            match kind {
+                Some(VariantKind::Struct { fields, .. }) => fields,
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
+                    Some(TypeDef::Struct(s)) => &s.fields,
+                    _ => &[],
+                },
+                _ => &[],
+            }
+        }
+        None => &[],
+    }
+}
+
+/// The fields that `t`, a value of `ft`, leaves to their defaults.
+fn applied(t: &Tree, ft: &FieldType, lookup: &dyn TypeLookup, out: &mut Vec<Applied>) {
+    if matches!(t, Tree::Null) {
+        return;
+    }
+    let named = |q: &QualifiedName, out: &mut Vec<Applied>| {
+        let variant = match lookup.find(q) {
+            Some(TypeDef::Enum(e)) => match t.get(e.tag.as_str()) {
+                Some(Tree::Str(s)) => Name::new(&**s).ok(),
+                _ => return,
+            },
+            _ => None,
+        };
+        let fields = fields_of(q, variant.as_ref().map(Name::as_str), lookup);
+        for (i, f) in fields.iter().enumerate() {
+            match t.get(f.name.as_str()) {
+                Some(x) if !matches!(x, Tree::Null) => applied(x, &f.ty, lookup, out),
+                _ if f.default.is_some() => out.push((q.clone(), variant.clone(), i)),
+                _ => {}
+            }
+        }
+    };
+    match ft {
+        FieldType::Option { inner, .. } => applied(t, inner, lookup, out),
+        FieldType::Vec { element, .. } => {
+            if let Tree::Array(items) = t {
+                items.iter().for_each(|x| applied(x, element, lookup, out));
+            }
+        }
+        FieldType::BtreeMap { value, .. } => {
+            if let Tree::Object(m) = t {
+                m.iter().for_each(|(_, x)| applied(x, value, lookup, out));
+            }
+        }
+        FieldType::IndexMap { value, .. } => {
+            if let Tree::Array(pairs) = t {
+                let of = pairs.iter().filter_map(|p| p.get("value"));
+                of.for_each(|x| applied(x, value, lookup, out));
+            }
+        }
+        FieldType::Named { name } => named(name, out),
+        FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
+            let v = crate::access::JsonOf::of(crate::tree::TreeRef::new(t));
+            if let Some(Ok((q, _))) = crate::access::concrete(v, ft, lookup) {
+                named(&q, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The problems of the defaults of the type `name`, declared at `path`, that hold
+/// themselves: a default that holds a value whose absent field has a default that
+/// leads back to it has no end.
+pub fn check_default_cycles(
+    name: &QualifiedName,
+    path: &str,
+    lookup: &dyn TypeLookup,
+) -> Vec<DeclError> {
+    let starts: Vec<(Option<Name>, usize, String)> = match lookup.find(name) {
+        Some(TypeDef::Struct(s)) => (0..s.fields.len())
+            .map(|i| (None, i, format!("{path}/fields/{i}/default")))
+            .collect(),
+        Some(TypeDef::Enum(e)) => e
+            .variants
+            .iter()
+            .enumerate()
+            .flat_map(|(k, v)| {
+                let n = match &v.kind {
+                    VariantKind::Struct { fields, .. } => fields.len(),
+                    _ => 0,
+                };
+                (0..n).map(move |i| (v.name.clone(), k, i))
+            })
+            .map(|(v, k, i)| {
+                let at = format!("{path}/variants/{k}/fields/{i}/default");
+                (Some(v), i, at)
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut out = Vec::new();
+    for (variant, i, at) in starts {
+        let start: Applied = (name.clone(), variant, i);
+        let mut seen: Vec<Applied> = Vec::new();
+        let mut next = vec![start.clone()];
+        while let Some((q, v, k)) = next.pop() {
+            let Some(f) = fields_of(&q, v.as_ref().map(Name::as_str), lookup).get(k) else {
+                continue;
+            };
+            let Some(d) = f.default.as_deref() else {
+                continue;
+            };
+            let mut found = Vec::new();
+            applied(d, &f.ty, lookup, &mut found);
+            if found.contains(&start) {
+                out.push(DeclError {
+                    code: "default_recursive",
+                    path: at.clone(),
+                    message: format!(
+                        "the default of `{}` holds a value of `{name}` that leaves `{}` to its default, without end; give it in the default, or declare the field without one",
+                        start_name(&start, lookup),
+                        start_name(&start, lookup)
+                    ),
+                });
+                break;
+            }
+            for a in found {
+                if !seen.contains(&a) {
+                    seen.push(a.clone());
+                    next.push(a);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The name of the field of `a`.
+fn start_name(a: &Applied, lookup: &dyn TypeLookup) -> String {
+    fields_of(&a.0, a.1.as_ref().map(Name::as_str), lookup)
+        .get(a.2)
+        .map(|f| f.name.to_string())
+        .unwrap_or_default()
 }
 
 /// The problems of the struct `s`, named `name` and declared at `path`,

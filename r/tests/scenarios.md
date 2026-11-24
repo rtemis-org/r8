@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 34 files of 286 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 35 files of 291 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -21,7 +21,7 @@ What each feature does, in 34 files of 286 tests. The runtime has its own tests 
 | `test-117-altrep.R` | Vectors that R has not written out in memory, such as 1:1e9, stay so. | 7 |
 | `test-118-messages.R` | The messages of a value that does not satisfy its type: the subject in R syntax, the requirement, the value found, the nearest name, hints for R objects, and the header. | 8 |
 | `test-119-representation.R` | A value as an R object: its identity and fields are in an ALTREP object, where R code does not reach, and its attributes are its names and its class. | 6 |
-| `test-120-update.R` | Values of another declaration of their type than the registered one: what reads them, what refuses them, and what r8_update() does with them. The scenarios tell the same of users' work. | 16 |
+| `test-120-update.R` | Values of another declaration of their type than the registered one: what reads them, what refuses them, and what r8_update() does with them. The scenarios tell the same of users' work. | 18 |
 | `test-121-traits.R` | Traits: named sets of methods that types implement. | 8 |
 | `test-122-dispatch.R` | Generics that choose a method by the types of several arguments. | 8 |
 | `test-123-dispatch-extends.R` | Methods of a parent called on a child, the method that comes next, and the ancestor that a value holds. | 5 |
@@ -35,6 +35,7 @@ What each feature does, in 34 files of 286 tests. The runtime has its own tests 
 | `test-132-text.R` | The text of values at the console: the layout of a value without a method of its own, colors, and the output types. | 11 |
 | `test-133-integrate.R` | The text of values in documents and notebooks: knitr, repr, and pillar. | 5 |
 | `test-134-conformance.R` | The same behavior of a type with fields of every kind, stored by R and by Rust. | 1 |
+| `test-135-rds.R` | Files with a checksum: `r8_save_rds()` and `r8_read_rds()`. | 3 |
 | `test-141-generate.R` | The R declarations that R8 writes for types declared in Rust. | 13 |
 | `test-142-public.R` | The examples of the help pages and the test packages use R8's functions, and none of its internals. | 2 |
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
@@ -45,7 +46,7 @@ What each feature does, in 34 files of 286 tests. The runtime has its own tests 
 
 ## Scenarios
 
-What happens to a user: 55 scenarios, of which 2 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
+What happens to a user: 58 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
 
 ### A. One session: a user declares a type again at the console
 
@@ -97,8 +98,8 @@ What happens to a user: 55 scenarios, of which 2 are open, since what R8 is to d
 
 | | What happens | The situation | The risk without a check | What R8 does | Tested with |
 |:--|:--|:--|:--|:--|:--|
-| E1 | a package is updated and lists the fields of a type in another order | pa 2.0.0 lists the field y before x. pb, built for pa 1.0.0, is not installed again. | R code of pb, which names the fields, reads another one. | pb loads and works. A value that the user saved is read by name, and is used once r8_update() has converted it. | installed packages |
-| E2 | a package is updated and adds an optional field to a type | pa 2.0.0 adds a field of type option() to its type. pb is not installed again, and the user reads a saved value and a document. | Code of pb that does not know the field fails. | pb loads and works, and the document is read. A value saved before has no such field: reading it is an error that says so, and r8_update() gives the value with the field absent. | installed packages |
+| E1 | a package is updated and lists the fields of a type in another order | pa 2.0.0 lists the field y before x. pb, built for pa 1.0.0, is not installed again. | R code of pb, which names the fields, reads another one. | pb loads and works. A value that the user saved is read by name, and is used once r8_update() has converted it. A document that holds its declarations is read, and one that does not is refused. | installed packages |
+| E2 | a package is updated and adds an optional field to a type | pa 2.0.0 adds a field of type option() to its type. pb is not installed again, and the user reads a saved value and a document. | Code of pb that does not know the field fails. | pb loads and works, and a document that holds its declarations is read. A value saved before has no such field: reading it is an error that says so, and r8_update() gives the value with the field absent. | installed packages |
 | E3 | a package is updated and adds a required field to a type | pa 2.0.0 adds a required field to its type. pb builds the type without it, and the user reads a saved value and a document. | Values without the field go around. | Building a value without the field, reading the document, and checking the saved value are errors that name the field. | installed packages |
 | E4 | a package is updated and removes a field of a type | pa 2.0.0 removes the field y. pb and the user's files still have it. | The field is dropped without notice, or read as another. | Building a value with the field, reading the document, and checking the saved value are errors that name it. | installed packages |
 | E5 | a package is updated and tightens a bound of a type | pa 2.0.0 requires x to be at least 5. The user's saved value has 3. | A value outside the bound goes around. | Building such a value, reading the document, and checking the saved value are errors that give the bound and the value found. | installed packages |
@@ -108,8 +109,8 @@ What happens to a user: 55 scenarios, of which 2 are open, since what R8 is to d
 | E9 | a package is updated and raises the version of a type | pa 2.0.0 raises the version of its type to 2, the author's statement that earlier values mean something else. The user reads a document and a saved value of version 1. | The earlier value is taken as one of the new version. | The document is refused, with both versions. | installed packages |
 | E10 | a saved value of a lower version of its type is refused as its document is | pa 2.0.0 raises the version of its type to 2. The user reads a value saved with saveRDS() at version 1. | The value is taken as one of version 2, and written as such. | Every use of the value, and r8_update(), are errors that give both versions. | installed packages |
 | E11 | a package is updated and changes the unit of a field | pa 2.0.0 gives a field per kilogram of body weight, and its author forgets to raise the version of the type. The field has the same name and the same bounds. The user reads a value that was saved before. | A dose of 500 mg is taken as 500 mg/kg. Every other check of the value passes. | The value prints with a line that names both units. Every use of it, and r8_update(), are errors that name them. | installed packages |
-| E12 | a document of an earlier unit is refused | As E11, for a JSON document that was written before. | A dose of 500 mg is read as 500 mg/kg. | The document is refused, or read as of its own declaration. | open: A document holds the version of its type and not the hash of its declaration. |
-| E13 | a package is updated and rewords its type | pa 2.0.0 changes descriptions, the message of a rule, and the default of a field. | Values that a user saved are refused without need. | The saved values are used as before: none of these has a part in a value. | installed packages |
+| E12 | a document of an earlier unit is refused | As E11, for a JSON document that was written before. | A dose of 500 mg is read as 500 mg/kg. | The document is refused: one that holds its declarations with both units, and one that does not by the hash of its declaration. A document that a person wrote, which names no declaration, is read. | installed packages |
+| E13 | a package is updated and rewords its type | pa 2.0.0 changes descriptions, the message of a rule, and the default of a field. | Values that a user saved are refused without need. | The saved values and documents are used as before: none of these has a part in a value. | installed packages |
 | E14 | a package is built for a newer version of another than the one installed | pb was built for pa 2.0.0, whose type has a field z, and the session has pa 1.0.0, since R does not check the versions that a package was built with. | pb reads a field that the type does not have. | Building a value with the field, and reading the field, are errors that name it. | installed packages |
 | E15 | a package is updated while a session has it loaded | A user installs pa 2.0.0, with the fields in another order, into the library of a session that has pa 1.0.0 loaded, and goes on working. A worker that starts then loads pa 2.0.0. | The session mixes the two declarations. | The session keeps the declaration that it loaded, and a new session has the new one. A value that crosses is read by name, and is used in the new session once r8_update() has converted it. | installed packages |
 | E16 | three packages, of which the first is updated | pc uses a type of pb that has a field of a type of pa. pa 2.0.0 removes a field of its type; pb and pc are not installed again. | pc, which does not name pa, meets values of another shape. | Checking a saved value of pb's type in pc, and reading its document, are errors that name the field of pa's type. | installed packages |
@@ -131,4 +132,7 @@ What happens to a user: 55 scenarios, of which 2 are open, since what R8 is to d
 | F3 | a value whose fields or class R code changed is not written or compared | A user changes a field of a value, its class, or its attributes with R's own functions. | The value is written to a file or compared as a valid one, or as a value of another type. | A list in place of the value is an error, and a class that R code gives a value changes nothing that R8 reads. | one session |
 | F4 | R's functions that change a vector are refused on a value | A user calls names<-, length<-, or an assignment by position on a value. | A field is renamed, dropped, or replaced without a check. | Each is an error, and the value is as it was. | one session |
 | F5 | a saved value of Rust whose bytes are damaged is an error | A file that holds a value of a type whose values Rust holds is damaged in the bytes that the Rust code wrote. Damage to R's own part of a file is R's to find. | The Rust code reads past the bytes, and R crashes. | Reading the value is an error, or gives a value that R8 checks. | installed packages |
+| F7 | a value that nests too deep is an error | A user builds a chain of values, each a field of the next, or puts a list of many levels into a field of JSON, as a recursive function or a parser may give it. | Each walk of the value takes a part of the stack per level, and the session ends. | The value is refused with the limit, which every JSON parser reads, and with what holds a longer chain. A chain within the limit is printed, hashed, compared, written, and read. | one session |
+| F8 | a declaration without end, or that nests too deep, is an error | A user gives a field of a recursive type a default that leaves the field to its default, or builds a type by wrapping it many times. | The first value, or the declaration itself, ends the session. | The declaration is refused, with the field and what to change. | one session |
+| F9 | a method that calls itself without end is an error | A user's format, print, or generic method calls itself on the same value. | The calls go through R8's compiled code, and the session ends. | R's own error of a recursion without end, and R8 works afterwards. | one session |
 

@@ -4,7 +4,7 @@
 //! type, constraint, and rule, collecting every error with a stable code, a
 //! JSON Pointer path, and, for a rule, its ID. A value's JSON form is the form
 //! [`crate::canonical::to_document`] writes: an absent field is `null` or an
-//! omitted member, and the document envelope (`"$type"` and `"$types"`) is
+//! omitted member, and the document envelope (`"$type"`, `"$types"`, `"$declarations"`, and `"$ir"`) is
 //! accepted on the outermost object.
 //!
 //! [`validate_access`] checks a value in any host form through
@@ -73,7 +73,13 @@ pub fn diagnosis(r: &RuleDef, mut d: crate::rules::Diagnosis) -> Box<crate::rule
 const INT_MIN: i64 = -2_147_483_647;
 const INT_MAX: i64 = 2_147_483_647;
 
-const ENVELOPE: [&str; 2] = ["$type", "$types"];
+/// The deepest nesting of a value: of named types, `vec()`, maps, and the lists of
+/// a `type_json()` value. A document of a value of this depth reads within the
+/// 128 levels of a JSON parser's recursion limit, and the stack holds every walk of
+/// the value.
+pub const MAX_NESTING: u32 = 100;
+
+const ENVELOPE: [&str; 4] = ["$type", "$types", "$declarations", "$ir"];
 
 /// Compiled rules and patterns, kept between validations.
 ///
@@ -322,6 +328,8 @@ struct Validator<'l, 'c> {
     cache: &'c mut RuleCache,
     /// The depth of `sensitive` fields around the value being checked.
     sensitive: u32,
+    /// The nesting of the value being checked.
+    nesting: u32,
 }
 
 impl<'l, 'c> Validator<'l, 'c> {
@@ -332,6 +340,7 @@ impl<'l, 'c> Validator<'l, 'c> {
             count: 0,
             cache,
             sensitive: 0,
+            nesting: 0,
         }
     }
 
@@ -427,6 +436,34 @@ impl<'l> Validator<'l, '_> {
     /// missing value; callers handle absence where the type admits it.
     fn value<'a, A: Access<'a>>(&mut self, ft: &FieldType, v: A, path: &P) {
         match ft {
+            FieldType::Vec { .. }
+            | FieldType::BtreeMap { .. }
+            | FieldType::IndexMap { .. }
+            | FieldType::Named { .. }
+            | FieldType::Dyn { .. }
+            | FieldType::Subtype { .. }
+                if self.nesting == MAX_NESTING =>
+            {
+                // The path has as many segments as the limit.
+                self.form(crate::access::too_deep(), &P::Root(""));
+            }
+            FieldType::Vec { .. }
+            | FieldType::BtreeMap { .. }
+            | FieldType::IndexMap { .. }
+            | FieldType::Named { .. }
+            | FieldType::Dyn { .. }
+            | FieldType::Subtype { .. } => {
+                self.nesting += 1;
+                self.value_of(ft, v, path);
+                self.nesting -= 1;
+            }
+            _ => self.value_of(ft, v, path),
+        }
+    }
+
+    /// [`Validator::value`] of a type whose nesting is counted.
+    fn value_of<'a, A: Access<'a>>(&mut self, ft: &FieldType, v: A, path: &P) {
+        match ft {
             FieldType::Option { inner, .. } => {
                 if !v.is_absent() {
                     self.value(inner, v, path);
@@ -503,7 +540,7 @@ impl<'l> Validator<'l, '_> {
                 }
             }
             FieldType::Json => {
-                if let Err(f) = v.json() {
+                if let Err(f) = v.json(MAX_NESTING - self.nesting) {
                     self.form(f, path);
                 }
             }

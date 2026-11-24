@@ -601,6 +601,9 @@ pub(crate) fn value_of_fields(
             format!("`fields` is the list of the {n} fields of `{q}`, without attributes"),
         ));
     }
+    if !crate::value::fit(fields) {
+        return Err(("too_deep", rtemis_r8::access::too_deep().message));
+    }
     let Some(vt) = crate::exports::codec(&q.to_string()).map_err(|m| ("declaration_changed", m))?
     else {
         return if guard {

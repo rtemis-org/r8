@@ -67,8 +67,8 @@ pb_library <- function(pa) {
 }
 
 # The first version of both, installed once per run, and the values and
-# documents that a user saved with them: the paths `p`, `h`, `k` (RDS), and
-# `pj` and `hj` (documents).
+# documents that a user saved with them: the paths `p`, `h`, `k` (RDS), `pj` and
+# `hj` (documents), and `pd` and `hd` (documents with their declarations).
 .pa_first <- new.env(parent = emptyenv())
 
 pa_first <- function() {
@@ -77,7 +77,7 @@ pa_first <- function() {
     .pa_first$pb <- pb_library(.pa_first$pa)
     dir <- tempfile("saved")
     dir.create(dir)
-    for (f in c("p.rds", "h.rds", "p.json", "h.json")) {
+    for (f in c("p.rds", "h.rds", "p.json", "h.json", "pd.json", "hd.json")) {
       assign(sub("[.]", "_", f), file.path(dir, f), envir = .pa_first)
     }
     out <- said(
@@ -90,6 +90,14 @@ pa_first <- function() {
         sprintf("saveRDS(h, %s)", deparse(.pa_first$h_rds)),
         sprintf("writeLines(R8::r8_to_json(p), %s)", deparse(.pa_first$p_json)),
         sprintf("writeLines(R8::r8_to_json(h), %s)", deparse(.pa_first$h_json)),
+        sprintf(
+          "writeLines(R8::r8_to_json(p, declarations = TRUE), %s)",
+          deparse(.pa_first$pd_json)
+        ),
+        sprintf(
+          "writeLines(R8::r8_to_json(h, declarations = TRUE), %s)",
+          deparse(.pa_first$hd_json)
+        ),
         "say('saved', TRUE)"
       )
     )
@@ -102,7 +110,7 @@ pa_first <- function() {
 
 # Runs `code` with `pb` as built for the first `pa`, and `pa` at a version with
 # the change `change`, after reading what the user saved: `p` and `h`, and the
-# documents `pj` and `hj`.
+# documents `pj` and `hj`, and `pd` and `hd` with their declarations.
 with_pa <- function(change, code, ...) {
   first <- pa_first()
   said(
@@ -113,6 +121,8 @@ with_pa <- function(change, code, ...) {
       sprintf("h <- readRDS(%s)", deparse(first$h_rds)),
       sprintf("pj <- readLines(%s)", deparse(first$p_json)),
       sprintf("hj <- readLines(%s)", deparse(first$h_json)),
+      sprintf("pd <- readLines(%s)", deparse(first$pd_json)),
+      sprintf("hd <- readLines(%s)", deparse(first$hd_json)),
       code
     )
   )

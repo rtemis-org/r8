@@ -19,6 +19,7 @@ void r8_set_attrib_functions(void *count, void *raw, void *payload);
 
 // Values (value.c), Rust-stored values (rust_stored.c), and the views and API table of R8Api
 // (view.c).
+void r8_pin_library(const void *address);
 void r8_init_values(DllInfo *dll);
 SEXP r8_identity(SEXP type, SEXP variant, SEXP names, SEXP cls, SEXP declaration, SEXP record,
                  int registered);
@@ -26,7 +27,9 @@ SEXP r8_held_identity(SEXP type, SEXP variant, SEXP declaration);
 SEXP r8_value_id(SEXP x);
 SEXP r8_value_fields(SEXP x);
 SEXP r8_value_new(SEXP fields, SEXP id);
-void r8_set_value_functions(void *identity, void *held, void *id, void *fields, void *value);
+int r8_fields_fit(SEXP fields);
+void r8_set_value_functions(void *identity, void *held, void *id, void *fields, void *value,
+                            void *fit);
 void r8_init_rust_stored(DllInfo *dll);
 void r8_init_views(DllInfo *dll);
 void r8_register_api(void);
@@ -43,6 +46,7 @@ void r8_set_rust_stored_functions(void *wrap, void *build, void *state, void *pa
 
 void R_init_R8(DllInfo *dll) {
     register_extendr_panic_hook();
+    r8_pin_library((const void *) R_init_R8);
     r8_set_attrib_functions((void *) r8_attrib_count, (void *) r8_attrib_raw, (void *) r8_payload);
     r8_set_rust_stored_functions((void *) r8_rust_stored_wrap, (void *) r8_rust_stored_build,
                                  (void *) r8_rust_stored_state, (void *) r8_rust_stored_parts,
@@ -50,7 +54,7 @@ void R_init_R8(DllInfo *dll) {
                                  (void *) r8_native_symbols);
     r8_set_value_functions((void *) r8_identity, (void *) r8_held_identity,
                            (void *) r8_value_id, (void *) r8_value_fields,
-                           (void *) r8_value_new);
+                           (void *) r8_value_new, (void *) r8_fields_fit);
     r8_init_values(dll);
     r8_init_rust_stored(dll);
     r8_init_views(dll);
