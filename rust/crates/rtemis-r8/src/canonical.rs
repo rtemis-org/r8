@@ -75,6 +75,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
     d.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The SHA-256 of the canonical text of `v`, `sha256:<hex>`.
+pub(crate) fn text_hash(v: &Value) -> String {
+    format!("sha256:{}", sha256_hex(canonical_text(v).as_bytes()))
+}
+
 fn hex(d: impl AsRef<[u8]>) -> String {
     d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -320,8 +325,7 @@ fn strip(def: &mut TypeDef) {
 pub fn declaration_hash(ty: &QualifiedName, lookup: &dyn TypeLookup) -> String {
     let mut seen = std::collections::BTreeMap::new();
     reachable(ty, lookup, &mut seen);
-    let obj = Value::Object(seen.into_iter().collect());
-    format!("sha256:{}", sha256_hex(canonical_text(&obj).as_bytes()))
+    text_hash(&Value::Object(seen.into_iter().collect()))
 }
 
 /// The content hash of a valid value, `sha256:<hex>`.

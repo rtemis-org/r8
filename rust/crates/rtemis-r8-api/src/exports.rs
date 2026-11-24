@@ -5,7 +5,7 @@ use std::ffi::{CStr, c_void};
 use std::sync::OnceLock;
 
 use rtemis_r8::abi::{self, ABI_VERSION, MethodFn};
-use rtemis_r8::ir::TypeDef;
+use rtemis_r8::ir::{MethodDef, RequiredField, TraitDef, TypeDef};
 use rtemis_r8::name::Name;
 
 use crate::dispatch::PositionEntry;
@@ -21,6 +21,8 @@ pub struct MethodRow {
     pub call: MethodFn,
     /// The number of parameters.
     pub n_params: usize,
+    /// The method's signature, `None` for a conversion.
+    pub signature: Option<MethodDef>,
 }
 
 /// The methods of one impl, which the function that `#[r8::methods]` adds
@@ -33,6 +35,35 @@ pub struct ImplSet {
     pub positions: Vec<PositionEntry>,
     /// The methods.
     pub methods: Vec<MethodRow>,
+    /// The trait's tag member, when the Rust trait states one.
+    pub tag: Option<&'static str>,
+    /// The fields that the trait's accessors give.
+    pub required_fields: Vec<RequiredField>,
+}
+
+/// The declaration record of the signatures of an impl's methods; no bytes
+/// for an impl that states none.
+fn signature(set: &mut ImplSet, ns: &Name) -> &'static [u8] {
+    use rtemis_r8::record::{self, DeclarationRef};
+    let methods: Vec<MethodDef> = set
+        .methods
+        .iter_mut()
+        .filter_map(|m| m.signature.take())
+        .collect();
+    if methods.is_empty() {
+        return &[];
+    }
+    let name = set.trait_name.to_str().unwrap_or_default();
+    let base = name.split_once("::").map_or(name, |(_, b)| b);
+    let t = crate::signature::trait_def(
+        base,
+        "",
+        set.tag,
+        false,
+        methods,
+        std::mem::take(&mut set.required_fields),
+    );
+    Box::leak(record::encode([(ns, DeclarationRef::Trait(&t))]).into_boxed_slice())
 }
 
 /// A position as an impl entry states it.
@@ -50,8 +81,8 @@ fn position(p: &PositionEntry) -> abi::Position {
 }
 
 /// The package's exports table, built on first use: the declaration record
-/// of `types` (the declarations of the Rust-stored types), the codec tables
-/// `codecs`, and the entries of the impls that `impls` give, from which R8
+/// of `declarations` (the types, and the traits declared in Rust), the codec
+/// tables `codecs`, and the entries of the impls that `impls` give, from which R8
 /// builds the impl declarations.
 ///
 /// # Panics
@@ -64,19 +95,26 @@ pub fn table(
     package: &'static CStr,
     namespace: &str,
     codecs: &'static [abi::Codec],
-    types: impl FnOnce() -> Vec<TypeDef>,
+    declarations: impl FnOnce() -> (Vec<TypeDef>, Vec<TraitDef>),
     impls: &'static [fn() -> ImplSet],
 ) -> *const abi::Exports {
     *cell.get_or_init(|| {
         use rtemis_r8::record::{self, DeclarationRef};
         let ns = Name::new(namespace).expect("the macro checks the namespace");
-        let types = types();
-        let bytes = record::encode(types.iter().map(|t| (&ns, DeclarationRef::Type(t))));
+        let (types, traits) = declarations();
+        let bytes = record::encode(
+            types
+                .iter()
+                .map(DeclarationRef::Type)
+                .chain(traits.iter().map(DeclarationRef::Trait))
+                .map(|d| (&ns, d)),
+        );
         let ir: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let entries: Vec<abi::ImplEntry> = impls
             .iter()
             .flat_map(|set| {
-                let set = set();
+                let mut set = set();
+                let signature = signature(&mut set, &ns);
                 let positions: &'static [abi::Position] =
                     Box::leak(set.positions.iter().map(position).collect());
                 set.methods.into_iter().map(move |m| abi::ImplEntry {
@@ -86,6 +124,12 @@ pub fn table(
                     method: m.name.as_ptr(),
                     call: Some(m.call),
                     n_params: m.n_params,
+                    signature: if signature.is_empty() {
+                        std::ptr::null()
+                    } else {
+                        signature.as_ptr()
+                    },
+                    signature_len: signature.len(),
                 })
             })
             .collect();
@@ -100,6 +144,7 @@ pub fn table(
             n_types: codecs.len(),
             impls: entries.as_ptr(),
             n_impls: entries.len(),
+            impl_size: std::mem::size_of::<abi::ImplEntry>(),
         }));
         std::ptr::from_ref(e) as usize
     }) as *const abi::Exports

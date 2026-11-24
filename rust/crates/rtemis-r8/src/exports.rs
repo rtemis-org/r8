@@ -8,7 +8,10 @@
 
 use crate::abi::Codec;
 use crate::ir::dispatch::tuple_text;
-use crate::ir::{FieldDef, FieldType, ImplDef, ImplMethod, TypeDef, TypeRef, VariantKind};
+use crate::ir::{
+    FieldDef, FieldType, ImplDef, ImplMethod, MethodDef, ParamDef, TypeDef, TypeRef,
+    TypedImplMethod, VariantKind,
+};
 use crate::name::{MethodName, QualifiedName};
 use crate::rules::{DocumentSet, TypeLookup};
 
@@ -26,6 +29,11 @@ pub struct ImplRow {
     /// The number of the method's parameters, `x` included and `...`
     /// counted as one.
     pub n_params: usize,
+    /// The method's signature, when the compiled code states it.
+    pub signature: Option<MethodDef>,
+    /// The type that the method returns, when it is narrower than its trait
+    /// declares.
+    pub return_type: Option<FieldType>,
 }
 
 impl ImplRow {
@@ -42,7 +50,8 @@ impl ImplRow {
 /// Reads each row's method as the one its trait declares: the method of that
 /// name, or the one whose identifier in the hosts other than R it is, such as
 /// `labels<-` for `with_labels`. The trait is declared, and its method has as
-/// many parameters as the row's function.
+/// many parameters as the row's function, which a row with a signature leaves
+/// to [`check_signatures`].
 pub fn resolve_methods(
     rows: &mut [ImplRow],
     set: &DocumentSet,
@@ -77,7 +86,7 @@ pub fn resolve_methods(
                     r.method, r.trait_name
                 ));
             }
-            Some(m) if m.params.len() != r.n_params => {
+            Some(m) if r.signature.is_none() && m.params.len() != r.n_params => {
                 return Err(format!(
                     "the impl function `{}` of `{}` for {} takes {} parameters, and the trait declares {}",
                     r.method,
@@ -91,6 +100,67 @@ pub fn resolve_methods(
         }
     }
     Ok(())
+}
+
+/// A method whose signature differs from its trait's declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignatureProblem {
+    /// The trait, and the impl's positions as a message writes them.
+    pub r#trait: String,
+    /// The impl's positions, as a message writes them.
+    pub target: String,
+    /// The method of the trait.
+    pub method: String,
+    /// The differences.
+    pub messages: Vec<String>,
+    /// The method as the compiled code has it, with the declared name of its
+    /// first parameter.
+    pub signature: MethodDef,
+}
+
+/// The rows whose signatures differ from the declarations of their traits in
+/// `set`, after [`resolve_methods`], which sets the narrower result type of
+/// each row that has one ([`crate::impl_signature`]).
+pub fn check_signatures(rows: &mut [ImplRow], set: &DocumentSet) -> Vec<SignatureProblem> {
+    let mut out = Vec::new();
+    for r in rows {
+        let (Some(have), Some(target)) = (&r.signature, r.positions.first()) else {
+            continue;
+        };
+        let Some(want) = QualifiedName::parse(&r.trait_name)
+            .ok()
+            .and_then(|q| set.trait_of(&q))
+            .and_then(|t| t.methods.iter().find(|m| m.name.as_str() == r.method))
+        else {
+            continue;
+        };
+        let found = crate::impl_signature::check_method(have, want, target, set);
+        if found.is_empty() {
+            r.return_type = crate::impl_signature::own_return_type(have, want, set);
+            continue;
+        }
+        let mut signature = have.clone();
+        signature.name = want.name.clone();
+        if let (Some(p), Some(w)) = (signature.params.first_mut(), want.params.first())
+            && p.name().is_empty()
+        {
+            *p = match p {
+                ParamDef::Name(_) => ParamDef::Name(w.name().to_string()),
+                ParamDef::Full(p) => ParamDef::Full(crate::ir::Param {
+                    name: w.name().to_string(),
+                    ..p.clone()
+                }),
+            };
+        }
+        out.push(SignatureProblem {
+            r#trait: r.trait_name.clone(),
+            target: r.target(),
+            method: r.method.clone(),
+            messages: found.into_iter().map(|m| m.message).collect(),
+            signature,
+        });
+    }
+    out
 }
 
 /// The impl declarations of an exports table's rows: one per trait and
@@ -146,7 +216,13 @@ pub fn impls_from_rows(rows: &[ImplRow], package: &str) -> Result<Vec<ImplDef>, 
                 r.target()
             ));
         }
-        methods.push(ImplMethod::Name(method));
+        methods.push(match &r.return_type {
+            Some(t) => ImplMethod::Typed(TypedImplMethod {
+                name: method,
+                return_type: t.clone(),
+            }),
+            None => ImplMethod::Name(method),
+        });
     }
     Ok(out)
 }
@@ -178,6 +254,8 @@ pub fn check_complete(impls: &[ImplDef], set: &DocumentSet, package: &str) -> Re
                     .collect(),
                 method: m.name.to_string(),
                 n_params: 0,
+                signature: None,
+                return_type: None,
             };
             return Err(format!(
                 "the impl of `{}` for {} of `{package}` defines `{}`, which has no default implementation",
@@ -271,6 +349,8 @@ mod tests {
             positions: vec![named(ty)],
             method: m.into(),
             n_params: 1,
+            signature: None,
+            return_type: None,
         }
     }
 
@@ -367,6 +447,54 @@ mod tests {
         }))
         .unwrap();
         DocumentSet::from(vec![doc])
+    }
+
+    #[test]
+    fn a_signature_is_checked_and_narrows_the_result() {
+        let doc: crate::ir::IrDocument = serde_json::from_value(serde_json::json!({
+            "$ir": 1,
+            "namespace": "p",
+            "types": [
+                {"kind": "struct", "name": "Point", "version": 1, "fields": []},
+                {"kind": "struct", "name": "Dot", "version": 1, "fields": [], "extends": "p::Point"},
+            ],
+            "traits": [{
+                "name": "Near",
+                "methods": [{
+                    "name": "near",
+                    "params": ["object", {"name": "by", "type": {"kind": "double", "min": 0}}],
+                    "return_type": {"kind": "subtype", "of": "p::Point"},
+                }],
+            }],
+        }))
+        .unwrap();
+        let set = DocumentSet::from(vec![doc]);
+        let with = |by: &str| ImplRow {
+            n_params: 2,
+            signature: Some(
+                serde_json::from_value(serde_json::json!({
+                    "name": "near",
+                    "params": ["", {"name": "by", "type": {"kind": by}}],
+                    "return_type": {"kind": "named", "name": "p::Dot"},
+                }))
+                .unwrap(),
+            ),
+            ..row("p::Near", "p::Point", "near")
+        };
+        let mut rows = [with("double")];
+        assert!(check_signatures(&mut rows, &set).is_empty());
+        let impls = impls_from_rows(&rows, "p").unwrap();
+        assert_eq!(
+            impls[0].methods[0].return_type(),
+            Some(&FieldType::Named {
+                name: QualifiedName::parse("p::Dot").unwrap()
+            })
+        );
+        let found = check_signatures(&mut [with("integer")], &set);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].target, "`p::Point`");
+        assert_eq!(found[0].messages.len(), 1);
+        assert_eq!(found[0].signature.params[0].name(), "object");
     }
 
     #[test]

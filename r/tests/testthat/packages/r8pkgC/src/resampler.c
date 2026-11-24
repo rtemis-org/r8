@@ -96,9 +96,10 @@ static R8Status resampler_write_state(const void *state, R8Writer *out, R8Error 
   return R8_OK;
 }
 
-static R8Status resampler_read_state(const uint8_t *bytes, size_t size, void **state,
+static R8Status resampler_read_state(const uint8_t *bytes, size_t size, SEXP kept, void **state,
                                      R8Error *err) {
   int kfold, k;
+  (void) kept;
   if (size != 2 * sizeof(int)) {
     set_error(err, "bad_state", "the bytes are not a Resampler state");
     return R8_ERROR;

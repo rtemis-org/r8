@@ -12,21 +12,21 @@ use crate::exports::{ImplSet, MethodRow};
 use crate::rust_stored::RustStored;
 
 /// `R8::Display`: the text of a value, `format(x, ...)`.
-#[methods(trait = "R8::Display")]
+#[methods(trait = "R8::Display", dyn)]
 pub trait Display {
     /// The text.
     fn format(&self, dots: Dots) -> String;
 }
 
 /// `R8::Debug`: the structure of a value, `str(object, ...)`.
-#[methods(trait = "R8::Debug")]
+#[methods(trait = "R8::Debug", dyn)]
 pub trait Debug {
     /// The structure, printed by R.
     fn str(&self, dots: Dots) -> String;
 }
 
 /// `R8::Shape`: the dimensions of a value, `dim(x)`.
-#[methods(trait = "R8::Shape")]
+#[methods(trait = "R8::Shape", dyn)]
 pub trait Shape {
     /// The dimensions.
     fn dim(&self) -> Vec<i32>;
@@ -37,7 +37,7 @@ pub trait Shape {
 /// call in R, `None` when they are not ordered, which R receives as `NA`.
 /// R8 calls the method by its qualified path, so a type that also
 /// implements `std::cmp::PartialOrd` keeps both.
-#[methods(trait = "R8::PartialOrd")]
+#[methods(trait = "R8::PartialOrd", dyn)]
 pub trait PartialOrd {
     /// The order of `self` and `y`.
     fn partial_cmp(&self, y: Sexp) -> Option<std::cmp::Ordering>;
@@ -101,7 +101,10 @@ pub trait From<Source>: Sized {
                 name: c"from",
                 call: from::<Source, Self>,
                 n_params: 1,
+                signature: None,
             }],
+            tag: None,
+            required_fields: Vec::new(),
         }
     }
 }

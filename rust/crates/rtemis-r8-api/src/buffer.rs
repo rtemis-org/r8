@@ -294,10 +294,7 @@ impl<T: Element> Buffer<T> {
             Backing::Owned(a) => {
                 let api = api::api()?;
                 let mut value: SEXP = unsafe { sys::R_NilValue };
-                let mut err = abi::Error {
-                    code: [0; 64],
-                    message: [0; 1024],
-                };
+                let mut err = api::blank();
                 if unsafe { T::view(api, owner, a.as_ptr(), a.len(), &mut value, &mut err) }
                     != abi::OK
                 {

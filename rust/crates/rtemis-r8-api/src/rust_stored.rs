@@ -57,6 +57,15 @@ pub trait RustStoredStruct: rtemis_r8::derive::R8 + Send + Sync + Sized + 'stati
     /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
 
+    /// Calls `f` with each field's name and R value, unprotected, in
+    /// declaration order; `owner` keeps the state alive, for a view of its
+    /// memory.
+    fn fields(
+        &self,
+        owner: SEXP,
+        f: &mut dyn FnMut(&'static CStr, SEXP) -> Result<()>,
+    ) -> Result<()>;
+
     /// The state of the ancestor `type_name` that the value embeds; NULL when
     /// it embeds none of that name.
     fn upcast(&self, _type_name: &CStr) -> *const c_void {
@@ -111,13 +120,25 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
 
     /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
+
+    /// The number of the fields of the value's variant.
+    fn n_fields(&self) -> usize;
+
+    /// Calls `f` with the name and the R value, unprotected, of each field of
+    /// the value's variant, in declaration order; `owner` keeps the state
+    /// alive, for a view of its memory.
+    fn fields(
+        &self,
+        owner: SEXP,
+        f: &mut dyn FnMut(&'static CStr, SEXP) -> Result<()>,
+    ) -> Result<()>;
 }
 
-/// A Rust-stored type of either kind: its name, its codec table, and its
-/// value from the fields of a value whose state is not lent. `#[derive(R8)]`
-/// with `#[r8(storage = "rust")]` implements it. A type that `r8::exports!`
-/// lists implements it, and a method of `#[r8::methods]` returns a value of
-/// one, and takes it as `&T`.
+/// A Rust-stored type of either kind: its name, its codec table, its value
+/// from the fields of a value whose state is not lent, and what a field of the
+/// type reads and writes. `#[derive(R8)]` with `#[r8(storage = "rust")]`
+/// implements it. A type that `r8::exports!` lists implements it, and a method
+/// of `#[r8::methods]` returns a value of one, and takes it as `&T`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a Rust-stored type",
     note = "a Rust-stored type is declared with `#[derive(R8)]` and `#[r8(storage = \"rust\")]`"
@@ -139,6 +160,33 @@ pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     ///
     /// On R's main thread, with valid R objects.
     unsafe fn from_value(x: SEXP, fields: &[SEXP]) -> Result<Self>;
+
+    /// The value from a node of a value R8 has read from a document and
+    /// validated.
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self>;
+
+    /// Writes the value's bytes.
+    fn write_bytes(&self, out: &mut StateWriter) -> Result<()>;
+
+    /// The value from bytes `write_bytes` wrote.
+    fn read_bytes(input: &mut StateReader) -> Result<Self>;
+
+    /// The memory Rust owns for the value beyond its inline size.
+    fn heap_bytes(&self) -> usize;
+
+    /// The name of an enum value's variant; `None` for a struct.
+    fn variant_name(&self) -> Option<&'static CStr>;
+
+    /// The number of the value's fields.
+    fn field_count(&self) -> usize;
+
+    /// The names and the R values of the value's fields, as
+    /// [`RustStoredStruct::fields`] and [`RustStoredEnum::fields`] give them.
+    fn each_field(
+        &self,
+        owner: SEXP,
+        f: &mut dyn FnMut(&'static CStr, SEXP) -> Result<()>,
+    ) -> Result<()>;
 }
 
 /// Identifies this shared object to R8 (`R8Codec.module`): each package
@@ -321,6 +369,7 @@ macro_rules! shared_fns {
             pub(super) unsafe extern "C" fn read_state<T: super::$tr>(
                 bytes: *const u8,
                 len: usize,
+                kept: abi::Sexp,
                 out: *mut *mut c_void,
                 err: *mut abi::Error,
             ) -> Status {
@@ -330,7 +379,7 @@ macro_rules! shared_fns {
                     } else {
                         unsafe { std::slice::from_raw_parts(bytes, len) }
                     };
-                    let mut r = StateReader::new(b);
+                    let mut r = StateReader::new(b, kept);
                     let v = T::read_state(&mut r)?;
                     if !r.is_done() {
                         return Err(Error::new(

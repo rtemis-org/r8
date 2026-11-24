@@ -54,6 +54,7 @@ unsafe extern "C" {
     pub fn Rf_ScalarReal(x: c_double) -> SEXP;
     pub fn Rf_ScalarInteger(x: c_int) -> SEXP;
     pub fn Rf_ScalarLogical(x: c_int) -> SEXP;
+    pub fn Rf_install(name: *const c_char) -> SEXP;
     pub fn Rf_getAttrib(x: SEXP, name: SEXP) -> SEXP;
     pub fn Rf_setAttrib(x: SEXP, name: SEXP, v: SEXP) -> SEXP;
     pub fn Rf_cons(car: SEXP, cdr: SEXP) -> SEXP;

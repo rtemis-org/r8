@@ -25,7 +25,8 @@ use rtemis_r8::abi::{
     ABI_VERSION, Codec, Exports, ImplEntry, MethodFn, POSITION_ANY, POSITION_CLASS, POSITION_TYPE,
     Position,
 };
-use rtemis_r8::ir::{ClassSystem, IrDocument, TypeDef, TypeRef};
+use rtemis_r8::exports::ImplRow;
+use rtemis_r8::ir::{ClassSystem, IrDocument, TraitDef, TypeDef, TypeRef};
 use rtemis_r8::name::{Name, QualifiedName};
 
 fn fail(message: impl Into<String>) -> Error {
@@ -152,6 +153,25 @@ fn type_tables(e: &Exports) -> Result<Vec<*const Codec>> {
     Ok(out)
 }
 
+/// The impl entries of an exports table, whose array has the stride
+/// `impl_size`.
+fn impl_entries(e: &Exports) -> Result<Vec<&ImplEntry>> {
+    if e.impls.is_null() || e.n_impls == 0 {
+        return Ok(Vec::new());
+    }
+    let size = std::mem::size_of::<ImplEntry>();
+    if e.impl_size < size {
+        return Err(fail(format!(
+            "the impl entries have size {}; ABI version 1 requires at least {size}",
+            e.impl_size
+        )));
+    }
+    let base = e.impls.cast::<u8>();
+    Ok((0..e.n_impls)
+        .map(|i| unsafe { &*base.add(i * e.impl_size).cast::<ImplEntry>() })
+        .collect())
+}
+
 /// A NUL-terminated UTF-8 string of a table.
 fn text(p: *const c_char, what: &str) -> Result<String> {
     if p.is_null() {
@@ -257,40 +277,36 @@ fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
     }
     if e.size < EXPORTS_SIZE {
         return Err(fail(format!(
-            "the exports table has {} bytes, fewer than the {EXPORTS_SIZE} of ABI version {ABI_VERSION}",
+            "the exports table has {} bytes, fewer than the {EXPORTS_SIZE} of ABI version {ABI_VERSION}; reinstall the package against the installed R8",
             e.size
         )));
     }
     Ok(e)
 }
 
-/// The type declarations of an exports table's declaration record, each of
-/// the namespace `ns`; none for a table without a record, a table written by
-/// hand in C.
-fn record_types(e: &Exports, ns: &str) -> Result<Vec<TypeDef>> {
+/// The declarations of an exports table's declaration record, types and
+/// traits, each of the namespace `ns`; none for a table without a record, a
+/// table written by hand in C.
+fn record_declarations(e: &Exports, ns: &str) -> Result<(Vec<TypeDef>, Vec<TraitDef>)> {
     use rtemis_r8::record::{self, Declaration};
     if e.ir_record.is_null() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let bytes = unsafe { std::slice::from_raw_parts(e.ir_record, e.ir_record_len) };
     let entries = record::decode(bytes)
         .map_err(|e| fail(format!("the exports table's record does not read: {e}")))?;
     let mut types = Vec::with_capacity(entries.len());
+    let mut traits = Vec::new();
     for entry in entries {
         if entry.namespace.as_str() != ns {
             return Err(fail(format!(
-                "the exports table's record declares a type of `{}`; the package declares its types in `{ns}`",
+                "the exports table's record declares into `{}`; the package declares into `{ns}`",
                 entry.namespace
             )));
         }
         match entry.declaration {
             Declaration::Type(t) => types.push(t),
-            Declaration::Trait(t) => {
-                return Err(fail(format!(
-                    "the exports table's record declares the trait `{}`; a record holds type declarations only",
-                    t.name
-                )));
-            }
+            Declaration::Trait(t) => traits.push(t),
             Declaration::Impl(i) => {
                 return Err(fail(format!(
                     "the exports table's record declares an impl of `{}`; R8 builds impl declarations from the impl entries",
@@ -299,10 +315,172 @@ fn record_types(e: &Exports, ns: &str) -> Result<Vec<TypeDef>> {
             }
         }
     }
-    Ok(types)
+    Ok((types, traits))
 }
 
-/// The IR document of the type declarations of an exports table's record,
+/// The signature of an impl entry's method, and the record of its impl, read
+/// from the entry's `signature`; `None` for an entry without one. The entries
+/// of one impl have one record, which `read` keeps by its address.
+fn signature(
+    entry: &ImplEntry,
+    method: &str,
+    read: &mut HashMap<usize, std::rc::Rc<TraitDef>>,
+) -> Result<Option<(rtemis_r8::ir::MethodDef, std::rc::Rc<TraitDef>)>> {
+    use rtemis_r8::record::{self, Declaration};
+    if entry.signature.is_null() {
+        return Ok(None);
+    }
+    let held = match read.get(&(entry.signature as usize)) {
+        Some(t) => t.clone(),
+        None => {
+            let bytes = unsafe { std::slice::from_raw_parts(entry.signature, entry.signature_len) };
+            let t = record::decode(bytes)
+                .map_err(|e| fail(format!("the signature of an impl entry does not read: {e}")))?
+                .into_iter()
+                .find_map(|e| match e.declaration {
+                    Declaration::Trait(t) => Some(std::rc::Rc::new(t)),
+                    _ => None,
+                })
+                .ok_or_else(|| fail("the signature of an impl entry holds no trait"))?;
+            read.insert(entry.signature as usize, t.clone());
+            t
+        }
+    };
+    let found = held
+        .methods
+        .iter()
+        .find(|m| m.name.as_str() == method)
+        .cloned()
+        .ok_or_else(|| {
+            fail(format!(
+                "the signature of an impl entry holds no method `{method}`"
+            ))
+        })?;
+    Ok(Some((found, held)))
+}
+
+/// The rows of an exports table's impl entries, with their functions.
+struct Rows {
+    rows: Vec<ImplRow>,
+    calls: Vec<ImplFn>,
+    /// Each trait with the record of an impl's signatures, once per record.
+    records: Vec<(String, std::rc::Rc<TraitDef>)>,
+}
+
+/// The rows of `e`, each method read as the one its trait declares in `reg`,
+/// and the impl declarations that they make.
+fn read_rows(
+    e: &Exports,
+    package: &str,
+    reg: &rtemis_r8::rules::DocumentSet,
+) -> Result<(Rows, Vec<rtemis_r8::exports::SignatureProblem>)> {
+    let entries = impl_entries(e)?;
+    let mut out = Rows {
+        rows: Vec::with_capacity(entries.len()),
+        calls: Vec::with_capacity(entries.len()),
+        records: Vec::new(),
+    };
+    let mut read = HashMap::new();
+    for entry in entries {
+        let method = text(entry.method, "method name")?;
+        let signed = signature(entry, &method, &mut read)?;
+        let trait_name = text(entry.trait_name, "trait name")?;
+        if let Some((_, t)) = &signed
+            && !out.records.iter().any(|(_, r)| std::rc::Rc::ptr_eq(r, t))
+        {
+            out.records.push((trait_name.clone(), t.clone()));
+        }
+        let row = ImplRow {
+            trait_name,
+            positions: positions(entry, package)?,
+            method,
+            n_params: entry.n_params,
+            signature: signed.map(|(m, _)| m),
+            return_type: None,
+        };
+        let call = entry.call.ok_or_else(|| {
+            fail(format!(
+                "the impl function `{}` of `{}` for `{}` is NULL",
+                row.method,
+                row.trait_name,
+                tuple_key(&row.positions)
+            ))
+        })?;
+        out.rows.push(row);
+        out.calls.push(ImplFn { call });
+    }
+    rtemis_r8::exports::resolve_methods(&mut out.rows, reg, package).map_err(fail)?;
+    if out.records.is_empty() {
+        return Ok((out, Vec::new()));
+    }
+    // A result may fit a trait that another impl of the table implements.
+    let mut with = reg.clone();
+    for i in rtemis_r8::exports::impls_from_rows(&out.rows, package).map_err(fail)? {
+        let d = with.document_position(&i.r#trait.namespace);
+        with.impls_mut(d).push(i);
+    }
+    let problems = rtemis_r8::exports::check_signatures(&mut out.rows, &with);
+    Ok((out, problems))
+}
+
+/// The differences of the signatures of an exports table's impls from the
+/// declarations of their traits.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @param package Character: The registering package.
+/// @return List: One element per method, accessor, or tag member that differs,
+///   each a list of `of` (the trait), `member`, `target` (the impl's positions,
+///   `""` for an accessor and a tag), `messages`, and, for a method,
+///   `signature`, its IR as compiled code has it.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_exports_signatures(ptr: Robj, package: &str) -> Result<List> {
+    let e = exports_of(&ptr)?;
+    let reg = crate::declare::snapshot()?;
+    let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
+    let (rows, problems) = read_rows(e, package, &reg)?;
+    let mut out: Vec<Robj> = Vec::new();
+    for p in problems {
+        let signature = crate::irser::to_r(&p.signature).map_err(|e| fail(e.to_string()))?;
+        out.push(
+            list!(
+                of = p.r#trait,
+                member = p.method,
+                target = p.target,
+                messages = p.messages,
+                signature = signature
+            )
+            .into(),
+        );
+    }
+    let mut seen = Vec::new();
+    for (name, held) in &rows.records {
+        let Some(want) = QualifiedName::parse(name)
+            .ok()
+            .and_then(|q| lookup.trait_of(&q))
+        else {
+            continue;
+        };
+        for m in rtemis_r8::impl_signature::check_members(held, want) {
+            if !seen.contains(&(name, m.clone())) {
+                out.push(
+                    list!(
+                        of = name.as_str(),
+                        member = m.member.as_str(),
+                        target = "",
+                        messages = m.message.as_str()
+                    )
+                    .into(),
+                );
+                seen.push((name, m));
+            }
+        }
+    }
+    Ok(List::from_values(out))
+}
+
+/// The IR document of the declarations of an exports table's record,
 /// as the R lists the declaration functions build.
 ///
 /// @param ptr The external pointer that `r8_exports` returned.
@@ -313,11 +491,12 @@ fn record_types(e: &Exports, ns: &str) -> Result<Vec<TypeDef>> {
 #[extendr]
 fn r8_exports_document(ptr: Robj, ns: &str) -> Result<Robj> {
     let e = exports_of(&ptr)?;
+    let (types, traits) = record_declarations(e, ns)?;
     let doc = IrDocument {
         ir_version: rtemis_r8::ir::IR_VERSION,
         namespace: Name::new(ns).map_err(|e| fail(e.to_string()))?,
-        types: record_types(e, ns)?,
-        traits: Vec::new(),
+        types,
+        traits,
         impls: Vec::new(),
     };
     crate::irser::to_r(&doc).map_err(|e| fail(e.to_string()))
@@ -331,8 +510,9 @@ fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
     }
 }
 
-/// Compares the types of an exports table with the registered declarations.
-/// A type of the record compares by declaration hash and by its parent,
+/// Compares the types and traits of an exports table with the registered
+/// declarations. A trait of the record compares by its hash
+/// (`impl_signature::trait_hash()`). A type of the record compares by declaration hash and by its parent,
 /// which the hash excludes: the Rust hash reads
 /// the registry with the record's types in place of its namespace's types
 /// of the same names, and the R hash reads the registry alone. A codec whose
@@ -341,8 +521,8 @@ fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
 ///
 /// @param ptr The external pointer that `r8_exports` returned.
 /// @param ns Character: The package's namespace.
-/// @return List: `type_name`, the qualified names; `status`, for a type of
-///   the record `"same"`, `"differs"`, or `"missing"` (no registered
+/// @return List: `type_name`, the qualified names; `status`, for a type or
+///   a trait of the record `"same"`, `"differs"`, or `"missing"` (no registered
 ///   declaration), and for a codec's type outside the record `"same"`,
 ///   `"stale"` (the pinned hash differs), `"unpinned"` (no pinned hash), or
 ///   `"undeclared"`; `codec`, whether the table carries the type's codec; and
@@ -352,7 +532,7 @@ fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
 #[extendr]
 fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
     let e = exports_of(&ptr)?;
-    let types = record_types(e, ns)?;
+    let (types, traits) = record_declarations(e, ns)?;
     let namespace = Name::new(ns).map_err(|e| fail(e.to_string()))?;
     let mut codecs = Vec::new();
     for v in type_tables(e)? {
@@ -399,6 +579,25 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
         hash.push(h.unwrap_or_default());
         names.push(name);
         status.push(s);
+    }
+    for t in &traits {
+        let q = QualifiedName {
+            namespace: namespace.clone(),
+            name: t.name.clone(),
+        };
+        let rust = rtemis_r8::impl_signature::trait_hash(t);
+        let s = match lookup_r
+            .trait_of(&q)
+            .map(rtemis_r8::impl_signature::trait_hash)
+        {
+            None => "missing",
+            Some(h) if h == rust => "same",
+            Some(_) => "differs",
+        };
+        names.push(q.to_string());
+        status.push(s);
+        codec.push(false);
+        hash.push(String::new());
     }
     for (name, pin) in &codecs {
         if names.contains(name) {
@@ -447,7 +646,8 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
             "the exports table names the package `{declared}` and is registered by `{package}`"
         )));
     }
-    let in_record: Vec<String> = record_types(e, ns)?
+    let in_record: Vec<String> = record_declarations(e, ns)?
+        .0
         .iter()
         .map(|t| format!("{ns}::{}", t.name()))
         .collect();
@@ -472,34 +672,20 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
         types.push((name, CodecPtr(v)));
     }
     // Impl functions, whose rows make the impl declarations.
-    let entries: &[ImplEntry] = if e.impls.is_null() || e.n_impls == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(e.impls, e.n_impls) }
-    };
-    let mut rows = Vec::with_capacity(entries.len());
-    let mut calls = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let row = rtemis_r8::exports::ImplRow {
-            trait_name: text(entry.trait_name, "trait name")?,
-            positions: positions(entry, package)?,
-            method: text(entry.method, "method name")?,
-            n_params: entry.n_params,
-        };
-        let call = entry.call.ok_or_else(|| {
-            fail(format!(
-                "the impl function `{}` of `{}` for `{}` is NULL",
-                row.method,
-                row.trait_name,
-                tuple_key(&row.positions)
-            ))
-        })?;
-        rows.push(row);
-        calls.push(ImplFn { call });
+    let (Rows { rows, calls, .. }, problems) = read_rows(e, package, &reg)?;
+    if let Some(p) = problems.first() {
+        return Err(fail(format!(
+            "the method `{}` of `{}` for {}: {}",
+            p.method,
+            p.r#trait,
+            p.target,
+            p.messages.join("; ")
+        )));
     }
-    rtemis_r8::exports::resolve_methods(&mut rows, &reg, package).map_err(fail)?;
-    let impls = rtemis_r8::exports::impls_from_rows(&rows, package).map_err(fail)?;
+    let mut impls = rtemis_r8::exports::impls_from_rows(&rows, package).map_err(fail)?;
     rtemis_r8::exports::check_complete(&impls, &reg, package).map_err(fail)?;
+    // A narrower result type is checked against the impls declared before it.
+    impls.sort_by_key(|i| i.methods.iter().any(|m| m.return_type().is_some()));
     for i in impls {
         crate::declare::declare_impl(i, ns)?;
     }
@@ -574,8 +760,8 @@ fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
 fn r8_exports_traits(ptr: Robj) -> Result<Vec<String>> {
     let e = exports_of(&ptr)?;
     let mut out: Vec<String> = Vec::new();
-    for i in 0..if e.impls.is_null() { 0 } else { e.n_impls } {
-        let name = text(unsafe { (*e.impls.add(i)).trait_name }, "trait name")?;
+    for entry in impl_entries(e)? {
+        let name = text(entry.trait_name, "trait name")?;
         if !out.contains(&name) {
             out.push(name);
         }
@@ -645,6 +831,7 @@ extendr_module! {
     fn r8_exports_document;
     fn r8_exports_compare;
     fn r8_exports_traits;
+    fn r8_exports_signatures;
     fn r8_register_exports;
     fn r8_impl_fn;
     fn r8_compiled_types;

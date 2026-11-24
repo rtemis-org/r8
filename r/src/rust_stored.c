@@ -87,8 +87,9 @@ static const char *state_variant(const R8Codec *vt, const void *state) {
 }
 
 // A value read by `Unserialize` before its codec was registered keeps the
-// serialized state, list(type, version, hash, package, names, bytes), and
-// for an enum value a seventh element, its variant, as the tag of its codec
+// serialized state, list(type, version, hash, package, names, bytes, kept),
+// where `kept` is the list of the R values that the state holds, or NULL, and
+// for an enum value an eighth element, its variant, as the tag of its codec
 // pointer, and builds its state on first entry.
 static SEXP kept_state(SEXP data1) {
   return R_ExternalPtrTag(R_ExternalPtrProtected(data1));
@@ -114,6 +115,12 @@ static int build_state(SEXP data1, R8Error *err) {
   const R8Codec *vt =
       r8_rust_stored_codec(kept_text(kept, 0), Rf_asInteger(VECTOR_ELT(kept, 1)), kept_text(kept, 2), err);
   if (vt == NULL) {
+    char reason[sizeof(err->message)];
+    snprintf(reason, sizeof(reason), "%s", err->message);
+    const char *pkg = kept_text(kept, 3);
+    snprintf(err->message, sizeof(err->message),
+             "this `%s` value needs the codec of the package `%s`; load it with library(%s): %.600s",
+             kept_text(kept, 0), pkg, pkg, reason);
     return 0;
   }
   if (vt->read_state == NULL) {
@@ -124,13 +131,14 @@ static int build_state(SEXP data1, R8Error *err) {
   }
   SEXP bytes = VECTOR_ELT(kept, 5);
   void *state = NULL;
-  if (vt->read_state(RAW_RO(bytes), (size_t) XLENGTH(bytes), &state, err) != R8_OK ||
+  if (vt->read_state(RAW_RO(bytes), (size_t) XLENGTH(bytes), VECTOR_ELT(kept, 6), &state, err) !=
+          R8_OK ||
       state == NULL) {
     return 0;
   }
   // An enum value's state has the variant the value was saved with.
-  if (XLENGTH(kept) > 6) {
-    const char *expected = kept_text(kept, 6);
+  if (XLENGTH(kept) > 7) {
+    const char *expected = kept_text(kept, 7);
     const char *found = state_variant(vt, state);
     if (found == NULL || strcmp(found, expected) != 0) {
       snprintf(err->code, sizeof(err->code), "%s", "bad_state");
@@ -151,23 +159,16 @@ static int build_state(SEXP data1, R8Error *err) {
 }
 
 // The state of `x`, built first for a value read before its codec was
-// registered; an error names the type and the package that registers it.
+// registered.
 static const void *rust_stored_state(SEXP x) {
   SEXP data1 = R_altrep_data1(x);
   const void *state = R_ExternalPtrAddr(data1);
   if (state != NULL) {
     return state;
   }
-  SEXP kept = kept_state(data1);
   R8Error err = {{0}, {0}};
   if (build_state(data1, &err)) {
     return R_ExternalPtrAddr(data1);
-  }
-  if (kept != R_NilValue) {
-    const char *pkg = kept_text(kept, 3);
-    Rf_error("this `%s` value needs the codec of the package `%s`; load it with "
-             "library(%s): %s [%s]",
-             kept_text(kept, 0), pkg, pkg, err.message, err.code);
   }
   Rf_error("%s [%s]", err.message, err.code);
   return NULL;
@@ -211,11 +212,13 @@ static SEXP rust_stored_Duplicate(SEXP x, Rboolean deep) {
   return ans;
 }
 
-// The R8Writers of `write_state`: one counts the bytes, the other fills a
-// raw vector of that size.
+// The R8Writers of `write_state`: one counts the bytes and the kept values,
+// the other fills a raw vector and a list of those sizes.
 typedef struct Sink {
   uint8_t *bytes;
   size_t len, cap;
+  SEXP kept;
+  size_t n_kept, cap_kept;
 } Sink;
 
 static R8Status count_write(void *context, const uint8_t *bytes, size_t len) {
@@ -236,9 +239,26 @@ static R8Status fill_write(void *context, const uint8_t *bytes, size_t len) {
   return R8_OK;
 }
 
-// list(type, version, hash, package, names, bytes), with the variant as a
-// seventh element for an enum value: the state's bytes from the codec's
-// `write_state`, with the records that `Unserialize` checks.
+static R8Status count_keep(void *context, SEXP value, size_t *index) {
+  (void) value;
+  *index = ((Sink *) context)->n_kept++;
+  return R8_OK;
+}
+
+static R8Status fill_keep(void *context, SEXP value, size_t *index) {
+  Sink *s = context;
+  if (s->n_kept >= s->cap_kept) {
+    return R8_ERROR;
+  }
+  SET_VECTOR_ELT(s->kept, (R_xlen_t) s->n_kept, value);
+  *index = s->n_kept++;
+  return R8_OK;
+}
+
+// list(type, version, hash, package, names, bytes, kept), with the variant as
+// an eighth element for an enum value: the state's bytes and the R values it
+// holds from the codec's `write_state`, with the records that `Unserialize`
+// checks; R serializes the kept values as it does any value.
 // NULL, which serializes the fields as a plain list, for a codec without
 // `write_state` or a type absent from the registry.
 static SEXP rust_stored_Serialized_state(SEXP x) {
@@ -259,28 +279,32 @@ static SEXP rust_stored_Serialized_state(SEXP x) {
   // Two passes, so the bytes are held once: the first counts them, the
   // second writes them into a raw vector of that size.
   R8Error err = {{0}, {0}};
-  Sink counter = {NULL, 0, 0};
-  R8Writer w = {&counter, count_write};
+  Sink counter = {NULL, 0, 0, R_NilValue, 0, 0};
+  R8Writer w = {&counter, count_write, count_keep};
   if (vt->write_state(state, &w, &err) != R8_OK) {
     UNPROTECT(1);
     Rf_error("%s [%s]", err.message, err.code);
   }
   SEXP bytes = PROTECT(Rf_allocVector(RAWSXP, (R_xlen_t) counter.len));
-  Sink sink = {RAW(bytes), 0, counter.len};
+  SEXP values = PROTECT(
+      counter.n_kept > 0 ? Rf_allocVector(VECSXP, (R_xlen_t) counter.n_kept) : R_NilValue);
+  Sink sink = {RAW(bytes), 0, counter.len, values, 0, counter.n_kept};
   w.context = &sink;
   w.write = fill_write;
-  if (vt->write_state(state, &w, &err) != R8_OK || sink.len != counter.len) {
-    UNPROTECT(2);
+  w.keep = fill_keep;
+  if (vt->write_state(state, &w, &err) != R8_OK || sink.len != counter.len ||
+      sink.n_kept != counter.n_kept) {
+    UNPROTECT(3);
     if (err.code[0] == '\0') {
-      Rf_error("`write_state` of `%s` wrote different bytes on its second pass",
+      Rf_error("`write_state` of `%s` wrote other bytes or kept other values on its second pass",
                vt->type_name);
     }
     Rf_error("%s [%s]", err.message, err.code);
   }
   const char *variant = state_variant(vt, state);
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, variant == NULL ? 6 : 7));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, variant == NULL ? 7 : 8));
   if (variant != NULL) {
-    SET_VECTOR_ELT(out, 6, Rf_mkString(variant));
+    SET_VECTOR_ELT(out, 7, Rf_mkString(variant));
   }
   SET_VECTOR_ELT(out, 0, Rf_mkString(vt->type_name));
   SET_VECTOR_ELT(out, 1, VECTOR_ELT(meta, 0));
@@ -288,7 +312,8 @@ static SEXP rust_stored_Serialized_state(SEXP x) {
   SET_VECTOR_ELT(out, 3, VECTOR_ELT(meta, 2));
   SET_VECTOR_ELT(out, 4, R_ExternalPtrTag(data1));
   SET_VECTOR_ELT(out, 5, bytes);
-  UNPROTECT(3);
+  SET_VECTOR_ELT(out, 6, values);
+  UNPROTECT(4);
   return out;
 }
 
@@ -304,10 +329,11 @@ static SEXP rust_stored_Unserialize(SEXP cls, SEXP kept) {
   for (R_xlen_t i = 0; i < n; i++) {
     SET_VECTOR_ELT(cache, i, unfilled);
   }
-  SEXP ans = R_new_altrep(rust_stored_class, data1, cache);
+  // Building the state allocates.
+  SEXP ans = PROTECT(R_new_altrep(rust_stored_class, data1, cache));
   R8Error err = {{0}, {0}};
   build_state(data1, &err);
-  UNPROTECT(3);
+  UNPROTECT(4);
   return ans;
 }
 
@@ -380,6 +406,16 @@ const void *r8_rust_stored_state(SEXP x, const R8Codec **vt) {
     *vt = rust_stored_codec(data1);
   }
   return R_ExternalPtrAddr(data1);
+}
+
+// Builds the state of `x`, a Rust-stored value that `Unserialize` read before
+// its codec was registered; returns 0, with `err` filled, when it cannot, and
+// 1 for any other object.
+int r8_rust_stored_build(SEXP x, R8Error *err) {
+  if (!ALTREP(x) || !R_altrep_inherits(x, rust_stored_class)) {
+    return 1;
+  }
+  return build_state(R_altrep_data1(x), err);
 }
 
 int r8_is_view(SEXP x);

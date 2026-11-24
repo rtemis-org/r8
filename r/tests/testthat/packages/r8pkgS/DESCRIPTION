@@ -13,6 +13,7 @@ Imports:
 SystemRequirements: Cargo (Rust's package manager), rustc
 Config/R8/namespace: pkgs
 Collate: 
+    'noted.R'
     'r8-types.R'
     'tile.R'
     'zzz.R'

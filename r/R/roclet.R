@@ -511,7 +511,7 @@ compiled_blocks <- function(blocks, env, base_path) {
       roxy_tag_of(block, "usage", structure(usage, class = "rd")),
       roxy_tag_of(block, ".formals", params),
       roxy_tag_of(block, "name", topic),
-      roxy_tag_of(block, "rdname", topic)
+      roxy_tag_of(block, "rdname", rd_stem(topic))
     )
     out <- c(out, list(block))
   }

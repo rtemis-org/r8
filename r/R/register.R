@@ -246,6 +246,7 @@ register_exports <- function(pkg, entries = list()) {
   for (name in r8_exports_traits(ptr)) {
     check_trait_registered(name, pkg)
   }
+  check_signatures(r8_exports_signatures(ptr, pkg), pkg)
   fns <- r8_register_exports(ptr, pkg, namespace)
   for (class in unlist(fns[["s4"]], recursive = FALSE)) {
     check_s4_class(class[["class"]], class[["package"]])
@@ -285,6 +286,61 @@ register_exports <- function(pkg, entries = list()) {
   }
   length(fns[["method"]])
 } # /R8::register_exports
+
+
+# %% check_signatures ----
+#' Check the signatures of a package's compiled impls
+#'
+#' @param problems List: `r8_exports_signatures()` of the package's exports.
+#' @param pkg Character: The package.
+#'
+#' @return `NULL`, invisibly; signals `r8_declaration_error` listing each
+#'   difference, with the R declaration that a method's signature states.
+#'
+#' @keywords internal
+#' @noRd
+check_signatures <- function(problems, pkg) {
+  if (length(problems) == 0L) {
+    return(invisible(NULL))
+  }
+  .r8_render_refs[["bare"]] <- TRUE
+  on.exit(.r8_render_refs[["bare"]] <- NULL)
+  lines <- vapply(
+    problems,
+    function(p) {
+      paste0(
+        "- `",
+        p[["member"]],
+        "` of `",
+        p[["of"]],
+        "`",
+        if (nzchar(p[["target"]])) paste0(" for ", p[["target"]]),
+        ": ",
+        paste(p[["messages"]], collapse = "; "),
+        ".",
+        if (!is.null(p[["signature"]])) {
+          sig <- p[["signature"]]
+          # The result of a method is of one impl; the declaration is of all.
+          sig[["return_type"]] <- NULL
+          paste0(
+            " Its parameters are declared in R as ",
+            gsub("R8::", "", render_params(sig[["params"]], ""), fixed = TRUE),
+            "."
+          )
+        }
+      )
+    },
+    character(1)
+  )
+  r8_abort(
+    "The compiled impls of package '",
+    pkg,
+    "' do not have the signatures that their traits declare:\n",
+    paste(lines, collapse = "\n"),
+    "\nThe Rust method or the declaration of its trait changes [impl_signature].",
+    class = "r8_declaration_error"
+  )
+} # /R8::check_signatures
 
 
 # %% check_trait_registered ----

@@ -76,6 +76,14 @@ fn text(b: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// An empty error report, for R8 to fill.
+pub(crate) fn blank() -> abi::Error {
+    abi::Error {
+        code: [0; 64],
+        message: [0; 1024],
+    }
+}
+
 static API: AtomicPtr<abi::Api> = AtomicPtr::new(std::ptr::null_mut());
 
 /// R8's API table of ABI version 1, fetched with
@@ -146,10 +154,7 @@ pub(crate) fn protect<F: Fn() -> SEXP>(f: &F) -> std::result::Result<SEXP, Jumpe
         )));
     };
     let mut value: abi::Sexp = unsafe { sys::R_NilValue };
-    let mut err = abi::Error {
-        code: [0; 64],
-        message: [0; 1024],
-    };
+    let mut err = blank();
     let status: Status = unsafe {
         p(
             trampoline::<F>,

@@ -40,13 +40,18 @@ pub struct Error {
     pub message: [c_char; 1024],
 }
 
-/// `R8Writer`: a sink for bytes supplied by the caller of `encode`.
+/// `R8Writer`: a sink for bytes, and for the R values of a state, supplied by
+/// the caller of `encode` and `write_state`.
 #[repr(C)]
 pub struct Writer {
-    /// The caller's state, passed to `write`.
+    /// The caller's state, passed to `write` and `keep`.
     pub context: *mut c_void,
     /// Appends bytes to the sink.
     pub write: Option<unsafe extern "C" fn(*mut c_void, *const u8, usize) -> Status>,
+    /// Keeps an R value that the state holds beside the state's bytes, and
+    /// gives its 0-based position among the kept values, which the codec
+    /// writes into the bytes; `None` in the writer of `encode`.
+    pub keep: Option<unsafe extern "C" fn(*mut c_void, Sexp, *mut usize) -> Status>,
 }
 
 /// `R8Node`: a part of a value that R8 has read and validated, lent to a
@@ -67,6 +72,14 @@ pub const NODE_STRING: u32 = 4;
 pub const NODE_ARRAY: u32 = 5;
 /// `R8_NODE_OBJECT`.
 pub const NODE_OBJECT: u32 = 6;
+
+/// `R8_VALUE_TYPE`: a value of the named type, exactly.
+pub const VALUE_TYPE: u32 = 0;
+/// `R8_VALUE_SUBTYPE`: a value of the named struct or of a struct that
+/// extends it.
+pub const VALUE_SUBTYPE: u32 = 1;
+/// `R8_VALUE_IMPLEMENTOR`: a value of an implementor of the named trait.
+pub const VALUE_IMPLEMENTOR: u32 = 2;
 
 /// `R8_NA_INTEGER`: the integer and logical a null reads as, R's
 /// `NA_integer_`.
@@ -122,6 +135,19 @@ pub struct Reader {
     pub logicals: Option<
         unsafe extern "C" fn(*mut c_void, Node, usize, usize, *mut i32, *mut Error) -> Status,
     >,
+    /// The R value of a node, unprotected: of the type, of a subtype of the
+    /// struct, or of an implementor of the trait that the name, NUL-terminated,
+    /// names, by a `VALUE_*` constant.
+    pub value: Option<
+        unsafe extern "C" fn(
+            *mut c_void,
+            Node,
+            u32,
+            *const c_char,
+            *mut Sexp,
+            *mut Error,
+        ) -> Status,
+    >,
 }
 
 /// `R8CallInputs`: the per-call inputs of an impl function.
@@ -159,9 +185,11 @@ pub struct Codec {
     /// serialization, to count the bytes and to write them, so every call
     /// writes the same bytes.
     pub write_state: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
-    /// Builds a state from bytes that `write_state` wrote.
-    pub read_state:
-        Option<unsafe extern "C" fn(*const u8, usize, *mut *mut c_void, *mut Error) -> Status>,
+    /// Builds a state from bytes that `write_state` wrote and the list of the
+    /// R values that it kept, `R_NilValue` when it kept none.
+    pub read_state: Option<
+        unsafe extern "C" fn(*const u8, usize, Sexp, *mut *mut c_void, *mut Error) -> Status,
+    >,
     /// Reads one field as an R value. `owner` is the external pointer that
     /// holds the state; a field that views the state's memory passes it as
     /// the view's owner. R8 calls it once per field and keeps the result.
@@ -265,6 +293,14 @@ pub struct ImplEntry {
     /// counted as one, which registration checks against the trait's
     /// declaration.
     pub n_params: usize,
+    /// The signatures of the impl's methods as the compiled code has them, a
+    /// declaration record ([`crate::record`]) of one trait that holds them, which
+    /// registration checks against the trait's declaration. The entries of one
+    /// impl have one; NULL in a table written by hand in C, whose functions
+    /// read R values.
+    pub signature: *const u8,
+    /// The length of `signature` in bytes.
+    pub signature_len: usize,
 }
 
 /// `R8Exports`: what a package registers.
@@ -291,6 +327,8 @@ pub struct Exports {
     pub impls: *const ImplEntry,
     /// The number of entries of `impls`.
     pub n_impls: usize,
+    /// The size of an entry of `impls` in bytes, the stride of the array.
+    pub impl_size: usize,
 }
 
 /// `R8Api`: R8's services to compiled code of other packages.
@@ -328,6 +366,12 @@ pub struct Api {
             *mut Error,
         ) -> Status,
     >,
+    /// Builds a value of a registered struct or enum from its fields,
+    /// whichever module its codec has.
+    pub value_of_fields: Option<ValueOfFieldsFn>,
+    /// Builds a value from another with some of its fields replaced, which R8
+    /// validates with the rules that read them.
+    pub with_fields: Option<WithFieldsFn>,
 }
 
 /// `R8ExportsFn`: the function a package registers as `"r8_exports"`.
@@ -353,6 +397,23 @@ pub type StateFn = unsafe extern "C" fn(
     *mut Error,
 ) -> Status;
 
+/// `value_of_fields` of [`Api`]: the type name, the variant of an enum's value
+/// or NULL, the declaration hash that the caller was compiled against, the
+/// list of the fields in declaration order and in their stored forms, the
+/// value, and the error report.
+pub type ValueOfFieldsFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const c_char,
+    Sexp,
+    *mut Sexp,
+    *mut Error,
+) -> Status;
+
+/// `with_fields` of [`Api`]: the value, the named list of the new fields, the
+/// new value, and the error report.
+pub type WithFieldsFn = unsafe extern "C" fn(Sexp, Sexp, *mut Sexp, *mut Error) -> Status;
+
 /// A view function of [`Api`]: the owner, the elements, their number, the
 /// view, and the error report.
 pub type ViewFn<T> = unsafe extern "C" fn(Sexp, *const T, usize, *mut Sexp, *mut Error) -> Status;
@@ -367,6 +428,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Error.message", offset_of!(Error, message)),
         ("R8Writer", size_of::<Writer>()),
         ("R8Writer.write", offset_of!(Writer, write)),
+        ("R8Writer.keep", offset_of!(Writer, keep)),
         ("R8CallInputs", size_of::<CallInputs>()),
         ("R8CallInputs.flags", offset_of!(CallInputs, flags)),
         ("R8CallInputs.seed", offset_of!(CallInputs, seed)),
@@ -401,6 +463,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Reader.doubles", offset_of!(Reader, doubles)),
         ("R8Reader.integers", offset_of!(Reader, integers)),
         ("R8Reader.logicals", offset_of!(Reader, logicals)),
+        ("R8Reader.value", offset_of!(Reader, value)),
         ("R8Position", size_of::<Position>()),
         ("R8Position.name", offset_of!(Position, name)),
         ("R8Position.package", offset_of!(Position, package)),
@@ -414,6 +477,11 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8ImplEntry.method", offset_of!(ImplEntry, method)),
         ("R8ImplEntry.call", offset_of!(ImplEntry, call)),
         ("R8ImplEntry.n_params", offset_of!(ImplEntry, n_params)),
+        ("R8ImplEntry.signature", offset_of!(ImplEntry, signature)),
+        (
+            "R8ImplEntry.signature_len",
+            offset_of!(ImplEntry, signature_len),
+        ),
         ("R8Exports", size_of::<Exports>()),
         ("R8Exports.size", offset_of!(Exports, size)),
         ("R8Exports.package", offset_of!(Exports, package)),
@@ -426,6 +494,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Exports.n_types", offset_of!(Exports, n_types)),
         ("R8Exports.impls", offset_of!(Exports, impls)),
         ("R8Exports.n_impls", offset_of!(Exports, n_impls)),
+        ("R8Exports.impl_size", offset_of!(Exports, impl_size)),
         ("R8Api", size_of::<Api>()),
         ("R8Api.size", offset_of!(Api, size)),
         ("R8Api.new_value", offset_of!(Api, new_value)),
@@ -436,5 +505,7 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Api.view_logicals", offset_of!(Api, view_logicals)),
         ("R8Api.view_bytes", offset_of!(Api, view_bytes)),
         ("R8Api.protect", offset_of!(Api, protect)),
+        ("R8Api.value_of_fields", offset_of!(Api, value_of_fields)),
+        ("R8Api.with_fields", offset_of!(Api, with_fields)),
     ]
 }

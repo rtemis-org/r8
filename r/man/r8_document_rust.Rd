@@ -20,16 +20,22 @@ leaves it current, and the generator does not rewrite it.}
 The path of \code{R/r8-types.R}, invisibly.
 }
 \description{
-Writes \code{R/r8-types.R}, the R declaration of each type that a package
-declares in Rust and lists in its compiled exports (\code{R8.h}): one
+Writes \code{R/r8-types.R}, the R declaration of each type and trait that a
+package declares in Rust and lists in its compiled exports (\code{R8.h}): one
 \code{new_struct()} or \code{new_enum()} call per type, Rust-stored types with
-\code{storage = "rust"}, with roxygen comments from the Rust doc comments. The R
-code of the package then has the type objects, their constructors, and
-their declarations at install, before the shared object loads, and
-\code{r8_register()} checks at load that each R declaration has the declaration
-hash of its Rust declaration.
+\code{storage = "rust"}, and one \code{generic()} or \code{new_trait()} call per trait, with
+a binding for each of a trait's generics, with roxygen comments from the
+Rust doc comments. The R code of the package then has the type objects,
+their constructors, the generics, and their declarations at install, before
+the shared object loads, and \code{r8_register()} checks at load that each R
+declaration has the hash of its Rust declaration.
 }
 \details{
+A \code{dyn()} field names its trait's object. A trait that the package declares
+in R is bound to its name there, in a file that precedes \code{R/r8-types.R} in
+the \code{Collate} field of \code{DESCRIPTION}. A trait of another package is its
+exported object.
+
 The generator reads the IR document from the compiled shared object,
 \verb{src/<package><dynlib.ext>}, which it loads with \code{dyn.load()} and unloads
 when it finishes; the package itself is not loaded, so the generator runs

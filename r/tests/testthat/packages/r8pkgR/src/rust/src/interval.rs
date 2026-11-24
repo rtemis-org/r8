@@ -79,11 +79,19 @@ impl Middle for Interval {
     }
 }
 
-/// The Rust side of the generic `pkgr::shifted`, whose impl for `Interval`
-/// and every struct that extends it returns a value of the same type.
+/// A value moved along its axis.
+///
+/// The impl for `Interval` and every struct that extends it returns a value of
+/// the same type.
 #[r8::methods(trait = "pkgr::shifted")]
 pub trait Shifted {
-    fn shifted(&self, by: f64) -> r8::Result<Self>
+    /// Moves a value.
+    fn shifted(
+        &self,
+        /// The distance, in the unit of the value.
+        #[r8(finite = false, default = "1")]
+        by: f64,
+    ) -> r8::Result<Self>
     where
         Self: Sized;
 }
@@ -147,11 +155,16 @@ impl r8::Display for Interval {
     }
 }
 
-/// The Rust side of the generic `pkgr::meets`, which dispatches on both
-/// arguments. The result names the impl and the values that it read.
+/// How two values meet. The result names the impl and the values that it read.
 #[r8::methods(trait = "pkgr::meets", dispatch(x, y))]
 pub trait Meets<Y> {
-    fn meets(&self, y: &Y, by: f64) -> String;
+    fn meets(
+        &self,
+        /// The other value.
+        y: &Y,
+        /// A number.
+        by: f64,
+    ) -> String;
 }
 
 impl Meets<Interval> for Interval {
@@ -173,11 +186,17 @@ impl Meets<r8::Any> for crate::Signal {
     }
 }
 
-/// The Rust side of the replacement generic `pkgr::label<-`: an impl for
-/// `Band` and every struct that extends it, whose result keeps the type.
+/// Another label. The impl for `Band` and every struct that extends it keeps
+/// the type.
 #[r8::methods(trait = "pkgr::with_label")]
 pub trait WithLabel {
-    fn with_label(&self, value: String) -> Self;
+    #[r8(name = "label<-")]
+    fn with_label(
+        &self,
+        /// The label.
+        #[r8(pattern = "^[a-z]*$")]
+        value: String,
+    ) -> Self;
 }
 
 impl<T: BandLike> WithLabel for T {

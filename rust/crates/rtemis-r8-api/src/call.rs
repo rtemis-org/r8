@@ -3,25 +3,38 @@
 //! ([`Receiver`]), `...` ([`Dots`]), and [`method`], which the functions
 //! that `#[r8::methods]` generates call.
 
-use std::ffi::c_void;
+use std::any::TypeId;
+use std::collections::HashMap;
+use std::ffi::{CStr, CString, c_void};
 use std::ops::Deref;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Mutex;
 
 use rtemis_r8::abi::{self, ERROR, OK, Status, UNWIND};
+use rtemis_r8::derive::Encode;
+use rtemis_r8::ir::FieldType;
+use rtemis_r8::rules::DocumentSet;
 
 use crate::api::{self, Error, Jumped, Result};
-use crate::buffer::{Buffer, Element};
-use crate::field::Field;
-use crate::keep;
+use crate::buffer::Buffer;
+use crate::field::{ElementType, Field};
+use crate::keep::{self, Token};
 use crate::rust_stored::{RustStored, module, panic_text};
+use crate::signature::ParamType;
 use crate::sys::{self, SEXP};
 
 /// An argument of an impl function, converted from its R value.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a parameter of an R8 method",
-    note = "a parameter is a `bool`, an `i32`, an `f64`, a `String`, a `Buffer`, an `Option` of one, a `Sexp`, a `Dots`, or `&T` of a Rust-stored type `T`"
+    note = "a parameter is a `bool`, an `i32`, an `f64`, a `String`, a `Buffer`, a `SubtypeValue`, an `ImplementorValue`, an `Option` of one, a `Sexp`, a `Dots`, or `&T` or `Option<&T>` of a Rust-stored type `T`"
 )]
 pub trait FromR: Sized {
+    /// The R8 type of the parameter.
+    fn param_type() -> ParamType;
+
+    /// Adds the declarations of the types that the parameter's names.
+    fn register(_set: &mut DocumentSet) {}
+
     /// The argument from `x`; `name` names the parameter in errors.
     ///
     /// # Safety
@@ -37,6 +50,9 @@ fn invalid(name: &str, e: Error) -> Error {
 macro_rules! from_field {
     ($($t:ty),*) => {$(
         impl FromR for $t {
+            fn param_type() -> ParamType {
+                ParamType::Typed(<$t as Encode>::field_type())
+            }
             unsafe fn from_arg(x: SEXP, name: &str) -> Result<Self> {
                 unsafe { <$t as Field>::from_r(x) }.map_err(|e| invalid(name, e))
             }
@@ -46,6 +62,9 @@ macro_rules! from_field {
 from_field!(bool, i32, String);
 
 impl FromR for f64 {
+    fn param_type() -> ParamType {
+        ParamType::Typed(<f64 as Encode>::field_type())
+    }
     unsafe fn from_arg(x: SEXP, name: &str) -> Result<Self> {
         // An integer argument reads as a double, as R's arithmetic does.
         if unsafe { sys::TYPEOF(x) } == sys::INTSXP && unsafe { sys::Rf_xlength(x) } == 1 {
@@ -64,6 +83,12 @@ impl FromR for f64 {
 }
 
 impl<T: FromR> FromR for Option<T> {
+    fn param_type() -> ParamType {
+        T::param_type().optional()
+    }
+    fn register(set: &mut DocumentSet) {
+        T::register(set);
+    }
     unsafe fn from_arg(x: SEXP, name: &str) -> Result<Self> {
         if x == unsafe { sys::R_NilValue } {
             return Ok(None);
@@ -72,7 +97,10 @@ impl<T: FromR> FromR for Option<T> {
     }
 }
 
-impl<T: Element> FromR for Buffer<T> {
+impl<T: ElementType> FromR for Buffer<T> {
+    fn param_type() -> ParamType {
+        ParamType::Typed(T::buffer_type())
+    }
     unsafe fn from_arg(x: SEXP, name: &str) -> Result<Self> {
         unsafe { Buffer::from_r(x) }.map_err(|e| invalid(name, e))
     }
@@ -95,6 +123,9 @@ impl Dots {
 }
 
 impl FromR for Dots {
+    fn param_type() -> ParamType {
+        ParamType::Dots
+    }
     unsafe fn from_arg(x: SEXP, _name: &str) -> Result<Self> {
         Ok(Dots(x))
     }
@@ -175,10 +206,7 @@ impl<T> Receiver<'_, T> {
         T: RustStored,
     {
         let mut state: *const c_void = std::ptr::null();
-        let mut err = abi::Error {
-            code: [0; 64],
-            message: [0; 1024],
-        };
+        let mut err = api::blank();
         let Some(f) = lend else {
             return Err(Error::new(
                 "no_api",
@@ -211,6 +239,22 @@ impl<T> Receiver<'_, T> {
     }
 }
 
+/// The value of an argument `Option<&T>` of a method, `None` for NULL.
+///
+/// # Safety
+///
+/// As for [`Receiver::from_named_arg`].
+#[doc(hidden)]
+pub unsafe fn optional_arg<'a, T: RustStored>(
+    x: SEXP,
+    name: &str,
+) -> Result<Option<Receiver<'a, T>>> {
+    if x == unsafe { sys::R_NilValue } {
+        return Ok(None);
+    }
+    unsafe { Receiver::from_named_arg(x, name) }.map(Some)
+}
+
 /// The variant of an R-stored enum value `x`, its `r8_variant` attribute.
 ///
 /// # Safety
@@ -218,31 +262,45 @@ impl<T> Receiver<'_, T> {
 /// On R's main thread, with a valid `x`.
 #[doc(hidden)]
 pub unsafe fn r_variant(x: SEXP) -> Result<String> {
-    unsafe extern "C" {
-        fn Rf_install(name: *const std::ffi::c_char) -> SEXP;
-    }
+    unsafe { r_string_attribute(x, c"r8_variant") }
+}
+
+/// The attribute `name` of `x`, one string.
+///
+/// # Safety
+///
+/// On R's main thread, with a valid `x`.
+pub(crate) unsafe fn r_string_attribute(x: SEXP, name: &CStr) -> Result<String> {
     unsafe {
-        let v = api::protect(&|| sys::Rf_getAttrib(x, Rf_install(c"r8_variant".as_ptr())))
+        let v = api::protect(&|| sys::Rf_getAttrib(x, sys::Rf_install(name.as_ptr())))
             .map_err(api::Jumped::into_error)?;
         if sys::TYPEOF(v) != sys::STRSXP || sys::Rf_xlength(v) != 1 {
             return Err(Error::new(
-                "no_variant",
-                "the enum value has no `r8_variant`",
+                "no_attribute",
+                format!("the value has no `{}`", name.to_string_lossy()),
             ));
         }
         let p = sys::Rf_translateCharUTF8(sys::STRING_ELT(v, 0));
-        Ok(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+        Ok(CStr::from_ptr(p).to_string_lossy().into_owned())
     }
 }
 
 /// A result of an impl function, converted to its R value: a Rust-stored
-/// value is wrapped by R8, for a type whose codec this package's exports
-/// hold.
+/// value is wrapped by R8, or, for a type of another package, built from its
+/// fields.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not the result of an R8 method",
-    note = "a result is a `bool`, an `i32`, an `f64`, a string, a `Vec` or a `Buffer` of numbers, a Rust-stored value, a `Sexp`, `()`, or an `Option` or a `Result` of one"
+    note = "a result is a `bool`, an `i32`, an `f64`, a string, a `Vec` or a `Buffer` of numbers, a Rust-stored value, a `SubtypeValue`, an `ImplementorValue`, a `Sexp`, `()`, or an `Option` or a `Result` of one"
 )]
 pub trait IntoR {
+    /// The R8 type of the result; `None` for a value of R of any type.
+    fn return_type() -> Option<FieldType> {
+        None
+    }
+
+    /// Adds the declarations of the types that the result's names.
+    fn register(_set: &mut DocumentSet) {}
+
     /// The R value; a jump out of an allocation is kept for R8 to continue.
     fn into_r(self) -> std::result::Result<SEXP, Jumped>;
 }
@@ -252,12 +310,18 @@ fn alloc<F: Fn() -> SEXP>(f: &F) -> std::result::Result<SEXP, Jumped> {
 }
 
 impl IntoR for f64 {
+    fn return_type() -> Option<FieldType> {
+        Some(<f64 as Encode>::field_type())
+    }
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         alloc(&|| unsafe { sys::Rf_ScalarReal(self) })
     }
 }
 
 impl IntoR for i32 {
+    fn return_type() -> Option<FieldType> {
+        Some(<i32 as Encode>::field_type())
+    }
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         alloc(&|| unsafe { sys::Rf_ScalarInteger(self) })
     }
@@ -276,18 +340,27 @@ impl IntoR for Option<std::cmp::Ordering> {
 }
 
 impl IntoR for bool {
+    fn return_type() -> Option<FieldType> {
+        Some(<bool as Encode>::field_type())
+    }
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         alloc(&|| unsafe { sys::Rf_ScalarLogical(i32::from(self)) })
     }
 }
 
 impl IntoR for String {
+    fn return_type() -> Option<FieldType> {
+        Some(<String as Encode>::field_type())
+    }
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         self.as_str().into_r()
     }
 }
 
 impl IntoR for &str {
+    fn return_type() -> Option<FieldType> {
+        Some(<String as Encode>::field_type())
+    }
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         let n = i32::try_from(self.len()).map_err(|_| {
             Jumped::Error(Error::new("too_long", "the string is longer than R allows"))
@@ -312,6 +385,12 @@ impl IntoR for () {
 }
 
 impl<T: IntoR> IntoR for Option<T> {
+    fn return_type() -> Option<FieldType> {
+        T::return_type().map(|t| FieldType::Option { inner: Box::new(t) })
+    }
+    fn register(set: &mut DocumentSet) {
+        T::register(set);
+    }
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         match self {
             Some(v) => v.into_r(),
@@ -321,6 +400,12 @@ impl<T: IntoR> IntoR for Option<T> {
 }
 
 impl<T: IntoR, E: Into<Error>> IntoR for std::result::Result<T, E> {
+    fn return_type() -> Option<FieldType> {
+        T::return_type()
+    }
+    fn register(set: &mut DocumentSet) {
+        T::register(set);
+    }
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
         match self {
             Ok(v) => v.into_r(),
@@ -329,17 +414,44 @@ impl<T: IntoR, E: Into<Error>> IntoR for std::result::Result<T, E> {
     }
 }
 
-unsafe extern "C" fn drop_buffer<T: Element>(x: SEXP) {
+unsafe extern "C" fn drop_boxed<T>(x: SEXP) {
     let p = unsafe { sys::R_ExternalPtrAddr(x) };
     if !p.is_null() {
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            drop(unsafe { Box::from_raw(p.cast::<Buffer<T>>()) })
+            drop(unsafe { Box::from_raw(p.cast::<T>()) })
         }));
         unsafe { sys::R_ClearExternalPtr(x) };
     }
 }
 
-impl<T: Element> IntoR for Vec<T> {
+/// An external pointer, unprotected, that owns `boxed` until R collects it,
+/// with the box's address, for views of its memory.
+fn owner<T>(boxed: Box<T>) -> std::result::Result<(SEXP, *const T), Jumped> {
+    let boxed = Box::into_raw(boxed);
+    let owner = alloc(&|| unsafe {
+        let o = sys::Rf_protect(sys::R_MakeExternalPtr(
+            boxed.cast(),
+            sys::R_NilValue,
+            sys::R_NilValue,
+        ));
+        sys::R_RegisterCFinalizerEx(o, drop_boxed::<T>, 1);
+        sys::Rf_unprotect(1);
+        o
+    });
+    match owner {
+        Ok(o) => Ok((o, boxed)),
+        Err(j) => {
+            // The finalizer was not registered, so the box is still Rust's.
+            drop(unsafe { Box::from_raw(boxed) });
+            Err(j)
+        }
+    }
+}
+
+impl<T: ElementType> IntoR for Vec<T> {
+    fn return_type() -> Option<FieldType> {
+        Some(T::buffer_type())
+    }
     /// The vector as an owned [`Buffer`], which R reads as a view: the
     /// result of `R8::Shape`'s `dim()`, among others.
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
@@ -347,65 +459,158 @@ impl<T: Element> IntoR for Vec<T> {
     }
 }
 
-impl<T: Element> IntoR for Buffer<T> {
+impl<T: ElementType> IntoR for Buffer<T> {
+    fn return_type() -> Option<FieldType> {
+        Some(T::buffer_type())
+    }
     /// A borrowed buffer returns its R vector; an owned one, a view whose
     /// owner, an external pointer, holds the buffer until R collects it.
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
-        let boxed = Box::into_raw(Box::new(self));
-        let owner = alloc(&|| unsafe {
-            let o = sys::Rf_protect(sys::R_MakeExternalPtr(
-                boxed.cast(),
-                sys::R_NilValue,
-                sys::R_NilValue,
-            ));
-            sys::R_RegisterCFinalizerEx(o, drop_buffer::<T>, 1);
-            sys::Rf_unprotect(1);
-            o
-        });
-        let owner = match owner {
-            Ok(o) => o,
-            Err(j) => {
-                // The finalizer was not registered, so the box is still Rust's.
-                drop(unsafe { Box::from_raw(boxed) });
-                return Err(j);
-            }
-        };
-        let b = unsafe { &*boxed };
-        b.to_r(owner).map_err(Jumped::Error)
+        let (owner, b) = owner(Box::new(self))?;
+        unsafe { &*b }.to_r(owner).map_err(Jumped::Error)
     }
 }
 
 impl<T: RustStored> IntoR for T {
-    fn into_r(self) -> std::result::Result<SEXP, Jumped> {
-        let a = api::api().map_err(Jumped::Error)?;
-        let Some(f) = a.new_value else {
-            return Err(Jumped::Error(Error::new(
-                "no_api",
-                "R8's API has no `new_value`",
-            )));
-        };
-        let mut value: SEXP = unsafe { sys::R_NilValue };
-        let mut err = abi::Error {
-            code: [0; 64],
-            message: [0; 1024],
-        };
-        let state = Box::into_raw(Box::new(self));
-        let status = unsafe {
-            f(
-                T::TYPE_NAME.as_ptr(),
-                module(),
-                state.cast(),
-                &mut value,
-                &mut err,
-            )
-        };
-        if status != OK {
-            // R8 owns the state only once it has wrapped it.
-            drop(unsafe { Box::from_raw(state) });
-            return Err(Jumped::Error(Error::from_abi(&err)));
-        }
-        Ok(value)
+    fn return_type() -> Option<FieldType> {
+        Some(T::field_type())
     }
+    fn register(set: &mut DocumentSet) {
+        <T as Encode>::register(set);
+    }
+    fn into_r(self) -> std::result::Result<SEXP, Jumped> {
+        rust_value(self)
+    }
+}
+
+/// The R value of `value`, unprotected: its state, which R8 wraps, or, for a
+/// type whose codec another package registers, a value built from its fields.
+pub(crate) fn rust_value<T: RustStored>(value: T) -> std::result::Result<SEXP, Jumped> {
+    let Some(f) = api::api()?.new_value else {
+        return Err(Jumped::Error(Error::new(
+            "no_api",
+            "R8's API has no `new_value`",
+        )));
+    };
+    let mut out: SEXP = unsafe { sys::R_NilValue };
+    let mut err = api::blank();
+    let state = Box::into_raw(Box::new(value));
+    let status = unsafe {
+        f(
+            T::TYPE_NAME.as_ptr(),
+            module(),
+            state.cast(),
+            &mut out,
+            &mut err,
+        )
+    };
+    if status == OK {
+        return Ok(out);
+    }
+    // R8 owns the state only once it has wrapped it.
+    let state = unsafe { Box::from_raw(state) };
+    let e = Error::from_abi(&err);
+    if e.code != "other_module" {
+        return Err(Jumped::Error(e));
+    }
+    value_of_fields(state).map_err(Jumped::Error)
+}
+
+/// A value of a type of another package from the fields of `value`.
+fn value_of_fields<T: RustStored>(value: Box<T>) -> Result<SEXP> {
+    let f = api::api()?
+        .value_of_fields
+        .ok_or_else(|| Error::new("no_api", "R8's API has no `value_of_fields`"))?;
+    let variant = value.variant_name();
+    let hash = declaration_hash::<T>()?;
+    let fields = field_list(value)?;
+    let mut out: SEXP = unsafe { sys::R_NilValue };
+    let mut err = api::blank();
+    let status = unsafe {
+        f(
+            T::TYPE_NAME.as_ptr(),
+            variant.map_or(std::ptr::null(), CStr::as_ptr),
+            hash.as_ptr(),
+            fields.list.get(),
+            &mut out,
+            &mut err,
+        )
+    };
+    if status == OK {
+        Ok(out)
+    } else {
+        Err(Error::from_abi(&err))
+    }
+}
+
+/// The declaration hash of `T`, as this package was compiled against it,
+/// computed once.
+fn declaration_hash<T: RustStored>() -> Result<&'static CStr> {
+    static HASHES: Mutex<Option<HashMap<TypeId, &'static CStr>>> = Mutex::new(None);
+    let mut held = HASHES.lock().unwrap_or_else(|e| e.into_inner());
+    let hashes = held.get_or_insert_default();
+    if let Some(h) = hashes.get(&TypeId::of::<T>()) {
+        return Ok(h);
+    }
+    let text = rtemis_r8::canonical::declaration_hash(&T::qualified_name(), &T::declarations());
+    let text = CString::new(text).map_err(|e| Error::new("bad_name", e.to_string()))?;
+    let hash: &'static CStr = Box::leak(text.into_boxed_c_str());
+    hashes.insert(TypeId::of::<T>(), hash);
+    Ok(hash)
+}
+
+/// The fields of a Rust-stored value as an R list, kept.
+pub(crate) struct FieldList {
+    list: Token,
+    names: Vec<&'static CStr>,
+}
+
+impl FieldList {
+    /// The list with its names.
+    pub(crate) fn named(&self) -> Result<SEXP> {
+        let list = self.list.get();
+        let names = &self.names;
+        api::protect(&|| unsafe {
+            let v = sys::Rf_protect(sys::Rf_allocVector(sys::STRSXP, names.len() as isize));
+            for (i, name) in names.iter().enumerate() {
+                let n = name.to_bytes().len() as i32;
+                sys::SET_STRING_ELT(
+                    v,
+                    i as isize,
+                    sys::Rf_mkCharLenCE(name.as_ptr(), n, sys::CE_UTF8),
+                );
+            }
+            sys::Rf_setAttrib(list, sys::R_NamesSymbol, v);
+            sys::Rf_unprotect(1);
+            list
+        })
+        .map_err(Jumped::into_error)
+    }
+}
+
+/// The fields of `value`, whose memory the views among them keep alive.
+pub(crate) fn field_list<T: RustStored>(value: Box<T>) -> Result<FieldList> {
+    unsafe { keep::prepare() }?;
+    let n = value.field_count();
+    let (owner, value) = owner(value).map_err(Jumped::into_error)?;
+    // The owner holds the value's memory until a view does.
+    let owner = unsafe { Token::keep(owner) }?;
+    let list = api::protect(&|| unsafe { sys::Rf_allocVector(sys::VECSXP, n as isize) })
+        .map_err(Jumped::into_error)?;
+    let list = unsafe { Token::keep(list) }?;
+    let mut names = Vec::with_capacity(n);
+    unsafe { &*value }.each_field(owner.get(), &mut |name, x| {
+        if names.len() == n {
+            return Err(Error::new(
+                "arity",
+                "the value gives more fields than it has",
+            ));
+        }
+        unsafe { sys::SET_VECTOR_ELT(list.get(), names.len() as isize, x) };
+        names.push(name);
+        Ok(())
+    })?;
+    Ok(FieldList { list, names })
 }
 
 /// An R object passed through unchanged; the impl function keeps it
@@ -420,6 +625,9 @@ impl IntoR for Sexp {
 }
 
 impl FromR for Sexp {
+    fn param_type() -> ParamType {
+        ParamType::Untyped
+    }
     unsafe fn from_arg(x: SEXP, _name: &str) -> Result<Self> {
         Ok(Sexp(x))
     }

@@ -3,11 +3,13 @@
 //! Rust-stored enum, `pkgr::Resampler`, of every variant shape, with an impl
 //! of `R8::Display`; `pkgr::Probe`, a field of every Rust field type,
 //! against which the conformance tests of `tests/testthat/conformance` run;
-//! and structs that extend one another (`interval`).
+//! structs that extend one another (`interval`); and open fields (`open`).
 
 pub mod interval;
+pub mod open;
 
 use interval::*;
+use open::*;
 use rtemis_r8::R8;
 use rtemis_r8_api as r8;
 use rtemis_r8_api::{Buffer, Dots, Logical};
@@ -176,7 +178,10 @@ impl r8::Display for Resampler {
 r8::exports! {
     package = "r8pkgR",
     namespace = "pkgr",
-    types = [Signal, Resampler, Probe, Interval, Band, Strip],
+    types = [Signal, Resampler, Probe, Interval, Band, Strip, Square, Panel],
+    traits = [
+        Shifted, Meets, WithLabel, Figure, Contents, Moved, Banded, HeldRange, Refit,
+    ],
     impls = [
         Signal: Norm,
         Signal: r8::Display,
@@ -201,5 +206,11 @@ r8::exports! {
         Interval: WithUpper,
         Interval: r8::From<Signal>,
         Signal: r8::From<Band>,
+        Square: Figure,
+        Panel: Contents,
+        Panel: Moved,
+        Panel: Banded,
+        Panel: HeldRange,
+        Panel: Refit,
     ],
 }

@@ -25,3 +25,61 @@ Tile <- R8::new_struct(
   extends = r8pkgR::Interval,
   storage = "rust"
 )
+
+#' Grid
+#'
+#' A grid of cells.
+#'
+#' The struct `pkgs::Grid`, declared in Rust.
+#'
+#' @param cell The cell, a value of r8pkgR's type.
+#' @param method The resampling method, a value of r8pkgR's enum.
+#' @param extent The extent.
+#' @param figure The figure.
+#' @param note A value with a note.
+#' @return A `pkgs::Grid` value.
+#' @export
+Grid <- R8::new_struct(
+  "Grid",
+  fields = list(
+    cell = R8::field(
+      r8pkgR::Interval,
+      description = "The cell, a value of r8pkgR's type."
+    ),
+    method = R8::field(
+      r8pkgR::Resampler,
+      description = "The resampling method, a value of r8pkgR's enum."
+    ),
+    extent = R8::field(
+      R8::subtype(r8pkgR::Interval),
+      description = "The extent."
+    ),
+    figure = R8::field(
+      R8::option(R8::dyn(r8pkgR::Figure)),
+      description = "The figure."
+    ),
+    note = R8::field(
+      R8::option(R8::dyn(Noted)),
+      description = "A value with a note."
+    )
+  ),
+  description = "A grid of cells.",
+  version = 1L,
+  storage = "rust"
+)
+
+#' cells
+#'
+#' The number of cells in the extent, and the band that the extent is.
+#'
+#' The generic `pkgs::cells`, declared in Rust.
+#'
+#' @param x A value, whose type selects the method.
+#' @return The result of the method: character.
+#' @export
+cells <- R8::generic(
+  "cells",
+  R8::params(x),
+  description = "The number of cells in the extent, and the band that the extent is.",
+  return_type = R8::type_character()
+)

@@ -380,6 +380,43 @@ fn number_attr(e: &Expr) -> Result<f64> {
         .map_err(|_| Error::new_spanned(e, "expected a number"))
 }
 
+/// Reads the attribute `key` of a field or a parameter as a constraint of
+/// `rtemis_r8::derive::Constraints`; `false` when it is not one.
+fn constraint(
+    meta: &syn::meta::ParseNestedMeta,
+    key: &str,
+    constraints: &mut Vec<Tokens>,
+) -> Result<bool> {
+    let k = match key {
+        "min" | "max" | "exclusive_min" | "exclusive_max" | "min_length" | "max_length"
+        | "pattern" | "finite" | "unique" => format_ident!("{}", key),
+        _ => return Ok(false),
+    };
+    let value = match key {
+        "min" | "max" | "exclusive_min" | "exclusive_max" => {
+            let e: Expr = meta.value()?.parse()?;
+            let x = number_attr(&e)?;
+            quote! { ::std::option::Option::Some(#x) }
+        }
+        "min_length" | "max_length" => {
+            let n: syn::LitInt = meta.value()?.parse()?;
+            let x: u64 = n.base10_parse()?;
+            quote! { ::std::option::Option::Some(#x) }
+        }
+        "pattern" => {
+            let s: syn::LitStr = meta.value()?.parse()?;
+            quote! { ::std::option::Option::Some(#s) }
+        }
+        "finite" => {
+            let b = meta.value()?.parse::<syn::LitBool>()?.value;
+            quote! { ::std::option::Option::Some(#b) }
+        }
+        _ => quote! { true },
+    };
+    constraints.push(quote! { #k: #value });
+    Ok(true)
+}
+
 /// The construction of one field's `rtemis_r8::ir::FieldDef`.
 fn field_def(field: &syn::Field) -> Result<Tokens> {
     let ident = field.ident.as_ref().expect("named fields");
@@ -403,29 +440,10 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
                 .get_ident()
                 .map(|i| i.to_string())
                 .unwrap_or_default();
+            if constraint(&meta, &key, &mut constraints)? {
+                return Ok(());
+            }
             match key.as_str() {
-                "min" | "max" | "exclusive_min" | "exclusive_max" => {
-                    let e: Expr = meta.value()?.parse()?;
-                    let x = number_attr(&e)?;
-                    let k = format_ident!("{}", key);
-                    constraints.push(quote! { #k: ::std::option::Option::Some(#x) });
-                }
-                "min_length" | "max_length" => {
-                    let n: syn::LitInt = meta.value()?.parse()?;
-                    let x: u64 = n.base10_parse()?;
-                    let k = format_ident!("{}", key);
-                    constraints.push(quote! { #k: ::std::option::Option::Some(#x) });
-                }
-                "pattern" => {
-                    let s: syn::LitStr = meta.value()?.parse()?;
-                    constraints.push(quote! { pattern: ::std::option::Option::Some(#s) });
-                }
-                "finite" => {
-                    let b: syn::LitBool = meta.value()?.parse()?;
-                    let b = b.value;
-                    constraints.push(quote! { finite: ::std::option::Option::Some(#b) });
-                }
-                "unique" => constraints.push(quote! { unique: true }),
                 "sensitive" => sensitive = true,
                 "unit" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
@@ -801,6 +819,7 @@ fn rust_stored_enum_impl(
     let tag_c = c_str(tag);
     let mut from_node = Vec::new();
     let api = quote! { ::rtemis_r8_api };
+    let of_kind = of_kind(&quote! { #api::RustStoredEnum });
     let unknown_field = quote! {
         Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name)))
     };
@@ -811,6 +830,8 @@ fn rust_stored_enum_impl(
     let mut write = Vec::new();
     let mut read = Vec::new();
     let mut bytes = Vec::new();
+    let mut count = Vec::new();
+    let mut each = Vec::new();
     for (k, v) in e.variants.iter().enumerate() {
         let vid = &v.ident;
         let vname = vid.to_string();
@@ -833,6 +854,8 @@ fn rust_stored_enum_impl(
                 write.push(quote! { Self::#vid => out.write(&#idx.to_le_bytes()) });
                 read.push(quote! { #idx => Ok(Self::#vid) });
                 bytes.push(quote! { Self::#vid => 0 });
+                count.push(quote! { Self::#vid => 0 });
+                each.push(quote! { Self::#vid => Ok(()) });
             }
             Fields::Named(_) => {
                 let fields = fields_of(&v.fields)?;
@@ -919,6 +942,14 @@ fn rust_stored_enum_impl(
                 bytes.push(quote! {
                     Self::#vid { #(#idents: #vars),* } => 0 #(+ #api::Field::owned_bytes(#vars))*
                 });
+                count.push(quote! { Self::#vid { .. } => #n });
+                let names_c: Vec<Tokens> = names.iter().map(|n| c_str(n)).collect();
+                each.push(quote! {
+                    Self::#vid { #(#idents: #vars),* } => {
+                        #(f(#names_c, #api::Field::to_r(#vars, owner)?)?;)*
+                        Ok(())
+                    }
+                });
             }
             Fields::Unnamed(u) if u.unnamed.len() == 1 => {
                 let inner = &u.unnamed[0].ty;
@@ -945,6 +976,11 @@ fn rust_stored_enum_impl(
                 bytes.push(
                     quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::owned_bytes(inner) },
                 );
+                count
+                    .push(quote! { Self::#vid(_) => <#inner as #api::RustStoredStruct>::N_FIELDS });
+                each.push(quote! {
+                    Self::#vid(inner) => <#inner as #api::RustStoredStruct>::fields(inner, owner, f)
+                });
             }
             Fields::Unnamed(u) => {
                 return Err(Error::new_spanned(
@@ -961,6 +997,13 @@ fn rust_stored_enum_impl(
             unsafe fn from_value(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 let variant = unsafe { #api::call::r_variant(x) }?;
                 unsafe { <Self as #api::RustStoredEnum>::from_variant(&variant, fields) }
+            }
+            #of_kind
+            fn variant_name(&self) -> ::std::option::Option<&'static ::core::ffi::CStr> {
+                ::std::option::Option::Some(<Self as #api::RustStoredEnum>::variant(self))
+            }
+            fn field_count(&self) -> usize {
+                <Self as #api::RustStoredEnum>::n_fields(self)
             }
         }
         #[allow(unused_variables)]
@@ -1000,8 +1043,44 @@ fn rust_stored_enum_impl(
             fn owned_bytes(&self) -> usize {
                 match self { #(#bytes,)* }
             }
+            fn n_fields(&self) -> usize {
+                match self { #(#count,)* }
+            }
+            fn fields(
+                &self,
+                owner: #api::sys::SEXP,
+                f: &mut dyn FnMut(&'static ::core::ffi::CStr, #api::sys::SEXP) -> #api::Result<()>,
+            ) -> #api::Result<()> {
+                match self { #(#each,)* }
+            }
         }
     })
+}
+
+/// The methods of `RustStored` that the trait of the type's kind, `kind`, has.
+fn of_kind(kind: &Tokens) -> Tokens {
+    let api = quote! { ::rtemis_r8_api };
+    quote! {
+        fn from_node<'a>(r: &#api::Reader<'a>, n: #api::Node<'a>) -> #api::Result<Self> {
+            <Self as #kind>::from_reader(r, n)
+        }
+        fn write_bytes(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
+            <Self as #kind>::write_state(self, out)
+        }
+        fn read_bytes(input: &mut #api::StateReader) -> #api::Result<Self> {
+            <Self as #kind>::read_state(input)
+        }
+        fn heap_bytes(&self) -> usize {
+            <Self as #kind>::owned_bytes(self)
+        }
+        fn each_field(
+            &self,
+            owner: #api::sys::SEXP,
+            f: &mut dyn FnMut(&'static ::core::ffi::CStr, #api::sys::SEXP) -> #api::Result<()>,
+        ) -> #api::Result<()> {
+            <Self as #kind>::fields(self, owner, f)
+        }
+    }
 }
 
 /// A C string literal, `c"..."`, of an R8 name, which holds ASCII letters,
@@ -1024,8 +1103,10 @@ fn rust_stored_impl(
     let n = fields.len();
     let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
     let names: Vec<String> = idents.iter().map(|i| field_name(i)).collect();
+    let names_c: Vec<Tokens> = names.iter().map(|n| c_str(n)).collect();
     let tys: Vec<_> = fields.iter().map(|f| &f.ty).collect();
     let api = quote! { ::rtemis_r8_api };
+    let of_kind = of_kind(&quote! { #api::RustStoredStruct });
     let base_ident = parent.map(|p| p.ident);
     let base: Vec<_> = parent.map(|p| p.ident).into_iter().collect();
     let base_ty: Vec<_> = parent.map(|p| p.ty).into_iter().collect();
@@ -1105,6 +1186,13 @@ fn rust_stored_impl(
                 let n = <Self as #api::RustStoredStruct>::N_FIELDS.min(fields.len());
                 unsafe { <Self as #api::RustStoredStruct>::from_fields(&fields[..n]) }
             }
+            #of_kind
+            fn variant_name(&self) -> ::std::option::Option<&'static ::core::ffi::CStr> {
+                ::std::option::Option::None
+            }
+            fn field_count(&self) -> usize {
+                <Self as #api::RustStoredStruct>::N_FIELDS
+            }
         }
         impl #api::RustStoredStruct for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
@@ -1157,6 +1245,15 @@ fn rust_stored_impl(
                 #(+ <#base_ty as #api::RustStoredStruct>::owned_bytes(&self.#base))*
                 #(+ #api::Field::owned_bytes(&self.#idents))*
             }
+            fn fields(
+                &self,
+                owner: #api::sys::SEXP,
+                f: &mut dyn FnMut(&'static ::core::ffi::CStr, #api::sys::SEXP) -> #api::Result<()>,
+            ) -> #api::Result<()> {
+                #(<#base_ty as #api::RustStoredStruct>::fields(&self.#base, owner, f)?;)*
+                #(f(#names_c, #api::Field::to_r(&self.#idents, owner)?)?;)*
+                Ok(())
+            }
             #(
                 fn upcast(&self, type_name: &::core::ffi::CStr) -> *const ::core::ffi::c_void {
                     if type_name == <#base_ty as #api::RustStoredStruct>::TYPE_NAME {
@@ -1193,6 +1290,32 @@ fn rust_stored_impl(
 /// Its argument is `&Y`, and a row names the type, `IRanges:
 /// Overlaps<GRanges>`, or any value, `IRanges: Overlaps<r8::Any>`. A
 /// replacement method `f<-` is `with_f(&self, value)`.
+///
+/// Registration checks the method's signature against the R declaration: the
+/// names of the parameters, their types, and the type of the result.
+///
+/// `traits` of `r8::exports!` lists the traits that Rust declares. The
+/// attributes of a parameter are those of a derived field's constraints and
+/// `default`, its doc comment is its description, `#[r8(name = "label<-")]`
+/// gives a method another name in R, whose identifier is the method's, and
+/// `tag = "type"` beside `trait` gives the trait a tag member. An accessor of
+/// a field that each implementing struct has is marked `#[r8(field)]`:
+///
+/// ```text
+/// #[r8::methods(trait = "ns::shifted")]
+/// pub trait Shifted {
+///     fn shifted(
+///         &self,
+///         /// The distance.
+///         #[r8(min = 0, default = "1")]
+///         by: f64,
+///     ) -> Self;
+/// }
+/// ```
+///
+/// `dyn` beside `trait` makes `dyn Trait` the name of the R8 trait in the type
+/// of an open field, `rtemis_r8_api::ImplementorValue<dyn Trait>`; the Rust
+/// trait is dyn compatible, and dispatches on one argument.
 #[proc_macro_attribute]
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as syn::Item);
@@ -1207,7 +1330,8 @@ fn valid_qualified(s: &str) -> bool {
 }
 
 /// `r8::exports! { package = "pkg", namespace = "ns", types = [T, ...],
-/// impls = [T: Trait, T: Trait<Y>, ...] }`: the package's exports table, built on first
+/// traits = [Trait, ...], impls = [T: Trait, T: Trait<Y>, ...] }`, where
+/// `traits` lists the traits declared in Rust: the package's exports table, built on first
 /// use, and `r8_init_<package>(dll)`, with an underscore for a period of the
 /// package's name, which the package's initialization routine calls to
 /// register it with `R_RegisterCCallable(pkg, "r8_exports", ...)`. It is

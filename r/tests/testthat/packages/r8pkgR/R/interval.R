@@ -2,17 +2,19 @@
 # ::r8pkgR::
 # 2026- EDG rtemis.org
 
-# The generics whose impls for Interval and Band are in Rust (src/rust).
+# The generics declared in R whose impls for Interval and Band are in Rust
+# (src/rust); the others are declared in Rust (R/r8-types.R).
 
 width <- R8::generic("width", R8::params(x), return_type = R8::type_double())
-middle <- R8::generic("middle", R8::params(x))
-shifted <- R8::generic("shifted", R8::params(x, by))
-overlap <- R8::generic("overlap", R8::params(x, y))
+middle <- R8::generic(
+  "middle",
+  R8::params(x),
+  return_type = R8::subtype(Interval)
+)
+overlap <- R8::generic("overlap", R8::params(x, y = R8::arg(Interval)))
 total <- R8::generic("total", R8::params(x))
 shares <- R8::generic("shares", R8::params(x))
-meets <- R8::generic("meets", R8::params(x, y, by), dispatch = c("x", "y"))
-`label<-` <- R8::generic("label<-", R8::params(x, value))
-`upper<-` <- R8::generic("upper<-", R8::params(x, value))
+`upper<-` <- R8::generic("upper<-", R8::params(x, value = R8::arg_double()))
 
 # An impl in R, which continues to the compiled impl of its parent.
 R8::implement(total, Strip) <- function(x) x[["number"]] + R8::r8_next_impl()

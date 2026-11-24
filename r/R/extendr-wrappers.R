@@ -353,7 +353,7 @@ r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 #' @noRd
 r8_clear_external_ptrs <- function(ptrs) .Call(wrap__r8_clear_external_ptrs, ptrs)
 
-#' The IR document of the type declarations of an exports table's record,
+#' The IR document of the declarations of an exports table's record,
 #' as the R lists the declaration functions build.
 #'
 #' @param ptr The external pointer that `r8_exports` returned.
@@ -363,8 +363,9 @@ r8_clear_external_ptrs <- function(ptrs) .Call(wrap__r8_clear_external_ptrs, ptr
 #' @noRd
 r8_exports_document <- function(ptr, ns) .Call(wrap__r8_exports_document, ptr, ns)
 
-#' Compares the types of an exports table with the registered declarations.
-#' A type of the record compares by declaration hash and by its parent,
+#' Compares the types and traits of an exports table with the registered
+#' declarations. A trait of the record compares by its hash
+#' (`impl_signature::trait_hash()`). A type of the record compares by declaration hash and by its parent,
 #' which the hash excludes: the Rust hash reads
 #' the registry with the record's types in place of its namespace's types
 #' of the same names, and the R hash reads the registry alone. A codec whose
@@ -373,8 +374,8 @@ r8_exports_document <- function(ptr, ns) .Call(wrap__r8_exports_document, ptr, n
 #'
 #' @param ptr The external pointer that `r8_exports` returned.
 #' @param ns Character: The package's namespace.
-#' @return List: `type_name`, the qualified names; `status`, for a type of
-#'   the record `"same"`, `"differs"`, or `"missing"` (no registered
+#' @return List: `type_name`, the qualified names; `status`, for a type or
+#'   a trait of the record `"same"`, `"differs"`, or `"missing"` (no registered
 #'   declaration), and for a codec's type outside the record `"same"`,
 #'   `"stale"` (the pinned hash differs), `"unpinned"` (no pinned hash), or
 #'   `"undeclared"`; `codec`, whether the table carries the type's codec; and
@@ -390,6 +391,19 @@ r8_exports_compare <- function(ptr, ns) .Call(wrap__r8_exports_compare, ptr, ns)
 #' @keywords internal
 #' @noRd
 r8_exports_traits <- function(ptr) .Call(wrap__r8_exports_traits, ptr)
+
+#' The differences of the signatures of an exports table's impls from the
+#' declarations of their traits.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @param package Character: The registering package.
+#' @return List: One element per method, accessor, or tag member that differs,
+#'   each a list of `of` (the trait), `member`, `target` (the impl's positions,
+#'   `""` for an accessor and a tag), `messages`, and, for a method,
+#'   `signature`, its IR as compiled code has it.
+#' @keywords internal
+#' @noRd
+r8_exports_signatures <- function(ptr, package) .Call(wrap__r8_exports_signatures, ptr, package)
 
 #' Registers an exports table: declares the impls its impl entries make and
 #' keeps the codecs of its Rust-stored types and its impl functions,

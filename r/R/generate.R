@@ -2,8 +2,8 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# The generator of R/r8-types.R: the R declarations of the types a package
-# declares in Rust, read from the IR document of the package's compiled
+# The generator of R/r8-types.R: the R declarations of the types and traits a
+# package declares in Rust, read from the IR document of the package's compiled
 # exports (R8.h). Each field type, rule, and default renders as the R
 # declaration call that compiles to it; JSON without an R form renders as
 # json_ir(). The generated file is checked by declaring it and comparing the
@@ -13,14 +13,20 @@
 # %% r8_document_rust ----
 #' Generate the R declarations of types declared in Rust
 #'
-#' Writes `R/r8-types.R`, the R declaration of each type that a package
-#' declares in Rust and lists in its compiled exports (`R8.h`): one
+#' Writes `R/r8-types.R`, the R declaration of each type and trait that a
+#' package declares in Rust and lists in its compiled exports (`R8.h`): one
 #' `new_struct()` or `new_enum()` call per type, Rust-stored types with
-#' `storage = "rust"`, with roxygen comments from the Rust doc comments. The R
-#' code of the package then has the type objects, their constructors, and
-#' their declarations at install, before the shared object loads, and
-#' `r8_register()` checks at load that each R declaration has the declaration
-#' hash of its Rust declaration.
+#' `storage = "rust"`, and one `generic()` or `new_trait()` call per trait, with
+#' a binding for each of a trait's generics, with roxygen comments from the
+#' Rust doc comments. The R code of the package then has the type objects,
+#' their constructors, the generics, and their declarations at install, before
+#' the shared object loads, and `r8_register()` checks at load that each R
+#' declaration has the hash of its Rust declaration.
+#'
+#' A `dyn()` field names its trait's object. A trait that the package declares
+#' in R is bound to its name there, in a file that precedes `R/r8-types.R` in
+#' the `Collate` field of `DESCRIPTION`. A trait of another package is its
+#' exported object.
 #'
 #' The generator reads the IR document from the compiled shared object,
 #' `src/<package><dynlib.ext>`, which it loads with `dyn.load()` and unloads
@@ -100,7 +106,10 @@ r8_document_rust <- function(path = ".", check = FALSE) {
     )
   }
   doc <- r8_exports_document(ptr, namespace)
-  .r8_render_refs[["map"]] <- foreign_refs(doc, path)
+  .r8_render_refs[["map"]] <- c(
+    foreign_refs(doc, path),
+    replacement_refs(doc[["traits"]], namespace)
+  )
   .r8_render_refs[["types"]] <- stats::setNames(
     doc[["types"]],
     vapply(
@@ -119,7 +128,15 @@ r8_document_rust <- function(path = ".", check = FALSE) {
   codecs <- r8_exports_compare(ptr, namespace)
   codecs <- codecs[["type_name"]][codecs[["codec"]]]
   lines <- render_document(doc, pkg, codecs)
-  verify_document(lines, doc[["namespace"]], ptr)
+  own_traits <- dyn_traits(c(doc[["types"]], doc[["traits"]]))
+  own_traits <- own_traits[startsWith(own_traits, paste0(namespace, "::"))]
+  declared_here <- vapply(
+    doc[["traits"]],
+    function(t) paste0(namespace, "::", t[["name"]]),
+    character(1)
+  )
+  own_traits <- setdiff(own_traits, declared_here)
+  verify_document(lines, doc[["namespace"]], ptr, own_traits)
   file <- file.path(path, "R", "r8-types.R")
   old <- if (file.exists(file)) readLines(file, warn = FALSE) else character()
   # A formatter such as air changes the file's layout and none of its tokens.
@@ -141,18 +158,22 @@ r8_document_rust <- function(path = ".", check = FALSE) {
 } # /R8::r8_document_rust
 
 
-# While r8_document_rust() renders: `map`, the R objects of the types of
-# other namespaces that the rendered file names, and `types`, the IR of the
-# document's types, both by qualified name.
+# While r8_document_rust() renders: `map`, the R objects of the types and
+# traits of other namespaces that the rendered file names and those of its
+# replacement generics, and `types`, the IR of the document's types, both by
+# qualified name. `bare` is TRUE while a message renders a declaration, which
+# names each type and trait without its namespace.
 .r8_render_refs <- new.env(parent = emptyenv())
 
 
 # %% foreign_refs ----
-#' The R objects of the types of other namespaces that a document names
+#' The R objects of the types and traits of other namespaces that a document
+#' names
 #'
-#' For each type of another namespace that the document's types reach, the
-#' exported binding of the package that owns the namespace, as R source:
-#' `"r8resample::Resampler"`. The owner is found among the packages of the
+#' For each type, and each trait of a `dyn()` field, of another namespace that
+#' the document's types reach, the exported binding of the package that owns
+#' the namespace, as R source: `"r8resample::Resampler"`. A trait's binding is
+#' its trait object or its generic. The owner is found among the packages of the
 #' `Imports` and `Depends` of the package's `DESCRIPTION`, each loaded, by
 #' R8's registry of namespace claims.
 #'
@@ -165,7 +186,10 @@ r8_document_rust <- function(path = ".", check = FALSE) {
 #' @noRd
 foreign_refs <- function(doc, path) {
   prefix <- paste0(doc[["namespace"]], "::")
-  refs <- unique(unlist(lapply(doc[["types"]], named_refs)))
+  refs <- unique(unlist(lapply(
+    c(doc[["types"]], doc[["traits"]]),
+    named_refs
+  )))
   refs <- refs[!startsWith(refs, prefix)]
   if (length(refs) == 0L) {
     return(character())
@@ -186,7 +210,7 @@ foreign_refs <- function(doc, path) {
     owner <- r8_namespace_owner(ns)
     if (!nzchar(owner) || !owner %in% deps) {
       r8_abort(
-        "The type `",
+        "`",
         q,
         "` belongs to the namespace `",
         ns,
@@ -195,26 +219,36 @@ foreign_refs <- function(doc, path) {
         class = "r8_declaration_error"
       )
     }
-    binding <- Filter(
-      function(e) {
-        v <- getExportedValue(owner, e)
-        inherits(v, "r8_type") && identical(attr(v, "r8_name"), q)
-      },
-      getNamespaceExports(owner)
+    # A generic of one method is a trait without an object of its own.
+    values <- lapply(
+      stats::setNames(nm = sort(getNamespaceExports(owner))),
+      function(e) getExportedValue(owner, e)
     )
+    names_it <- function(v) {
+      inherits(v, "r8_type") &&
+        identical(attr(v, "r8_name"), q) ||
+        inherits(v, "r8_trait") && identical(unclass(v)[["name"]], q)
+    }
+    binding <- names(Filter(names_it, values))
+    if (length(binding) == 0L) {
+      of_trait <- function(v) {
+        inherits(v, "r8_generic") && identical(attr(v, "r8_trait"), q)
+      }
+      binding <- names(Filter(of_trait, values))
+    }
     if (length(binding) == 0L) {
       r8_abort(
         "Package '",
         owner,
         "' owns the namespace `",
         ns,
-        "` and exports no type object of `",
+        "` and exports no type or trait object of `",
         q,
         "`.",
         class = "r8_declaration_error"
       )
     }
-    out[[q]] <- paste0(owner, "::", backtick(sort(binding)[[1L]]))
+    out[[q]] <- paste0(owner, "::", backtick(binding[[1L]]))
   }
   out
 } # /R8::foreign_refs
@@ -262,14 +296,24 @@ same_code <- function(a, b) {
 #' @param lines Character: The rendered file.
 #' @param namespace Character: The exports' namespace.
 #' @param ptr The external pointer that `r8_exports` returned.
+#' @param own_traits Character: The qualified names of the namespace's traits
+#'   that `dyn()` fields name.
 #'
 #' @return `NULL`, invisibly; signals `r8_declaration_error` naming each type
 #'   whose rendering differs.
 #'
 #' @keywords internal
 #' @noRd
-verify_document <- function(lines, namespace, ptr) {
+verify_document <- function(lines, namespace, ptr, own_traits) {
   env <- new.env(parent = globalenv())
+  # A trait of the package, which its R code declares, is known by its name.
+  for (q in own_traits) {
+    assign(
+      sub("^.*::", "", q),
+      structure(list(name = q), class = "r8_trait"),
+      envir = env
+    )
+  }
   op <- options(r8.namespace = namespace)
   on.exit(options(op), add = TRUE)
   eval(parse(text = lines, keep.source = FALSE), envir = env)
@@ -301,10 +345,12 @@ verify_document <- function(lines, namespace, ptr) {
 #' @noRd
 render_document <- function(doc, pkg, codecs) {
   ns <- doc[["namespace"]]
-  types <- type_order(doc[["types"]], ns)
-  blocks <- lapply(types, function(t) {
+  declarations <- type_order(c(doc[["types"]], doc[["traits"]]), ns)
+  blocks <- lapply(declarations, function(t) {
     rust_stored <- paste0(ns, "::", t[["name"]]) %in% codecs
-    if (identical(t[["kind"]], "struct")) {
+    if (is.null(t[["kind"]])) {
+      render_trait(t, ns)
+    } else if (identical(t[["kind"]], "struct")) {
       render_struct(t, ns, rust_stored)
     } else {
       render_enum(t, ns, rust_stored)
@@ -325,9 +371,9 @@ render_document <- function(doc, pkg, codecs) {
 
 
 # %% type_order ----
-#' Types in an order that declares each after the types it names
+#' Declarations in an order that declares each after those it names
 #'
-#' @param types List: The IR type declarations.
+#' @param types List: The IR declarations of types and traits.
 #' @param ns Character: The namespace.
 #'
 #' @return List: The declarations, reordered.
@@ -349,7 +395,7 @@ type_order <- function(types, ns) {
     }
     if (n %in% path) {
       r8_abort(
-        "The types `",
+        "The declarations `",
         paste(c(path, n), collapse = "` -> `"),
         "` name each other in a cycle.",
         class = "r8_declaration_error"
@@ -372,7 +418,7 @@ type_order <- function(types, ns) {
 #'
 #' @param x An IR value: a declaration, field, or field type.
 #'
-#' @return Character.
+#' @return Character: The names of types and of the traits of `dyn()` fields.
 #'
 #' @keywords internal
 #' @noRd
@@ -387,6 +433,7 @@ named_refs <- function(x) {
     switch(
       kind,
       named = x[["name"]],
+      dyn = x[["trait"]],
       matrix_of = ,
       table_of = ,
       subtype = ,
@@ -397,6 +444,24 @@ named_refs <- function(x) {
   }
   c(own, unlist(lapply(unname(x), named_refs)))
 } # /R8::named_refs
+
+
+# %% dyn_traits ----
+#' The traits that the `dyn()` fields of an IR value name
+#'
+#' @param x An IR value: a declaration, field, or field type.
+#'
+#' @return Character: The qualified names, each once.
+#'
+#' @keywords internal
+#' @noRd
+dyn_traits <- function(x) {
+  if (!is.list(x)) {
+    return(character())
+  }
+  own <- if (identical(x[["kind"]], "dyn")) x[["trait"]] else character()
+  unique(c(own, unlist(lapply(unname(x), dyn_traits))))
+} # /R8::dyn_traits
 
 
 # %% check_renderable ----
@@ -656,6 +721,315 @@ render_enum <- function(t, ns, rust_stored = FALSE) {
 } # /R8::render_enum
 
 
+# %% replacement_refs ----
+#' The R objects of the replacement generics that a document declares
+#'
+#' The trait of a replacement generic `f<-` is `with_f`, and its object the
+#' generic.
+#'
+#' @param traits List: The IR of the document's traits.
+#' @param ns Character: The namespace.
+#'
+#' @return Named character: R source by the trait's qualified name.
+#'
+#' @keywords internal
+#' @noRd
+replacement_refs <- function(traits, ns) {
+  out <- character()
+  for (t in traits) {
+    m <- t[["methods"]][[1L]][["name"]]
+    if (isTRUE(t[["generic"]]) && endsWith(m, "<-")) {
+      out[[paste0(ns, "::", t[["name"]])]] <- backtick(m)
+    }
+  }
+  out
+} # /R8::replacement_refs
+
+
+# %% render_arg ----
+#' A typed parameter as `arg()` or the shorthand of its type
+#'
+#' @param p List: The IR parameter.
+#' @param ns Character: The namespace.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+render_arg <- function(p, ns) {
+  type <- p[["type"]]
+  default <- if (!is.null(p[["default"]])) {
+    paste0("default = ", render_default(p[["default"]], type, ns))
+  }
+  optional <- identical(type[["kind"]], "option")
+  # An absent value is the default of arg_option().
+  if (optional && "default" %in% names(p)) {
+    return(paste0(
+      "R8::arg_option(",
+      paste(c(render_type(type[["inner"]], ns), default), collapse = ", "),
+      ")"
+    ))
+  }
+  text <- render_type(type, ns)
+  shorthand <- sub(
+    "^R8::(type_|(?=vec\\(|btree_map\\(|index_map\\())",
+    "R8::arg_",
+    text,
+    perl = TRUE
+  )
+  if (identical(shorthand, text)) {
+    return(paste0("R8::arg(", paste(c(text, default), collapse = ", "), ")"))
+  }
+  if (is.null(default)) {
+    return(shorthand)
+  }
+  open <- sub("\\)$", "", shorthand)
+  paste0(open, if (!endsWith(open, "(")) ", ", default, ")")
+} # /R8::render_arg
+
+
+# %% render_params ----
+#' The parameters of a method as `params()`
+#'
+#' @param params List: The IR parameters.
+#' @param ns Character: The namespace.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+render_params <- function(params, ns) {
+  args <- vapply(
+    params,
+    function(p) {
+      name <- if (is.list(p)) p[["name"]] else p
+      if (identical(name, "...")) {
+        "\"...\""
+      } else if (is.list(p) && !is.null(p[["type"]])) {
+        paste0(backtick(name), " = ", render_arg(p, ns))
+      } else {
+        backtick(name)
+      }
+    },
+    character(1)
+  )
+  paste0("R8::params(", paste(args, collapse = ", "), ")")
+} # /R8::render_params
+
+
+# %% render_method ----
+#' The arguments of `generic()` and `trait_method()` that a method's IR states
+#'
+#' @param m List: The IR method.
+#' @param ns Character: The namespace.
+#'
+#' @return Character: The arguments.
+#'
+#' @keywords internal
+#' @noRd
+render_method <- function(m, ns) {
+  marked <- Filter(
+    function(p) is.list(p) && isTRUE(p[["dispatch"]]),
+    m[["params"]]
+  )
+  ret <- m[["return_type"]]
+  c(
+    render_params(m[["params"]], ns),
+    if (nzchar(m[["description"]] %||% "")) {
+      paste0("description = ", deparse_string(m[["description"]]))
+    },
+    if (length(marked) > 0L) {
+      names <- vapply(marked, function(p) p[["name"]], character(1))
+      paste0("dispatch = ", r_vector(vapply(names, deparse_string, "")))
+    },
+    if (identical(ret, "Self")) {
+      "return_type = \"Self\""
+    } else if (!is.null(ret)) {
+      paste0("return_type = ", render_type(ret, ns))
+    }
+  )
+} # /R8::render_method
+
+
+# %% render_trait ----
+#' The lines of a trait's declaration
+#'
+#' A trait of one method with the trait's name is a `generic()`; any other is
+#' a `new_trait()`, with a binding for each generic that it makes.
+#'
+#' @param t List: The IR declaration.
+#' @param ns Character: The namespace.
+#'
+#' @return Character: The lines.
+#'
+#' @keywords internal
+#' @noRd
+render_trait <- function(t, ns) {
+  qname <- paste0(ns, "::", t[["name"]])
+  check_renderable(t, "supertraits", paste0("`", qname, "`"))
+  call_lines <- function(binding, fn, args) {
+    c(
+      paste0(backtick(binding), " <- R8::", fn, "("),
+      paste0("  ", args, c(rep(",", length(args) - 1L), "")),
+      ")"
+    )
+  }
+  if (isTRUE(t[["generic"]])) {
+    m <- t[["methods"]][[1L]]
+    # A generic's description is its method's.
+    m[["description"]] <- generic_description(t)
+    return(c(
+      generic_roxygen(
+        m,
+        ns,
+        paste0("The generic `", qname, "`, declared in Rust.")
+      ),
+      call_lines(
+        m[["name"]],
+        "generic",
+        c(deparse_string(m[["name"]]), render_method(m, ns))
+      )
+    ))
+  }
+  methods <- vapply(
+    t[["methods"]],
+    function(m) {
+      paste0(
+        backtick(m[["name"]]),
+        " = R8::trait_method(",
+        paste(render_method(m, ns), collapse = ", "),
+        ")"
+      )
+    },
+    character(1)
+  )
+  required <- vapply(
+    t[["required_fields"]],
+    function(f) paste0(backtick(f[["name"]]), " = ", render_field(f, ns)),
+    character(1)
+  )
+  args <- c(
+    deparse_string(t[["name"]]),
+    paste0(
+      "methods = list(\n    ",
+      paste(methods, collapse = ",\n    "),
+      "\n  )"
+    ),
+    if (nzchar(t[["description"]] %||% "")) {
+      paste0("description = ", deparse_string(t[["description"]]))
+    },
+    if (!is.null(t[["tag"]])) paste0("tag = ", deparse_string(t[["tag"]])),
+    if (length(required) > 0L) {
+      paste0("required_fields = list(", paste(required, collapse = ", "), ")")
+    }
+  )
+  # A method of an S3 generic is called by that generic.
+  own <- Filter(
+    function(m) is.null(existing_generic(m[["name"]], globalenv())),
+    t[["methods"]]
+  )
+  c(
+    roxygen_block(c(list(kind = "trait"), t), qname),
+    "#' @return The trait object.",
+    "#' @export",
+    call_lines(t[["name"]], "new_trait", args),
+    unlist(lapply(own, function(m) {
+      c(
+        "",
+        generic_roxygen(m, ns, paste0("A generic of the trait `", qname, "`.")),
+        paste0(
+          backtick(m[["name"]]),
+          " <- ",
+          backtick(t[["name"]]),
+          "@",
+          backtick(m[["name"]])
+        )
+      )
+    }))
+  )
+} # /R8::render_trait
+
+
+# %% generic_description ----
+#' The description of a generic that Rust declares
+#'
+#' @param t List: The IR of its trait.
+#'
+#' @return Character: The description of the Rust trait's method, or else of the
+#'   trait.
+#'
+#' @keywords internal
+#' @noRd
+generic_description <- function(t) {
+  own <- t[["methods"]][[1L]][["description"]] %||% ""
+  if (nzchar(own)) own else t[["description"]] %||% ""
+} # /R8::generic_description
+
+
+# %% generic_roxygen ----
+#' The roxygen block of a generic
+#'
+#' @param m List: The IR method.
+#' @param ns Character: The namespace.
+#' @param what Character: The sentence that says what it is.
+#'
+#' @return Character: The lines.
+#'
+#' @keywords internal
+#' @noRd
+generic_roxygen <- function(m, ns, what) {
+  d <- m[["description"]] %||% ""
+  dispatched <- dispatch_names(m[["params"]])
+  params <- vapply(
+    m[["params"]],
+    function(p) {
+      name <- if (is.list(p)) p[["name"]] else p
+      text <- if (is.list(p)) p[["description"]] %||% "" else ""
+      if (!nzchar(text)) {
+        text <- if (identical(name, "...")) {
+          "Arguments of the method."
+        } else if (name %in% dispatched) {
+          "A value, whose type selects the method."
+        } else {
+          paste0("The parameter `", name, "`.")
+        }
+      }
+      paste0("#' @param ", name, " ", roxygen_text(text))
+    },
+    character(1)
+  )
+  ret <- m[["return_type"]]
+  value <- if (endsWith(m[["name"]], "<-")) {
+    "The value with the replacement, of its type."
+  } else if (is.null(ret)) {
+    "The result of the method."
+  } else if (identical(ret, "Self")) {
+    paste0("A value of the type of `", dispatched[[1L]], "`.")
+  } else {
+    paste0(
+      "The result of the method: ",
+      plain_notation(r8_type_notation(ret)),
+      "."
+    )
+  }
+  c(
+    paste0("#' ", m[["name"]]),
+    "#'",
+    if (nzchar(d)) {
+      c(
+        paste0("#' ", strsplit(roxygen_text(d), "\n", fixed = TRUE)[[1L]]),
+        "#'"
+      )
+    },
+    paste0("#' ", what),
+    "#'",
+    params,
+    paste0("#' @return ", value),
+    "#' @export"
+  )
+} # /R8::generic_roxygen
+
+
 # %% roxygen_block ----
 #' The title and description lines of a type's roxygen block
 #'
@@ -873,6 +1247,7 @@ render_type <- function(t, ns) {
     ),
     named = type_ref(t[["name"]], ns),
     subtype = call("subtype", type_ref(t[["of"]], ns)),
+    dyn = call("dyn", type_ref(t[["trait"]], ns)),
     matrix = call(
       "type_matrix",
       render_type(t[["element"]], ns),
@@ -924,11 +1299,12 @@ render_type <- function(t, ns) {
 
 
 # %% type_ref ----
-#' The R object of a named type
+#' The R object of a named type or trait
 #'
-#' A type of the namespace `ns` is the object the rendered file defines; a
-#' type of another namespace is the exported object that `foreign_refs()`
-#' found, such as `r8resample::Resampler`.
+#' A type of the namespace `ns` is the object the rendered file defines, and a
+#' trait of it the object of the trait's name that the package defines; a type
+#' or a trait of another namespace is the exported object that
+#' `foreign_refs()` found, such as `r8resample::Resampler`.
 #'
 #' @param qname Character: The qualified name.
 #' @param ns Character: The namespace.
@@ -938,16 +1314,19 @@ render_type <- function(t, ns) {
 #' @keywords internal
 #' @noRd
 type_ref <- function(qname, ns) {
-  prefix <- paste0(ns, "::")
-  if (startsWith(qname, prefix)) {
-    return(backtick(substring(qname, nchar(prefix) + 1L)))
+  if (isTRUE(.r8_render_refs[["bare"]])) {
+    return(backtick(sub("^.*::", "", qname)))
   }
   foreign <- .r8_render_refs[["map"]]
   if (qname %in% names(foreign)) {
     return(foreign[[qname]])
   }
+  prefix <- paste0(ns, "::")
+  if (startsWith(qname, prefix)) {
+    return(backtick(substring(qname, nchar(prefix) + 1L)))
+  }
   r8_abort(
-    "The type `",
+    "`",
     qname,
     "` belongs to another namespace, whose package r8_document_rust() ",
     "finds among the Imports of the package's DESCRIPTION.",

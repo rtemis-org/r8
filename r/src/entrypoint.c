@@ -23,20 +23,22 @@ void r8_init_views(DllInfo *dll);
 void r8_register_api(void);
 SEXP r8_rust_stored_wrap(const R8Codec *vt, void *state, SEXP like, SEXP from,
                     R_xlen_t skip);
+int r8_rust_stored_build(SEXP x, R8Error *err);
 const void *r8_rust_stored_state(SEXP x, const R8Codec **vt);
 SEXP r8_rust_stored_parts(SEXP x);
 SEXP r8_rust_stored_memory(void);
 R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err);
 SEXP r8_native_symbols(void);
-void r8_set_rust_stored_functions(void *wrap, void *state, void *parts, void *memory,
-                             void *protect, void *symbols);
+void r8_set_rust_stored_functions(void *wrap, void *build, void *state, void *parts,
+                                  void *memory, void *protect, void *symbols);
 
 void R_init_R8(DllInfo *dll) {
     register_extendr_panic_hook();
     r8_set_attrib_functions((void *) r8_attrib_count, (void *) r8_attrib_raw, (void *) r8_payload);
-    r8_set_rust_stored_functions((void *) r8_rust_stored_wrap, (void *) r8_rust_stored_state,
-                            (void *) r8_rust_stored_parts, (void *) r8_rust_stored_memory,
-                            (void *) r8_protect, (void *) r8_native_symbols);
+    r8_set_rust_stored_functions((void *) r8_rust_stored_wrap, (void *) r8_rust_stored_build,
+                                 (void *) r8_rust_stored_state, (void *) r8_rust_stored_parts,
+                                 (void *) r8_rust_stored_memory, (void *) r8_protect,
+                                 (void *) r8_native_symbols);
     r8_init_rust_stored(dll);
     r8_init_views(dll);
     r8_register_api();

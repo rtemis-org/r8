@@ -14,6 +14,7 @@ pub struct Args {
     package: syn::LitStr,
     namespace: syn::LitStr,
     types: Vec<syn::Path>,
+    traits: Vec<syn::Path>,
     impls: Vec<Row>,
 }
 
@@ -48,6 +49,7 @@ impl Parse for Args {
         let mut package = None;
         let mut namespace = None;
         let mut types = Vec::new();
+        let mut traits = Vec::new();
         let mut impls = Vec::new();
         while !input.is_empty() {
             let key: syn::Ident = input.parse()?;
@@ -56,11 +58,12 @@ impl Parse for Args {
                 "package" => package = Some(input.parse()?),
                 "namespace" => namespace = Some(input.parse()?),
                 "types" => types = bracketed(input)?,
+                "traits" => traits = bracketed(input)?,
                 "impls" => impls = bracketed(input)?,
                 _ => {
                     return Err(Error::new_spanned(
                         key,
-                        "expected package, namespace, types, or impls",
+                        "expected package, namespace, types, traits, or impls",
                     ));
                 }
             }
@@ -73,6 +76,7 @@ impl Parse for Args {
             package: package.ok_or_else(|| input.error("`package = \"...\"` is required"))?,
             namespace: namespace.ok_or_else(|| input.error("`namespace = \"...\"` is required"))?,
             types,
+            traits,
             impls,
         })
     }
@@ -117,7 +121,22 @@ pub fn expand(a: &Args) -> Result<Tokens> {
         quote_spanned! { of.span() => <#ty as #of>::__r8_methods }
     });
     let n_impls = a.impls.len();
+    let traits = &a.traits;
+    // The constant of a trait of `#[r8::methods]` has the trait's path.
+    let checks = traits.iter().map(|t| {
+        quote_spanned! { t.span() =>
+            const _: () = {
+                if let ::std::option::Option::Some(why) = #t.unsupported {
+                    panic!("{}", why);
+                }
+                if !#t.is_of(#namespace) {
+                    panic!("a trait declared in Rust is of the namespace of its package");
+                }
+            };
+        }
+    });
     Ok(quote! {
+        #(#checks)*
         static __R8_CODECS: #api::Shared<[#api::rtemis_r8::abi::Codec; #n_types]> =
             #api::Shared([#(<#types as #api::RustStored>::TABLE.0),*]);
         static __R8_IMPLS: [fn() -> #api::ImplSet; #n_impls] = [#(#sets),*];
@@ -129,16 +148,20 @@ pub fn expand(a: &Args) -> Result<Tokens> {
                 #package_c,
                 #namespace,
                 &__R8_CODECS.0,
-                // The listed types and every type of the namespace they
-                // reach, such as the struct of a newtype variant.
+                // The listed types and every type of the namespace that they
+                // and the listed traits reach, such as the struct of a
+                // newtype variant; and the listed traits.
                 || {
                     let mut set = #api::rtemis_r8::rules::DocumentSet::default();
                     #(<#types as #api::rtemis_r8::derive::Encode>::register(&mut set);)*
-                    set.into_documents()
+                    #((#traits.register)(&mut set);)*
+                    let types = set
+                        .into_documents()
                         .into_iter()
                         .find(|d| d.namespace.as_str() == #namespace)
                         .map(|d| d.types)
-                        .unwrap_or_default()
+                        .unwrap_or_default();
+                    (types, ::std::vec![#((#traits.def)()),*])
                 },
                 &__R8_IMPLS,
             )

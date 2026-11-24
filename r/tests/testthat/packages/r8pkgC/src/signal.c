@@ -126,9 +126,10 @@ static R8Status signal_write_state(const void *state, R8Writer *out, R8Error *er
   return R8_OK;
 }
 
-static R8Status signal_read_state(const uint8_t *bytes, size_t size, void **state,
+static R8Status signal_read_state(const uint8_t *bytes, size_t size, SEXP kept, void **state,
                                   R8Error *err) {
   uint64_t len, n;
+  (void) kept;
   if (size < sizeof(len)) {
     goto bad;
   }

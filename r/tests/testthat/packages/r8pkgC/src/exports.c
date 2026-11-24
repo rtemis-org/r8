@@ -123,10 +123,40 @@ SEXP pkgc_signal_make(SEXP name, SEXP n);
 SEXP pkgc_lend(SEXP x, SEXP type, SEXP upcast);
 SEXP pkgc_wrap(SEXP type);
 
+// The value that R8Api.value_of_fields builds, or the code it reports.
+static SEXP pkgc_of_fields(SEXP type, SEXP variant, SEXP hash, SEXP fields) {
+  const R8Api *api = R8_api();
+  R8Error err = {{0}, {0}};
+  SEXP value = R_NilValue;
+  // R8 takes the list.
+  SEXP list = PROTECT(Rf_shallow_duplicate(fields));
+  R8Status status = api->value_of_fields(
+      CHAR(STRING_ELT(type, 0)), variant == R_NilValue ? NULL : CHAR(STRING_ELT(variant, 0)),
+      CHAR(STRING_ELT(hash, 0)), list, &value, &err);
+  UNPROTECT(1);
+  return status == R8_OK ? value : Rf_mkString(err.code);
+}
+
+// The value that R8Api.with_fields builds, or the report it fills.
+static SEXP pkgc_with_fields(SEXP x, SEXP fields) {
+  const R8Api *api = R8_api();
+  R8Error err = {{0}, {0}};
+  SEXP value = R_NilValue;
+  if (api->with_fields(x, fields, &value, &err) == R8_OK) {
+    return value;
+  }
+  SEXP out = PROTECT(Rf_allocVector(STRSXP, 2));
+  SET_STRING_ELT(out, 0, Rf_mkChar(err.code));
+  SET_STRING_ELT(out, 1, Rf_mkChar(err.message));
+  UNPROTECT(1);
+  return out;
+}
+
 // Impl entries that registration refuses, by `kind`: 1 repeats a method, 2 has
 // a NULL function, 3 omits a method, 4 has no position, 5 has a position of an
-// unknown kind, 6 a class of an unknown system, 7 an unknown method, and 8
-// another number of parameters.
+// unknown kind, 6 a class of an unknown system, 7 an unknown method, 8
+// another number of parameters, and tables of an earlier header: 9, whose
+// table is smaller, and 10, whose entries are.
 static R8ImplEntry bad_rows[2];
 static R8Exports bad_impl_exports;
 
@@ -149,10 +179,11 @@ static SEXP pkgc_bad_impls(SEXP kind) {
   }
   bad_impl_exports = (R8Exports) {
       .abi_version = R8_ABI_VERSION,
-      .size = sizeof(R8Exports),
+      .size = k == 9 ? (uint32_t) offsetof(R8Exports, impl_size) : sizeof(R8Exports),
       .package = "r8pkgC",
       .impls = bad_rows,
       .n_impls = k == 3 ? 1 : 2,
+      .impl_size = k == 10 ? offsetof(R8ImplEntry, signature) : sizeof(R8ImplEntry),
   };
   return R_MakeExternalPtr(&bad_impl_exports, Rf_install("r8_exports"), R_NilValue);
 }
@@ -165,6 +196,7 @@ static const R8Exports exports = {
     .n_types = 2,
     .impls = impls,
     .n_impls = sizeof(impls) / sizeof(impls[0]),
+    .impl_size = sizeof(R8ImplEntry),
 };
 
 // The status R8Api.protect returns for a callback that raises an R error,
@@ -187,6 +219,8 @@ static const R_CallMethodDef call_methods[] = {
     {"pkgc_signal_make", (DL_FUNC) &pkgc_signal_make, 2},
     {"pkgc_lend", (DL_FUNC) &pkgc_lend, 3},
     {"pkgc_wrap", (DL_FUNC) &pkgc_wrap, 1},
+    {"pkgc_of_fields", (DL_FUNC) &pkgc_of_fields, 4},
+    {"pkgc_with_fields", (DL_FUNC) &pkgc_with_fields, 2},
     {"pkgc_protect_status", (DL_FUNC) &pkgc_protect_status, 0},
     {"pkgc_bad_exports", (DL_FUNC) &pkgc_bad_exports, 1},
     {"pkgc_bad_impls", (DL_FUNC) &pkgc_bad_impls, 1},

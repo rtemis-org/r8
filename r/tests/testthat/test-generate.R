@@ -7,8 +7,9 @@
 # same namespace, and compares the IR: the round trip from IR to R to IR.
 
 # Renders the declarations of `types` (in order) from their IR, declares the
-# rendering in `ns`, and returns the canonical IR before and after.
-round_trip <- function(ns, types) {
+# rendering in `ns`, with the objects of `traits`, by name, in reach, and returns
+# the canonical IR before and after.
+round_trip <- function(ns, types, traits = list()) {
   before <- vapply(
     types,
     function(t) R8:::canonical_ir(R8:::type_ir(t)),
@@ -23,7 +24,7 @@ round_trip <- function(ns, types) {
     }
   }))
   text <- unlist(strsplit(lines, "\n", fixed = TRUE))
-  env <- new.env(parent = globalenv())
+  env <- list2env(traits, parent = globalenv())
   op <- options(r8.namespace = ns)
   on.exit(options(op))
   eval(parse(text = text, keep.source = FALSE), envir = env)
@@ -163,6 +164,138 @@ test_that("a struct that extends another renders with its own members", {
     ""
   )
   expect_identical(order, c("Range", "Plain", "Window", "Pane"))
+})
+
+test_that("a field of any implementor of a trait renders as dyn()", {
+  ns <- declare_in("gen_dyn", {
+    Figure <- new_trait(
+      "Figure",
+      methods = list(area = trait_method(params(x)))
+    )
+    width <- generic("width", params(x))
+    Panel <- new_struct(
+      "Panel",
+      fields = list(
+        figure = dyn(Figure),
+        wide = option(dyn(width)),
+        all = vec(dyn(Figure), min_length = 1L)
+      )
+    )
+    Frame <- new_enum(
+      "Frame",
+      variants = list(Of = variant(fields = list(figure = dyn(Figure))))
+    )
+    list(types = list(Panel, Frame), traits = list(Figure, width))
+  })
+  traits <- stats::setNames(ns[["traits"]], c("Figure", "width"))
+  rt <- round_trip("gen_dyn", ns[["types"]], traits)
+  expect_identical(rt[["after"]], rt[["before"]])
+  text <- paste(rt[["text"]], collapse = "\n")
+  expect_match(text, "R8::dyn(Figure)", fixed = TRUE)
+  expect_match(text, "R8::option(R8::dyn(width))", fixed = TRUE)
+  irs <- lapply(ns[["types"]], R8:::type_ir)
+  expect_setequal(
+    R8:::dyn_traits(irs),
+    c("gen_dyn::Figure", "gen_dyn::width")
+  )
+  # A trait of another namespace is found among the imported packages.
+  expect_error(
+    R8:::render_type(
+      list(kind = "dyn", trait = "elsewhere::Figure"),
+      "gen_dyn"
+    ),
+    "`elsewhere::Figure` belongs to another namespace",
+    class = "r8_declaration_error"
+  )
+})
+
+test_that("a trait and a generic render as R that declares the same IR", {
+  traits <- declare_in("gen_traits", {
+    P <- new_struct("P", fields = list(a = type_double()), version = 1L)
+    Figure <- new_trait(
+      "Figure",
+      methods = list(
+        area = trait_method(
+          params(x),
+          description = "The area.",
+          return_type = type_double(min = 0)
+        ),
+        scaled = trait_method(
+          params(x, by = arg_double(min = 0, default = 1), "..."),
+          return_type = "Self"
+        )
+      ),
+      description = "A figure.",
+      tag = "kind",
+      required_fields = list(
+        name = type_character(),
+        size = field(option(type_integer()), description = "The size.")
+      )
+    )
+    tune <- generic(
+      "tune",
+      params(
+        object,
+        p = arg(P),
+        any,
+        n = arg_integer(default = 10L),
+        q = arg_option(P),
+        r = arg(option(type_double())),
+        s = arg_option(type_character(), default = "a"),
+        v = arg_vec(type_double(), min_length = 1L, default = c(1, 2)),
+        w = arg_date(),
+        f = arg(dyn(Figure)),
+        g = arg(subtype(P)),
+        flag = arg_logical(default = TRUE)
+      ),
+      description = "Tunes a model.",
+      return_type = subtype(P)
+    )
+    near <- generic("near", params(x, y, by), dispatch = c("x", "y"))
+    `size<-` <- generic("size<-", params(x, value = arg_integer(min = 1L)))
+    list(
+      objects = list(P = P),
+      names = c("Figure", "tune", "near", "with_size")
+    )
+  })
+  ir_of <- function(n) R8:::r8_trait_ir(paste0("gen_traits::", n))
+  before <- lapply(traits[["names"]], ir_of)
+  text <- unlist(lapply(before, R8:::render_trait, ns = "gen_traits"))
+  text <- unlist(strsplit(text, "\n", fixed = TRUE))
+  env <- list2env(traits[["objects"]], parent = globalenv())
+  op <- options(r8.namespace = "gen_traits")
+  on.exit(options(op))
+  eval(parse(text = text, keep.source = FALSE), envir = env)
+  after <- lapply(traits[["names"]], ir_of)
+  expect_identical(
+    vapply(after, R8:::canonical_ir, ""),
+    vapply(before, R8:::canonical_ir, ""),
+    info = paste(text, collapse = "\n")
+  )
+  code <- paste(text, collapse = "\n")
+  for (part in c(
+    "p = R8::arg(P), any, n = R8::arg_integer(default = 10L)",
+    "q = R8::arg_option(P), r = R8::arg(R8::option(R8::type_double()))",
+    "s = R8::arg_option(R8::type_character(), default = \"a\")",
+    "v = R8::arg_vec(R8::type_double(), min_length = 1L, default = c(1, 2))",
+    "w = R8::arg_date(), f = R8::arg(R8::dyn(Figure))",
+    "scaled = R8::trait_method(R8::params(x, by = R8::arg_double(min = 0, default = 1), \"...\"), return_type = \"Self\")",
+    "dispatch = c(\"x\", \"y\")",
+    "`size<-` <- R8::generic(",
+    "area <- Figure@area",
+    "#' @return A value of the type of `x`."
+  )) {
+    expect_match(code, part, fixed = TRUE)
+  }
+  # A declaration follows those it names.
+  types <- list(R8:::type_ir(traits[["objects"]][["P"]]))
+  order <- vapply(
+    R8:::type_order(c(rev(before), types), "gen_traits"),
+    function(t) t[["name"]],
+    ""
+  )
+  expect_lt(match("P", order), match("tune", order))
+  expect_lt(match("Figure", order), match("tune", order))
 })
 
 test_that("a change to an inherited field without an R form is refused", {

@@ -266,10 +266,12 @@ typedef struct ViewArgs {
 
 static SEXP view_body(void *p) {
   ViewArgs *a = p;
+  // The caller may hold the owner unprotected.
+  PROTECT(a->owner);
   SEXP len = PROTECT(Rf_ScalarReal((double) a->n));
   SEXP ptr = PROTECT(R_MakeExternalPtr((void *) a->data, len, a->owner));
   SEXP ans = R_new_altrep(a->cls, ptr, R_NilValue);
-  UNPROTECT(2);
+  UNPROTECT(3);
   return ans;
 }
 
@@ -326,11 +328,24 @@ R8Status r8_api_value_state(SEXP value, const char *type_name, const void *modul
                             const void **state, R8Error *err);
 R8Status r8_api_upcast_state(SEXP value, const char *type_name, const void *module,
                              const void **state, R8Error *err);
+R8Status r8_api_value_of_fields(const char *type_name, const char *variant,
+                                const char *declaration_hash, SEXP fields, SEXP *value,
+                                R8Error *err);
+R8Status r8_api_with_fields(SEXP value, SEXP fields, SEXP *new_value, R8Error *err);
 
 static const R8Api api = {
-    R8_ABI_VERSION,      sizeof(R8Api), r8_api_new_value, r8_api_value_state,
-    r8_api_upcast_state, view_doubles,  view_integers,    view_logicals,
-    view_bytes,          api_protect,
+    R8_ABI_VERSION,
+    sizeof(R8Api),
+    r8_api_new_value,
+    r8_api_value_state,
+    r8_api_upcast_state,
+    view_doubles,
+    view_integers,
+    view_logicals,
+    view_bytes,
+    api_protect,
+    r8_api_value_of_fields,
+    r8_api_with_fields,
 };
 
 static const R8Api *r8_api(uint32_t abi_version) {

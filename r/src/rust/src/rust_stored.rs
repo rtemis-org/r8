@@ -21,6 +21,7 @@ use crate::declare::registry;
 use crate::rview::{attr_string, sym_r8_type, xlen};
 
 static WRAP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static BUILD: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static STATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static PARTS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static MEMORY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -31,12 +32,14 @@ static SYMBOLS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 ///
 /// # Safety
 ///
-/// `wrap`, `state`, `parts`, `memory`, `protect`, and `symbols` are
-/// `r8_rust_stored_wrap()`, `r8_rust_stored_state()`, `r8_rust_stored_parts()`,
-/// `r8_rust_stored_memory()`, `r8_protect()`, and `r8_native_symbols()`.
+/// `wrap`, `build`, `state`, `parts`, `memory`, `protect`, and `symbols` are
+/// `r8_rust_stored_wrap()`, `r8_rust_stored_build()`, `r8_rust_stored_state()`,
+/// `r8_rust_stored_parts()`, `r8_rust_stored_memory()`, `r8_protect()`, and
+/// `r8_native_symbols()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_set_rust_stored_functions(
     wrap: *mut (),
+    build: *mut (),
     state: *mut (),
     parts: *mut (),
     memory: *mut (),
@@ -44,6 +47,7 @@ pub unsafe extern "C" fn r8_set_rust_stored_functions(
     symbols: *mut (),
 ) {
     WRAP.store(wrap, Ordering::Release);
+    BUILD.store(build, Ordering::Release);
     STATE.store(state, Ordering::Release);
     PARTS.store(parts, Ordering::Release);
     MEMORY.store(memory, Ordering::Release);
@@ -151,10 +155,7 @@ pub(crate) fn with_field(
         .ok_or_else(|| "the codec has no `with_field`".to_string())?;
     let field = std::ffi::CString::new(name).map_err(|e| e.to_string())?;
     let mut new_state: *mut c_void = std::ptr::null_mut();
-    let mut err = Error {
-        code: [0; 64],
-        message: [0; 1024],
-    };
+    let mut err = blank();
     let status = unsafe {
         f(
             state,
@@ -186,17 +187,41 @@ pub(crate) fn state_of(x: SEXP) -> Option<(*const c_void, *const Codec)> {
     (!state.is_null()).then_some((state, vt))
 }
 
+/// Builds the state of a Rust-stored value that was read before its codec was
+/// registered; an error is its code and message.
+fn build(x: SEXP) -> Result<(), (String, String)> {
+    let f = BUILD.load(Ordering::Acquire);
+    assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
+    let f: unsafe extern "C" fn(SEXP, *mut Error) -> i32 = unsafe { std::mem::transmute(f) };
+    let mut err = blank();
+    if unsafe { f(x, &mut err) } == 1 {
+        Ok(())
+    } else {
+        Err((report_text(&err.code), report_text(&err.message)))
+    }
+}
+
+/// An empty error report, for a callee to fill.
+fn blank() -> Error {
+    Error {
+        code: [0; 64],
+        message: [0; 1024],
+    }
+}
+
+/// The text of a buffer of an error report.
+fn report_text(b: &[c_char]) -> String {
+    let bytes: Vec<u8> = b
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 /// The codec's error as text: its message followed by its code in brackets.
 fn error_text(err: &Error) -> String {
-    let text = |b: &[c_char]| {
-        let bytes: Vec<u8> = b
-            .iter()
-            .take_while(|&&c| c != 0)
-            .map(|&c| c as u8)
-            .collect();
-        String::from_utf8_lossy(&bytes).into_owned()
-    };
-    format!("{} [{}]", text(&err.message), text(&err.code))
+    format!("{} [{}]", report_text(&err.message), report_text(&err.code))
 }
 
 /// A state built by the codec from the fields of `fields`, a list in
@@ -210,10 +235,7 @@ pub(crate) fn from_fields(vt: *const Codec, fields: SEXP) -> Result<*mut c_void,
         .map(|i| unsafe { VECTOR_ELT(fields, i as R_xlen_t) }.cast())
         .collect();
     let mut state: *mut c_void = std::ptr::null_mut();
-    let mut err = Error {
-        code: [0; 64],
-        message: [0; 1024],
-    };
+    let mut err = blank();
     let status = unsafe { f(items.as_ptr(), items.len(), &mut state, &mut err) };
     if status != OK || state.is_null() {
         return Err(error_text(&err));
@@ -265,10 +287,7 @@ pub(crate) fn from_reader(
         .from_reader
         .ok_or_else(|| "the codec has no `from_reader`".to_string())?;
     let mut state: *mut c_void = std::ptr::null_mut();
-    let mut err = Error {
-        code: [0; 64],
-        message: [0; 1024],
-    };
+    let mut err = blank();
     let status = unsafe { f(reader, root, &mut state, &mut err) };
     if status != OK || state.is_null() {
         return Err(error_text(&err));
@@ -304,10 +323,7 @@ pub(crate) fn from_variant(
         .map(|i| unsafe { VECTOR_ELT(fields, i as R_xlen_t) }.cast())
         .collect();
     let mut state: *mut c_void = std::ptr::null_mut();
-    let mut err = Error {
-        code: [0; 64],
-        message: [0; 1024],
-    };
+    let mut err = blank();
     let status = unsafe {
         f(
             name.as_ptr(),
@@ -352,7 +368,19 @@ pub(crate) fn value_fields(
     variant: Option<&str>,
     lookup: &dyn TypeLookup,
 ) -> Option<(Vec<String>, u32)> {
-    let names = |fs: &[rtemis_r8::ir::FieldDef]| fs.iter().map(|f| f.name.to_string()).collect();
+    let (names, version) = value_names(def, variant, lookup)?;
+    Some((names.into_iter().map(str::to_string).collect(), version))
+}
+
+/// [`value_fields`], its names borrowed from the declarations.
+fn value_names<'a>(
+    def: &'a TypeDef,
+    variant: Option<&str>,
+    lookup: &'a dyn TypeLookup,
+) -> Option<(Vec<&'a str>, u32)> {
+    fn names(fs: &[rtemis_r8::ir::FieldDef]) -> Vec<&str> {
+        fs.iter().map(|f| f.name.as_str()).collect()
+    }
     match def {
         TypeDef::Struct(s) => Some((names(&s.fields), s.version)),
         TypeDef::Enum(e) => {
@@ -407,15 +435,15 @@ pub unsafe extern "C" fn r8_api_new_value(
 
 /// Runs an API function: an error fills `err`, as does a panic, with the
 /// code `panic` and the message `on_panic`.
-fn report(
+fn report<C: AsRef<str>>(
     err: *mut Error,
     on_panic: &str,
-    f: impl FnOnce() -> Result<(), (&'static str, String)> + std::panic::UnwindSafe,
+    f: impl FnOnce() -> Result<(), (C, String)> + std::panic::UnwindSafe,
 ) -> Status {
     match catch_unwind(f) {
         Ok(Ok(())) => OK,
         Ok(Err((code, message))) => {
-            set_error(err, code, &message);
+            set_error(err, code.as_ref(), &message);
             ERROR
         }
         Err(_) => {
@@ -478,10 +506,7 @@ fn new_value(
         variant: variant.as_deref(),
     };
     let mut out: SEXP = unsafe { extendr_ffi::R_NilValue };
-    let mut err = Error {
-        code: [0; 64],
-        message: [0; 1024],
-    };
+    let mut err = blank();
     let status = protect(
         build_value,
         std::ptr::from_ref(&args).cast_mut().cast(),
@@ -534,6 +559,179 @@ fn protect(
         *mut Error,
     ) -> Status = unsafe { std::mem::transmute(p) };
     unsafe { p(f, data, value, err) }
+}
+
+/// The outcome of `f`, which may call R functions that jump, run by
+/// `R8Api.protect`: `None` when R jumped out of it, which leaks what `f`
+/// allocated in Rust. A panic in `f` continues in the caller.
+pub(crate) fn guarded<T>(mut f: impl FnMut() -> T) -> Option<T> {
+    struct Run<'a, T> {
+        f: &'a mut dyn FnMut() -> T,
+        out: Option<std::thread::Result<T>>,
+    }
+    extern "C" fn run<T>(p: *mut c_void) -> SEXP {
+        let r = unsafe { &mut *p.cast::<Run<T>>() };
+        r.out = Some(catch_unwind(AssertUnwindSafe(|| (r.f)())));
+        unsafe { extendr_ffi::R_NilValue }
+    }
+    let mut r = Run {
+        f: &mut f,
+        out: None,
+    };
+    let mut value: SEXP = unsafe { extendr_ffi::R_NilValue };
+    let status = protect(
+        run::<T>,
+        std::ptr::from_mut(&mut r).cast(),
+        &mut value,
+        &mut blank(),
+    );
+    match r.out.filter(|_| status == OK)? {
+        Ok(v) => Some(v),
+        Err(p) => std::panic::resume_unwind(p),
+    }
+}
+
+/// `R8Api.value_of_fields`: builds a value of a registered struct, or of a
+/// variant of an enum, from the list of its fields, which is not validated;
+/// the codec of a Rust-stored type builds its state.
+///
+/// # Safety
+///
+/// `type_name` and `declaration_hash` are NUL-terminated or NULL, as is
+/// `variant`, NULL for a struct; `fields` is a protected list that nothing
+/// else refers to; `value` and `err` are writable or NULL; called on R's main
+/// thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_api_value_of_fields(
+    type_name: *const c_char,
+    variant: *const c_char,
+    declaration_hash: *const c_char,
+    fields: Sexp,
+    value: *mut Sexp,
+    err: *mut Error,
+) -> Status {
+    report(
+        err,
+        "R8 panicked while building the value",
+        AssertUnwindSafe(|| {
+            if value.is_null() || type_name.is_null() || declaration_hash.is_null() {
+                return Err((
+                    "invalid_argument",
+                    "`type_name`, `declaration_hash`, or `value` is NULL".to_string(),
+                ));
+            }
+            let name = c_text(type_name).unwrap_or_default();
+            let q = QualifiedName::parse(&name).map_err(|e| ("unknown_type", e.to_string()))?;
+            let docs = registry().snapshot();
+            if docs.find(&q).is_none() {
+                return Err(("unknown_type", format!("`{q}` is not a registered type")));
+            }
+            let hash = c_text(declaration_hash).unwrap_or_default();
+            if *crate::construct::registry_declaration_hash(&q, &*docs) != *hash {
+                return Err((
+                    "declaration_changed",
+                    format!(
+                        "the registered declaration of `{q}` differs from the one that the caller was compiled against; reinstall the caller's package"
+                    ),
+                ));
+            }
+            let x = value_of_fields(&q, c_text(variant).as_deref(), fields.cast(), &*docs, true)?;
+            unsafe { *value = x.cast() };
+            Ok(())
+        }),
+    )
+}
+
+/// The value of the type `q`, of the variant `variant` for an enum, over
+/// `fields`, the list of its fields in declaration order and in their stored
+/// forms, which are not validated: the list itself with the type's shared
+/// attributes, or, for a type whose codec is registered, a Rust-stored value
+/// of the state that the codec builds from them. R allocates under
+/// `guarded()` with `guard`, for a caller that R must not jump out of, and
+/// otherwise in the caller's frame.
+pub(crate) fn value_of_fields(
+    q: &QualifiedName,
+    variant: Option<&str>,
+    fields: SEXP,
+    lookup: &dyn TypeLookup,
+    guard: bool,
+) -> Result<SEXP, (&'static str, String)> {
+    let Some(def) = lookup.find(q) else {
+        return Err(("unknown_type", format!("`{q}` is not a registered type")));
+    };
+    let Some((names, version)) = value_names(def, variant, lookup) else {
+        return Err((
+            "unknown_variant",
+            format!("`{q}` has no variant `{}`", variant.unwrap_or_default()),
+        ));
+    };
+    let is_list = unsafe { extendr_ffi::TYPEOF(fields) } == SEXPTYPE::VECSXP;
+    if !is_list || xlen(fields) != names.len() {
+        return Err((
+            "invalid_argument",
+            format!(
+                "`fields` is the list of the {} fields of `{q}`",
+                names.len()
+            ),
+        ));
+    }
+    let jumped = || ("r_error", "R could not allocate the value".to_string());
+    let qname = q.to_string();
+    let set_attributes = || {
+        let shared = crate::construct::shared_attributes(&qname, version, variant, &names);
+        unsafe { crate::construct::set_value_attributes(fields, shared) };
+    };
+    if guard {
+        guarded(set_attributes).ok_or_else(jumped)?;
+    } else {
+        set_attributes();
+    }
+    let Some(vt) = crate::exports::codec(&qname) else {
+        return Ok(fields);
+    };
+    let state = match variant {
+        None => from_fields(vt, fields),
+        Some(v) => from_variant(vt, v, fields),
+    }
+    .map_err(|m| ("codec", m))?;
+    if !guard {
+        return Ok(wrap(vt, state, fields));
+    }
+    guarded(|| wrap(vt, state, fields)).ok_or_else(|| {
+        if let Some(d) = unsafe { (*vt).drop } {
+            unsafe { d(state) };
+        }
+        jumped()
+    })
+}
+
+/// `R8Api.with_fields`: the value of `value` with the fields of `fields`, a
+/// named list, replaced, as `value[names] <- fields` gives it.
+///
+/// # Safety
+///
+/// `value` and `fields` are protected; `new_value` and `err` are writable or
+/// NULL; called on R's main thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_api_with_fields(
+    value: Sexp,
+    fields: Sexp,
+    new_value: *mut Sexp,
+    err: *mut Error,
+) -> Status {
+    report(
+        err,
+        "R8 panicked while replacing the fields",
+        AssertUnwindSafe(|| {
+            if new_value.is_null() {
+                return Err(("invalid_argument", "`new_value` is NULL".to_string()));
+            }
+            let out = guarded(|| crate::construct::with_fields(value.cast(), fields.cast()))
+                .ok_or_else(|| ("r_error", "R raised an error".to_string()))??;
+            unsafe { *new_value = out.cast() };
+            Ok(())
+        }),
+    )
 }
 
 /// A list of the field names `names` with the attributes of a value of the
@@ -610,21 +808,33 @@ pub unsafe extern "C" fn r8_api_upcast_state(
 /// `upcast`, of a struct that extends it, to `module`: the codec of the
 /// value has the same module and, for another type, embeds the state of
 /// `type_name`. `not_lent` reports any other value of the type, or of a
-/// registered subtype with `upcast`; `type_mismatch` any other object.
+/// registered subtype with `upcast`; `type_mismatch` any other object. The state of a value read
+/// before its codec was registered is built first; a value whose state cannot
+/// be built is the codec's error.
 fn lend(
     value: Sexp,
     type_name: *const c_char,
     module: *const c_void,
     state: *mut *const c_void,
     upcast: bool,
-) -> Result<(), (&'static str, String)> {
+) -> Result<(), (std::borrow::Cow<'static, str>, String)> {
     if state.is_null() || type_name.is_null() {
         return Err((
-            "invalid_argument",
+            "invalid_argument".into(),
             "`type_name` or `state` is NULL".to_string(),
         ));
     }
     let x: SEXP = value.cast();
+    if state_of(x).is_none() {
+        guarded(|| build(x))
+            .ok_or_else(|| {
+                (
+                    "r_error".into(),
+                    "R could not allocate the value".to_string(),
+                )
+            })?
+            .map_err(|(code, message)| (code.into(), message))?;
+    }
     let name = unsafe { CStr::from_ptr(type_name) };
     if let Some((s, vt)) = state_of(x) {
         let codec = unsafe { &*vt };
@@ -657,14 +867,17 @@ fn lend(
             });
     Err(if is_one {
         (
-            "not_lent",
+            "not_lent".into(),
             format!("the state of the `{held}` is not this module's to read"),
         )
     } else if held.is_empty() {
-        ("type_mismatch", format!("the object is not a `{name}`"))
+        (
+            "type_mismatch".into(),
+            format!("the object is not a `{name}`"),
+        )
     } else {
         (
-            "type_mismatch",
+            "type_mismatch".into(),
             format!("the value is a `{held}`, not a `{name}`"),
         )
     })

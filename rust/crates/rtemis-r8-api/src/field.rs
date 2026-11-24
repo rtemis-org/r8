@@ -1,6 +1,7 @@
 //! `Field`: a field type of a Rust-stored struct, with its conversions from
 //! and to R, its bytes in the codec's state, and the memory Rust owns for
-//! it; and `Encode` for [`Buffer`], its declaration and JSON form.
+//! it; and `Encode` for [`Buffer`], its declaration and JSON form. A
+//! Rust-stored type is a field type, whose R value is a value of the type.
 
 use rtemis_r8::derive::{Bytes, Encode};
 use rtemis_r8::ir::FieldType;
@@ -8,13 +9,19 @@ use serde_json::Value;
 
 use crate::api::{self, Error, Result};
 use crate::buffer::{Buffer, Element, Logical};
+use crate::call::{Receiver, rust_value};
 use crate::reader::{Node, Reader};
+use crate::rust_stored::RustStored;
 use crate::state::{StateReader, StateWriter};
 use crate::sys::{self, SEXP};
 
 /// A field type of a Rust-stored struct. R8 validates a field and converts
 /// it to its stored form before `from_r` reads it, so `from_r` checks only
 /// what Rust needs.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a field type of a Rust-stored type",
+    note = "a field is a `bool`, an `i32`, an `f64`, a `String`, a `Buffer`, a Rust-stored type that is `Clone`, a `SubtypeValue`, an `ImplementorValue`, or an `Option` of one"
+)]
 pub trait Field: Clone + Send + Sync + 'static {
     /// The field from its R value in its stored form.
     ///
@@ -238,6 +245,32 @@ impl<T: Element> Field for Buffer<T> {
     }
     fn owned_bytes(&self) -> usize {
         Buffer::owned_bytes(self)
+    }
+}
+
+/// A value of a Rust-stored type `T` exactly, which the holding value owns; its
+/// R value is another value of `T`.
+impl<T: RustStored + Clone> Field for T {
+    unsafe fn from_r(x: SEXP) -> Result<Self> {
+        match unsafe { Receiver::<T>::from_named_arg(x, "value") }? {
+            Receiver::Borrowed(t) => Ok(t.clone()),
+            Receiver::Built(t) => Ok(t),
+        }
+    }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        <T as RustStored>::from_node(r, n)
+    }
+    fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
+        rust_value(self.clone()).map_err(api::Jumped::into_error)
+    }
+    fn write(&self, out: &mut StateWriter) -> Result<()> {
+        self.write_bytes(out)
+    }
+    fn read(input: &mut StateReader) -> Result<Self> {
+        T::read_bytes(input)
+    }
+    fn owned_bytes(&self) -> usize {
+        self.heap_bytes()
     }
 }
 

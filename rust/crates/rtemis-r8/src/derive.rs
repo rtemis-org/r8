@@ -12,18 +12,23 @@
 //! declared in R: [`R8::to_document`] validates the encoded value, rules
 //! included, and writes a document; [`R8::from_document`] reads and validates
 //! a document, then decodes it. A struct extends another by embedding it
-//! ([`Extensible`], [`Subtype`]).
+//! ([`Extensible`], [`Subtype`]). A field of any struct that extends another
+//! is a [`SubtypeOf`], and one of any implementor of a trait an
+//! [`ImplementorOf`].
 
 use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 
-use crate::canonical::{read_document, to_document};
+use crate::canonical::{declaration_hash, read_document, to_document};
 use crate::ir::{FieldType, InheritedChange, StructDef, TypeDef};
 use crate::name::{Name, QualifiedName};
-use crate::rules::DocumentSet;
+use crate::rules::{DocumentSet, TypeLookup};
 use crate::validate::ValueError;
 
+#[doc(hidden)]
+pub use crate::open::implementor_type;
+pub use crate::open::{ImplementorOf, SubtypeOf, TraitObject};
 #[doc(hidden)]
 pub use serde_json;
 
@@ -62,14 +67,80 @@ pub trait R8: Encode {
 
     /// Validates the value and writes it as a document.
     fn to_document(&self) -> Result<String, Vec<ValueError>> {
-        let v = self.encode().map_err(|e| vec![encode_error(e)])?;
-        to_document(&v, &Self::qualified_name(), &Self::declarations())
+        write(self, &Self::declarations())
     }
 
     /// Reads and validates a document, then decodes it.
     fn from_document(text: &str) -> Result<Self, Vec<ValueError>> {
-        let v = read_document(text, &Self::qualified_name(), &Self::declarations())?;
-        Self::decode(&v).map_err(|e| vec![encode_error(e)])
+        read(text, &Self::declarations())
+    }
+
+    /// [`to_document`](R8::to_document) with the declarations of `types`, for
+    /// a value that holds values of types that the type does not reach
+    /// ([`SubtypeOf`], [`ImplementorOf`]). `types` holds the type and each
+    /// named type it reaches as [`declarations`](R8::declarations) does.
+    fn to_document_in(&self, types: &dyn TypeLookup) -> Result<String, Vec<ValueError>> {
+        same_declarations::<Self>(types)?;
+        write(self, types)
+    }
+
+    /// [`from_document`](R8::from_document) with the declarations of `types`,
+    /// as for [`to_document_in`](R8::to_document_in).
+    fn from_document_in(text: &str, types: &dyn TypeLookup) -> Result<Self, Vec<ValueError>> {
+        same_declarations::<Self>(types)?;
+        read(text, types)
+    }
+}
+
+fn write<T: R8>(value: &T, types: &dyn TypeLookup) -> Result<String, Vec<ValueError>> {
+    let mut v = value.encode().map_err(|e| vec![encode_error(e)])?;
+    let name = T::qualified_name();
+    crate::open::name_tags(&mut v, &name, types);
+    to_document(&v, &name, types)
+}
+
+fn read<T: R8>(text: &str, types: &dyn TypeLookup) -> Result<T, Vec<ValueError>> {
+    let name = T::qualified_name();
+    let mut v = read_document(text, &name, types)?;
+    crate::open::name_types(&mut v, &name, types);
+    T::decode(&v).map_err(|e| vec![encode_error(e)])
+}
+
+/// Checks that `types` declares `T` and the named types it reaches as `T`
+/// does: `T` decodes a value by its own declaration.
+fn same_declarations<T: R8>(types: &dyn TypeLookup) -> Result<(), Vec<ValueError>> {
+    let own = T::declarations();
+    let mut errors = Vec::new();
+    for d in own.documents() {
+        for t in &d.types {
+            let q = QualifiedName {
+                namespace: d.namespace.clone(),
+                name: t.name().clone(),
+            };
+            let (code, message) = if types.find(&q).is_none() {
+                (
+                    "unknown_type",
+                    format!("the declarations do not hold `{q}`"),
+                )
+            } else if declaration_hash(&q, types) != declaration_hash(&q, &own) {
+                (
+                    "declaration_changed",
+                    format!("the declarations declare `{q}` in another way than its Rust type"),
+                )
+            } else {
+                continue;
+            };
+            errors.push(ValueError {
+                code,
+                message,
+                ..Default::default()
+            });
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
     }
 }
 
@@ -155,7 +226,7 @@ assert_eq!((w.lo(), w.hi(), w.label.as_str()), (&1.0, &5.0, "w"));
 )]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not extensible",
-    label = "the parent of `#[r8(extends)]`",
+    label = "a struct that others extend is required here",
     note = "a struct that others extend is declared with `#[r8(extensible)]`"
 )]
 pub trait Extensible: R8 + Clone + Subtype<Self> {}
@@ -543,7 +614,7 @@ map!(HashMap, BTreeMap);
 
 /// The constraints of a derived field's attributes.
 #[doc(hidden)]
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Constraints {
     pub min: Option<f64>,
     pub max: Option<f64>,

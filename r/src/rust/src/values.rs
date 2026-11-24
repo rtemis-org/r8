@@ -1359,10 +1359,49 @@ impl Decoder<'_> {
         r.set_class(crate::construct::value_class(&qname))?;
         r.set_attrib("r8_type", qname.as_str())?;
         r.set_attrib("r8_version", version as i32)?;
-        if let Some(var) = variant {
-            r.set_attrib("r8_variant", var)?;
+        if let Some(var) = &variant {
+            r.set_attrib("r8_variant", var.as_str())?;
         }
-        Ok(r)
+        // The codec of a Rust-stored type builds the state from the fields.
+        let Some(vt) = crate::exports::codec(&qname) else {
+            return Ok(r);
+        };
+        let fields = unsafe { r.get() };
+        let state = match &variant {
+            None => crate::rust_stored::from_fields(vt, fields),
+            Some(v) => crate::rust_stored::from_variant(vt, v, fields),
+        }
+        .map_err(fail)?;
+        Ok(unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, fields)) })
+    }
+}
+
+/// The R values of the nodes that a codec's reader reads as values.
+struct Values<'a> {
+    lookup: &'a dyn TypeLookup,
+}
+
+impl rtemis_r8::reader::HostValues for Values<'_> {
+    fn value(
+        &self,
+        node: &rtemis_r8::tree::Tree,
+        ty: &FieldType,
+    ) -> std::result::Result<rtemis_r8::abi::Sexp, (&'static str, String)> {
+        let decoder = Decoder {
+            lookup: self.lookup,
+        };
+        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::rust_stored::guarded(|| decoder.value(rtemis_r8::tree::TreeRef::new(node), ty))
+        }));
+        match read {
+            Ok(Some(Ok(x))) => Ok(unsafe { x.get() }.cast()),
+            Ok(Some(Err(e))) => Err(("value", e.to_string())),
+            Ok(None) => Err((
+                "r_error",
+                "R raised an error while reading the value".into(),
+            )),
+            Err(_) => Err(("panic", "R8 panicked while reading the value".into())),
+        }
     }
 }
 
@@ -1744,84 +1783,56 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
     let lookup: &dyn TypeLookup = &*docs;
     // A Rust-stored struct or enum: the codec builds the state from the
     // read value through `from_reader` when its table has it, and otherwise
-    // from the validated fields as R values, through `from_fields` (a struct)
-    // or `from_variant` (an enum); the state's variant is checked against the
-    // document's, and the codec receives no JSON text.
-    if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name)) {
-        if crate::rust_stored::has_from_reader(vt) {
-            let lent = rtemis_r8::reader::TreeReader::new();
-            let reader = lent.table();
-            let state =
-                crate::rust_stored::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
-                    .map_err(fail)?;
-            let variant = crate::rust_stored::state_variant(vt, state);
-            let drop_state = || {
-                if let Some(d) = unsafe { (*vt).drop } {
-                    unsafe { d(state) };
-                }
-            };
-            if let TypeDef::Enum(e) = def {
-                let read = match &tree {
-                    rtemis_r8::tree::Tree::Str(s) => Some(&**s),
-                    other => match other.get(e.tag.as_str()) {
-                        Some(rtemis_r8::tree::Tree::Str(s)) => Some(&**s),
-                        _ => None,
-                    },
-                };
-                if read != variant.as_deref() {
-                    drop_state();
-                    return Err(fail(format!(
-                        "the codec of `{q}` read the variant `{}` from a document of the variant `{}` [codec_variant]",
-                        variant.unwrap_or_default(),
-                        read.unwrap_or_default()
-                    )));
-                }
+    // from the validated fields as R values (`Decoder::named()`); the state's
+    // variant is checked against the document's, and the codec receives no
+    // JSON text.
+    if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name))
+        && crate::rust_stored::has_from_reader(vt)
+    {
+        let values = Values { lookup };
+        let lent = rtemis_r8::reader::TreeReader::new(&values);
+        let reader = lent.table();
+        let state = crate::rust_stored::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
+            .map_err(fail)?;
+        let variant = crate::rust_stored::state_variant(vt, state);
+        let drop_state = || {
+            if let Some(d) = unsafe { (*vt).drop } {
+                unsafe { d(state) };
             }
-            let Some((names, version)) =
-                crate::rust_stored::value_fields(def, variant.as_deref(), lookup)
-            else {
+        };
+        if let TypeDef::Enum(e) = def {
+            let read = match &tree {
+                rtemis_r8::tree::Tree::Str(s) => Some(&**s),
+                other => match other.get(e.tag.as_str()) {
+                    Some(rtemis_r8::tree::Tree::Str(s)) => Some(&**s),
+                    _ => None,
+                },
+            };
+            if read != variant.as_deref() {
                 drop_state();
                 return Err(fail(format!(
-                    "the codec of `{q}` built a state of the undeclared variant `{}` [codec_variant]",
-                    variant.unwrap_or_default()
+                    "the codec of `{q}` read the variant `{}` from a document of the variant `{}` [codec_variant]",
+                    variant.unwrap_or_default(),
+                    read.unwrap_or_default()
                 )));
-            };
-            let value = unsafe {
-                let like = crate::rust_stored::template(
-                    &q.to_string(),
-                    &names,
-                    version,
-                    variant.as_deref(),
-                );
-                let r = Robj::from_sexp(crate::rust_stored::wrap(vt, state, like));
-                extendr_ffi::Rf_unprotect(1);
-                r
-            };
-            return Ok(list!(value = value));
-        }
-        let builds = match def {
-            TypeDef::Struct(_) => unsafe { (*vt).from_fields.is_some() },
-            TypeDef::Enum(_) => crate::rust_stored::is_enum_codec(vt),
-        };
-        if !builds {
-            return Err(fail(format!(
-                "the codec of `{q}` builds no value from a document: it sets neither `from_reader` nor `from_fields` (a struct) or `from_variant` (an enum) [codec_read]"
-            )));
-        }
-        let fields = Decoder { lookup: &*docs }.named(v, &q, None)?;
-        let fs = unsafe { fields.get() };
-        let state = match def {
-            TypeDef::Struct(_) => crate::rust_stored::from_fields(vt, fs),
-            TypeDef::Enum(_) => {
-                let variant = fields
-                    .get_attrib("r8_variant")
-                    .and_then(|a| a.as_str().map(str::to_string))
-                    .unwrap_or_default();
-                crate::rust_stored::from_variant(vt, &variant, fs)
             }
         }
-        .map_err(fail)?;
-        let value = unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, fs)) };
+        let Some((names, version)) =
+            crate::rust_stored::value_fields(def, variant.as_deref(), lookup)
+        else {
+            drop_state();
+            return Err(fail(format!(
+                "the codec of `{q}` built a state of the undeclared variant `{}` [codec_variant]",
+                variant.unwrap_or_default()
+            )));
+        };
+        let value = unsafe {
+            let like =
+                crate::rust_stored::template(&q.to_string(), &names, version, variant.as_deref());
+            let r = Robj::from_sexp(crate::rust_stored::wrap(vt, state, like));
+            extendr_ffi::Rf_unprotect(1);
+            r
+        };
         return Ok(list!(value = value));
     }
     Ok(list!(

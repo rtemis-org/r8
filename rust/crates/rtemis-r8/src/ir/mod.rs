@@ -29,6 +29,7 @@ pub use decl::{
     SplitTarget, StructDef, TraitDef, TypeRef, TypedImplMethod, VariantDef, VariantKind,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
+pub use fit::fits;
 pub use logic::{Logic, Operator};
 pub use lower::{InheritedChange, check_defaults, check_extends, extend};
 pub use number::{EXACT_DOUBLE, Number};

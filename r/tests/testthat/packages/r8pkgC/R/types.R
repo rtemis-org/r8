@@ -69,3 +69,13 @@ lend <- function(x, type, upcast = FALSE) .Call(pkgc_lend, x, type, upcast)
 # The code that R8Api.new_value reports for a state of this package wrapped
 # as a value of `type`.
 wrap <- function(type) .Call(pkgc_wrap, type)
+
+# The value that R8Api.value_of_fields builds from the list `fields`, or the
+# code it reports.
+of_fields <- function(type, fields, hash, variant = NULL) {
+  .Call(pkgc_of_fields, type, variant, hash, fields)
+}
+
+# The value that R8Api.with_fields builds from `x` and the named list `fields`,
+# or the code and the message it reports.
+with_fields <- function(x, fields) .Call(pkgc_with_fields, x, fields)

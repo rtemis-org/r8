@@ -689,7 +689,7 @@ test_that("Rust-stored structs extend one another, and compiled impls apply to d
       "x <- shifted(s, 1); y <- shifted(b, 1); z <- shifted(Interval(lo = 1, hi = 3), 1)",
       "say('shifted', class(x)[1], x$lo, x$hi, x$label, x$weights, x$number, class(y)[1], y$lo, y$label, class(z)[1], z$lo)",
       "say('stored', stored(x, 'Strip'), stored(y, 'Band'), stored(z, 'Interval'), grepl('[not_finite]', msg(shifted(s, Inf)), fixed = TRUE))",
-      "no <- function(y) grepl('`y` is not a `pkgr::Interval`', msg(overlap(s, y)), fixed = TRUE)",
+      "no <- function(y) grepl('Invalid arguments of `overlap()`: 1 problem\\n- `y` must be a value', msg(overlap(s, y)), fixed = TRUE)",
       "say('argument', overlap(s, Interval(lo = 1, hi = 9)), no(s), no(1), no(NULL))",
       "say('format', format(s))",
       "say('other', grepl('`x` is not a `pkgr::Interval`', msg(r8_method(width, Interval)(Signal(name = 'a', values = 1))), fixed = TRUE))",
@@ -798,7 +798,7 @@ test_that("Rust-stored structs extend one another, and compiled impls apply to d
       "library(R8)",
       "ptr <- .Call(R8:::.r8_native[['exports']], 'r8pkgR')",
       "op <- options(r8.namespace = 'pkgr')",
-      sprintf("source(%s)", deparse(file.path(copy, "R", "r8-types.R"))),
+      sprintf("source('%s')", file.path(copy, "R", "r8-types.R")),
       "flat <- R8:::r8_type_ir('pkgr::Strip')",
       "st <- function() { x <- R8:::r8_exports_compare(ptr, 'pkgr'); x$status[x$type_name == 'pkgr::Strip'] }",
       "cat('before', st(), '\\n')",
@@ -896,7 +896,7 @@ test_that("compiled impls dispatch on several arguments, replace, and convert", 
     info = info
   )
   expect_true("upper 9 r8_result_error TRUE " %in% out, info = info)
-  expect_true("argument simpleError " %in% out, info = info)
+  expect_true("argument r8_argument_error " %in% out, info = info)
   expect_true(
     "convert [2, 8] [2, 8] pkgr::Signal new 1 5 " %in% out,
     info = info
@@ -935,7 +935,7 @@ test_that("a package's crate depends on another's, and registers its traits' imp
       "say('ancestor', width(t), format(t), class(v)[1], v$hi, class(m)[1], m$lo)",
       # An impl of a trait of r8pkgR's crate, and a parameter of r8pkgR's type.
       "say('total', total(t), grepl('does not implement', msg(total(v))))",
-      "say('gap', gap(t, Interval(lo = 7, hi = 8)), grepl('`y` is not a `pkgr::Interval`', msg(gap(t, t)), fixed = TRUE))",
+      "say('gap', gap(t, Interval(lo = 7, hi = 8)), grepl('Invalid arguments of `gap()`', msg(gap(t, t)), fixed = TRUE))",
       "say('own', grepl('does not implement `pkgs::gap`', msg(gap(v, v)), fixed = TRUE))",
       "m <- mirai::mirai({ library(r8pkgS); list(r8pkgR::width(t), class(r8pkgR::shifted(t, 1))[1], inherits(t, r8pkgR::Interval), names(as.list(t))[4]) }, t = t)[]",
       "say('mirai', unlist(m))"
@@ -960,6 +960,342 @@ test_that("a package's crate depends on another's, and registers its traits' imp
     )
   )
   expect_true("current" %in% out, info = paste(out, collapse = "\n"))
+})
+
+test_that("a Rust-stored type holds values of types its code does not know", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("mirai")
+  lib <- install_test_packages()
+  rds <- c(tempfile(fileext = ".rds"), tempfile(fileext = ".rds"))
+  session <- c(
+    "suppressPackageStartupMessages({ library(R8); library(r8pkgR); library(r8pkgS) })",
+    "say <- function(...) cat(..., '\\n')",
+    "msg <- function(x) tryCatch(x, error = function(e) conditionMessage(e))",
+    "strip <- Strip(lo = 1, hi = 4, label = 's', weights = c(1, 2), number = 7L)",
+    "tile <- Tile(lo = 1, hi = 3, number = 2L)",
+    "frame <- Interval(lo = 0, hi = 2)",
+    "p <- Panel(range = strip, inset = strip, frame = frame, method = Resampler@KFold(k = 3L, seed = 1L), figure = Square(side = 2))",
+    # A value of r8pkgS's type, which r8pkgR's code does not know.
+    "q <- Panel(range = tile, frame = frame, figure = Square(side = 1))"
+  )
+  out <- run_r(
+    lib,
+    c(
+      session,
+      "say('contents', contents(p))",
+      "say('unknown', contents(q))",
+      # A held value is the value itself, and a nested one a value of its type.
+      "say('read', identical(p$range, strip), class(q$range)[1], class(p$frame)[1], p$frame$hi, r8_variant(p$method), is.null(q$method), is.null(q$inset))",
+      "w <- q; w$range <- strip; w$frame <- Interval(lo = 0, hi = 10); w$method <- Resampler@Loocv",
+      "say('write', contents(w), r8_variant(w$method), contents(q))",
+      "say('held', class(held(p))[1], class(held(q))[1])",
+      # Another value of an ancestor keeps the type and its other fields.
+      "m <- moved(p, 2, 9); n <- moved(q, 0, 1)",
+      "say('moved', class(m$range)[1], m$range$lo, m$range$hi, m$range$label, m$range$number, contents(m))",
+      "say('moved unknown', class(n$range)[1], n$range$hi, n$range$number, class(held(n))[1])",
+      # The rules of the held type are checked where the value is first read.
+      "bad <- moved(q, 5, 1)",
+      "say('invalid', msg(bad$range), msg(serialize(bad, NULL)), msg(held(bad)))",
+      "b <- banded(p, 'new')",
+      "say('new', class(b$range)[1], b$range$label, b$range$hi, b$range$weights, class(b$figure)[1], b$figure$side)",
+      "say('json', vapply(list(p, q, m), function(x) { y <- r8_from_json(Panel, r8_to_json(x)); r8_equal(x, y) && r8_hash(x) == r8_hash(y) && contents(x) == contents(y) }, NA))",
+      "say('tag', grepl('\"figure\":{\"side\":2,\"name\":\"square\",\"figure\":\"Square\"}', r8_to_json(p), fixed = TRUE))",
+      "say('serialize', vapply(list(p, q, m), function(x) { y <- unserialize(serialize(x, NULL)); r8_equal(x, y) && contents(x) == contents(y) }, NA))",
+      "say('r_stored', contents(unserialize(serialize(q, NULL, version = 2))))",
+      # An implementor declared in R, and a type that implements nothing.
+      "op <- options(r8.namespace = 'demo')",
+      "Circle <- new_struct('Circle', fields = list(r = type_double(), name = type_character()))",
+      "impl(Figure, Circle, methods = list(area = function(x) x$r, scaled = function(x, by) { x$r <- x$r * by; x }))",
+      "x <- Panel(range = frame, frame = frame, figure = Circle(r = 3, name = 'c')); y <- r8_from_json(Panel, r8_to_json(x))",
+      "say('implementor', contents(x), area(x$figure), r8_equal(x, y), contents(y))",
+      "say('refused', grepl('not_implementor', msg(Panel(range = frame, frame = frame, figure = strip))), grepl('not_subtype', msg(Panel(range = Square(side = 1), frame = frame, figure = Square(side = 1)))), grepl('invalid', msg(Panel(range = frame, frame = strip, figure = Square(side = 1))), ignore.case = TRUE))",
+      # Parameters of a method in Rust: an open value, an optional value, and an optional vector.
+      "r <- refit(p, tile, Circle(r = 2, name = 'd'))",
+      "say('refit', contents(r), r$frame$hi, refit(p, strip, Square(side = 1), Interval(lo = 0, hi = 4), c(1, 2))$frame$hi)",
+      "say('refit_refused', vapply(list(quote(refit(p, 1, Square(side = 1))), quote(refit(p, tile, tile)), quote(refit(p, tile, Square(side = 1), strip)), quote(refit(p, tile, Square(side = 1), weights = -1))), function(e) class(tryCatch(eval(e), error = identity))[1], ''))",
+      # A trait declared in Rust, with a required field, an impl in R, and one in Rust.
+      "say('scaled', scaled(Square(side = 2), 3)$side, scaled(Circle(r = 2, name = 'c'), 2)$r, Square(side = 1)$name, class(tryCatch(scaled(Square(side = 1), 0), error = identity))[1])",
+      "say('required', grepl('required_field_missing', msg(impl(Figure, new_struct('Bare', fields = list(r = type_double())), methods = list(area = function(x) 1, scaled = function(x, by) x)))))",
+      # Fields of r8pkgR's types in a type of r8pkgS, whose library does not build them.
+      "g <- Grid(cell = frame, method = Resampler@Custom(train = 1:2, test = 3L), extent = Band(lo = 0, hi = 8, label = 'b', weights = 1), figure = Square(side = 3), note = tile)",
+      "say('noted', noted(g$note), grepl('not_implementor', msg(g$note <- strip)))",
+      "h <- r8_from_json(Grid, r8_to_json(g)); u <- unserialize(serialize(g, NULL))",
+      "say('grid', cells(g), cells(h), cells(u), r8_equal(g, h), r8_equal(g, u))",
+      "say('nested', class(g$cell)[1], h$cell$hi, r8_variant(u$method), h$method$train, width(h$cell), format(u$method), area(h$figure))",
+      "g$method <- Resampler@Loocv; say('unit', format(g$method), format(r8_from_json(Grid, r8_to_json(g))$method))",
+      "say('result', class(lower(tile))[1], lower(tile)$hi, width(lower(tile)))",
+      "k <- mirai::mirai({ library(r8pkgS); list(r8pkgR::contents(q), class(q$range)[1], r8pkgR::moved(q, 1, 5)) }, q = q)[]",
+      "say('mirai', k[[1]], k[[2]], contents(k[[3]]))",
+      sprintf(
+        "saveRDS(q, %s); saveRDS(moved(q, 1, 2), %s)",
+        deparse(rds[[1]]),
+        deparse(rds[[2]])
+      )
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("contents strip 7; s 3; square 4; 5 " %in% out, info = info)
+  expect_true("unknown pkgs::Tile; none; square 1; 4 " %in% out, info = info)
+  expect_true(
+    "read TRUE pkgs::Tile pkgr::Interval 2 KFold TRUE TRUE " %in% out,
+    info = info
+  )
+  expect_true(
+    "write strip 7; none; square 1; 13 Loocv pkgs::Tile; none; square 1; 4 " %in%
+      out,
+    info = info
+  )
+  expect_true("held pkgr::Strip pkgs::Tile " %in% out, info = info)
+  expect_true(
+    "moved pkgr::Strip 2 9 s 7 strip 7; s 3; square 4; 9 " %in% out,
+    info = info
+  )
+  expect_true("moved unknown pkgs::Tile 1 2 pkgs::Tile " %in% out, info = info)
+  expect_true(
+    paste(
+      "invalid",
+      strrep("the rule `ordered` is violated [invalid_value] ", 3L)
+    ) %in%
+      out,
+    info = info
+  )
+  expect_true("new pkgr::Band new 2 1 2 pkgr::Square 2 " %in% out, info = info)
+  expect_true("json TRUE TRUE TRUE " %in% out, info = info)
+  expect_true("tag TRUE " %in% out, info = info)
+  expect_true("serialize TRUE TRUE TRUE " %in% out, info = info)
+  expect_true("r_stored pkgs::Tile; none; square 1; 4 " %in% out, info = info)
+  expect_true(
+    "implementor pkgr::Interval; none; demo::Circle; 4 3 TRUE pkgr::Interval; none; demo::Circle; 4 " %in%
+      out,
+    info = info
+  )
+  expect_true("refused TRUE TRUE TRUE " %in% out, info = info)
+  expect_true(
+    "refit pkgs::Tile; s 3; demo::Circle; 4 2 7 " %in% out,
+    info = info
+  )
+  expect_true(
+    paste("refit_refused", strrep("r8_argument_error ", 4L)) %in% out,
+    info = info
+  )
+  expect_true("scaled 6 4 square r8_argument_error " %in% out, info = info)
+  expect_true("required TRUE " %in% out, info = info)
+  expect_true("grid 4 b 1 4 b 1 4 b 1 TRUE TRUE " %in% out, info = info)
+  expect_true(
+    "nested pkgr::Interval 2 Custom 1 2 2 Custom (2 train, 1 test) 9 " %in% out,
+    info = info
+  )
+  expect_true("noted tile 2 TRUE " %in% out, info = info)
+  expect_true("unit LOOCV LOOCV " %in% out, info = info)
+  expect_true("result pkgr::Interval 2 1 " %in% out, info = info)
+  expect_true(
+    "mirai pkgs::Tile; none; square 1; 4 pkgs::Tile pkgs::Tile; none; square 1; 6 " %in%
+      out,
+    info = info
+  )
+  # A value read before its package is loaded names each package it needs.
+  out <- run_r(
+    lib,
+    c(
+      "say <- function(...) cat(..., '\\n')",
+      "msg <- function(x) tryCatch(x, error = function(e) conditionMessage(e))",
+      sprintf(
+        "q <- readRDS(%s); m <- readRDS(%s)",
+        deparse(rds[[1]]),
+        deparse(rds[[2]])
+      ),
+      "say('first', msg(q$frame))",
+      "suppressPackageStartupMessages(library(r8pkgR))",
+      "say('second', msg(q$frame)); say('third', msg(contents(q)))",
+      "suppressPackageStartupMessages(library(r8pkgS))",
+      "say('then', contents(q), q$range$number, m$range$hi)"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  needs <- function(type, pkg) {
+    paste0("this `", type, "` value needs the codec of the package `", pkg, "`")
+  }
+  expect_true(
+    any(startsWith(out, paste("first", needs("pkgr::Panel", "r8pkgR")))),
+    info = info
+  )
+  expect_true(
+    any(startsWith(out, paste("second", needs("pkgs::Tile", "r8pkgS")))),
+    info = info
+  )
+  expect_true(
+    any(startsWith(out, paste("third `x`:", needs("pkgs::Tile", "r8pkgS")))),
+    info = info
+  )
+  expect_true(
+    "then pkgs::Tile; none; square 1; 4 2 2 " %in% out,
+    info = info
+  )
+  # Each operation that reaches R from a codec, under R's torture of the
+  # collector.
+  out <- run_r(
+    lib,
+    c(
+      session,
+      "g <- Grid(cell = frame, method = Resampler@Custom(train = 1:2, test = 3L), extent = Band(lo = 0, hi = 8, label = 'b', weights = 1), figure = Square(side = 3))",
+      "pj <- r8_to_json(p); gj <- r8_to_json(g)",
+      "run <- function() list(contents(moved(p, 2, 9)), moved(q, 2, 9)$range$number, banded(p, 'n')$range$weights, r8_from_json(Panel, pj)$range$weights, r8_from_json(Grid, gj)$method$train, unserialize(serialize(p, NULL))$range$weights, unserialize(serialize(g, NULL))$extent$weights, lower(tile)$hi, r8_from_json(Grid, gj)$cell$hi)",
+      "a <- run(); gctorture2(1); b <- run(); gctorture2(0)",
+      "say('torture', identical(a, b), unlist(b[-1]))"
+    )
+  )
+  expect_true(
+    "torture TRUE 2 1 2 1 2 1 2 1 2 1 2 2 " %in% out,
+    info = paste(out, collapse = "\n")
+  )
+})
+
+test_that("the signatures of compiled impls are those of their traits", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  pkg <- normalizePath(test_path("packages", "r8pkgR"))
+  session <- c(
+    sprintf("dyn.load(%s)", deparse(file.path(pkg, "src", "r8pkgR.so"))),
+    "library(R8)",
+    "ptr <- .Call(R8:::.r8_native[['exports']], 'r8pkgR')",
+    "op <- options(r8.namespace = 'pkgr')",
+    sprintf("source(%s)", deparse(file.path(pkg, "R", "r8-types.R")))
+  )
+  in_r <- sprintf(
+    "source(%s)",
+    vapply(
+      file.path(pkg, "R", c("interval.R", "norm.R")),
+      deparse,
+      character(1)
+    )
+  )
+  out <- run_r(
+    lib,
+    c(
+      session,
+      in_r,
+      "cat('agree', length(R8:::r8_exports_signatures(ptr, 'r8pkgR')), '\\n')",
+      # Other declarations of the generics and the trait that R declares.
+      "width <- generic('width', params(x, digits = arg_integer()))",
+      "middle <- generic('middle', params(x), return_type = type_double())",
+      "overlap <- generic('overlap', params(x, y))",
+      "`upper<-` <- generic('upper<-', params(x, value = arg_integer()))",
+      "total <- generic('total', params(x), return_type = type_double(min = 0))",
+      "Norm <- new_trait('Norm', methods = list(magnitude = trait_method(params(x)), ratio = trait_method(params(x, to = arg_double())), distance = trait_method(params(x, y = arg(Band)))))",
+      "p <- R8:::r8_exports_signatures(ptr, 'r8pkgR')",
+      "cat('members', sort(vapply(p, function(x) x$member, '')), '\\n')",
+      "e <- tryCatch(R8:::check_signatures(p, 'r8pkgR'), error = identity)",
+      "cat('class', class(e)[1], '\\n')",
+      "cat(conditionMessage(e), '\\n')",
+      # Another declaration of a generic that Rust declares.
+      "status <- function() { x <- R8:::r8_exports_compare(ptr, 'pkgr'); x$status[x$type_name == 'pkgr::shifted'] }",
+      "cat('before', status(), '\\n')",
+      "shifted <- generic('shifted', params(x, by = arg_double(finite = FALSE, default = 2)), return_type = 'Self')",
+      "cat('after', status(), '\\n')",
+      "shifted <- generic('shifted', params(x, by = arg_double(finite = FALSE, default = 1)), description = 'Another text.', return_type = 'Self')",
+      "cat('described', status(), '\\n')",
+      "e <- tryCatch(R8:::check_exports('p', list(type_name = 'p::f', status = 'missing', codec = FALSE, hash = ''), character()), error = conditionMessage)",
+      "cat('absent', grepl('`p::f` is declared in the compiled exports and has no R declaration', e, fixed = TRUE), '\\n')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("agree 0 " %in% out, info = info)
+  expect_true(
+    "members distance middle overlap ratio upper<- width " %in% out,
+    info = info
+  )
+  expect_true("class r8_declaration_error " %in% out, info = info)
+  for (line in c(
+    "- `width` of `pkgr::width` for `pkgr::Interval`: it takes the parameters (x), and the declaration (x, digits). Its parameters are declared in R as params(x).",
+    "- `middle` of `pkgr::middle` for `pkgr::Interval`: it returns `pkgr::Interval`, and the declaration double. Its parameters are declared in R as params(x).",
+    "- `overlap` of `pkgr::overlap` for `pkgr::Interval`: its parameter `y` is `pkgr::Interval`, and in the declaration without a type. Its parameters are declared in R as params(x, y = arg(Interval)).",
+    "- `upper<-` of `pkgr::with_upper` for `pkgr::Interval`: its parameter `value` is double, and in the declaration integer. Its parameters are declared in R as params(x, value = arg_double()).",
+    "- `ratio` of `pkgr::Norm` for `pkgr::Signal`: it takes the parameters (x, by), and the declaration (x, to). Its parameters are declared in R as params(x, by = arg_double()).",
+    "- `distance` of `pkgr::Norm` for `pkgr::Signal`: its parameter `y` is `pkgr::Signal`, and in the declaration `pkgr::Band`. Its parameters are declared in R as params(x, y = arg(Signal))."
+  )) {
+    expect_true(line %in% out, info = paste(line, info, sep = "\n"))
+  }
+  expect_true(
+    any(grepl("[impl_signature]", out, fixed = TRUE)),
+    info = info
+  )
+  expect_true("before same " %in% out, info = info)
+  expect_true("after differs " %in% out, info = info)
+  expect_true("described same " %in% out, info = info)
+  expect_true("absent TRUE " %in% out, info = info)
+  # The result type of a method that returns a narrower type than its generic.
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
+      "say <- function(...) cat(..., '\\n')",
+      "i <- jsonlite::fromJSON(r8_declaration(Interval), simplifyVector = FALSE)$impls",
+      "own <- Filter(function(x) identical(x$trait, 'pkgr::middle'), i)[[1]]$methods[[1]]",
+      "say('own', own$name, own$return_type$name)",
+      "x <- Interval(lo = 0, hi = 4); say('default', shifted(x)$lo, shifted(x, 2)$lo)",
+      "b <- Band(lo = 0, hi = 4, label = 'b', weights = 1)",
+      "say('pattern', class(tryCatch(label(b) <- 'B', error = identity))[1])",
+      "say('print', format(args(refit))[1])"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("default 1 2 " %in% out, info = info)
+  expect_true("pattern r8_argument_error " %in% out, info = info)
+})
+
+test_that("R8Api builds a value from fields and replaces the fields of one", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({ library(R8); library(r8pkgC); loadNamespace('r8pkgR') })",
+      "say <- function(...) cat(..., '\\n')",
+      "of <- r8pkgC:::of_fields; with <- r8pkgC:::with_fields",
+      "types <- R8:::r8_exports_compare(.Call(R8:::.r8_native[['exports']], 'r8pkgR'), 'pkgr')",
+      "hash <- function(q) types$hash[match(q, types$type_name)]",
+      "x <- of('pkgr::Interval', list(1, 2, NULL), hash('pkgr::Interval'))",
+      "say('struct', class(x)[1], x$lo, x$hi, r8pkgR::width(x), r8_equal(x, r8pkgR::Interval(lo = 1, hi = 2)))",
+      "k <- of('pkgr::Resampler', list(3L, 1L), hash('pkgr::Resampler'), 'KFold')",
+      "say('enum', r8_variant(k), k$k, format(k))",
+      "s <- of('pkgr::Split', list(1:2, 3L), hash('pkgr::Split'))",
+      "say('r_stored', class(s)[1], s$test, is.null(R8:::r8_rust_stored_parts(s)))",
+      "h <- hash('pkgr::Interval')",
+      "say('codes', of('pkgr::Interval', list(1, 2, NULL), 'sha256:0'), of('pkgr::None', list(), h), of('None', list(), h), of('pkgr::Interval', list(1, 2), h), of('pkgr::Resampler', list(), hash('pkgr::Resampler'), 'None'))",
+      "y <- with(x, list(hi = 9, unit = 'cm'))",
+      "say('replaced', class(y)[1], y$lo, y$hi, y$unit, x$hi)",
+      "say('rule', with(x, list(hi = 0)))",
+      "say('type', with(x, list(hi = 'a')))",
+      "say('field', with(x, list(top = 1)))",
+      "say('list', with(x, list(1))[1], with(x, 1)[1])"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  expect_true("struct pkgr::Interval 1 2 1 TRUE " %in% out, info = info)
+  expect_true("enum KFold 3 KFold (k = 3, seed = 1) " %in% out, info = info)
+  expect_true("r_stored pkgr::Split 3 TRUE " %in% out, info = info)
+  expect_true(
+    "codes declaration_changed unknown_type unknown_type invalid_argument unknown_variant " %in%
+      out,
+    info = info
+  )
+  expect_true("replaced pkgr::Interval 1 9 cm 2 " %in% out, info = info)
+  expect_true(
+    "rule invalid_value the rule `ordered` is violated " %in% out,
+    info = info
+  )
+  expect_true(any(startsWith(out, "type invalid_value `/hi`")), info = info)
+  expect_true(any(startsWith(out, "field unknown_field")), info = info)
+  expect_true("list invalid_argument invalid_argument " %in% out, info = info)
 })
 
 test_that("an enum declared in R takes a codec in C, and a misshaped codec is refused", {
@@ -997,6 +1333,7 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
       "cat('impls', grepl('two impl functions `magnitude`', ri(1)), grepl('`ratio` of `pkgc::Norm` for `pkgc::Point` is NULL', ri(2)), '\\n')",
       "has <- function(k, text) grepl(text, ri(k), fixed = TRUE)",
       "cat('rows', has(3, 'defines `ratio`, which has no default'), has(4, 'names no type that it is for'), has(5, 'of the kind 9'), has(6, 'of the system `s5`'), has(7, 'the method `norm` of `pkgc::Norm`, which declares no such method'), has(8, 'takes 3 parameters, and the trait declares 2'), '\\n')",
+      "cat('header', has(9, 'reinstall the package against the installed R8'), has(10, 'the impl entries have size'), '\\n')",
       "cat('class', magnitude(c(3, 4)), ratio(c(8, 1), 2), tryCatch(magnitude('a'), error = function(e) class(e)[1]), '\\n')",
       "s <- Signal(name = 'a', values = 1)",
       "cat('after', grepl('r8 rust-stored pkgc::Signal', inspect(s)), '\\n')"
@@ -1017,6 +1354,8 @@ test_that("an enum declared in R takes a codec in C, and a misshaped codec is re
   expect_true("unpinned TRUE TRUE " %in% out, info = info)
   expect_true("impls TRUE TRUE " %in% out, info = info)
   expect_true("rows TRUE TRUE TRUE TRUE TRUE TRUE " %in% out, info = info)
+  # A table of an earlier header is refused before its entries are read.
+  expect_true("header TRUE TRUE " %in% out, info = info)
   # A compiled impl for a class of R.
   expect_true("class 5 4 r8_dispatch_error " %in% out, info = info)
   expect_true("after TRUE " %in% out, info = info)
@@ -1060,7 +1399,7 @@ test_that("the generator names a type of another namespace by its package's expo
       "doc$types[[1]]$fields[[1]]$type$name <- 'pkga::Absent'",
       "desc('r8pkgA')",
       "e <- tryCatch(R8:::foreign_refs(doc, p), error = function(e) conditionMessage(e))",
-      "cat('unexported', grepl('exports no type object', e), '\\n')"
+      "cat('unexported', grepl('exports no type or trait object', e), '\\n')"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -1117,16 +1456,20 @@ test_that("the roclet r8_rd documents the methods a package implements in Rust",
         deparse(copy)
       ),
       "has <- function(f, text) any(grepl(text, rd(f), fixed = TRUE))",
-      "cat('positions', has('Signal.Rd', \"R8 method for struct 'Signal', any\"), has('Interval.Rd', \"R8 method for struct 'Interval', struct 'Band'\"), has('Interval.Rd', 'special{meets(x, y, by)}'), '\\n')",
-      "cat('replace', has('Band.Rd', 'special{label(x) <- value}'), '\\n')",
+      "cat('positions', has('meets.Rd', \"R8 method for struct 'Signal', any\"), has('meets.Rd', \"R8 method for struct 'Interval', struct 'Band'\"), has('meets.Rd', 'special{meets(x, y, by)}'), '\\n')",
+      "cat('replace', has('label-set.Rd', 'special{label(x) <- value}'), '\\n')",
+      # A generic and a trait declared in Rust.
+      "cat('declared', has('shifted.Rd', 'item{by}{Double'), has('shifted.Rd', 'The distance'), has('Figure.Rd', 'A plane figure'), has('scaled.Rd', 'special{scaled(x, by)}'), '\\n')",
       "cat('from', has('Interval.Rd', 'special{from(x)}'), '\\n')"
     )
   )
   info <- paste(out, collapse = "\n")
-  expect_true("signal 5 TRUE " %in% out, info = info)
+  expect_true("signal 4 TRUE " %in% out, info = info)
+  expect_false(any(startsWith(out, "\u2716")), info = info)
   expect_true("resampler TRUE TRUE " %in% out, info = info)
   expect_true("positions TRUE TRUE TRUE " %in% out, info = info)
   expect_true("replace TRUE " %in% out, info = info)
+  expect_true("declared TRUE TRUE TRUE TRUE " %in% out, info = info)
   # A conversion has no entry of its own.
   expect_true("from FALSE " %in% out, info = info)
 })

@@ -1046,6 +1046,65 @@ fn r8_set_fields(x: Robj, names: Robj, values: Robj) -> Result<Robj> {
 /// Returns the new value; `list(errors = <problems>)`, of every field, with
 /// the class `r8_problems`; or `NULL` when a name is not a field.
 fn replace_fields(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Robj> {
+    match replaced(x, changes)? {
+        Replaced::Value(v) => Ok(v),
+        Replaced::Problems(errors) => problems(&errors),
+        Replaced::NotField => Ok(().into()),
+    }
+}
+
+/// The outcome of [`replaced`].
+enum Replaced {
+    Value(Robj),
+    Problems(Vec<ValueError>),
+    /// A name is not a field.
+    NotField,
+}
+
+/// The value of `value`, an R8 value, with the fields of `fields`, a named
+/// list, replaced, unprotected; an error is a code and a message.
+pub(crate) fn with_fields(
+    value: SEXP,
+    fields: SEXP,
+) -> std::result::Result<SEXP, (&'static str, String)> {
+    let names: Option<Vec<_>> = strings(attr(fields, sym_names())).into_iter().collect();
+    let names = names
+        .filter(|n| sexptype(fields) == SEXPTYPE::VECSXP && n.len() == xlen(fields))
+        .ok_or_else(|| ("invalid_argument", "`fields` is a named list".to_string()))?;
+    let changes: Vec<(&str, SEXP)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (&**f, unsafe { VECTOR_ELT(fields, i as R_xlen_t) }))
+        .collect();
+    match replaced(&own(value), &changes).map_err(|e| ("invalid_argument", e.to_string()))? {
+        Replaced::Value(v) => Ok(unsafe { v.get() }),
+        Replaced::Problems(errors) => {
+            let lines: Vec<String> = errors
+                .iter()
+                .map(|e| {
+                    let rule = match (&e.rule, e.rule_index) {
+                        (Some(id), _) => format!("the rule `{id}` is violated"),
+                        (None, Some(i)) => format!("rule {} is violated", i + 1),
+                        (None, None) => return e.message.clone(),
+                    };
+                    if e.message.is_empty() {
+                        rule
+                    } else {
+                        format!("{rule}: {}", e.message)
+                    }
+                })
+                .collect();
+            Err(("invalid_value", lines.join("; ")))
+        }
+        Replaced::NotField => Err((
+            "unknown_field",
+            format!("the value has none of the fields {}", names.join(", ")),
+        )),
+    }
+}
+
+/// [`replace_fields`], its outcome as Rust values.
+fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
     let xs = unsafe { x.get() };
     let type_name = attr_string(xs, sym_r8_type()).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
@@ -1080,7 +1139,7 @@ fn replace_fields(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Robj> {
     let mut errors: Vec<ValueError> = Vec::new();
     for &(name, vs) in changes {
         let Some(k) = fields.iter().position(|f| f.name.as_str() == name) else {
-            return Ok(().into());
+            return Ok(Replaced::NotField);
         };
         let f = &fields[k];
         let at = format!("/{}", name.replace('~', "~0").replace('/', "~1"));
@@ -1142,7 +1201,7 @@ fn replace_fields(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Robj> {
         stored.push((k, s));
     }
     if !errors.is_empty() {
-        return problems(&errors);
+        return Ok(Replaced::Problems(errors));
     }
     // A Rust-stored value: the codec builds the new state, one field at a
     // time, and the new value reads its fields from it on demand, keeping the
@@ -1166,9 +1225,9 @@ fn replace_fields(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Robj> {
         drop(created);
         let errors = reading_rule_errors(rules, fields, changes, unsafe { value.get() }, lookup);
         if !errors.is_empty() {
-            return problems(&errors);
+            return Ok(Replaced::Problems(errors));
         }
-        return Ok(value);
+        return Ok(Replaced::Value(value));
     }
     let n = xlen(xs);
     let out = unsafe {
@@ -1198,9 +1257,9 @@ fn replace_fields(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Robj> {
     drop(created);
     let errors = reading_rule_errors(rules, fields, changes, unsafe { out.get() }, lookup);
     if !errors.is_empty() {
-        return problems(&errors);
+        return Ok(Replaced::Problems(errors));
     }
-    Ok(out)
+    Ok(Replaced::Value(out))
 }
 
 /// The violations of the rules of `rules` that read any field of `changes`,
@@ -1339,10 +1398,8 @@ pub unsafe extern "C" fn r8_inherited_fields(
 }
 
 /// The value of the struct `type_name` over `fields`, a list of its fields
-/// in declaration order and in their stored forms, which is not validated:
-/// the list itself with the type's shared attributes, or, for a type whose
-/// codec is registered, a Rust-stored value of the state that the codec
-/// builds from them. NULL, with `err` filled, when there is none.
+/// (`rust_stored::value_of_fields()`). NULL, with `err` filled, when there is
+/// none.
 ///
 /// # Safety
 ///
@@ -1360,18 +1417,8 @@ pub unsafe extern "C" fn r8_value_of_fields(
             .map_err(|e| e.to_string())?;
         let q = QualifiedName::parse(name).map_err(|e| e.to_string())?;
         let docs = registry().snapshot();
-        let Some(TypeDef::Struct(s)) = docs.find(&q) else {
-            return Err(format!("`{q}` is not a registered struct [unknown_type]"));
-        };
-        let names: Vec<&str> = s.fields.iter().map(|f| f.name.as_str()).collect();
-        unsafe { set_value_attributes(fields, shared_attributes(name, s.version, None, &names)) };
-        match crate::exports::codec(name) {
-            Some(vt) => {
-                let state = crate::rust_stored::from_fields(vt, fields)?;
-                Ok(crate::rust_stored::wrap(vt, state, fields))
-            }
-            None => Ok(fields),
-        }
+        crate::rust_stored::value_of_fields(&q, None, fields, &*docs, false)
+            .map_err(|(_, message)| message)
     }));
     match result {
         Ok(Ok(v)) => v,
