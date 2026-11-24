@@ -446,7 +446,8 @@ fn read_rows(
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_exports_signatures(ptr: Robj, package: &str) -> Result<List> {
+fn r8_exports_signatures(ptr: Robj, package: crate::utf8::Utf8) -> Result<List> {
+    let package: &str = &package;
     let e = exports_of(&ptr)?;
     let reg = crate::declare::snapshot()?;
     let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
@@ -500,7 +501,8 @@ fn r8_exports_signatures(ptr: Robj, package: &str) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_exports_document(ptr: Robj, ns: &str) -> Result<Robj> {
+fn r8_exports_document(ptr: Robj, ns: crate::utf8::Utf8) -> Result<Robj> {
+    let ns: &str = &ns;
     let e = exports_of(&ptr)?;
     let Declarations { types, traits, .. } = record_declarations(e, ns)?;
     let doc = IrDocument {
@@ -537,7 +539,8 @@ fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
+fn r8_exports_compare(ptr: Robj, ns: crate::utf8::Utf8) -> Result<List> {
+    let ns: &str = &ns;
     let e = exports_of(&ptr)?;
     let Declarations { types, traits, .. } = record_declarations(e, ns)?;
     let namespace = Name::new(ns).map_err(|e| fail(e.to_string()))?;
@@ -620,7 +623,13 @@ fn r8_exports_compare(ptr: Robj, ns: &str) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_register_exports(ptr: Robj, package: &str, ns: &str) -> Result<List> {
+fn r8_register_exports(
+    ptr: Robj,
+    package: crate::utf8::Utf8,
+    ns: crate::utf8::Utf8,
+) -> Result<List> {
+    let package: &str = &package;
+    let ns: &str = &ns;
     let e = exports_of(&ptr)?;
     let declared = text(e.package, "package name")?;
     if declared != package {
@@ -765,7 +774,14 @@ fn r8_exports_traits(ptr: Robj) -> Result<Vec<String>> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_impl_fn(trait_name: &str, tuple: &str, method: &str) -> Result<Robj> {
+fn r8_impl_fn(
+    trait_name: crate::utf8::Utf8,
+    tuple: crate::utf8::Utf8,
+    method: crate::utf8::Utf8,
+) -> Result<Robj> {
+    let trait_name: &str = &trait_name;
+    let tuple: &str = &tuple;
+    let method: &str = &method;
     let f = {
         let c = compiled()
             .lock()

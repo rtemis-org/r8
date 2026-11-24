@@ -13,6 +13,7 @@
 // uses, so the owner's memory is only read.
 
 #include <setjmp.h>
+#include <signal.h>
 
 // A jump buffer that leaves the signal mask alone: sigsetjmp(buf, 0) saves
 // no mask, where setjmp() on macOS and the BSDs saves it with a system call
@@ -207,6 +208,35 @@ int r8_is_view(SEXP x) {
           R_altrep_inherits(x, view_logical) || R_altrep_inherits(x, view_raw));
 }
 
+// Another view of the memory that `x` views, with the attributes of `x`, so that
+// the copy a write asks for and the attributes it sets are those of one read.
+// R_NilValue unless `x` is a view in place.
+SEXP r8_view_again(SEXP x) {
+  if (!r8_is_view(x) || R_altrep_data2(x) != R_NilValue) {
+    return R_NilValue;
+  }
+  R_altrep_class_t cls;
+  switch (TYPEOF(x)) {
+  case REALSXP:
+    cls = view_double;
+    break;
+  case INTSXP:
+    cls = view_integer;
+    break;
+  case LGLSXP:
+    cls = view_logical;
+    break;
+  default:
+    cls = view_raw;
+    break;
+  }
+  SEXP ans = PROTECT(R_new_altrep(cls, R_altrep_data1(x), R_NilValue));
+  SHALLOW_DUPLICATE_ATTRIB(ans, x);
+  MARK_NOT_MUTABLE(ans);
+  UNPROTECT(1);
+  return ans;
+}
+
 static void set_error(R8Error *err, const char *code, const char *message) {
   if (err != NULL) {
     snprintf(err->code, sizeof(err->code), "%s", code);
@@ -342,6 +372,10 @@ SEXP r8_c_variant(SEXP x);
 SEXP r8_c_is_value(SEXP x);
 SEXP r8_c_names(SEXP x);
 
+// The fields of a value as a read gives them (field.c).
+SEXP r8_c_get(SEXP x, SEXP name);
+SEXP r8_c_fields(SEXP x, SEXP at);
+
 // The identity of a value, or R_NilValue (value.c), and whether an identity is
 // of the registered declaration (value.rs).
 SEXP r8_value_id(SEXP x);
@@ -386,6 +420,41 @@ void r8_register_api(void) {
 R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err) {
   return api_protect(fn, data, value, err);
 }
+
+static SEXP check_interrupt(void *data) {
+  (void) data;
+  R_CheckUserInterrupt();
+  return R_NilValue;
+}
+
+static SEXP limit_reached(SEXP condition, void *reached) {
+  (void) condition;
+  *(int *) reached = 1;
+  return R_NilValue;
+}
+
+static SEXP check_both(void *reached) {
+  return R_tryCatchError(check_interrupt, NULL, limit_reached, reached);
+}
+
+// Whether the user interrupted R (2), a time limit of R is reached (1), or neither
+// (0); R's jump ends here. The interrupt is raised again, which R takes once
+// R8's code has returned.
+int r8_check_interrupt(void) {
+  int reached = 0;
+  SEXP value = R_NilValue;
+  R8Error err = {{0}, {0}};
+  if (api_protect(check_both, &reached, &value, &err) == R8_UNWIND) {
+#ifndef _WIN32
+    raise(SIGINT);
+#endif
+    return 2;
+  }
+  return reached;
+}
+
+// Continues the jump of R that R8Api.protect caught last.
+void r8_continue_unwind(void) { R_ContinueUnwind(continuation); }
 
 // The number of the fields of `ancestor` when the registered type
 // `type_name` is a subtype of it, and -1 otherwise; and the value of a struct
@@ -464,7 +533,18 @@ static SEXP r8_invoke(SEXP fn, SEXP args) {
     R_ContinueUnwind(continuation);
   }
   if (status == R8_ERROR) {
-    Rf_errorcall(PROTECT(generic_call()), "%s [%s]", err.message, err.code);
+    // A callee may leave the buffers without an end.
+    err.code[sizeof(err.code) - 1] = '\0';
+    err.message[sizeof(err.message) - 1] = '\0';
+    if (strcmp(err.code, "panic") == 0) {
+      Rf_errorcall(PROTECT(generic_call()),
+                   "the compiled method panicked, which is a defect of its package: %s [panic]",
+                   err.message);
+    }
+    Rf_errorcall(PROTECT(generic_call()), "%s [%s]",
+                 err.message[0] == '\0' ? "the compiled method returned an error without a message"
+                                        : err.message,
+                 err.code[0] == '\0' ? "no_code" : err.code);
   }
   Rf_error("the impl function returned the status %d, none of R8_OK, R8_ERROR, and R8_UNWIND",
            (int) status);
@@ -1000,7 +1080,7 @@ static SEXP r8_is_variant(SEXP x, SEXP variant, SEXP variants) {
   SEXP v = r8_c_variant(x);
   if (v != R_NilValue && TYPEOF(variant) == STRSXP && XLENGTH(variant) == 1) {
     SEXP name = STRING_ELT(variant, 0);
-    if (name != NA_STRING && LENGTH(name) > 0) {
+    if (name != NA_STRING && LENGTH(name) > 0 && Rf_getCharCE(name) != CE_BYTES) {
       if (name == STRING_ELT(v, 0) ||
           strcmp(Rf_translateCharUTF8(name), Rf_translateCharUTF8(STRING_ELT(v, 0))) == 0) {
         return Rf_ScalarLogical(TRUE);
@@ -1034,11 +1114,11 @@ static SEXP r8_require(SEXP x) {
 // The C routines that R calls through `.Call()` on a native symbol:
 // list(invoke, exports, construct, find, replaced, find2, find3, call,
 // result, upcast, variant, is_variant, type, variant_of, is_value, names,
-// require). R8's `.Call` routines
+// require, get, fields). R8's `.Call` routines
 // are the Rust code's, registered by extendr; these continue a jump, call R_GetCCallable(), evaluate R code, or
 // read the fields of Rust-stored values from C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 17));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 19));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
@@ -1056,7 +1136,9 @@ SEXP r8_native_symbols(void) {
   SET_VECTOR_ELT(out, 14, native_symbol((DL_FUNC) r8_c_is_value));
   SET_VECTOR_ELT(out, 15, native_symbol((DL_FUNC) r8_c_names));
   SET_VECTOR_ELT(out, 16, native_symbol((DL_FUNC) r8_require));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 17));
+  SET_VECTOR_ELT(out, 17, native_symbol((DL_FUNC) r8_c_get));
+  SET_VECTOR_ELT(out, 18, native_symbol((DL_FUNC) r8_c_fields));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 19));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
@@ -1074,6 +1156,8 @@ SEXP r8_native_symbols(void) {
   SET_STRING_ELT(names, 14, Rf_mkChar("is_value"));
   SET_STRING_ELT(names, 15, Rf_mkChar("names"));
   SET_STRING_ELT(names, 16, Rf_mkChar("require"));
+  SET_STRING_ELT(names, 17, Rf_mkChar("get"));
+  SET_STRING_ELT(names, 18, Rf_mkChar("fields"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

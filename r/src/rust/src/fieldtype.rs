@@ -381,28 +381,32 @@ fn r8_ft_map(r#type: Robj, keys: Robj, ordered: bool) -> Robj {
     built.unwrap_or_else(message)
 }
 
-/// `type_matrix()`, `type_array()` (`dim`), and `type_sparse_matrix()`
-/// (`sparse = TRUE`).
+/// `type_matrix()`, `type_array()` (`dim`), and `type_sparse_matrix()`, as `kind`
+/// names them: `"matrix"`, `"array"`, and `"sparse_matrix"`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, sparse: bool) -> Robj {
+fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, kind: crate::utf8::Utf8) -> Robj {
+    let kind: &str = &kind;
     let built = (|| unsafe {
         let t = r#type.get();
-        if !sparse && is_null(dim.get()) && inherits(t, "r8_struct_type") {
+        if kind == "matrix" && inherits(t, "r8_struct_type") {
             return Ok(field_type_list(&build::matrix_of(type_name(t)?)));
         }
         let el = element(t)?;
-        if let Some(d) = numbers(dim.get(), "dim")? {
-            let d = d
-                .iter()
-                .map(|&x| build::count(x, "dim"))
-                .collect::<Built<Vec<u32>>>()?;
+        if kind == "array" {
+            let d = numbers(dim.get(), "dim")?
+                .map(|d| {
+                    d.iter()
+                        .map(|&x| build::count(x, "dim"))
+                        .collect::<Built<Vec<u32>>>()
+                })
+                .transpose()?;
             return Ok(container(
                 "array",
                 &[
                     ("element", Some(Member::Object(&el))),
-                    ("dim", Some(Member::Counts(&d))),
+                    ("dim", d.as_deref().map(Member::Counts)),
                 ],
             ));
         }
@@ -412,7 +416,11 @@ fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, sparse: bool) -
             count(number(ncol.get(), "ncol")?, "ncol")?,
         );
         Ok(container(
-            if sparse { "sparse_matrix" } else { "matrix" },
+            if kind == "sparse_matrix" {
+                "sparse_matrix"
+            } else {
+                "matrix"
+            },
             &[
                 ("element", Some(Member::Object(&el))),
                 ("nrow", nrow.map(|v| Member::Count(u64::from(v)))),
@@ -565,7 +573,9 @@ fn nearest_function(name: &str) -> Option<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_nearest_name(name: &str, candidates: Vec<String>) -> Vec<String> {
+fn r8_nearest_name(name: crate::utf8::Utf8, candidates: crate::utf8::Utf8s) -> Vec<String> {
+    let name: &str = &name;
+    let candidates: Vec<String> = candidates.to_vec();
     rtemis_r8::name::nearest(name, candidates.iter().map(String::as_str))
         .map(str::to_string)
         .into_iter()

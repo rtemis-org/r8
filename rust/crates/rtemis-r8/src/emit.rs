@@ -808,6 +808,7 @@ impl<'l, S: Sink> Emitter<'l, S> {
 
     /// Writes a value of the field type `ft`.
     pub fn value<'a, A: Access<'a>>(&mut self, ft: &FieldType, v: A) {
+        crate::progress::tick();
         if v.is_absent() {
             return self.w.null();
         }

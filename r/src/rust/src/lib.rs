@@ -15,6 +15,7 @@ mod construct;
 mod declare;
 mod exports;
 mod fieldtype;
+mod interrupt;
 mod irde;
 mod irser;
 #[cfg(feature = "oracle")]
@@ -25,6 +26,7 @@ mod rust_stored;
 mod rview;
 mod signature;
 mod text;
+mod utf8;
 mod value;
 mod values;
 mod version;

@@ -544,3 +544,14 @@ test_that("an R object of any type is refused where its type does not admit it",
   x$n <- 2L
   expect_identical(x$n, 2L)
 })
+
+test_that("an array without declared dimensions takes any number of them", {
+  A <- declare_in("arrays", {
+    new_struct("A", fields = list(a = type_array(type_double())))
+  })
+  for (dim in list(8L, c(2L, 4L), c(2L, 2L, 2L), c(1L, 2L, 2L, 2L))) {
+    x <- A(a = array(as.numeric(1:8), dim))
+    expect_identical(dim(x$a), dim)
+    expect_true(r8_equal(r8_from_json(A, r8_to_json(x)), x))
+  }
+})

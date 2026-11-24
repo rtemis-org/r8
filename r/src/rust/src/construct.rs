@@ -22,8 +22,9 @@ use extendr_api::SEXP;
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use extendr_ffi::{
-    INTEGER, LOGICAL, R_xlen_t, REAL, Rf_allocVector, Rf_mkCharLenCE, Rf_protect, Rf_setAttrib,
-    Rf_unprotect, SET_STRING_ELT, SET_VECTOR_ELT, SEXPTYPE, STRING_ELT, VECTOR_ELT, cetype_t,
+    INTEGER, LOGICAL, R_xlen_t, REAL, Rf_allocVector, Rf_duplicate, Rf_mkCharLenCE, Rf_protect,
+    Rf_setAttrib, Rf_unprotect, SET_STRING_ELT, SET_VECTOR_ELT, SEXPTYPE, STRING_ELT, VECTOR_ELT,
+    cetype_t,
 };
 use rtemis_r8::access::Access;
 use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantKind};
@@ -701,8 +702,11 @@ fn sparse(x: SEXP) -> Result<Option<Robj>> {
     Ok(Some(r))
 }
 
-/// A table, stored as a `data.frame` with the compact row names
-/// `c(NA, -n)` and its columns in their stored forms.
+/// A table, stored as a `data.frame` of its own with the compact row names
+/// `c(NA, -n)` and its columns in their stored forms: the columns of a data frame
+/// as they are, and copies of those of a data.table, whose functions change a
+/// column in place. A list of its own keeps `setDT()` of the data frame given from
+/// the value's.
 fn table<C: rtemis_r8::ir::Column>(x: SEXP, columns: &[C]) -> Result<Option<Robj>> {
     let n = table_rows(x).map_err(|f| fail(f.message))? as i32;
     let names = attr(x, sym_names());
@@ -730,25 +734,30 @@ fn table<C: rtemis_r8::ir::Column>(x: SEXP, columns: &[C]) -> Result<Option<Robj
             changed.push((i, r));
         }
     }
-    let rn = attrib_raw(x, sym_row_names());
-    let compact = sexptype(rn) == SEXPTYPE::INTSXP
-        && xlen(rn) == 2
-        && int_elt(rn, 0) == NA_INT
-        && int_elt(rn, 1) == -n;
-    if changed.is_empty() && compact && class_is(x, &["data.frame"]) && attrib_count(x) == 3 {
-        return Ok(None);
-    }
+    let by_reference = inherits(x, "data.table");
     unsafe {
         let v = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, k as R_xlen_t));
         for i in 0..k {
-            SET_VECTOR_ELT(v, i as R_xlen_t, VECTOR_ELT(x, i as R_xlen_t));
+            if changed.iter().any(|(j, _)| *j == i) {
+                continue;
+            }
+            let col = VECTOR_ELT(x, i as R_xlen_t);
+            let own = if by_reference {
+                Rf_duplicate(col)
+            } else {
+                crate::value::viewed(col)
+            };
+            SET_VECTOR_ELT(v, i as R_xlen_t, own);
         }
         for (i, r) in &changed {
             SET_VECTOR_ELT(v, *i as R_xlen_t, r.get());
         }
         let r = own(v);
         Rf_unprotect(1);
-        set_attr(&r, sym_names(), names);
+        // data.table's setnames() and set() change the vector of names in place.
+        let own_names = Rf_protect(Rf_duplicate(names));
+        set_attr(&r, sym_names(), own_names);
+        Rf_unprotect(1);
         let rn = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, 2));
         *INTEGER(rn) = NA_INT;
         *INTEGER(rn).add(1) = -n;
@@ -811,7 +820,7 @@ pub(crate) fn assemble(
                         created.push(r);
                         s
                     }
-                    None => x,
+                    None => crate::value::viewed(x),
                 }
             };
             SET_VECTOR_ELT(out, k as R_xlen_t, value);
@@ -856,26 +865,35 @@ pub(crate) fn assemble(
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_new_value(fields: Robj, type_name: &str, variant: &str) -> Result<Robj> {
-    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry().snapshot();
-    if docs.find(&q).is_none() {
-        return problems(&[ValueError {
-            code: "type_unregistered",
-            path: String::new(),
-            rule: None,
-            rule_index: None,
-            message: format!("`{q}` is not registered"),
-            diagnosis: None,
-            ..Default::default()
-        }]);
-    }
-    let x = unsafe { fields.get() };
-    let errors = with_cache(|cache| validate_access(RView::Draft(x, variant), &q, &*docs, cache));
-    if !errors.is_empty() {
-        return problems(&errors);
-    }
-    assemble(x, &q, variant, &*docs)
+fn r8_new_value(
+    fields: Robj,
+    type_name: crate::utf8::Utf8,
+    variant: crate::utf8::Utf8,
+) -> Result<Robj> {
+    crate::interrupt::interruptible(unsafe { fields.get() }, || {
+        let type_name: &str = &type_name;
+        let variant: &str = &variant;
+        let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+        let docs = registry().snapshot();
+        if docs.find(&q).is_none() {
+            return problems(&[ValueError {
+                code: "type_unregistered",
+                path: String::new(),
+                rule: None,
+                rule_index: None,
+                message: format!("`{q}` is not registered"),
+                diagnosis: None,
+                ..Default::default()
+            }]);
+        }
+        let x = unsafe { fields.get() };
+        let errors =
+            with_cache(|cache| validate_access(RView::Draft(x, variant), &q, &*docs, cache));
+        if !errors.is_empty() {
+            return problems(&errors);
+        }
+        assemble(x, &q, variant, &*docs)
+    })
 }
 
 /// `list(errors = <problems>)` with the class `r8_problems`, which no R8
@@ -896,8 +914,11 @@ pub(crate) fn problems(errors: &[ValueError]) -> Result<Robj> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
-    replace_fields(&x, &[(name, unsafe { value.get() })])
+fn r8_set_field(x: Robj, name: crate::utf8::Utf8, value: Robj) -> Result<Robj> {
+    crate::interrupt::interruptible(unsafe { value.get() }, || {
+        let name: &str = &name;
+        replace_fields(&x, &[(name, unsafe { value.get() })])
+    })
 }
 
 /// Replaces the fields `names` of the R8 value `x` with the elements of
@@ -913,36 +934,38 @@ fn r8_set_field(x: Robj, name: &str, value: Robj) -> Result<Robj> {
 /// @noRd
 #[extendr]
 fn r8_set_fields(x: Robj, names: Robj, values: Robj) -> Result<Robj> {
-    let (ns, vs) = unsafe { (names.get(), values.get()) };
-    let fields: Option<Vec<_>> = strings(ns).into_iter().collect();
-    let Some(fields) = fields.filter(|_| sexptype(ns) == SEXPTYPE::STRSXP) else {
-        return Ok(().into());
-    };
-    let distinct = fields
-        .iter()
-        .enumerate()
-        .all(|(i, f)| !fields[..i].contains(f));
-    let given = attr(vs, sym_names());
-    let named = is_null(given)
-        || strings(given).len() == fields.len()
-            && strings(given)
-                .iter()
-                .zip(&fields)
-                .all(|(g, f)| g.as_ref() == Some(f));
-    if !distinct
-        || !named
-        || sexptype(vs) != SEXPTYPE::VECSXP
-        || !is_null(attr(vs, sym_class()))
-        || xlen(vs) != fields.len()
-    {
-        return Ok(().into());
-    }
-    let changes: Vec<(&str, SEXP)> = fields
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (&**f, unsafe { VECTOR_ELT(vs, i as R_xlen_t) }))
-        .collect();
-    replace_fields(&x, &changes)
+    crate::interrupt::interruptible(unsafe { values.get() }, || {
+        let (ns, vs) = unsafe { (names.get(), values.get()) };
+        let fields: Option<Vec<_>> = strings(ns).into_iter().collect();
+        let Some(fields) = fields.filter(|_| sexptype(ns) == SEXPTYPE::STRSXP) else {
+            return Ok(().into());
+        };
+        let distinct = fields
+            .iter()
+            .enumerate()
+            .all(|(i, f)| !fields[..i].contains(f));
+        let given = attr(vs, sym_names());
+        let named = is_null(given)
+            || strings(given).len() == fields.len()
+                && strings(given)
+                    .iter()
+                    .zip(&fields)
+                    .all(|(g, f)| g.as_ref() == Some(f));
+        if !distinct
+            || !named
+            || sexptype(vs) != SEXPTYPE::VECSXP
+            || !is_null(attr(vs, sym_class()))
+            || xlen(vs) != fields.len()
+        {
+            return Ok(().into());
+        }
+        let changes: Vec<(&str, SEXP)> = fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (&**f, unsafe { VECTOR_ELT(vs, i as R_xlen_t) }))
+            .collect();
+        replace_fields(&x, &changes)
+    })
 }
 
 /// A new value of the R8 value `x` with each field of `changes` replaced: the
@@ -1123,7 +1146,7 @@ fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
                 created.push(r);
                 s
             }
-            None => vs,
+            None => crate::value::viewed(vs),
         };
         stored.push((k, s));
     }
@@ -1269,7 +1292,8 @@ fn reading_rule_errors(
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_type_ancestors(type_name: &str) -> Result<List> {
+fn r8_type_ancestors(type_name: crate::utf8::Utf8) -> Result<List> {
+    let type_name: &str = &type_name;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry().snapshot();
     let parent = match docs.find(&q) {

@@ -358,19 +358,26 @@ fn problems_of(p: Problem) -> List {
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn r8_declare(
-    kind: &str,
-    name: &str,
-    description: &str,
+    kind: crate::utf8::Utf8,
+    name: crate::utf8::Utf8,
+    description: crate::utf8::Utf8,
     version: i32,
-    tag: &str,
+    tag: crate::utf8::Utf8,
     members: Robj,
     rules: Robj,
-    namespace: &str,
-    package: &str,
-    parent: &str,
+    namespace: crate::utf8::Utf8,
+    package: crate::utf8::Utf8,
+    parent: crate::utf8::Utf8,
     defaults: Robj,
     parent_formals: Robj,
 ) -> extendr_api::Result<List> {
+    let kind: &str = &kind;
+    let name: &str = &name;
+    let description: &str = &description;
+    let tag: &str = &tag;
+    let namespace: &str = &namespace;
+    let package: &str = &package;
+    let parent: &str = &parent;
     let owner = crate::declare::claim_namespace(namespace, package)?;
     let empty = || {
         list!(
@@ -707,12 +714,15 @@ fn has_json_form(ty: &FieldType, default: SEXP) -> bool {
 /// @noRd
 #[extendr]
 fn r8_params_ir(
-    names: Vec<String>,
+    names: crate::utf8::Utf8s,
     types: Robj,
     constants: Robj,
-    texts: Vec<String>,
-    dispatch: Vec<String>,
+    texts: crate::utf8::Utf8s,
+    dispatch: crate::utf8::Utf8s,
 ) -> extendr_api::Result<Robj> {
+    let names: Vec<String> = names.to_vec();
+    let texts: Vec<String> = texts.to_vec();
+    let dispatch: Vec<String> = dispatch.to_vec();
     use rtemis_r8::ir::{HostDefault, Param, ParamDef};
     let snapshot = crate::declare::snapshot()?;
     let lookup = &*snapshot;

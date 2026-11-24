@@ -461,7 +461,7 @@ type_matrix <- function(type = NULL, nrow = NULL, ncol = NULL, of = NULL) {
       class = "r8_declaration_error"
     )
   }
-  declared(r8_ft_matrix(type, nrow, ncol, NULL, FALSE))
+  declared(r8_ft_matrix(type, nrow, ncol, NULL, "matrix"))
 } # /R8::type_matrix
 
 
@@ -514,7 +514,7 @@ struct_columns <- function(kind, of, fn, alone) {
 #'
 #' @export
 type_array <- function(type, dim = NULL) {
-  declared(r8_ft_matrix(type, NULL, NULL, dim, FALSE))
+  declared(r8_ft_matrix(type, NULL, NULL, dim, "array"))
 } # /R8::type_array
 
 
@@ -535,7 +535,7 @@ type_array <- function(type, dim = NULL) {
 #'
 #' @export
 type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
-  declared(r8_ft_matrix(type, nrow, ncol, NULL, TRUE))
+  declared(r8_ft_matrix(type, nrow, ncol, NULL, "sparse_matrix"))
 } # /R8::type_sparse_matrix
 
 

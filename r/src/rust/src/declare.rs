@@ -54,9 +54,8 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
     // `json_ir()`: JSON text spliced into the IR as written.
     // `int64()`: an integer beyond 2^53, as its decimal digits.
     if x.inherits("r8_int64") {
-        let text = x
-            .as_str()
-            .ok_or_else(|| fail(format!("{path}: int64() holds one string")))?;
+        let text =
+            crate::utf8::one(x).ok_or_else(|| fail(format!("{path}: int64() holds one string")))?;
         return text
             .parse::<i64>()
             .map(Value::from)
@@ -64,10 +63,9 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
             .map_err(|_| fail(format!("{path}: int64() holds the digits of one integer")));
     }
     if x.inherits("r8_json_ir") {
-        let text = x
-            .as_str()
+        let text = crate::utf8::one(x)
             .ok_or_else(|| fail(format!("{path}: json_ir() holds one string")))?;
-        return serde_json::from_str(text)
+        return serde_json::from_str(&text)
             .map_err(|e| fail(format!("{path}: the text of json_ir() is not JSON: {e}")));
     }
     match x.rtype() {
@@ -104,23 +102,20 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
         }
         Rtype::Strings => {
             let mut out = Vec::new();
-            for s in x.as_str_iter().into_iter().flatten() {
-                if s.is_na() {
+            for s in crate::utf8::all(x).unwrap_or_default() {
+                let Some(s) = s else {
                     return Err(fail(format!("{path}: a declaration holds no NA")));
-                }
+                };
                 out.push(Value::from(s));
             }
             Ok(scalar_or_array(out))
         }
         Rtype::List => {
             let list = x.as_list().unwrap();
-            let named = x
-                .names()
-                .map(|n| n.into_iter().any(|s| !s.is_empty()))
-                .unwrap_or(false);
-            if named {
+            let names = crate::utf8::names(x).filter(|n| n.iter().any(|s| !s.is_empty()));
+            if let Some(names) = names {
                 let mut m = Map::new();
-                for (k, v) in list.iter() {
+                for (k, v) in names.iter().zip(list.values()) {
                     m.insert(k.to_string(), to_json(&v, &format!("{path}/{k}"))?);
                 }
                 Ok(Value::Object(m))
@@ -161,7 +156,8 @@ fn r8_ir_json(x: Robj) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_json_parse(json: &str) -> Result<Robj> {
+fn r8_json_parse(json: crate::utf8::Utf8) -> Result<Robj> {
+    let json: &str = &json;
     let v: Value = serde_json::from_str(json).map_err(|e| fail(format!("not JSON: {e}")))?;
     Ok(from_json(&v))
 }
@@ -199,7 +195,8 @@ fn from_json(v: &Value) -> Robj {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_canonical_json(json: &str) -> Result<String> {
+fn r8_canonical_json(json: crate::utf8::Utf8) -> Result<String> {
+    let json: &str = &json;
     let v: Value = serde_json::from_str(json).map_err(|e| fail(format!("not JSON: {e}")))?;
     Ok(canonical_text(&v))
 }
@@ -216,7 +213,8 @@ fn r8_canonical_json(json: &str) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_type(ir: Robj, namespace: &str) -> Result<List> {
+fn r8_declare_type(ir: Robj, namespace: crate::utf8::Utf8) -> Result<List> {
+    let namespace: &str = &namespace;
     let def: TypeDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
     declare_type(def, namespace).map(|(p, _)| p)
@@ -246,7 +244,8 @@ pub(crate) fn declare_type(def: TypeDef, namespace: &str) -> Result<(List, Vec<S
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_type_schema(name: &str, closed: bool) -> Result<String> {
+fn r8_type_schema(name: crate::utf8::Utf8, closed: bool) -> Result<String> {
+    let name: &str = &name;
     let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
     let docs = registry().snapshot();
     if rtemis_r8::rules::TypeLookup::find(&*docs, &q).is_none() {
@@ -265,7 +264,8 @@ fn r8_type_schema(name: &str, closed: bool) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_stale_types(namespaces: Vec<String>) -> Vec<String> {
+fn r8_stale_types(namespaces: crate::utf8::Utf8s) -> Vec<String> {
+    let namespaces: Vec<String> = namespaces.to_vec();
     use rtemis_r8::rules::TypeLookup;
     let docs = registry().snapshot();
     let within = |q: &QualifiedName| namespaces.iter().any(|n| n == q.namespace.as_str());
@@ -284,7 +284,8 @@ fn r8_stale_types(namespaces: Vec<String>) -> Vec<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_type_document(name: &str) -> Result<String> {
+fn r8_type_document(name: crate::utf8::Utf8) -> Result<String> {
+    let name: &str = &name;
     let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
     let reg = registry().snapshot();
     let def = rtemis_r8::rules::TypeLookup::find(&*reg, &q)
@@ -317,7 +318,8 @@ pub(crate) fn problems_list(problems: &[rtemis_r8::ir::DeclError]) -> List {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_trait(ir: Robj, namespace: &str) -> Result<List> {
+fn r8_declare_trait(ir: Robj, namespace: crate::utf8::Utf8) -> Result<List> {
+    let namespace: &str = &namespace;
     let def: rtemis_r8::ir::TraitDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
     declare_trait(def, namespace)
@@ -343,7 +345,8 @@ pub(crate) fn declare_trait(def: rtemis_r8::ir::TraitDef, namespace: &str) -> Re
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_impl(ir: Robj, namespace: &str) -> Result<()> {
+fn r8_declare_impl(ir: Robj, namespace: crate::utf8::Utf8) -> Result<()> {
+    let namespace: &str = &namespace;
     let def: rtemis_r8::ir::ImplDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the impl does not read: {e}")))?;
     declare_impl(def, namespace)
@@ -377,7 +380,9 @@ pub(crate) fn declare_impl(def: rtemis_r8::ir::ImplDef, namespace: &str) -> Resu
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_claim_namespace(namespace: &str, package: &str) -> Result<String> {
+fn r8_claim_namespace(namespace: crate::utf8::Utf8, package: crate::utf8::Utf8) -> Result<String> {
+    let namespace: &str = &namespace;
+    let package: &str = &package;
     claim_namespace(namespace, package)
 }
 
@@ -394,7 +399,8 @@ pub(crate) fn claim_namespace(namespace: &str, package: &str) -> Result<String> 
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_package_namespaces(package: &str) -> Result<Vec<String>> {
+fn r8_package_namespaces(package: crate::utf8::Utf8) -> Result<Vec<String>> {
+    let package: &str = &package;
     Ok(registry().namespaces_of(package))
 }
 
@@ -490,7 +496,13 @@ fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_dispatch_select(trait_name: &str, types: Robj, chains: List, above: Robj) -> Result<Robj> {
+fn r8_dispatch_select(
+    trait_name: crate::utf8::Utf8,
+    types: Robj,
+    chains: List,
+    above: Robj,
+) -> Result<Robj> {
+    let trait_name: &str = &trait_name;
     use rtemis_r8::ir::dispatch::{Arg, Selection, select};
     use rtemis_r8::rules::TypeLookup;
     let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
@@ -504,23 +516,27 @@ fn r8_dispatch_select(trait_name: &str, types: Robj, chains: List, above: Robj) 
             .into_iter()
             .map(|(_, i)| i)
             .collect();
-    let strings = types
-        .as_str_iter()
-        .ok_or_else(|| fail("`types` is character"))?;
+    let strings = crate::utf8::all(&types).ok_or_else(|| fail("`types` is character"))?;
     let args: Vec<Arg> = strings
+        .into_iter()
         .zip(chains.values())
         .map(|(s, chain)| match s {
-            s if s.is_na() => chain.as_str_vector().map_or(Arg::Other, |c| {
-                Arg::Classes(c.into_iter().map(str::to_string).collect())
+            None => crate::utf8::all(&chain).map_or(Arg::Other, |c| {
+                Arg::Classes(c.into_iter().flatten().collect())
             }),
-            s => QualifiedName::parse(s).map_or(Arg::Other, Arg::Type),
+            Some(s) => QualifiedName::parse(&s).map_or(Arg::Other, Arg::Type),
         })
         .collect();
-    let above = match above.as_str_vector() {
+    let above = match crate::utf8::all(&above) {
         Some(v) => Some(
             impls
                 .iter()
-                .position(|i| tuple_strings(i, arity) == v)
+                .position(|i| {
+                    tuple_strings(i, arity)
+                        .iter()
+                        .map(Some)
+                        .eq(v.iter().map(Option::as_ref))
+                })
                 .ok_or_else(|| fail("the running impl is not registered"))?,
         ),
         None => None,
@@ -582,7 +598,8 @@ fn r8_dispatch_select(trait_name: &str, types: Robj, chains: List, above: Robj) 
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_dispatch_ambiguities(trait_name: &str) -> Result<Robj> {
+fn r8_dispatch_ambiguities(trait_name: crate::utf8::Utf8) -> Result<Robj> {
+    let trait_name: &str = &trait_name;
     let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
     let docs = snapshot()?;
     let (arity, found) = trait_impls(&docs, &tr)?;
@@ -620,7 +637,8 @@ fn r8_dispatch_ambiguities(trait_name: &str) -> Result<Robj> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_namespace_owner(namespace: &str) -> Result<String> {
+fn r8_namespace_owner(namespace: crate::utf8::Utf8) -> Result<String> {
+    let namespace: &str = &namespace;
     Ok(registry().owner(namespace).unwrap_or_default())
 }
 
@@ -632,7 +650,8 @@ fn r8_namespace_owner(namespace: &str) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_type_ir(name: &str) -> Result<Robj> {
+fn r8_type_ir(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
     let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
     let reg = registry().snapshot();
     let def = rtemis_r8::rules::TypeLookup::find(&*reg, &q)
@@ -692,7 +711,8 @@ pub(crate) fn type_record(q: &QualifiedName) -> Result<Vec<u8>> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_is_registered(name: &str) -> bool {
+fn r8_is_registered(name: crate::utf8::Utf8) -> bool {
+    let name: &str = &name;
     QualifiedName::parse(name)
         .is_ok_and(|q| rtemis_r8::rules::TypeLookup::find(&*registry().snapshot(), &q).is_some())
 }
@@ -712,7 +732,8 @@ fn r8_is_registered(name: &str) -> bool {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_records(records: List, source: &str, check: bool) -> Result<List> {
+fn r8_declare_records(records: List, source: crate::utf8::Utf8, check: bool) -> Result<List> {
+    let source: &str = &source;
     use rtemis_r8::record;
     let from = if source.is_empty() {
         "a type object".to_string()
@@ -782,7 +803,8 @@ fn find_trait<'a>(reg: &'a DocumentSet, name: &str) -> Result<&'a rtemis_r8::ir:
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_trait_record(name: &str) -> Result<Robj> {
+fn r8_trait_record(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
     use rtemis_r8::record::{self, DeclarationRef};
     let reg = registry().snapshot();
     let t = find_trait(&reg, name)?;
@@ -802,7 +824,8 @@ fn r8_trait_record(name: &str) -> Result<Robj> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_impl_record(ir: Robj, namespace: &str) -> Result<Robj> {
+fn r8_impl_record(ir: Robj, namespace: crate::utf8::Utf8) -> Result<Robj> {
+    let namespace: &str = &namespace;
     use rtemis_r8::record::{self, DeclarationRef};
     let def: rtemis_r8::ir::ImplDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the impl does not read: {e}")))?;
@@ -819,7 +842,8 @@ fn r8_impl_record(ir: Robj, namespace: &str) -> Result<Robj> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_trait_ir(name: &str) -> Result<Robj> {
+fn r8_trait_ir(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
     let reg = registry().snapshot();
     let t = find_trait(&reg, name)?;
     crate::irser::to_r(t).map_err(|e| fail(e.to_string()))
@@ -891,8 +915,8 @@ fn r8_variant_problem(has_of: bool, has_fields: bool, has_rules: bool) -> String
 /// @noRd
 #[extendr]
 fn r8_name_problem(x: Robj) -> String {
-    match x.as_str() {
-        Some(s) if x.len() == 1 && !x.is_na() => match Name::new(s) {
+    match crate::utf8::one(&x) {
+        Some(s) => match Name::new(s) {
             Ok(_) => String::new(),
             Err(e) => e.to_string(),
         },

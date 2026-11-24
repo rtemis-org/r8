@@ -67,7 +67,13 @@ fn encode_with_runtime(
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<List> {
+fn r8_new_value_json(
+    fields: Robj,
+    type_name: crate::utf8::Utf8,
+    variant: crate::utf8::Utf8,
+) -> Result<List> {
+    let type_name: &str = &type_name;
+    let variant: &str = &variant;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = crate::declare::snapshot()?;
     let docs: &DocumentSet = &docs;
@@ -91,7 +97,9 @@ fn r8_new_value_json(fields: Robj, type_name: &str, variant: &str) -> Result<Lis
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
+fn r8_document_identity(text: crate::utf8::Utf8, type_name: crate::utf8::Utf8) -> Result<List> {
+    let text: &str = &text;
+    let type_name: &str = &type_name;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry().snapshot();
     let docs: &DocumentSet = &docs;
@@ -114,7 +122,8 @@ fn r8_document_identity(text: &str, type_name: &str) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declaration_hash(type_name: &str) -> Result<String> {
+fn r8_declaration_hash(type_name: crate::utf8::Utf8) -> Result<String> {
+    let type_name: &str = &type_name;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let docs = registry().snapshot();
     Ok(rtemis_r8::canonical::declaration_hash(&q, &*docs))
@@ -132,7 +141,15 @@ fn r8_declaration_hash(type_name: &str) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_any_value(fields: List, type_name: &str, variant: &str, declaration: &str) -> Result<Robj> {
+fn r8_any_value(
+    fields: List,
+    type_name: crate::utf8::Utf8,
+    variant: crate::utf8::Utf8,
+    declaration: crate::utf8::Utf8,
+) -> Result<Robj> {
+    let type_name: &str = &type_name;
+    let variant: &str = &variant;
+    let declaration: &str = &declaration;
     let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
     let variant = (!variant.is_empty()).then_some(variant);
     let text = if declaration.is_empty() {

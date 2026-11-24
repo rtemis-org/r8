@@ -48,6 +48,7 @@ pub mod layout;
 pub mod name;
 mod open;
 pub mod problem;
+pub mod progress;
 pub mod reader;
 pub mod record;
 pub mod refine;

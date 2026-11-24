@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 35 files of 291 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 36 files of 298 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -12,7 +12,7 @@ What each feature does, in 35 files of 291 tests. The runtime has its own tests 
 | `test-102-rules.R` | Rules: conditions that a value as a whole satisfies, such as lo <= hi. | 11 |
 | `test-103-extends.R` | Structs that extend another struct. | 5 |
 | `test-104-dyn.R` | Fields that hold a value of any type that implements a trait, dyn(Trait), or of any struct that extends another, subtype(Struct). | 7 |
-| `test-111-construct.R` | Construction from R objects, checked against an independent path. | 12 |
+| `test-111-construct.R` | Construction from R objects, checked against an independent path. | 13 |
 | `test-112-values.R` | Values: construction, the read and the write of a field, documents, equality, and hashes. | 14 |
 | `test-113-fields.R` | Several fields replaced at once, x[names] <- list(...), with one check of the rules between them. | 5 |
 | `test-114-variant.R` | The name of an enum value's variant, and the test of one. | 4 |
@@ -36,6 +36,7 @@ What each feature does, in 35 files of 291 tests. The runtime has its own tests 
 | `test-133-integrate.R` | The text of values in documents and notebooks: knitr, repr, and pillar. | 5 |
 | `test-134-conformance.R` | The same behavior of a type with fields of every kind, stored by R and by Rust. | 1 |
 | `test-135-rds.R` | Files with a checksum: `r8_save_rds()` and `r8_read_rds()`. | 3 |
+| `test-136-sharing.R` | What a value shares with the code around it: a vector or a data frame given, and what a read gives, are not copied, and R's own functions and data.table's change no value. | 6 |
 | `test-141-generate.R` | The R declarations that R8 writes for types declared in Rust. | 13 |
 | `test-142-public.R` | The examples of the help pages and the test packages use R8's functions, and none of its internals. | 2 |
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
@@ -46,7 +47,7 @@ What each feature does, in 35 files of 291 tests. The runtime has its own tests 
 
 ## Scenarios
 
-What happens to a user: 58 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
+What happens to a user: 62 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
 
 ### A. One session: a user declares a type again at the console
 
@@ -132,7 +133,11 @@ What happens to a user: 58 scenarios, of which 1 are open, since what R8 is to d
 | F3 | a value whose fields or class R code changed is not written or compared | A user changes a field of a value, its class, or its attributes with R's own functions. | The value is written to a file or compared as a valid one, or as a value of another type. | A list in place of the value is an error, and a class that R code gives a value changes nothing that R8 reads. | one session |
 | F4 | R's functions that change a vector are refused on a value | A user calls names<-, length<-, or an assignment by position on a value. | A field is renamed, dropped, or replaced without a check. | Each is an error, and the value is as it was. | one session |
 | F5 | a saved value of Rust whose bytes are damaged is an error | A file that holds a value of a type whose values Rust holds is damaged in the bytes that the Rust code wrote. Damage to R's own part of a file is R's to find. | The Rust code reads past the bytes, and R crashes. | Reading the value is an error, or gives a value that R8 checks. | installed packages |
-| F7 | a value that nests too deep is an error | A user builds a chain of values, each a field of the next, or puts a list of many levels into a field of JSON, as a recursive function or a parser may give it. | Each walk of the value takes a part of the stack per level, and the session ends. | The value is refused with the limit, which every JSON parser reads, and with what holds a longer chain. A chain within the limit is printed, hashed, compared, written, and read. | one session |
-| F8 | a declaration without end, or that nests too deep, is an error | A user gives a field of a recursive type a default that leaves the field to its default, or builds a type by wrapping it many times. | The first value, or the declaration itself, ends the session. | The declaration is refused, with the field and what to change. | one session |
-| F9 | a method that calls itself without end is an error | A user's format, print, or generic method calls itself on the same value. | The calls go through R8's compiled code, and the session ends. | R's own error of a recursion without end, and R8 works afterwards. | one session |
+| F6 | a value that nests too deep is an error | A user builds a chain of values, each a field of the next, or puts a list of many levels into a field of JSON, as a recursive function or a parser may give it. | Each walk of the value takes a part of the stack per level, and the session ends. | The value is refused with the limit, which every JSON parser reads, and with what holds a longer chain. A chain within the limit is printed, hashed, compared, written, and read. | one session |
+| F7 | a declaration without end, or that nests too deep, is an error | A user gives a field of a recursive type a default that leaves the field to its default, or builds a type by wrapping it many times. | The first value, or the declaration itself, ends the session. | The declaration is refused, with the field and what to change. | one session |
+| F8 | a method that calls itself without end is an error | A user's format, print, or generic method calls itself on the same value. | The calls go through R8's compiled code, and the session ends. | R's own error of a recursion without end, and R8 works afterwards. | one session |
+| F9 | a text in another encoding is translated, or refused where it cannot be | A user reads a file that was written in Latin-1, or cuts a string inside a character, and gives it to a field, a document, or the name of a variant. | The bytes are taken for UTF-8: the session ends, or the text is stored, hashed, and written with other letters. | A text that R marks as Latin-1 is translated, and has the hash and the document of the same text in UTF-8. Bytes that are no text are an error that gives the position and what reads the file. | one session |
+| F10 | a long call ends when a time limit is reached | A user sets a time limit, or interrupts, while R8 checks, hashes, or writes a value of hundreds of thousands of values. | The call goes on to its end, whatever the user does. | The call ends with an error that says why, and R8 works afterwards. | one session |
+| F11 | data.table changes no value, whether the table was given or read | A user gives a data.table to a field, and turns a table that a field gives into a data.table. The user then changes both in place. | The value changes without a check, and holds what its type refuses. | The value is as it was: the columns of a data.table given are copied, and a data.table made from what a field gives has columns of its own. | one session |
+| F12 | a vector that data.table changes in place is found on demand | A user gives a data frame to a field, turns that data frame into a data.table with setDT(), and changes a column in place. Or the user calls set() on the data frame that a field gives. | The value changes without a check: the vectors are shared, since a copy of each would double the memory, and data.table does not ask R before it changes one. | The value holds the change, and r8_validate() reports it. A large data.table that is changed in place is held in a field of host_class(), which R8 does not check, and r8_check() checks it against a type where the code asks. | one session |
 

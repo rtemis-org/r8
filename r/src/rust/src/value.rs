@@ -31,6 +31,7 @@ static ID: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static FIELDS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static VALUE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static FIT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static VIEWED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// The elements of an identity (`value.c`).
 const ID_TYPE: isize = 0;
@@ -44,9 +45,9 @@ const ID_STAMP: isize = 6;
 ///
 /// # Safety
 ///
-/// `identity`, `held`, `id`, `fields`, `value`, and `fit` are `r8_identity()`,
-/// `r8_held_identity()`, `r8_value_id()`, `r8_value_fields()`, `r8_value_new()`,
-/// and `r8_fields_fit()`.
+/// `identity`, `held`, `id`, `fields`, `value`, `fit`, and `viewed` are
+/// `r8_identity()`, `r8_held_identity()`, `r8_value_id()`, `r8_value_fields()`,
+/// `r8_value_new()`, `r8_fields_fit()`, and `r8_field_viewed()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_set_value_functions(
     identity: *mut (),
@@ -55,6 +56,7 @@ pub unsafe extern "C" fn r8_set_value_functions(
     fields: *mut (),
     value: *mut (),
     fit: *mut (),
+    viewed: *mut (),
 ) {
     IDENTITY.store(identity, Ordering::Release);
     HELD.store(held, Ordering::Release);
@@ -62,6 +64,7 @@ pub unsafe extern "C" fn r8_set_value_functions(
     FIELDS.store(fields, Ordering::Release);
     VALUE.store(value, Ordering::Release);
     FIT.store(fit, Ordering::Release);
+    VIEWED.store(viewed, Ordering::Release);
 }
 
 fn loaded(f: &AtomicPtr<()>) -> *mut () {
@@ -113,6 +116,13 @@ pub(crate) fn names_of(id: SEXP) -> SEXP {
 /// value, and `x` itself for any other object.
 pub(crate) fn fields(x: SEXP) -> SEXP {
     let f: unsafe extern "C" fn(SEXP) -> SEXP = unsafe { std::mem::transmute(loaded(&FIELDS)) };
+    unsafe { f(x) }
+}
+
+/// The vector that `x` views, for a view that a read of a field gave (`field.c`),
+/// and `x` for any other object.
+pub(crate) fn viewed(x: SEXP) -> SEXP {
+    let f: unsafe extern "C" fn(SEXP) -> SEXP = unsafe { std::mem::transmute(loaded(&VIEWED)) };
     unsafe { f(x) }
 }
 
@@ -717,20 +727,23 @@ fn updated(
 /// @noRd
 #[extendr]
 fn r8_updated_value(x: Robj) -> Result<List> {
-    let xs = unsafe { x.get() };
-    let docs = crate::declare::registry().snapshot();
-    // A field read of a Rust-stored value may raise an R error.
-    let read =
-        crate::rust_stored::guarded(|| updated(xs, &docs, 2 * rtemis_r8::validate::MAX_NESTING));
-    Ok(match read {
-        None => list!(message = "its fields do not read"),
-        Some(Ok(None)) => list!(value = x),
-        Some(Ok(Some(v))) => list!(value = v),
-        Some(Err(Refused::Deep(message))) => list!(message = message, code = "too_deep"),
-        Some(Err(Refused::Other(message))) => list!(message = message),
-        Some(Err(Refused::Invalid(ty, errors))) => {
-            list!(errors = crate::values::errors_list(&errors), of = ty)
-        }
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let docs = crate::declare::registry().snapshot();
+        // A field read of a Rust-stored value may raise an R error.
+        let read = crate::rust_stored::guarded(|| {
+            updated(xs, &docs, 2 * rtemis_r8::validate::MAX_NESTING)
+        });
+        Ok(match read {
+            None => list!(message = "its fields do not read"),
+            Some(Ok(None)) => list!(value = x),
+            Some(Ok(Some(v))) => list!(value = v),
+            Some(Err(Refused::Deep(message))) => list!(message = message, code = "too_deep"),
+            Some(Err(Refused::Other(message))) => list!(message = message),
+            Some(Err(Refused::Invalid(ty, errors))) => {
+                list!(errors = crate::values::errors_list(&errors), of = ty)
+            }
+        })
     })
 }
 

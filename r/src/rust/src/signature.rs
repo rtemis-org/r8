@@ -504,35 +504,37 @@ fn errors_of(x: SEXP, ty: &FieldType, docs: &DocumentSet, name: Option<&str>) ->
 /// @noRd
 #[extendr]
 fn r8_check_args(key: Robj, values: Robj) -> Result<Robj> {
-    let sig = signature(unsafe { key.get() }).ok_or_else(no_signature)?;
-    let list = unsafe { values.get() };
-    let docs = crate::declare::registry().snapshot();
-    let checked: Vec<(&Slot, SEXP)> = sig
-        .slots
-        .iter()
-        .map(|s| (s, unsafe { VECTOR_ELT(list, s.at as isize) }))
-        .filter(|(s, x)| s.test.run(*x) == CHECK)
-        .collect();
-    let errors: Vec<ValueError> = checked
-        .iter()
-        .flat_map(|(s, x)| errors_of(*x, &s.ty, &docs, Some(&s.name)))
-        .collect();
-    if !errors.is_empty() {
-        return problems(&errors);
-    }
-    let mut out: Vec<Robj> = vec![Robj::from(()); sig.forced.len()];
-    let mut changed = false;
-    for (s, x) in checked {
-        s.test.admit(x);
-        if let Some(r) = normalize(x, &s.ty, &*docs)? {
-            out[s.at] = r;
-            changed = true;
+    crate::interrupt::interruptible(unsafe { values.get() }, || {
+        let sig = signature(unsafe { key.get() }).ok_or_else(no_signature)?;
+        let list = unsafe { values.get() };
+        let docs = crate::declare::registry().snapshot();
+        let checked: Vec<(&Slot, SEXP)> = sig
+            .slots
+            .iter()
+            .map(|s| (s, unsafe { VECTOR_ELT(list, s.at as isize) }))
+            .filter(|(s, x)| s.test.run(*x) == CHECK)
+            .collect();
+        let errors: Vec<ValueError> = checked
+            .iter()
+            .flat_map(|(s, x)| errors_of(*x, &s.ty, &docs, Some(&s.name)))
+            .collect();
+        if !errors.is_empty() {
+            return problems(&errors);
         }
-    }
-    Ok(if changed {
-        List::from_values(out).into()
-    } else {
-        ().into()
+        let mut out: Vec<Robj> = vec![Robj::from(()); sig.forced.len()];
+        let mut changed = false;
+        for (s, x) in checked {
+            s.test.admit(x);
+            if let Some(r) = normalize(x, &s.ty, &*docs)? {
+                out[s.at] = r;
+                changed = true;
+            }
+        }
+        Ok(if changed {
+            List::from_values(out).into()
+        } else {
+            ().into()
+        })
     })
 }
 
@@ -546,23 +548,26 @@ fn r8_check_args(key: Robj, values: Robj) -> Result<Robj> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_check_result(key: Robj, tuple: &str, value: Robj) -> Result<Robj> {
-    let sig = signature(unsafe { key.get() }).ok_or_else(no_signature)?;
-    let own = sig.narrowed.iter().find(|(k, _, _)| &**k == tuple);
-    let (ty, test) = match (own, &sig.returned) {
-        (Some((_, t, test)), _) | (None, Returned::Type(t, test)) => (t, test),
-        _ => return Ok(().into()),
-    };
-    let x = unsafe { value.get() };
-    let docs = crate::declare::registry().snapshot();
-    let errors = errors_of(x, ty, &docs, None);
-    if !errors.is_empty() {
-        return problems(&errors);
-    }
-    test.admit(x);
-    Ok(match normalize(x, ty, &*docs)? {
-        Some(r) => List::from_values([r]).into(),
-        None => ().into(),
+fn r8_check_result(key: Robj, tuple: crate::utf8::Utf8, value: Robj) -> Result<Robj> {
+    crate::interrupt::interruptible(unsafe { value.get() }, || {
+        let tuple: &str = &tuple;
+        let sig = signature(unsafe { key.get() }).ok_or_else(no_signature)?;
+        let own = sig.narrowed.iter().find(|(k, _, _)| &**k == tuple);
+        let (ty, test) = match (own, &sig.returned) {
+            (Some((_, t, test)), _) | (None, Returned::Type(t, test)) => (t, test),
+            _ => return Ok(().into()),
+        };
+        let x = unsafe { value.get() };
+        let docs = crate::declare::registry().snapshot();
+        let errors = errors_of(x, ty, &docs, None);
+        if !errors.is_empty() {
+            return problems(&errors);
+        }
+        test.admit(x);
+        Ok(match normalize(x, ty, &*docs)? {
+            Some(r) => List::from_values([r]).into(),
+            None => ().into(),
+        })
     })
 }
 
@@ -603,7 +608,9 @@ fn r8_type_notation(r#type: Robj) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_method_returns(trait_name: &str, method: &str) -> Result<List> {
+fn r8_method_returns(trait_name: crate::utf8::Utf8, method: crate::utf8::Utf8) -> Result<List> {
+    let trait_name: &str = &trait_name;
+    let method: &str = &method;
     let q = QualifiedName::parse(trait_name).map_err(|e| Error::Other(e.to_string()))?;
     let docs = crate::declare::registry().snapshot();
     let (tuple, ty): (Vec<String>, Vec<String>) = narrowed(&docs, &q, method)

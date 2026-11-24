@@ -84,6 +84,56 @@ r8_resolve <- function(x, context = list()) {
 } # /R8::r8_resolve
 
 
+# %% r8_check ----
+#' Check an object against a type
+#'
+#' Checks any R object against a field type or an R8 type, as a field of the type
+#' is checked: its form, its constraints, and, for a table, its rules. An object
+#' that a value holds by reference, such as a data.table of a field
+#' `host_class("data.table")`, whose content R8 does not check, is checked with it
+#' where the code needs it.
+#'
+#' @param x An object.
+#' @param type A field type, such as `type_table(...)` or `vec(type_double())`, or an
+#'   R8 type object.
+#'
+#' @return `x`, invisibly; an object that does not satisfy the type raises
+#'   `r8_value_error` with every problem.
+#'
+#' @examples
+#' Features <- type_table(columns = list(
+#'   age = column(type_double(min = 0)),
+#'   sex = column(type_factor(c("f", "m")))
+#' ), open = TRUE)
+#' r8_check(data.frame(age = c(40, 52), sex = factor(c("f", "m"))), Features)
+#' data <- data.frame(age = c(40, -1), sex = factor(c("f", "m")))
+#' try(r8_check(data, Features))
+#'
+#' @export
+r8_check <- function(x, type) {
+  name <- substitute(x)
+  name <- if (is.symbol(name)) as.character(name) else "x"
+  if (inherits(type, "r8_type")) {
+    ensure_registered(type)
+  } else if (!inherits(type, "r8_field_type")) {
+    r8_abort(
+      "`type` is a field type, such as type_table(), or an R8 type object.",
+      class = "r8_type_error"
+    )
+  }
+  res <- r8_check_object(x, type, name)
+  if (!is.null(res)) {
+    value_abort(
+      "Invalid",
+      name,
+      res[["errors"]],
+      inputs = stats::setNames(list(x), name)
+    )
+  }
+  invisible(x)
+} # /R8::r8_check
+
+
 # %% r8_validate ----
 #' Validate an R8 value
 #'

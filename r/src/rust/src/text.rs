@@ -86,7 +86,10 @@ fn int_vec(v: &Robj) -> Option<Vec<i32>> {
 pub(crate) fn str_vec(v: &Robj) -> Option<Vec<String>> {
     match v.rtype() {
         Rtype::Strings if v.len() == 0 => Some(Vec::new()),
-        Rtype::Strings => v.as_string_vector(),
+        // Text to show: a string that is no text shows replacement characters.
+        Rtype::Strings => {
+            crate::utf8::all(v).map(|s| s.into_iter().map(Option::unwrap_or_default).collect())
+        }
         _ => None,
     }
 }
@@ -540,9 +543,9 @@ fn style_from_r(role: &str, x: &Robj) -> Result<Style> {
         .dollar("color")
         .ok()
         .filter(|c| !c.is_null() && !c.is_na())
-        .and_then(|c| c.as_str())
+        .and_then(|c| crate::utf8::one(&c))
     {
-        Some(hex) => Some(Color::from_hex(hex).ok_or_else(|| {
+        Some(hex) => Some(Color::from_hex(&hex).ok_or_else(|| {
             fail(format!(
                 "the color of `{role}` is a hex code such as \"#6CA3A0\", not \"{hex}\""
             ))
@@ -624,8 +627,8 @@ fn r8_theme_table(overrides: List) -> Result<List> {
         let mut style = theme.style(role);
         for (member, v) in l.iter() {
             match member {
-                "color" => style.color = match v.as_str().filter(|_| !v.is_na()) {
-                    Some(hex) => Some(Color::from_hex(hex).ok_or_else(|| {
+                "color" => style.color = match crate::utf8::one(&v) {
+                    Some(hex) => Some(Color::from_hex(&hex).ok_or_else(|| {
                         fail(format!(
                             "the color of `{name}` is a hex code such as \"#6CA3A0\", not \"{hex}\""
                         ))
@@ -705,12 +708,14 @@ fn r8_css_text(theme: Nullable<List>, named: Robj) -> Result<String> {
 #[extendr]
 fn r8_text_encode(
     text: List,
-    output_type: &str,
+    output_type: crate::utf8::Utf8,
     theme: Nullable<List>,
-    depth: &str,
+    depth: crate::utf8::Utf8,
     html_classes: bool,
     inline: bool,
 ) -> Result<String> {
+    let output_type: &str = &output_type;
+    let depth: &str = &depth;
     let t = text_from_r(&text)?;
     let theme = match theme {
         Nullable::NotNull(l) => theme_from_r(&l)?,
@@ -747,7 +752,7 @@ fn r8_text_encode(
 
 /// An output type named in a fact, or `None` for `NULL` or `""`.
 fn fact_type(facts: &List, name: &str) -> Result<Option<OutputType>> {
-    match facts.dollar(name).ok().and_then(|v| v.as_str().map(str::to_string)) {
+    match facts.dollar(name).ok().and_then(|v| crate::utf8::one(&v)) {
         None => Ok(None),
         Some(s) if s.is_empty() => Ok(None),
         Some(s) => OutputType::from_name(&s).map(Some).ok_or_else(|| {
@@ -776,11 +781,7 @@ fn r8_determine_output(facts: List) -> Result<Vec<String>> {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     };
-    let host = match facts
-        .dollar("host")
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-    {
+    let host = match facts.dollar("host").ok().and_then(|v| crate::utf8::one(&v)) {
         Some(h) if h == "positron" => HostKind::Positron,
         Some(h) if h == "rstudio" => HostKind::RStudio {
             console_color: false,

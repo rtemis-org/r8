@@ -435,6 +435,7 @@ impl<'l> Validator<'l, '_> {
     /// Checks a value of a field type. An absent value is reported as a
     /// missing value; callers handle absence where the type admits it.
     fn value<'a, A: Access<'a>>(&mut self, ft: &FieldType, v: A, path: &P) {
+        crate::progress::tick();
         match ft {
             FieldType::Vec { .. }
             | FieldType::BtreeMap { .. }
@@ -1157,7 +1158,7 @@ impl<'l> Validator<'l, '_> {
                 format!("shape {shape:?} differs from the declared {dim:?}"),
             );
         }
-        let n: u64 = shape.iter().product();
+        let n = shape.iter().fold(1u64, |n, &d| n.saturating_mul(d));
         let data = P::Raw(path, "/data");
         if d.len as u64 != n {
             return self.error(

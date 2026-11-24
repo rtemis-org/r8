@@ -83,6 +83,7 @@ impl Eq<'_> {
     }
 
     fn value<'a, A: Access<'a>>(&self, ft: &FieldType, a: A, b: A) -> bool {
+        crate::progress::tick();
         if a.same(b) {
             return true;
         }

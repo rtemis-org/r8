@@ -91,6 +91,11 @@
 - A value saved with an earlier R8 is read again from its source or its document.
 - `r8_to_json()` writes `$declarations`, the hash of what each declaration says about a value, and, with `declarations = TRUE`, the declarations themselves. `r8_from_json()` refuses a document of another declaration than the registered one, unless the declarations it holds give its fields the same meaning, or `declaration = "any"` is passed.
 - A value, a field type, and a rule's expression nest at most 100 levels (`too_deep`), and a default that holds itself is a declaration error (`default_recursive`).
+- A string in Latin-1 is translated to UTF-8 for documents, hashes, and equality; bytes that are no text are an error (`r_encoding`). `r8_from_json()` refuses an object that is not text.
+- A long validation, hash, comparison, or document ends at the user's interrupt and at R's time limits.
+- `type_array()` without `dim` takes an array of any number of dimensions.
+- A field read gives a vector as a view that R copies before it changes it, and a table as a data frame of its own, so that `setDT()`, `:=`, and `setattr()` on what a read gave leave the value as it is. The columns of a data.table given to a constructor are copied; vectors and data frames are not.
+- `r8_check(x, type)` checks any object against a field type or an R8 type.
 - `r8_save_rds()` and `r8_read_rds()` write and read an RDS file with a checksum: a damaged file is an `r8_file_error`.
 - `print()`, `format()`, and `str()` of a value show `<sensitive>` for a field declared `sensitive = TRUE`.
 - A constructor builds a default that is a value of another package's type from the registered declaration of that type.

@@ -23,11 +23,20 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
     c(
       "suppressPackageStartupMessages(library(r8pkgR))",
       "inspect <- function(x) utils::capture.output(.Internal(inspect(x, 0)))[1]",
-      "# A compact sequence is copied into Rust, whose memory the field views.",
+      "# A compact sequence is copied into Rust, whose memory a large field views.",
       "s <- Signal(name = 'a', values = as.numeric(1:3))",
       "cat('rust_stored', grepl('r8 rust-stored pkgr::Signal', inspect(s)), '\\n')",
       "v <- s$values",
-      "cat('view', grepl('r8 view', inspect(v)), v, '\\n')",
+      "cat('small', grepl('r8', inspect(v)), v, '\\n')",
+      "big <- Signal(name = 'a', values = as.numeric(seq_len(1e6)))",
+      "b <- big$values",
+      "cat('view', grepl('r8 view', inspect(b)), grepl('in place', inspect(b)), '\\n')",
+      "used <- function(f) { before <- gc(reset = TRUE)['Vcells', 'used']; f(); gc()['Vcells', 'max used'] - before < 5e5 }",
+      "cat('in_place', used(function() sum(big$values)), used(function() big$values[1:5]), '\\n')",
+      "o <- order(big$values)",
+      "cat('own_copy', grepl('in place', inspect(big$values)), '\\n')",
+      "w <- b; w[1] <- 99",
+      "cat('big_copy', w[1], big$values[1], R8::r8_hash(big) == R8::r8_hash(Signal(name = 'a', values = as.numeric(seq_len(1e6)))), '\\n')",
       "w <- v; w[1] <- 99",
       "cat('copy', w[1], s$values[1], '\\n')",
       "cat('equal', R8::r8_equal(s, Signal(name = 'a', values = c(1, 2, 3))), '\\n')",
@@ -48,7 +57,7 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
       "invisible(y$name); invisible(y$values)",
       "cat('str', utils::capture.output(str(y))[1], '\\n')",
       "rm(y)",
-      "rm(s, u, v, w, r, t, x); invisible(gc()); invisible(gc())",
+      "rm(s, u, v, w, r, t, x, b, big); invisible(gc()); invisible(gc())",
       "live <- function() R8:::r8_rust_stored_memory()[1]",
       "cat('dropped', live(), '\\n')",
       "peak <- 0",
@@ -58,7 +67,11 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
   )
   info <- paste(out, collapse = "\n")
   expect_true("rust_stored TRUE " %in% out, info = info)
-  expect_true("view TRUE 1 2 3 " %in% out, info = info)
+  expect_true("small FALSE 1 2 3 " %in% out, info = info)
+  expect_true("view TRUE TRUE " %in% out, info = info)
+  expect_true("in_place TRUE TRUE " %in% out, info = info)
+  expect_true("own_copy TRUE " %in% out, info = info)
+  expect_true("big_copy 99 1 TRUE " %in% out, info = info)
   expect_true("copy 99 1 " %in% out, info = info)
   expect_true("equal TRUE " %in% out, info = info)
   expect_true("hash TRUE " %in% out, info = info)

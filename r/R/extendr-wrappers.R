@@ -488,11 +488,11 @@ r8_ft_option <- function(type) .Call(wrap__r8_ft_option, type)
 #' @noRd
 r8_ft_map <- function(type, keys, ordered) .Call(wrap__r8_ft_map, type, keys, ordered)
 
-#' `type_matrix()`, `type_array()` (`dim`), and `type_sparse_matrix()`
-#' (`sparse = TRUE`).
+#' `type_matrix()`, `type_array()` (`dim`), and `type_sparse_matrix()`, as `kind`
+#' names them: `"matrix"`, `"array"`, and `"sparse_matrix"`.
 #' @keywords internal
 #' @noRd
-r8_ft_matrix <- function(type, nrow, ncol, dim, sparse) .Call(wrap__r8_ft_matrix, type, nrow, ncol, dim, sparse)
+r8_ft_matrix <- function(type, nrow, ncol, dim, kind) .Call(wrap__r8_ft_matrix, type, nrow, ncol, dim, kind)
 
 #' `rule()`: `invariant` and `when` are the unevaluated expressions;
 #' `message` and `id` are `NULL` or one string.
@@ -820,6 +820,16 @@ r8_value_hash <- function(x) .Call(wrap__r8_value_hash, x)
 #' @keywords internal
 #' @noRd
 r8_value_check <- function(x) .Call(wrap__r8_value_check, x)
+
+#' Validates an R object against a field type, in place.
+#'
+#' @param x Object.
+#' @param type An R8 field type or type object.
+#' @param name Character: The object, as a problem names it.
+#' @return `NULL`, or `list(errors = <problems>)`.
+#' @keywords internal
+#' @noRd
+r8_check_object <- function(x, type, name) .Call(wrap__r8_check_object, x, type, name)
 
 #' Writes an R8 value as a document, from the R objects in place.
 #'

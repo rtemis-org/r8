@@ -21,6 +21,10 @@
 .r8_c_names <- NULL
 .r8_c_require <- NULL
 
+# The native symbols of the C routines `get` and `fields`, which read fields.
+.r8_c_get <- NULL
+.r8_c_fields <- NULL
+
 
 # %% is_value ----
 #' Whether an object is an R8 value
@@ -902,7 +906,7 @@ new_dgc <- function(i, p, x, dim) {
 #' @name r8_value_fields
 #' @export
 `$.r8_value` <- function(x, name) {
-  v <- .subset2(x, name)
+  v <- .Call(.r8_c_get, x, name)
   if (is.null(v)) field_get(x, name) else v
 } # /R8::$.r8_value
 
@@ -917,7 +921,7 @@ new_dgc <- function(i, p, x, dim) {
       class = "r8_value_error"
     )
   }
-  v <- .subset2(x, i)
+  v <- .Call(.r8_c_get, x, i)
   if (is.null(v)) field_get(x, i) else v
 } # /R8::[[.r8_value
 
@@ -936,7 +940,7 @@ new_dgc <- function(i, p, x, dim) {
   if (any(unknown)) {
     unknown_field(x, i[unknown][[1L]])
   }
-  .subset(x, i)
+  .Call(.r8_c_fields, x, match(i, attr(x, "names", exact = TRUE)))
 } # /R8::[.r8_value
 
 
@@ -944,7 +948,7 @@ new_dgc <- function(i, p, x, dim) {
 #' @rdname r8_value_fields
 #' @export
 as.list.r8_value <- function(x, ...) {
-  .subset(x, attr(x, "names", exact = TRUE))
+  .Call(.r8_c_fields, x, NULL)
 } # /R8::as.list.r8_value
 
 
@@ -989,22 +993,21 @@ as.list.r8_value <- function(x, ...) {
 
 
 # %% field_get ----
-#' Read a field
+#' Read a field that the C routine `get` gives as `NULL`
 #'
 #' @param x An R8 value.
 #' @param name Character: The field name.
 #'
-#' @return The field's value.
+#' @return `NULL` for a field of `x`; an unknown name raises `r8_value_error`.
 #'
 #' @keywords internal
 #' @noRd
 field_get <- function(x, name) {
-  v <- .subset2(x, name)
   # `names()` dispatches; the attribute does not.
-  if (is.null(v) && is.na(match(name, attr(x, "names", exact = TRUE)))) {
+  if (is.na(match(name, attr(x, "names", exact = TRUE)))) {
     unknown_field(x, name)
   }
-  v
+  NULL
 } # /R8::field_get
 
 
@@ -1292,13 +1295,14 @@ r8_from_json <- function(type, json, load = NULL, declaration = "registered") {
       class = "r8_type_error"
     )
   }
+  json <- document_text(json)
   load_packages(load)
   ensure_registered(type)
   if (identical(attr(type, "r8_storage"), "rust")) {
     check_codec(attr(type, "r8_name"), attr(type, "r8_package") %||% "")
   }
   res <- r8_value_from_document(
-    paste(json, collapse = "\n"),
+    json,
     attr(type, "r8_name"),
     identical(declaration, "any")
   )
@@ -1314,6 +1318,36 @@ r8_from_json <- function(type, json, load = NULL, declaration = "registered") {
   }
   res[["value"]]
 } # /R8::r8_from_json
+
+
+# %% document_text ----
+#' The text of a document
+#'
+#' @param json Character: The document, or its lines.
+#'
+#' @return Character: One string, in UTF-8; another object, and a text that is not
+#'   valid UTF-8, raise `r8_type_error`.
+#'
+#' @keywords internal
+#' @noRd
+document_text <- function(json) {
+  if (!is.character(json) || anyNA(json)) {
+    r8_abort(
+      "`json` is the text of a document: one string, or its lines, such as ",
+      "readLines(file) gives.",
+      class = "r8_type_error"
+    )
+  }
+  json <- paste(enc2utf8(as.vector(json)), collapse = "\n")
+  if (!validUTF8(json)) {
+    r8_abort(
+      "`json` is not valid UTF-8. Read the file with its encoding, such as ",
+      "readLines(file, encoding = \"latin1\"), and pass the text to enc2utf8().",
+      class = "r8_type_error"
+    )
+  }
+  json
+} # /R8::document_text
 
 
 # %% declaration_hint ----

@@ -163,19 +163,37 @@ pub(crate) fn xlen(x: SEXP) -> usize {
     }
 }
 
-/// A string element of a character vector, `None` for `NA`. A string that
-/// is not valid UTF-8 is converted with replacement characters.
+/// A string element of a character vector, `None` for `NA`. A string that is no
+/// text is converted with replacement characters; the validator reports it.
 pub(crate) fn string_elt<'a>(x: SEXP, i: usize) -> Option<Cow<'a, str>> {
     unsafe {
         let c = STRING_ELT(x, i as R_xlen_t);
         if c == R_NaString {
             return None;
         }
-        let bytes = std::slice::from_raw_parts(R_CHAR(c) as *const u8, LENGTH(c) as usize);
-        Some(match std::str::from_utf8(bytes) {
-            Ok(s) => Cow::Borrowed(s),
-            Err(_) => Cow::Owned(String::from_utf8_lossy(bytes).into_owned()),
-        })
+        Some(crate::utf8::text(c).unwrap_or_else(|_| {
+            let bytes = std::slice::from_raw_parts(R_CHAR(c) as *const u8, LENGTH(c) as usize);
+            Cow::Owned(String::from_utf8_lossy(bytes).into_owned())
+        }))
+    }
+}
+
+/// The problem of a string that is no text.
+pub(crate) fn not_text(at: usize) -> Form {
+    Form::new(
+        "r_encoding",
+        format!(
+            "the string is not valid UTF-8 at byte {at}; {}",
+            crate::utf8::ADVICE
+        ),
+    )
+}
+
+/// The problem of the names, the levels, or the keys `x`, when one is no text.
+fn names_text(x: SEXP) -> Read<()> {
+    match crate::utf8::invalid(x) {
+        None => Ok(()),
+        Some((_, at)) => Err(not_text(at)),
     }
 }
 
@@ -330,6 +348,7 @@ pub(crate) fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usi
     let mut i = start;
     while i < end {
         let want = buf.len().min(end - i) as R_xlen_t;
+        crate::interrupt::tick_block();
         let got = unsafe { REAL_GET_REGION(p, i as R_xlen_t, want, buf.as_mut_ptr()) } as usize;
         if got == 0 {
             break;
@@ -361,6 +380,7 @@ pub(crate) fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usiz
     let mut i = start;
     while i < end {
         let want = buf.len().min(end - i) as R_xlen_t;
+        crate::interrupt::tick_block();
         let got = unsafe {
             if logical {
                 LOGICAL_GET_REGION(p, i as R_xlen_t, want, buf.as_mut_ptr())
@@ -776,7 +796,10 @@ impl<'a> Access<'a> for RView<'a> {
 
     fn character(self) -> Read<Cow<'a, str>> {
         let (x, i) = self.scalar(&FieldType::Character(Default::default()))?;
-        Ok(string_elt(x, i).unwrap_or(Cow::Borrowed("NA")))
+        match crate::utf8::text(unsafe { STRING_ELT(x, i as R_xlen_t) }) {
+            Ok(s) => Ok(s),
+            Err(at) => Err(not_text(at)),
+        }
     }
 
     fn date(self) -> Read<i64> {
@@ -898,6 +921,7 @@ impl<'a> Access<'a> for RView<'a> {
         if buf.is_empty() || start >= xlen(x) {
             return Some(0);
         }
+        crate::interrupt::tick_block();
         Some(unsafe {
             REAL_GET_REGION(
                 x,
@@ -916,6 +940,7 @@ impl<'a> Access<'a> for RView<'a> {
         if buf.is_empty() || start >= xlen(x) {
             return Some(0);
         }
+        crate::interrupt::tick_block();
         Some(unsafe {
             INTEGER_GET_REGION(
                 x,
@@ -1087,6 +1112,10 @@ impl<'a> Access<'a> for RView<'a> {
         }
         let list = sexptype(x) == SEXPTYPE::VECSXP;
         for i in 0..xlen(x).min(xlen(names)) {
+            if let Err(at) = crate::utf8::text(unsafe { STRING_ELT(names, i as R_xlen_t) }) {
+                f(i, Err(not_text(at)));
+                continue;
+            }
             let k = string_elt(names, i).unwrap_or(Cow::Borrowed("NA"));
             let v = if list {
                 RView::Whole(unsafe { VECTOR_ELT(x, i as R_xlen_t) })
@@ -1112,6 +1141,7 @@ impl<'a> Access<'a> for RView<'a> {
                 "expected an unordered factor"
             }));
         }
+        names_text(attr(x, sym_levels()))?;
         let lv = strings(attr(x, sym_levels()));
         if lv.iter().any(Option::is_none) {
             return Err(Form::new("r_factor", "a factor has no NA level"));
@@ -1138,6 +1168,11 @@ impl<'a> Access<'a> for RView<'a> {
         let shape: Vec<u64> = ints(dim).iter().map(|&d| d.max(0) as u64).collect();
         let mut problems = Vec::new();
         let dn = attr(x, sym_dimnames());
+        if sexptype(dn) == SEXPTYPE::VECSXP {
+            for i in 0..xlen(dn) {
+                names_text(unsafe { VECTOR_ELT(dn, i as R_xlen_t) })?;
+            }
+        }
         if !is_null(dn) {
             let ok = sexptype(dn) == SEXPTYPE::VECSXP
                 && xlen(dn) == shape.len()
@@ -1233,6 +1268,7 @@ impl<'a> Access<'a> for RView<'a> {
         }
         let rows = table_rows(x)?;
         let names = attr(x, sym_names());
+        names_text(names)?;
         let columns = (0..xlen(x))
             .map(|i| {
                 (
@@ -1511,6 +1547,9 @@ fn json_form(x: SEXP, suffix: &str, levels: u32) -> Read<()> {
         }
         SEXPTYPE::VECSXP => {
             let names = attr(x, sym_names());
+            if let Err(f) = names_text(names) {
+                return Err(f.at(suffix.to_string()));
+            }
             for i in 0..xlen(x) {
                 let s = match string_elt_opt(names, i) {
                     Some(k) => format!("{suffix}/{}", k.replace('~', "~0").replace('/', "~1")),
@@ -1530,6 +1569,9 @@ fn json_form(x: SEXP, suffix: &str, levels: u32) -> Read<()> {
                 SEXPTYPE::REALSXP => !real_elt(x, 0).is_finite(),
                 _ => RView::Elem(x, 0).is_absent(),
             };
+            if let Some((_, at)) = crate::utf8::invalid(x) {
+                return Err(not_text(at).at(suffix.to_string()));
+            }
             if bad {
                 return fail("NA and non-finite numbers have no JSON form");
             }

@@ -105,7 +105,10 @@ as_r8_text <- function(x) {
   if (is_value(x)) {
     return(value_text(x))
   }
-  lines <- as.character(unlist(strsplit(as.character(x), "\n", fixed = TRUE)))
+  text <- enc2utf8(as.character(x))
+  invalid <- !is.na(text) & !validUTF8(text)
+  text[invalid] <- iconv(text[invalid], "UTF-8", "UTF-8", sub = "\ufffd")
+  lines <- as.character(unlist(strsplit(text, "\n", fixed = TRUE)))
   lines[is.na(lines)] <- "NA"
   n <- nchar(lines)
   shown <- which(n > 0)

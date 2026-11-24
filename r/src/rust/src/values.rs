@@ -47,10 +47,7 @@ fn attribute_names(x: &Robj) -> Vec<String> {
         return Vec::new();
     };
     match f.call(pairlist!(x.clone())) {
-        Ok(a) => a
-            .names()
-            .map(|n| n.map(str::to_string).collect())
-            .unwrap_or_default(),
+        Ok(a) => crate::utf8::names(&a).unwrap_or_default(),
         Err(_) => Vec::new(),
     }
 }
@@ -201,16 +198,11 @@ impl Encoder<'_> {
                         .collect(),
                 )
             }
-            FieldType::Character(_) => match x.as_str_iter() {
+            FieldType::Character(_) => match crate::utf8::all(x) {
                 Some(it) => Some(
-                    it.map(|s| {
-                        if s.is_na() {
-                            Value::Null
-                        } else {
-                            Value::from(s)
-                        }
-                    })
-                    .collect(),
+                    it.into_iter()
+                        .map(|s| s.map_or(Value::Null, Value::from))
+                        .collect(),
                 ),
                 None => {
                     self.err("r_type", path, "expected a character vector".to_string());
@@ -387,7 +379,7 @@ impl Encoder<'_> {
                 // `list()`, a zero-length list without names, is the empty
                 // map; another value without names is not a map.
                 let empty_list = x.is_list() && x.is_empty();
-                let names: Option<Vec<String>> = x.names().map(|n| n.map(str::to_string).collect());
+                let names = crate::utf8::names(x);
                 let names = match names {
                     Some(n) if n.len() == x.len() => n,
                     None if empty_list => Vec::new(),
@@ -490,12 +482,7 @@ impl Encoder<'_> {
         }
         let lv: Vec<Option<String>> = x
             .get_attrib("levels")
-            .and_then(|l| {
-                l.as_str_iter().map(|it| {
-                    it.map(|s| if s.is_na() { None } else { Some(s.to_string()) })
-                        .collect()
-                })
-            })
+            .and_then(|l| crate::utf8::all(&l))
             .unwrap_or_default();
         if lv.iter().any(Option::is_none) {
             return self.err("r_factor", path, "a factor has no NA level".to_string());
@@ -552,8 +539,12 @@ impl Encoder<'_> {
         if let Some(dn) = x.get_attrib("dimnames").and_then(|d| d.as_list()) {
             let names: Vec<Value> = dn
                 .values()
-                .map(|n| match n.as_str_iter() {
-                    Some(it) => Value::Array(it.map(Value::from).collect()),
+                .map(|n| match crate::utf8::all(&n) {
+                    Some(it) => Value::Array(
+                        it.into_iter()
+                            .map(|s| Value::from(s.unwrap_or_else(|| "NA".to_string())))
+                            .collect(),
+                    ),
                     None => Value::Null,
                 })
                 .collect();
@@ -614,10 +605,11 @@ impl Encoder<'_> {
             None => 0,
         };
         let list = x.as_list().unwrap();
+        let names = crate::utf8::names(x).unwrap_or_default();
         let mut m = Map::new();
         m.insert("$length".into(), Value::from(n));
         let mut extra_types = Map::new();
-        for (name, col) in list.iter() {
+        for (name, col) in names.iter().map(String::as_str).zip(list.values()) {
             let p = format!("{path}/{}", esc(name));
             let declared = columns.iter().find(|c| c.field().name.as_str() == name);
             let ft = match declared {
@@ -660,7 +652,7 @@ impl Encoder<'_> {
             Rtype::Null => Value::Null,
             Rtype::List => {
                 let list = x.as_list().unwrap();
-                let names: Option<Vec<String>> = x.names().map(|n| n.map(str::to_string).collect());
+                let names = crate::utf8::names(x);
                 match names {
                     Some(n) => Value::Object(
                         list.values()
@@ -701,11 +693,7 @@ impl Encoder<'_> {
                         .as_real_slice()
                         .filter(|s| s[0].is_finite())
                         .map(|s| number(s[0])),
-                    _ => x
-                        .as_str_iter()
-                        .and_then(|mut it| it.next())
-                        .filter(|s| !s.is_na())
-                        .map(Value::from),
+                    _ => crate::utf8::one(x).map(Value::from),
                 };
                 v.unwrap_or_else(|| {
                     self.err(
@@ -1645,24 +1633,26 @@ fn diagnosis_r(d: &rtemis_r8::rules::Diagnosis) -> Robj {
 /// @noRd
 #[extendr]
 fn r8_value_identity(x: Robj) -> Result<List> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
-    let v = crate::rview::RView::Whole(xs);
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
-    });
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)));
-    }
-    let canonical = rtemis_r8::canonical::canonical_access(v, &q, lookup);
-    let hash = rtemis_r8::canonical::content_hash_access(v, &q, lookup);
-    let host_only = rtemis_r8::canonical::host_only_paths(&q, v, lookup);
-    Ok(list!(
-        canonical = canonical,
-        hash = hash,
-        host_only = host_only
-    ))
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let v = crate::rview::RView::Whole(xs);
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(v, &q, lookup, cache)
+        });
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)));
+        }
+        let canonical = rtemis_r8::canonical::canonical_access(v, &q, lookup);
+        let hash = rtemis_r8::canonical::content_hash_access(v, &q, lookup);
+        let host_only = rtemis_r8::canonical::host_only_paths(&q, v, lookup);
+        Ok(list!(
+            canonical = canonical,
+            hash = hash,
+            host_only = host_only
+        ))
+    })
 }
 
 /// The content hash of an R8 value, streamed from the R objects in place.
@@ -1673,17 +1663,19 @@ fn r8_value_identity(x: Robj) -> Result<List> {
 /// @noRd
 #[extendr]
 fn r8_value_hash(x: Robj) -> Result<Robj> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
-    let v = crate::rview::RView::Whole(xs);
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
-    });
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)).into());
-    }
-    Ok(rtemis_r8::canonical::content_hash_access(v, &q, lookup).into())
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let v = crate::rview::RView::Whole(xs);
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(v, &q, lookup, cache)
+        });
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)).into());
+        }
+        Ok(rtemis_r8::canonical::content_hash_access(v, &q, lookup).into())
+    })
 }
 
 /// Whether two R8 values of one type are equal: the same normalized form,
@@ -1697,31 +1689,33 @@ fn r8_value_hash(x: Robj) -> Result<Robj> {
 /// @noRd
 #[extendr]
 fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
-    let (xs, ys) = unsafe { (x.get(), y.get()) };
-    let (q, docs) = value_type(xs)?;
-    if crate::value::type_name(ys).as_deref() != Some(&q.to_string()) {
-        return Ok(false.into());
-    }
-    if let Some(o) = crate::value::other(xs).or_else(|| crate::value::other(ys)) {
-        return Ok(list!(message = o.message()).into());
-    }
-    let lookup: &dyn TypeLookup = &*docs;
-    if lookup.is_stale(&q) {
-        let parent = lookup.ancestors(&q).first().map(|p| p.to_string());
-        return Ok(list!(stale = parent.unwrap_or_default()).into());
-    }
-    let (eq, met) = crate::value::meeting(|| {
-        rtemis_r8::equal::equal_access(
-            &q,
-            crate::rview::RView::Whole(xs),
-            crate::rview::RView::Whole(ys),
-            lookup,
-        )
-    });
-    if let Some(o) = met.and_then(crate::value::other) {
-        return Ok(list!(message = o.message()).into());
-    }
-    Ok(eq.into())
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let (xs, ys) = unsafe { (x.get(), y.get()) };
+        let (q, docs) = value_type(xs)?;
+        if crate::value::type_name(ys).as_deref() != Some(&q.to_string()) {
+            return Ok(false.into());
+        }
+        if let Some(o) = crate::value::other(xs).or_else(|| crate::value::other(ys)) {
+            return Ok(list!(message = o.message()).into());
+        }
+        let lookup: &dyn TypeLookup = &*docs;
+        if lookup.is_stale(&q) {
+            let parent = lookup.ancestors(&q).first().map(|p| p.to_string());
+            return Ok(list!(stale = parent.unwrap_or_default()).into());
+        }
+        let (eq, met) = crate::value::meeting(|| {
+            rtemis_r8::equal::equal_access(
+                &q,
+                crate::rview::RView::Whole(xs),
+                crate::rview::RView::Whole(ys),
+                lookup,
+            )
+        });
+        if let Some(o) = met.and_then(crate::value::other) {
+            return Ok(list!(message = o.message()).into());
+        }
+        Ok(eq.into())
+    })
 }
 
 /// The qualified type of an R8 value, with a snapshot of the registry.
@@ -1741,20 +1735,27 @@ fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::Arc<DocumentSet>)> {
 /// @noRd
 #[extendr]
 fn r8_value_to_document(x: Robj, declarations: bool) -> Result<List> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
-    let v = crate::rview::RView::Whole(xs);
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
-    });
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)));
-    }
-    let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, lookup);
-    Ok(list!(
-        json = rtemis_r8::canonical::document_with(v, &q, lookup, declarations, &hash)
-    ))
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let v = crate::rview::RView::Whole(xs);
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(v, &q, lookup, cache)
+        });
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)));
+        }
+        let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, lookup);
+        let json = rtemis_r8::canonical::document_with(v, &q, lookup, declarations, &hash);
+        if json.len() > i32::MAX as usize {
+            return Err(fail(format!(
+                "the document takes {}, and R holds at most 2 GiB in one string; save the value with r8_save_rds()",
+                rtemis_r8::text::format_size(json.len() as u64)
+            )));
+        }
+        Ok(list!(json = json))
+    })
 }
 
 /// Reads a document of a type into an R8 value.
@@ -1767,71 +1768,80 @@ fn r8_value_to_document(x: Robj, declarations: bool) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_value_from_document(text: &str, type_name: &str, any: bool) -> Result<List> {
-    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = crate::declare::snapshot()?;
-    // The value as a compact tree, which holds a run of numbers in 8 B an
-    // item; the conversion to R and a codec's reader read it in place.
-    let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, &*docs);
-    let options = rtemis_r8::canonical::ReadOptions {
-        any_declaration: any,
-        hash: &hash,
-    };
-    let tree = match crate::construct::with_cache(|cache| {
-        rtemis_r8::canonical::read_tree_with(text, &q, &*docs, cache, options)
-    }) {
-        Ok(t) => t,
-        Err(errors) => return Ok(list!(errors = errors_list(&errors))),
-    };
-    let v = rtemis_r8::tree::TreeRef::new(&tree);
-    let lookup: &dyn TypeLookup = &*docs;
-    // A Rust-stored struct or enum: the codec builds the state from the
-    // read value through `from_reader`; the state's variant is checked against
-    // the document's, and the codec receives no JSON text.
-    let codec =
-        crate::exports::codec(type_name).map_err(|m| fail(format!("{m} [declaration_changed]")))?;
-    if let (Some(def), Some(vt)) = (lookup.find(&q), codec) {
-        let values = Values { lookup };
-        let lent = rtemis_r8::reader::TreeReader::new(&values);
-        let reader = lent.table();
-        let state = crate::rust_stored::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
-            .map_err(fail)?;
-        let variant = crate::rust_stored::state_variant(vt, state);
-        let drop_state = || {
-            if let Some(d) = unsafe { (*vt).drop } {
-                unsafe { d(state) };
-            }
+fn r8_value_from_document(
+    text: crate::utf8::Utf8,
+    type_name: crate::utf8::Utf8,
+    any: bool,
+) -> Result<List> {
+    crate::interrupt::interruptible_if(text.len() > 1 << 20, || {
+        let text: &str = &text;
+        let type_name: &str = &type_name;
+        let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+        let docs = crate::declare::snapshot()?;
+        // The value as a compact tree, which holds a run of numbers in 8 B an
+        // item; the conversion to R and a codec's reader read it in place.
+        let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, &*docs);
+        let options = rtemis_r8::canonical::ReadOptions {
+            any_declaration: any,
+            hash: &hash,
         };
-        if let TypeDef::Enum(e) = def {
-            let read = match &tree {
-                rtemis_r8::tree::Tree::Str(s) => Some(&**s),
-                other => match other.get(e.tag.as_str()) {
-                    Some(rtemis_r8::tree::Tree::Str(s)) => Some(&**s),
-                    _ => None,
-                },
+        let tree = match crate::construct::with_cache(|cache| {
+            rtemis_r8::canonical::read_tree_with(text, &q, &*docs, cache, options)
+        }) {
+            Ok(t) => t,
+            Err(errors) => return Ok(list!(errors = errors_list(&errors))),
+        };
+        let v = rtemis_r8::tree::TreeRef::new(&tree);
+        let lookup: &dyn TypeLookup = &*docs;
+        // A Rust-stored struct or enum: the codec builds the state from the
+        // read value through `from_reader`; the state's variant is checked against
+        // the document's, and the codec receives no JSON text.
+        let codec = crate::exports::codec(type_name)
+            .map_err(|m| fail(format!("{m} [declaration_changed]")))?;
+        if let (Some(def), Some(vt)) = (lookup.find(&q), codec) {
+            let values = Values { lookup };
+            let lent = rtemis_r8::reader::TreeReader::new(&values);
+            let reader = lent.table();
+            let state =
+                crate::rust_stored::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
+                    .map_err(fail)?;
+            let variant = crate::rust_stored::state_variant(vt, state);
+            let drop_state = || {
+                if let Some(d) = unsafe { (*vt).drop } {
+                    unsafe { d(state) };
+                }
             };
-            if read != variant.as_deref() {
+            if let TypeDef::Enum(e) = def {
+                let read = match &tree {
+                    rtemis_r8::tree::Tree::Str(s) => Some(&**s),
+                    other => match other.get(e.tag.as_str()) {
+                        Some(rtemis_r8::tree::Tree::Str(s)) => Some(&**s),
+                        _ => None,
+                    },
+                };
+                if read != variant.as_deref() {
+                    drop_state();
+                    return Err(fail(format!(
+                        "the codec of `{q}` read the variant `{}` from a document of the variant `{}` [codec_variant]",
+                        variant.unwrap_or_default(),
+                        read.unwrap_or_default()
+                    )));
+                }
+            }
+            let Ok(id) = crate::value::identity(&q, variant.as_deref(), lookup) else {
                 drop_state();
                 return Err(fail(format!(
-                    "the codec of `{q}` read the variant `{}` from a document of the variant `{}` [codec_variant]",
-                    variant.unwrap_or_default(),
-                    read.unwrap_or_default()
+                    "the codec of `{q}` built a state of the undeclared variant `{}` [codec_variant]",
+                    variant.unwrap_or_default()
                 )));
-            }
+            };
+            let value = unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, id)) };
+            return Ok(list!(value = value));
         }
-        let Ok(id) = crate::value::identity(&q, variant.as_deref(), lookup) else {
-            drop_state();
-            return Err(fail(format!(
-                "the codec of `{q}` built a state of the undeclared variant `{}` [codec_variant]",
-                variant.unwrap_or_default()
-            )));
-        };
-        let value = unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, id)) };
-        return Ok(list!(value = value));
-    }
-    Ok(list!(
-        value = Decoder { lookup: &*docs }.named(v, &q, None)?
-    ))
+        Ok(list!(
+            value = Decoder { lookup: &*docs }.named(v, &q, None)?
+        ))
+    })
 }
 
 /// Resolves a struct value: given its fields, with context fields filled by
@@ -1844,71 +1854,74 @@ fn r8_value_from_document(text: &str, type_name: &str, any: bool) -> Result<List
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
-    use extendr_ffi::{
-        R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_VECTOR_ELT, SEXPTYPE, VECTOR_ELT,
-    };
-    use rtemis_r8::ir::Resolve;
-    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry().snapshot();
-    let lookup: &dyn TypeLookup = &*docs;
-    let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
-        return Err(fail(format!("`{type_name}` is not a registered struct")));
-    };
-    // A working copy of the fields list, which the computed values fill.
-    let fs = unsafe { fields.get() };
-    let n = crate::rview::xlen(fs);
-    let work = unsafe {
-        let w = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
-        for i in 0..n {
-            SET_VECTOR_ELT(w, i as R_xlen_t, VECTOR_ELT(fs, i as R_xlen_t));
+fn r8_resolve_value(fields: Robj, type_name: crate::utf8::Utf8) -> Result<List> {
+    crate::interrupt::interruptible(unsafe { fields.get() }, || {
+        let type_name: &str = &type_name;
+        use extendr_ffi::{
+            R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_VECTOR_ELT, SEXPTYPE,
+            VECTOR_ELT,
+        };
+        use rtemis_r8::ir::Resolve;
+        let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+        let docs = registry().snapshot();
+        let lookup: &dyn TypeLookup = &*docs;
+        let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
+            return Err(fail(format!("`{type_name}` is not a registered struct")));
+        };
+        // A working copy of the fields list, which the computed values fill.
+        let fs = unsafe { fields.get() };
+        let n = crate::rview::xlen(fs);
+        let work = unsafe {
+            let w = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
+            for i in 0..n {
+                SET_VECTOR_ELT(w, i as R_xlen_t, VECTOR_ELT(fs, i as R_xlen_t));
+            }
+            let r = Robj::from_sexp(w);
+            Rf_unprotect(1);
+            r
+        };
+        let ws = unsafe { work.get() };
+        unsafe {
+            extendr_ffi::Rf_setAttrib(
+                ws,
+                crate::rview::sym_names(),
+                crate::rview::attr(fs, crate::rview::sym_names()),
+            );
         }
-        let r = Robj::from_sexp(w);
-        Rf_unprotect(1);
-        r
-    };
-    let ws = unsafe { work.get() };
-    unsafe {
-        extendr_ffi::Rf_setAttrib(
-            ws,
-            crate::rview::sym_names(),
-            crate::rview::attr(fs, crate::rview::sym_names()),
-        );
-    }
-    let names: Vec<String> =
-        crate::rview::strings(crate::rview::attr(fs, crate::rview::sym_names()))
-            .into_iter()
-            .map(|k| k.map(|s| s.into_owned()).unwrap_or_default())
-            .collect();
-    let computed = |f: &FieldDef| match &f.resolve {
-        Some(Resolve::Computed { expr }) => Some(expr.clone()),
-        _ => None,
-    };
-    let mut pending: Vec<&FieldDef> = def
-        .fields
-        .iter()
-        .filter(|f| computed(f).is_some())
-        .filter(|f| {
-            crate::rview::list_member(ws, f.name.as_str()).is_none_or(crate::rview::is_null)
-        })
-        .collect();
-    let mut errors = Vec::new();
-    let mut kept: Vec<Robj> = Vec::new();
-    while !pending.is_empty() {
-        let pending_names: Vec<String> = pending.iter().map(|f| f.name.to_string()).collect();
-        // A field is ready when no field it reads is still pending.
-        let ready = pending.iter().position(|f| {
-            computed(f).is_some_and(|expr| {
-                rtemis_r8::rules::reads(&expr)
-                    .iter()
-                    .all(|r| !pending_names.contains(r) || r == f.name.as_str())
+        let names: Vec<String> =
+            crate::rview::strings(crate::rview::attr(fs, crate::rview::sym_names()))
+                .into_iter()
+                .map(|k| k.map(|s| s.into_owned()).unwrap_or_default())
+                .collect();
+        let computed = |f: &FieldDef| match &f.resolve {
+            Some(Resolve::Computed { expr }) => Some(expr.clone()),
+            _ => None,
+        };
+        let mut pending: Vec<&FieldDef> = def
+            .fields
+            .iter()
+            .filter(|f| computed(f).is_some())
+            .filter(|f| {
+                crate::rview::list_member(ws, f.name.as_str()).is_none_or(crate::rview::is_null)
             })
-        });
-        let Some(k) = ready else { break };
-        let f = pending.remove(k);
-        let Some(expr) = computed(f) else { continue };
-        let at = format!("/{}", esc(f.name.as_str()));
-        match rtemis_r8::rules::evaluate_computed_access(
+            .collect();
+        let mut errors = Vec::new();
+        let mut kept: Vec<Robj> = Vec::new();
+        while !pending.is_empty() {
+            let pending_names: Vec<String> = pending.iter().map(|f| f.name.to_string()).collect();
+            // A field is ready when no field it reads is still pending.
+            let ready = pending.iter().position(|f| {
+                computed(f).is_some_and(|expr| {
+                    rtemis_r8::rules::reads(&expr)
+                        .iter()
+                        .all(|r| !pending_names.contains(r) || r == f.name.as_str())
+                })
+            });
+            let Some(k) = ready else { break };
+            let f = pending.remove(k);
+            let Some(expr) = computed(f) else { continue };
+            let at = format!("/{}", esc(f.name.as_str()));
+            match rtemis_r8::rules::evaluate_computed_access(
             &expr,
             &def.fields,
             lookup,
@@ -1963,19 +1976,66 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
                 ..Default::default()
             }),
         }
-    }
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)));
-    }
-    let problems = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(crate::rview::RView::Draft(ws, ""), &q, lookup, cache)
-    });
-    if !problems.is_empty() {
-        return Ok(list!(errors = errors_list(&problems)));
-    }
-    let value = crate::construct::assemble(ws, &q, "", lookup)?;
-    drop(kept);
-    Ok(list!(value = value))
+        }
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)));
+        }
+        let problems = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(
+                crate::rview::RView::Draft(ws, ""),
+                &q,
+                lookup,
+                cache,
+            )
+        });
+        if !problems.is_empty() {
+            return Ok(list!(errors = errors_list(&problems)));
+        }
+        let value = crate::construct::assemble(ws, &q, "", lookup)?;
+        drop(kept);
+        Ok(list!(value = value))
+    })
+}
+
+/// Validates an R object against a field type, in place.
+///
+/// @param x Object.
+/// @param type An R8 field type or type object.
+/// @param name Character: The object, as a problem names it.
+/// @return `NULL`, or `list(errors = <problems>)`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_check_object(x: Robj, r#type: Robj, name: crate::utf8::Utf8) -> Result<Robj> {
+    let xs = unsafe { x.get() };
+    let ty =
+        crate::fieldtype::field_type(unsafe { r#type.get() }).map_err(|e| fail(e.to_string()))?;
+    crate::interrupt::interruptible(xs, || {
+        let docs = registry().snapshot();
+        let lookup: &dyn TypeLookup = &*docs;
+        let mut errors = crate::construct::with_cache(|cache| {
+            let v = crate::rview::RView::Whole(xs);
+            rtemis_r8::validate::validate_field_access(v, &ty, lookup, cache)
+        });
+        for e in &mut errors {
+            e.path = format!("/{}{}", esc(&name), e.path);
+            e.segments
+                .insert(0, rtemis_r8::problem::Segment::Field(name.to_string()));
+            if let Some(p) = &e.problem {
+                e.message = p.sentence(
+                    &e.segments,
+                    e.found.as_ref(),
+                    e.suggestion.as_deref(),
+                    &rtemis_r8::problem::Neutral,
+                );
+            }
+        }
+        if errors.is_empty() {
+            Ok(().into())
+        } else {
+            Ok(list!(errors = errors_list(&errors)).into())
+        }
+    })
 }
 
 /// Validates an R8 value in place.
@@ -1986,17 +2046,19 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
 /// @noRd
 #[extendr]
 fn r8_value_check(x: Robj) -> Result<Robj> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &*docs;
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
-    });
-    if errors.is_empty() {
-        Ok(().into())
-    } else {
-        Ok(list!(errors = errors_list(&errors)).into())
-    }
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
+        });
+        if errors.is_empty() {
+            Ok(().into())
+        } else {
+            Ok(list!(errors = errors_list(&errors)).into())
+        }
+    })
 }
 
 extendr_module! {
@@ -2006,6 +2068,7 @@ extendr_module! {
     fn r8_values_equal;
     fn r8_value_hash;
     fn r8_value_check;
+    fn r8_check_object;
     fn r8_value_to_document;
     fn r8_value_from_document;
 }
