@@ -361,7 +361,7 @@ test_that("r8_equal() compares normalized forms in place", {
     new_struct(
       "Eq",
       fields = list(
-        d = vec(option(type_double(finite = FALSE))),
+        d = vec(option(type_double(infinite = TRUE, nan = TRUE))),
         h = btree_map(type_integer()),
         n = field(type_double(), default = 1)
       )

@@ -394,16 +394,23 @@ declare <- function(
   # enum's constructor takes no arguments.
   formals <- out[["formals"]] %||% list()
   ctor <- as.function(
-    c(
-      formals,
-      constructor_body(
-        qname,
-        formals,
-        rust_stored = rust_stored,
-        package = package,
-        required = out[["required"]]
+    if (class == "r8_table_type") {
+      c(
+        alist(... = ),
+        call("table_value", qname, quote(list(...)), quote(sys.function()))
       )
-    ),
+    } else {
+      c(
+        formals,
+        constructor_body(
+          qname,
+          formals,
+          rust_stored = rust_stored,
+          package = package,
+          required = out[["required"]]
+        )
+      )
+    },
     envir = asNamespace("R8")
   )
   # In a package, the record goes to the package's table and the type object
@@ -504,15 +511,15 @@ ensure_registered <- function(type) {
 #' @noRd
 declaration_failed <- function(qname, problems, decl = NULL) {
   msg <- problems[["message"]]
-  # A name that is not a field may be an R variable, whose value lit() reads.
-  pattern <- "^`([A-Za-z][A-Za-z0-9_.]*)` is not a field in scope"
+  # A name that is not a field may be an R variable, whose value val() reads.
+  pattern <- "^`([A-Za-z][A-Za-z0-9_.]*)` is not a (field in scope|column of the table)"
   hint <- problems[["code"]] == "rule_field" & grepl(pattern, msg)
   name <- regmatches(msg[hint], regexpr("^`[^`]+`", msg[hint]))
   msg[hint] <- paste0(
     msg[hint],
     "; if ",
     name,
-    " is an R variable, write `lit(",
+    " is an R variable, write `val(",
     gsub("`", "", name),
     ")`"
   )

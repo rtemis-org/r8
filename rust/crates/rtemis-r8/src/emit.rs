@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 
 use crate::access::{Access, Indices, MISSING_CODE, base64_encode};
 use crate::canonical::{date_text, datetime_text};
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
+use crate::ir::{FieldDef, FieldType, TableDef, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -684,7 +684,7 @@ pub fn table_binary_access<'a, A: Access<'a>, O: Out, C: crate::ir::Column>(
             .iter()
             .find(|c| c.field().name.as_str() == name)
             .map(|c| c.field().ty.clone())
-            .or_else(|| v.extra_column_type(&name).ok())
+            .or_else(|| v.extra_column_type(&name, cells).ok())
             .unwrap_or(FieldType::Json);
         let (tag, inner) = element_tag(&ft);
         put_str(out, &name);
@@ -1114,50 +1114,141 @@ impl<'l, S: Sink> Emitter<'l, S> {
             let hex = digest_hex(|h| table_binary_access(columns, open, v, h));
             return self.digest_object(hex);
         }
+        self.table_members(columns, open, v, None, false);
+    }
+
+    /// A value of a named table; `extra` is a member added, such as the type
+    /// member of a `dyn()` value.
+    fn named_table<'a, A: Access<'a>>(
+        &mut self,
+        def: &TableDef,
+        v: A,
+        extra: Option<(String, String)>,
+    ) {
+        if !self.digest {
+            return self.table_members(&def.columns, def.open, v, extra, true);
+        }
+        // The digest covers the cells, the names, and the types of the columns;
+        // the order and the units of the extra ones stand beside it.
+        let hex = digest_hex(|h| table_binary_access(&def.columns, def.open, v, h));
+        let extras = crate::access::extra_columns(&def.columns, def.open, v);
+        let units: serde_json::Map<String, Value> = extras
+            .iter()
+            .filter_map(|(k, _, f)| Some((k.to_string(), Value::from(f.unit.clone()?))))
+            .collect();
+        let mut members: Vec<(String, Value)> =
+            vec![("$digest".into(), Value::from(format!("sha256:{hex}")))];
+        if !extras.is_empty() {
+            let order: Vec<&str> = extras.iter().map(|(k, _, _)| k.as_ref()).collect();
+            members.push(("$order".into(), Value::from(order)));
+        }
+        if !units.is_empty() {
+            members.push(("$units".into(), Value::Object(units)));
+        }
+        if let Some((k, t)) = extra {
+            members.push((k, Value::from(t)));
+        }
+        members.sort_by(|a, b| utf16_order(&a.0, &b.0));
+        self.w.begin_object();
+        for (k, x) in &members {
+            self.w.key(k);
+            self.w.value(x);
+        }
+        self.w.end_object();
+    }
+
+    /// The members of a table: `"$length"`, the columns, and, with extra
+    /// columns, their types under `"$columns"`; in a named table, also their
+    /// order and their facts.
+    fn table_members<'a, A: Access<'a>, C: crate::ir::Column>(
+        &mut self,
+        columns: &[C],
+        open: bool,
+        v: A,
+        extra: Option<(String, String)>,
+        named: bool,
+    ) {
         let Ok(t) = v.table(columns, open) else {
             return self.w.null();
         };
         let n = t.rows as usize;
-        // Each column with its type; extra columns of an open table listed
-        // under "$columns".
-        let mut cols: Vec<(Cow<'a, str>, A, FieldType, bool)> = Vec::new();
-        for (name, cells) in t.columns {
-            match columns.iter().find(|c| c.field().name.as_str() == name) {
-                Some(c) => cols.push((name, cells, c.field().ty.clone(), false)),
-                None => {
-                    if let Ok(ft) = v.extra_column_type(&name) {
-                        cols.push((name, cells, ft, true));
-                    }
-                }
+        let extras = crate::access::extra_columns(columns, open, v);
+        let cells: HashMap<&str, A> = t.columns.iter().map(|(k, c)| (k.as_ref(), *c)).collect();
+        // The columns in the order of the value, each with its type.
+        let mut cols: Vec<(Cow<'a, str>, A, FieldType)> = Vec::new();
+        for (name, c) in &t.columns {
+            if let Some(d) = columns.iter().find(|d| d.field().name.as_str() == name) {
+                cols.push((name.clone(), *c, d.field().ty.clone()));
             }
         }
-        // Members: "$length", the columns, and "$columns".
-        let mut members: Vec<(String, Option<usize>)> = vec![("$length".to_string(), None)];
-        for (i, c) in cols.iter().enumerate() {
-            members.push((c.0.to_string(), Some(i)));
+        for (name, ft, _) in &extras {
+            if let Some(c) = cells.get(name.as_ref()) {
+                cols.push((name.clone(), *c, ft.clone()));
+            }
         }
-        let extras: Vec<(String, Value)> = cols
+        if !named {
+            // A table field keeps the order of its data frame.
+            let place: HashMap<&str, usize> = t
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(i, (k, _))| (k.as_ref(), i))
+                .collect();
+            cols.sort_by_key(|(k, _, _)| place.get(k.as_ref()).copied());
+        }
+        let types: serde_json::Map<String, Value> = extras
             .iter()
-            .filter(|c| c.3)
-            .map(|c| {
-                (
-                    c.0.to_string(),
-                    serde_json::to_value(&c.2).unwrap_or(Value::Null),
-                )
+            .map(|(k, ft, _)| {
+                let ft = serde_json::to_value(ft).unwrap_or(Value::Null);
+                (k.to_string(), ft)
             })
             .collect();
-        if !extras.is_empty() {
-            members.push(("$columns".to_string(), None));
+        let facts: serde_json::Map<String, Value> = extras
+            .iter()
+            .filter_map(|(k, _, f)| {
+                let mut m = serde_json::Map::new();
+                if let Some(d) = &f.description {
+                    m.insert("description".into(), Value::from(d.as_str()));
+                }
+                if let Some(u) = &f.unit {
+                    m.insert("unit".into(), Value::from(u.as_str()));
+                }
+                (!m.is_empty()).then(|| (k.to_string(), Value::Object(m)))
+            })
+            .collect();
+        enum Member {
+            Column(usize),
+            Length,
+            Text(String),
+            Json(Value),
+        }
+        let mut members: Vec<(String, Member)> = Vec::new();
+        if let Some((k, t)) = extra {
+            members.push((k, Member::Text(t)));
+        }
+        members.push(("$length".into(), Member::Length));
+        for (i, c) in cols.iter().enumerate() {
+            members.push((c.0.to_string(), Member::Column(i)));
+        }
+        if !types.is_empty() {
+            members.push(("$columns".into(), Member::Json(Value::Object(types))));
+        }
+        if named && extras.len() > 1 {
+            let order: Vec<&str> = extras.iter().map(|(k, _, _)| k.as_ref()).collect();
+            members.push(("$order".into(), Member::Json(Value::from(order))));
+        }
+        if named && !facts.is_empty() {
+            members.push(("$facts".into(), Member::Json(Value::Object(facts))));
         }
         if self.w.sorted() {
             members.sort_by(|a, b| utf16_order(&a.0, &b.0));
         }
         self.w.begin_object();
-        for (k, col) in members {
+        for (k, member) in members {
             self.w.key(&k);
-            match col {
-                Some(i) => {
-                    let (_, cells, ft, _) = &cols[i];
+            match member {
+                Member::Column(i) => {
+                    let (_, cells, ft) = &cols[i];
                     match unwrap_option(ft) {
                         FieldType::Factor { levels, ordered } => {
                             self.factor(levels.as_deref(), *ordered, *cells)
@@ -1165,11 +1256,9 @@ impl<'l, S: Sink> Emitter<'l, S> {
                         _ => self.sequence(ft, *cells, n),
                     }
                 }
-                None if k == "$length" => self.w.number(n as f64),
-                None => {
-                    let obj = Value::Object(extras.iter().cloned().collect());
-                    self.w.value(&obj);
-                }
+                Member::Length => self.w.number(n as f64),
+                Member::Text(t) => self.w.string(&t),
+                Member::Json(x) => self.w.value(&x),
             }
         }
         self.w.end_object();
@@ -1187,12 +1276,9 @@ impl<'l, S: Sink> Emitter<'l, S> {
         let Some(def) = lookup.find(name) else {
             return self.w.null();
         };
-        let version = match def {
-            TypeDef::Struct(s) => s.version,
-            TypeDef::Enum(e) => e.version,
-        };
-        self.contained.insert(name.to_string(), version);
+        self.contained.insert(name.to_string(), def.version());
         match def {
+            TypeDef::Table(t) => self.named_table(t, v, extra),
             TypeDef::Struct(s) => self.object(&s.fields, v, extra.into_iter().collect()),
             TypeDef::Enum(e) => {
                 let variant = v
@@ -1327,7 +1413,7 @@ fn walk_named<'a, A: Access<'a>>(
                 _ => return,
             }
         }
-        None => return,
+        Some(TypeDef::Table(_)) | None => return,
     };
     for (i, f) in fields.iter().enumerate() {
         let x = v.member_at(i, f.name.as_str());

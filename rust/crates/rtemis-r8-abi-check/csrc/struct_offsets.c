@@ -9,11 +9,9 @@
 
 static const size_t struct_offsets[] = {
   SIZE(R8Error), OFFSET(R8Error, message),
-  SIZE(R8Writer), OFFSET(R8Writer, write), OFFSET(R8Writer, keep),
   SIZE(R8CallInputs), OFFSET(R8CallInputs, flags), OFFSET(R8CallInputs, seed),
   SIZE(R8Codec), OFFSET(R8Codec, type_name), OFFSET(R8Codec, module),
-  OFFSET(R8Codec, from_fields), OFFSET(R8Codec, encode),
-  OFFSET(R8Codec, write_state), OFFSET(R8Codec, read_state),
+  OFFSET(R8Codec, from_fields),
   OFFSET(R8Codec, get_field), OFFSET(R8Codec, with_field),
   OFFSET(R8Codec, drop), OFFSET(R8Codec, owned_bytes),
   OFFSET(R8Codec, variant), OFFSET(R8Codec, from_variant),

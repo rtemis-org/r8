@@ -208,9 +208,9 @@ int r8_is_view(SEXP x) {
           R_altrep_inherits(x, view_logical) || R_altrep_inherits(x, view_raw));
 }
 
-// Another view of the memory that `x` views, with the attributes of `x`, so that
-// the copy a write asks for and the attributes it sets are those of one read.
-// R_NilValue unless `x` is a view in place.
+// Another view of the memory that `x` views, without attributes, so that the copy
+// a write asks for and the attributes it sets are those of one read. R_NilValue
+// unless `x` is a view in place.
 SEXP r8_view_again(SEXP x) {
   if (!r8_is_view(x) || R_altrep_data2(x) != R_NilValue) {
     return R_NilValue;
@@ -230,11 +230,7 @@ SEXP r8_view_again(SEXP x) {
     cls = view_raw;
     break;
   }
-  SEXP ans = PROTECT(R_new_altrep(cls, R_altrep_data1(x), R_NilValue));
-  SHALLOW_DUPLICATE_ATTRIB(ans, x);
-  MARK_NOT_MUTABLE(ans);
-  UNPROTECT(1);
-  return ans;
+  return R_new_altrep(cls, R_altrep_data1(x), R_NilValue);
 }
 
 static void set_error(R8Error *err, const char *code, const char *message) {

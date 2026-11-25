@@ -51,7 +51,7 @@ test_that("PartialOrd orders values; without it, ordering is an error", {
 
 test_that("PartialOrd's result is -1L, 0L, 1L, or NA, and NA orders nothing", {
   declare_in("po2", {
-    Score <- new_struct("Score", fields = list(v = type_double(finite = FALSE)))
+    Score <- new_struct("Score", fields = list(v = type_double(nan = TRUE)))
     impl(
       PartialOrd,
       Score,

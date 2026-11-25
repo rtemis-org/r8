@@ -1,7 +1,7 @@
 # R8 0.4.0.9000
 
 - The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "subtype", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
-- The declaration record has format 7; a package installed with an earlier R8 is reinstalled.
+- The declaration record has format 8; a package installed with an earlier R8 is reinstalled.
 - `new_struct(extends = Parent)` declares a child that holds the parent's fields and rules, then its own; `defaults =` changes the defaults of inherited fields. A child's values carry the parent's class after their own, and a field typed as a struct admits that struct only.
 - A struct whose fields all have defaults that violate its rules is a declaration error (`default_violates_rule`).
 - Declaring a parent again leaves the children that extend its earlier declaration stale: they construct and read no values until they are declared again, and the declaration warns (`r8_stale_warning`). A package built against an earlier declaration of another package's parent is refused at load.
@@ -66,7 +66,7 @@
 - A method in Rust returns a value of another package's Rust-stored type, which R8 builds from its fields.
 - A nested value of a Rust-stored type, read from JSON, is a Rust-stored value.
 - A value read by `readRDS()` before its package is loaded names the package of each value that it holds.
-- `R8.h`: `R8Writer.keep` keeps the R values that a state holds, which `read_state` receives as a list; `R8Reader.value` gives the R value of a node; `R8Api.value_of_fields` builds a value of any registered type from its fields, and `R8Api.with_fields` replaces fields of a value, validated. A package with compiled exports is reinstalled.
+- `R8.h`: `R8Reader.value` gives the R value of a node; `R8Api.value_of_fields` builds a value of any registered type from its fields, and `R8Api.with_fields` replaces fields of a value, validated. A package with compiled exports is reinstalled.
 - The result of a method that returns a buffer, and a value read by `unserialize()`, are protected while R allocates.
 - A problem of a package's declarations is reported once.
 - Type objects and the objects a declaration is written with (`rule()`, `field()`, `column()`, `variant()`, `trait_method()`, `params()`, `impl_method()`, and the field types) print in one notation, with their defaults, descriptions, and rules: `<r8 field> integer [1, Inf) = 10L`, `<r8 rule ORDER> lo <= hi`. `format()` gives the lines, of a type object too.
@@ -94,6 +94,27 @@
 - A string in Latin-1 is translated to UTF-8 for documents, hashes, and equality; bytes that are no text are an error (`r_encoding`). `r8_from_json()` refuses an object that is not text.
 - A long validation, hash, comparison, or document ends at the user's interrupt and at R's time limits.
 - `type_array()` without `dim` takes an array of any number of dimensions.
+- `r8_filter(x, rule)` and `r8_select(x, columns)` choose the rows and the columns of a table, and `x[rule, columns]` is the same: a `rule()` is an index of rows. A rule is a value, which filters every table that has the columns it names; `!`, `&`, and `|` make a rule of others. A name in `x[i, j]` is R's.
+- Rules over rows are evaluated by column in Rust, in filters and in the validation of a table's rules. A comparison of two columns of 10^7 doubles with numbers takes 12 ms with the choice of the rows, against 42 ms for R's condition.
+- Rules gain `mean()`, `sqrt()`, `log()`, `exp()`, `is.na()`, `pmin()`, and `pmax()`. In a filter, `mean()`, `sum()`, `min()`, and `max()` read the whole column; in a table's declaration they are refused (`rule_aggregate`), and `is.null()` of a cell is refused with `is.na()`. `sum()` is the exact sum, rounded once.
+- In a rule, `FALSE && NA` is false and `TRUE || NA` true, in either order, as in R, and an operand that decides absorbs an error. A comparison with `NaN` is missing. A missing element makes `sum()`, `min()`, and `max()` of a vector missing.
+- In a row rule, the cell of a factor is its label: `stage == "II"`; a label that is no declared level is a declaration error (`rule_level`). A string compared with a date or a date-time is one (`rule_date`), and `val()` takes a `Date` and a `POSIXct`.
+- In a rule, a name with a dot is one name, such as the column `Petal.Width`, and `$` makes a path.
+- `type_double(infinite =, nan =)` replace `finite`: `infinite = TRUE` admits the infinities within the bounds, and `nan = TRUE` admits `NaN`, whatever the bounds are. `NaN` where the type does not admit it is `nan_value`, with the number of such elements, and `infinite` that the bounds or the values leave nothing to is a declaration error (`infinite_unused`). In Rust, `#[r8(infinite, nan)]`; in the IR, `"infinite"` and `"nan"`.
+- The problems of one kind in the elements of a vector are one entry of an error.
+- A column of a table that is replaced has no unit and no description but its type's, and an error of a declared column gives the ways to store a transformed one.
+- `val()` replaces `lit()`.
+- A row rule that reads a column that a table may leave out holds for a table without it.
+- A rule that ends in an error, such as a division by zero, shows the rule, the values it read, and the rows.
+- A `derive(R8)` rule takes `abs`, `sum`, and `nchar`.
+- A table prints as a grid with the types, units, and missing cells of its columns, its first and last rows, and what it leaves out.
+- `new_table()` declares a table, a type whose values hold columns, and `Raven` is the table of any columns. A table reads as a list of its columns and, with `x[i, j]`, as a data frame; it shares the vectors that it is made from, and copies those of a data.table. `r8_columns()` and `r8_set_columns()` give and set the units and descriptions of columns.
+- The extra columns of an open `type_table()` have any name that does not begin with `$`, and a double column among them holds `NaN` and infinite values.
+- A field asked for by position is an error that gives the call by name: "field 1 is `id`: r[["id"]]".
+- Names that repeat are refused: two columns of a table (`duplicate_column`), two keys of a `btree_map()` or two members of a `type_json()` value (`duplicate_key`), and two members of one name in an object of a JSON document.
+- `implement()` takes a generic that does more than dispatch, such as `as.data.frame()`, `sort()`, `dplyr::filter()`, and `data.table::as.data.table()`.
+- A Rust-stored value is saved as its fields, which read without the package that declares the type, and after the type changed; R8 checks them before Rust code takes the value. `R8Codec.write_state`, `read_state`, and `encode`, and `R8Writer`, are removed, and the interface is ABI version 2: a package with compiled exports is reinstalled.
+- No operation copies a vector, a matrix, a factor, or a column of a data frame, unless the field's type asks for other elements; a `POSIXct` in another time zone is shared and read in UTC.
 - A field read gives a vector as a view that R copies before it changes it, and a table as a data frame of its own, so that `setDT()`, `:=`, and `setattr()` on what a read gave leave the value as it is. The columns of a data.table given to a constructor are copied; vectors and data frames are not.
 - `r8_check(x, type)` checks any object against a field type or an R8 type.
 - `r8_save_rds()` and `r8_read_rds()` write and read an RDS file with a checksum: a damaged file is an `r8_file_error`.
@@ -131,11 +152,11 @@
 - A rule violation in a map or a table names the key, the item, or the cell in R: `` m[["2"]] ``, `om[[2]]`.
 - In a rule, `length()` counts the elements of a vector, as in R; `nchar()` counts a string's characters. Indexing a field in a rule is an error that names `all()`, `any()`, and `$`.
 - The declaration record has format 2; a package installed with an earlier R8 is reinstalled.
-- `lit(expr)` puts the value of an R expression into a rule as a constant: `cost <= lit(max_cost)`. A bare name in a rule is always a field.
+- `val(expr)` puts the value of an R expression into a rule as a constant: `cost <= val(max_cost)`. A bare name in a rule is always a field.
 - Rules gain `abs()`, `sum()`, `nchar()`, and `min()` and `max()` of one vector. `==` on a double computed by arithmetic or `sum()` is a declaration error (`rule_float_equality`), whose message gives the tolerance form `abs(a - b) <= 1e-9`.
 - `rules =` takes a single `rule()` without `list()`.
 - A violation shows the rule in R and the values it read: scalar fields, the length or dimensions of larger fields, computed operands, and the failing elements `.x` of an `all()`. A `sensitive` field shows as `<sensitive>`; `options(r8.show_values = FALSE)` shows no values. The condition's field `problems` holds the same data.
-- Rule errors at declaration write the fix: a one-argument `all()` gives the two-argument form, a name that is not a field names the nearest field and the `lit()` form, an unknown function names the nearest one, and an error shows the R expression at its path.
+- Rule errors at declaration write the fix: a one-argument `all()` gives the two-argument form, a name that is not a field names the nearest field and the `val()` form, an unknown function names the nearest one, and an error shows the R expression at its path.
 - `?rule` and the user guide's chapter "Rules" cover rules on one field and across fields, conditions, vectors, constants, and violations.
 - `int64(text)` gives an integer beyond 2^53 as its decimal digits, for a rule's constant or a default; R8 writes such an integer of a declaration in this form, and an integer outside R's integer range but within 2^53 as a whole double.
 - `r8_from_json()` reads a document into a compact tree that holds an array of numbers as one run of doubles, then converts it to R or to a Rust-stored value in place. Reading a value with fields of 10^7 elements (99 MB) takes 343 ms and 191 MB beyond the session, against 851 ms and 2.1 GB; a value with fields of 10^6 elements, 31 ms against 183 ms. R8 writes numbers without intermediate strings, and `to_json()` takes about a third of its time.

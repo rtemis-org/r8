@@ -198,7 +198,6 @@ pub mod open;
 pub mod reader;
 pub mod rust_stored;
 pub mod signature;
-pub mod state;
 pub mod sys;
 pub mod traits;
 
@@ -214,7 +213,6 @@ pub use rust_stored::{
     RustStored, RustStoredEnum, RustStoredStruct, Shared, codec, enum_codec, module,
 };
 pub use signature::{ParamType, TraitDecl};
-pub use state::{StateReader, StateWriter};
 pub use traits::{Debug, Display, From, PartialOrd, Shape};
 
 #[doc(hidden)]

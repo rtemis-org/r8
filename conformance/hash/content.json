@@ -47,7 +47,7 @@
     {
       "description": "A matrix with a missing cell, an infinity, and dimnames; a date and a date-time.",
       "expect": {
-        "hash": "sha256:f5a3c81088e5717844e6cc629761a88fa116fd553218e35c9a0907f8022ee9f6"
+        "hash": "sha256:71976c0b9ebffd958bcc53d013ffecb1711a3f1b49266946b6521847204edefa"
       },
       "id": "matrix-dates",
       "input": {
@@ -375,7 +375,8 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double",
-                    "finite": false
+                    "infinite": true,
+                    "nan": true
                   }
                 }
               },

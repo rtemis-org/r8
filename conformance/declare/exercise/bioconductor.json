@@ -446,7 +446,8 @@
                         "kind": "option",
                         "inner": {
                           "kind": "double",
-                          "finite": false
+                          "infinite": true,
+                          "nan": true
                         }
                       }
                     }
@@ -463,7 +464,8 @@
                       "kind": "sparse_matrix",
                       "element": {
                         "kind": "double",
-                        "finite": false
+                        "infinite": true,
+                        "nan": true
                       }
                     }
                   }

@@ -140,6 +140,17 @@ function normalizer(find, digest) {
   const named = (q, v) => {
     const t = find(q);
     if (t.kind === "struct") return fields(t.fields, v);
+    if (t.kind === "table") {
+      // The extra columns, in their order, with their units.
+      const extra = Object.keys(v).filter((k) => !k.startsWith("$") && !t.columns.some((c) => c.name === k));
+      const order = v.$order ?? extra;
+      if (!digest) return order.length > 1 ? { ...v, $order: order } : v;
+      const units = Object.fromEntries(order.filter((k) => v.$facts?.[k]?.unit).map((k) => [k, v.$facts[k].unit]));
+      const out = { $digest: sha256(table(t.columns, v)) };
+      if (order.length) out.$order = order;
+      if (Object.keys(units).length) out.$units = units;
+      return out;
+    }
     if (t.variants.every((x) => x.kind === "unit")) return v;
     const tag = t.tag ?? "type", variant = t.variants.find((x) => x.name === v[tag]);
     const defs = variant.kind === "struct" ? variant.fields : variant.kind === "newtype" ? find(variant.of).fields : [];
@@ -183,6 +194,7 @@ function declarationHash(q, find) {
     if ("description" in c) c.description = "";
     delete c.extensions;
     if (c.kind === "struct") strip(c.fields);
+    else if (c.kind === "table") strip(c.columns);
     else c.variants.forEach((x) => { if ("description" in x) x.description = ""; if (x.kind === "struct") strip(x.fields); });
     seen[name] = c;
     const refs = [];
@@ -197,7 +209,7 @@ function declarationHash(q, find) {
       }
     };
     if (t.kind === "struct") t.fields.forEach((f) => walk(f.type));
-    else t.variants.forEach((x) => { if (x.kind === "struct") x.fields.forEach((f) => walk(f.type)); if (x.kind === "newtype") refs.push(x.of); });
+    else if (t.kind === "enum") t.variants.forEach((x) => { if (x.kind === "struct") x.fields.forEach((f) => walk(f.type)); if (x.kind === "newtype") refs.push(x.of); });
     refs.forEach(reach);
   };
   reach(q);

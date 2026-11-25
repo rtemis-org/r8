@@ -55,47 +55,47 @@ test_that("a one-argument all() or any() writes the two-argument form", {
   )
 })
 
-test_that("lit() stores the value of an R expression, evaluated where rule() is called", {
+test_that("val() stores the value of an R expression, evaluated where rule() is called", {
   make <- function(cap) {
-    rule(cost <= lit(cap), message = "cost is at most cap.", id = "CAP")
+    rule(cost <= val(cap), message = "cost is at most cap.", id = "CAP")
   }
   r <- make(100)
   expect_identical(r[["invariant"]][["<="]][[2L]], 100)
   allowed <- c("linear", "rbf")
-  r <- rule(kernel %in% lit(allowed), message = "m", id = "K")
+  r <- rule(kernel %in% val(allowed), message = "m", id = "K")
   expect_identical(unlist(r[["invariant"]][["in"]][[2L]]), allowed)
   expect_identical(
-    rule(kernel %in% R8::lit(allowed), message = "m", id = "K")[["invariant"]],
+    rule(kernel %in% R8::val(allowed), message = "m", id = "K")[["invariant"]],
     r[["invariant"]]
   )
-  r <- rule(cost <= 1, when = n > lit(length(allowed)), message = "m", id = "W")
+  r <- rule(cost <= 1, when = n > val(length(allowed)), message = "m", id = "W")
   expect_identical(r[["when"]][[">"]][[2L]], 2L)
   na <- NA_real_
   expect_error(
-    rule(cost <= lit(na), message = "m", id = "NA"),
+    rule(cost <= val(na), message = "m", id = "NA"),
     "is not a constant of a rule",
     class = "r8_declaration_error"
   )
   expect_error(
-    rule(cost <= lit(mean), message = "m", id = "F"),
+    rule(cost <= val(mean), message = "m", id = "F"),
     "is not a constant of a rule",
     class = "r8_declaration_error"
   )
   expect_error(
-    rule(cost <= lit(lit(1)), message = "m", id = "N"),
-    "lit() does not nest",
+    rule(cost <= val(val(1)), message = "m", id = "N"),
+    "val() does not nest",
     fixed = TRUE,
     class = "r8_declaration_error"
   )
   expect_error(
-    rule(cost <= lit(x = 1), message = "m", id = "A"),
+    rule(cost <= val(x = 1), message = "m", id = "A"),
     "one unnamed argument",
     class = "r8_declaration_error"
   )
-  expect_identical(lit(3), 3)
+  expect_identical(val(3), 3)
 })
 
-test_that("a name that is not a field names the nearest field and lit()", {
+test_that("a name that is not a field names the nearest field and val()", {
   declare_in("rulesnear", {
     expect_error(
       new_struct(
@@ -103,7 +103,7 @@ test_that("a name that is not a field names the nearest field and lit()", {
         fields = list(values = vec(type_double())),
         rules = rule(length(valeus) > 0, message = "m", id = "A")
       ),
-      "the nearest field is `values`; if `valeus` is an R variable, write `lit(valeus)`",
+      "the nearest field is `values`; if `valeus` is an R variable, write `val(valeus)`",
       fixed = TRUE,
       class = "r8_declaration_error"
     )

@@ -280,3 +280,42 @@ test_that("a method has the generic's parameters, and adds its own only after ..
     )
   })
 })
+
+test_that("a generic that does more than dispatch takes methods", {
+  info <- function(f) unlist(s3_generic_info(f))
+  expect_identical(
+    info(as.data.frame),
+    c(name = "as.data.frame", package = "base")
+  )
+  expect_identical(info(sort), c(name = "sort", package = "base"))
+  # Dispatch on another argument, and a function that is no generic.
+  expect_null(s3_generic_info(utils::relist))
+  expect_null(s3_generic_info(graphics::Axis))
+  expect_null(s3_generic_info(lapply))
+  # A body with an empty argument, x[i, ].
+  expect_null(s3_generic_info(stats::filter))
+  Tab <- declare_in("disp", {
+    Tab <- new_struct("Tab", fields = list(a = vec(type_double())))
+    implement(as.data.frame, Tab) <- function(
+      x,
+      row.names = NULL,
+      optional = FALSE,
+      ...
+    ) {
+      data.frame(a = x$a, b = x$a^2)
+    }
+    implement(sort, Tab) <- function(x, decreasing = FALSE, ...) {
+      Tab(a = sort(x$a, decreasing = decreasing))
+    }
+    Tab
+  })
+  x <- Tab(a = c(3, 1, 2))
+  expect_identical(as.data.frame(x)$b, c(9, 1, 4))
+  expect_equal(stats::coef(stats::lm(b ~ a, data = x))[["a"]], 4)
+  expect_identical(sort(x)$a, c(1, 2, 3))
+  skip_if_not_installed("data.table")
+  expect_identical(
+    info(data.table::as.data.table),
+    c(name = "as.data.table", package = "data.table")
+  )
+})

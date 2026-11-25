@@ -340,8 +340,13 @@ pub fn integer(bounds: Bounds, values: Option<&[f64]>) -> Built<FieldType> {
     }))
 }
 
-/// `type_double(min, max, exclusive_min, exclusive_max, finite, values)`.
-pub fn double(bounds: Bounds, finite_only: bool, values: Option<&[f64]>) -> Built<FieldType> {
+/// `type_double(min, max, exclusive_min, exclusive_max, infinite, nan, values)`.
+pub fn double(
+    bounds: Bounds,
+    infinite: bool,
+    nan: bool,
+    values: Option<&[f64]>,
+) -> Built<FieldType> {
     let b = bounds.checked()?;
     let lower = side(b.min, b.exclusive_min, ("min", "exclusive_min"))?;
     let upper = side(b.max, b.exclusive_max, ("max", "exclusive_max"))?;
@@ -351,7 +356,8 @@ pub fn double(bounds: Bounds, finite_only: bool, values: Option<&[f64]>) -> Buil
     Ok(FieldType::Double(DoubleType {
         lower,
         upper,
-        finite: finite_only,
+        infinite,
+        nan,
         values: values.map(Box::from),
     }))
 }
@@ -602,6 +608,27 @@ pub fn var(path: impl Into<Box<str>>) -> Logic {
     Logic::Var(path.into())
 }
 
+/// A field, or a path into one, of its names in order: `{"var": "a.b"}` for
+/// R8 names, after the element `.x` of an enclosing `all()` or `any()` too,
+/// and otherwise `{"path": ["a.b"]}`.
+pub fn path(names: &[&str]) -> Logic {
+    let plain = |n: &str| {
+        n.starts_with(|c: char| c.is_ascii_alphabetic())
+            && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let rest = match names {
+        [".x", rest @ ..] => rest,
+        all => all,
+    };
+    if rest.iter().all(|n| plain(n)) {
+        return var(names.join("."));
+    }
+    call(
+        super::Operator::Path,
+        names.iter().map(|&n| Logic::String(n.into())).collect(),
+    )
+}
+
 /// `is_variant(x, "Name")`, whose variant operand is a string.
 pub fn is_variant(x: Logic, variant: Logic) -> Built<Logic> {
     if !matches!(variant, Logic::String(_)) {
@@ -634,20 +661,20 @@ mod tests {
     #[test]
     fn bounds() {
         assert_eq!(
-            double(b(Some(0.0), Some(0.0)), true, None)
+            double(b(Some(0.0), Some(0.0)), false, false, None)
                 .unwrap_err()
                 .to_string(),
             "`min` and `exclusive_min` bound the same side; give one of them."
         );
         assert_eq!(
-            double(b(Some(f64::INFINITY), None), true, None).unwrap_err(),
+            double(b(Some(f64::INFINITY), None), false, false, None).unwrap_err(),
             BuildError::NotOneNumber { arg: "min" }
         );
-        let FieldType::Double(d) = double(b(None, Some(0.0)), true, None).unwrap() else {
+        let FieldType::Double(d) = double(b(None, Some(0.0)), false, false, None).unwrap() else {
             panic!()
         };
         assert_eq!(d.exclusive_min(), Some(0.0));
-        assert!(d.finite);
+        assert!(!d.infinite && !d.nan);
     }
 
     #[test]

@@ -27,7 +27,8 @@ use crate::ir::{
     Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, EnumDef, FieldDef, FieldType,
     HostDefault, ImplDef, ImplMethod, IntegerType, Logic, MethodDef, Migration, MigrationStep,
     Operator, Param, ParamDef, RequiredField, Resolve, ReturnType, RuleDef, SelfMarker,
-    SplitTarget, StructDef, TraitDef, TypeDef, TypeRef, TypedImplMethod, VariantDef, VariantKind,
+    SplitTarget, StructDef, TableDef, TraitDef, TypeDef, TypeRef, TypedImplMethod, VariantDef,
+    VariantKind,
 };
 use crate::name::{MethodName, Name, QualifiedName};
 
@@ -35,7 +36,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 7;
+pub const FORMAT: u32 = 8;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -241,7 +242,8 @@ operator_tags! {
     10 Add, 11 Sub, 12 Mul, 13 Div, 14 Mod, 15 Min, 16 Max, 17 In, 18 Cat, 19 Length,
     20 Subset, 21 NonIncreasing, 22 NonDecreasing, 23 Floor, 24 Ceiling, 25 Round,
     26 Nrow, 27 Ncol, 28 Dim, 29 IsNull, 30 IsVariant, 31 Levels, 32 All, 33 Any,
-    34 If, 35 And, 36 Or, 37 Abs, 38 Sum, 39 Nchar,
+    34 If, 35 And, 36 Or, 37 Abs, 38 Sum, 39 Nchar, 40 Path, 41 Mean, 42 Pmin,
+    43 Pmax, 44 Sqrt, 45 Log, 46 Exp, 47 IsNa,
 }
 
 /// A number at the tags `base` (a `u64`), `base + 1` (a negative `i64`), and
@@ -450,13 +452,15 @@ fn w_type(w: &mut W, t: &FieldType) {
         FieldType::Double(DoubleType {
             lower,
             upper,
-            finite,
+            infinite,
+            nan,
             values,
         }) => {
             w.u8(2);
             w.u8(bound_bits(lower, upper)
                 | u8::from(values.is_some()) << 4
-                | u8::from(*finite) << 5);
+                | u8::from(*infinite) << 5
+                | u8::from(*nan) << 6);
             if let Some(b) = lower {
                 w.f64(b.value);
             }
@@ -826,7 +830,34 @@ fn w_type_def(w: &mut W, t: &TypeDef) {
             w.u8(1);
             w_enum(w, e);
         }
+        TypeDef::Table(t) => {
+            w.u8(2);
+            w_table(w, t);
+        }
     }
+}
+
+fn w_table(w: &mut W, t: &TableDef) {
+    let TableDef {
+        name,
+        description,
+        version,
+        columns,
+        open,
+        rules,
+        migrations,
+        aliases,
+        extensions,
+    } = t;
+    w.name(name);
+    w.str(description);
+    w.u32(*version);
+    w.u8(u8::from(*open));
+    w.seq(columns, w_column);
+    w.seq(rules, w_rule);
+    w.seq(migrations, w_migration);
+    w.seq(aliases, |w, q| w.qn(q));
+    w_map(w, extensions);
 }
 
 fn w_target(w: &mut W, t: &TypeRef) {
@@ -1303,7 +1334,7 @@ fn r_type(r: &mut R) -> Res<FieldType> {
                 })
             }
             2 => {
-                let f = r.flags(0x3f, "double type")?;
+                let f = r.flags(0x7f, "double type")?;
                 FieldType::Double(DoubleType {
                     lower: r_bound(f, r, R::f64)?,
                     upper: r_bound(f >> 2, r, R::f64)?,
@@ -1312,7 +1343,8 @@ fn r_type(r: &mut R) -> Res<FieldType> {
                     } else {
                         None
                     },
-                    finite: f & 32 != 0,
+                    infinite: f & 32 != 0,
+                    nan: f & 64 != 0,
                 })
             }
             3 => FieldType::Character(r_character(r)?),
@@ -1568,6 +1600,24 @@ fn r_struct(r: &mut R) -> Res<StructDef> {
     })
 }
 
+fn r_table(r: &mut R) -> Res<TableDef> {
+    let name = r.name()?;
+    let description = r.str()?.to_owned();
+    let version = r.u32()?;
+    let f = r.flags(1, "table")?;
+    Ok(TableDef {
+        name,
+        description,
+        version,
+        open: f & 1 != 0,
+        columns: r.seq(4, r_column)?,
+        rules: r.seq(5, r_rule)?,
+        migrations: r.seq(2, r_migration)?,
+        aliases: r.seq(2, R::qn)?,
+        extensions: r_map(r, |r| Ok(r.str()?.to_owned()), String::clone)?,
+    })
+}
+
 fn r_enum(r: &mut R) -> Res<EnumDef> {
     let name = r.name()?;
     let description = r.str()?.to_owned();
@@ -1607,6 +1657,7 @@ fn r_type_def(r: &mut R) -> Res<TypeDef> {
     Ok(match r.u8()? {
         0 => TypeDef::Struct(r_struct(r)?),
         1 => TypeDef::Enum(r_enum(r)?),
+        2 => TypeDef::Table(r_table(r)?),
         t => return Err(RecordError::Tag("type", t)),
     })
 }

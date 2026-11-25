@@ -74,7 +74,7 @@ fn pane() -> Pane {
 fn struct_of<T: rtemis_r8::derive::R8>() -> StructDef {
     match T::type_def() {
         TypeDef::Struct(s) => s,
-        TypeDef::Enum(_) => panic!("a struct"),
+        _ => panic!("a struct"),
     }
 }
 
@@ -207,6 +207,11 @@ fn a_child_encodes_as_one_object_and_reads_with_its_own_defaults() {
     )
     .unwrap();
     assert_eq!((p.window.base.unit, p.number), (None, 1));
+    let e = Pane::from_document(
+        r#"{"$type": "demo::Pane", "$types": {"demo::Pane": 1}, "label": "w", "label": "x"}"#,
+    )
+    .unwrap_err();
+    assert_eq!(e[0].code, "document_json");
 }
 
 #[test]

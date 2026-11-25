@@ -250,3 +250,198 @@ test_that("a data.table of host_class() is held, and read, by reference", {
   w <- t[["W"]](tab = data.table::data.table(a = runif(10), b = "x"))
   expect_s3_class(w$tab, "data.frame", exact = TRUE)
 })
+
+# The R memory in bytes that evaluating `expr` takes at its highest.
+taken <- function(expr) {
+  expr <- substitute(expr)
+  env <- parent.frame()
+  before <- gc(reset = TRUE)["Vcells", "used"]
+  x <- eval(expr, env)
+  8 * (gc()["Vcells", "max used"] - before)
+}
+
+test_that("no operation on a value copies a vector, a matrix, or a data frame", {
+  skip_on_cran()
+  n <- 1e6
+  out <- declare_in("nc", {
+    size_of <- generic("size_of", params(x))
+    V <- new_struct(
+      "V",
+      fields = list(
+        id = type_integer(),
+        d = option(vec(type_double(min = 0))),
+        i = option(vec(type_integer())),
+        l = option(vec(type_logical())),
+        s = option(vec(type_character())),
+        f = option(type_factor(c("a", "b"))),
+        t = option(vec(type_posixct())),
+        date = option(vec(type_date())),
+        m = option(type_matrix(type_double())),
+        r = option(type_raw()),
+        tab = option(type_table(columns = list(a = column(type_double()))))
+      )
+    )
+    H <- new_struct(
+      "H",
+      fields = list(v = V, data = option(host_class("data.frame")))
+    )
+    P <- new_struct("P", fields = list(x = type_integer()))
+    Q <- new_struct("Q", extends = P, fields = list(d = vec(type_double())))
+    implement(size_of, V) <- function(x) length(x$d)
+    list(V = V, H = H, P = P, Q = Q, size_of = size_of)
+  })
+  V <- out[["V"]]
+  given <- list(
+    d = runif(n),
+    i = sample.int(9L, n, TRUE),
+    l = runif(n) > 0.5,
+    s = rep_len(c("x", "y"), n),
+    f = factor(rep_len(c("a", "b"), n), levels = c("a", "b")),
+    t = .POSIXct(floor(runif(n) * 1e9), tz = "America/New_York"),
+    date = .Date(floor(runif(n) * 1e4)),
+    m = matrix(runif(n), ncol = 4L),
+    r = as.raw(rep_len(0:9, 8 * n)),
+    tab = data.frame(a = runif(n))
+  )
+  few <- 2^18
+  for (name in names(given)) {
+    expect_lt(
+      taken(do.call(V, c(list(id = 1L), given[name]))),
+      few,
+      label = paste("construction with", name)
+    )
+  }
+  v <- do.call(V, c(list(id = 1L), given))
+  for (name in names(given)) {
+    expect_lt(taken(v[[name]]), few, label = paste("a read of", name))
+  }
+  d <- given[["d"]]
+  same <- V(id = 1L, d = d + 0)
+  q <- out[["Q"]](x = 1L, d = d)
+  expect_lt(taken(as.list(v)), few)
+  expect_lt(taken(v[c("d", "m")]), few)
+  expect_lt(taken(v$tab$a), few)
+  expect_lt(
+    taken({
+      u <- v
+      u$id <- 2L
+      u["i"] <- list(NULL)
+    }),
+    few
+  )
+  expect_lt(taken(V(id = 1L, d = v$d, tab = v$tab, t = v$t)), few)
+  expect_lt(taken(out[["H"]](v = v, data = given[["tab"]])), few)
+  expect_lt(taken(r8_validate(v)), few)
+  expect_lt(taken(r8_check(d, vec(type_double(min = 0)))), few)
+  expect_lt(taken(r8_equal(V(id = 1L, d = d), same)), few)
+  expect_lt(taken(r8_hash(V(id = 1L, m = given[["m"]]))), few)
+  expect_lt(taken(out[["size_of"]](v)), few)
+  expect_lt(taken(r8_upcast(q, out[["P"]])), few)
+  expect_lt(taken(sum(v$d)), few)
+  expect_lt(taken(v$d[1:10]), few)
+  expect_lt(taken(colMeans(v$m)), few)
+  expect_lt(
+    taken({
+      to <- file(nullfile(), "wb")
+      serialize(v, to)
+      close(to)
+    }),
+    few
+  )
+})
+
+test_that("a vector in another time zone is shared, and read in UTC", {
+  V <- declare_in("tz", {
+    new_struct(
+      "V",
+      fields = list(
+        t = vec(type_posixct()),
+        tab = option(type_table(columns = list(t = column(type_posixct()))))
+      )
+    )
+  })
+  t <- .POSIXct(floor(runif(1000) * 1e9), tz = "America/New_York")
+  first <- as.numeric(t[1L])
+  v <- V(t = t, tab = data.frame(t = t))
+  expect_identical(attr(v$t, "tzone"), "UTC")
+  expect_identical(attr(t, "tzone"), "America/New_York")
+  expect_identical(as.numeric(v$t), as.numeric(t))
+  t[1L] <- t[1L] + 100
+  x <- v$t
+  x[1L] <- .POSIXct(0)
+  expect_identical(as.numeric(v$t[1L]), first)
+  expect_identical(as.numeric(v$tab$t[1L]), first)
+  expect_identical(unserialize(serialize(v, NULL)), v)
+  skip_if_not_installed("data.table")
+  dt <- data.table::data.table(t = t)
+  w <- V(t = t, tab = dt)
+  first <- as.numeric(w$tab$t[1L])
+  data.table::set(dt, 1L, "t", t[2L])
+  expect_identical(as.numeric(w$tab$t[1L]), first)
+})
+
+test_that("elements and extremes of a read are those of the vector", {
+  t <- sharing_types("sh11")
+  V <- t[["V"]]
+  set.seed(3)
+  n <- 500L
+  given <- list(
+    d = c(runif(n - 1L), 0),
+    i = sample.int(1000L, n, TRUE),
+    l = sample(c(TRUE, FALSE, NA), n, TRUE)
+  )
+  v <- V(d = given$d, i = given$i, l = given$l)
+  index <- list(
+    1:10,
+    c(n, 1L, n),
+    -(1:10),
+    c(1, NA, 3),
+    c(5.9, 2),
+    n + 1L,
+    0L,
+    c(0, 2),
+    integer(),
+    given$d > 0.5,
+    c(TRUE, NA),
+    NA,
+    n:1,
+    1e6,
+    NULL,
+    c(1, 2^31 + 5)
+  )
+  for (name in names(given)) {
+    x <- v[[name]]
+    expect_true(is_field_view(x))
+    for (k in index) {
+      expect_identical(x[k], given[[name]][k], info = paste(name, deparse1(k)))
+    }
+    for (f in list(min, max, range, sum, mean)) {
+      expect_identical(f(x), f(given[[name]]), info = name)
+    }
+    expect_identical(min(x, na.rm = TRUE), min(given[[name]], na.rm = TRUE))
+  }
+  full <- full(t)
+  expect_identical(full$f[c(3L, NA)], .subset2(full, "f")[c(3L, NA)])
+  expect_identical(full$t[5:1], .subset2(full, "t")[5:1])
+  expect_identical(full$m[2L, ], .subset2(full, "m")[2L, ])
+  for (x in list(
+    c(NaN, runif(40)),
+    c(runif(40), NA),
+    c(-Inf, runif(40), Inf),
+    numeric()
+  )) {
+    r <- Raven(x = x, y = as.integer(is.na(x)))
+    expect_identical(suppressWarnings(min(r$x)), suppressWarnings(min(x)))
+    expect_identical(suppressWarnings(max(r$x)), suppressWarnings(max(x)))
+    expect_identical(
+      suppressWarnings(max(r$x, na.rm = TRUE)),
+      suppressWarnings(max(x, na.rm = TRUE))
+    )
+  }
+  # Rows by a logical vector, with every remainder of a block.
+  for (k in c(0L, 1L, 7L, 33L)) {
+    l <- rep(c(TRUE, FALSE, FALSE), length.out = k)
+    r <- Raven(x = seq_len(k))
+    expect_identical(r[l, ]$x, seq_len(k)[l])
+  }
+})

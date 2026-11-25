@@ -81,11 +81,39 @@ static int field_lgl_no_na(SEXP x) { return LOGICAL_NO_NA(viewed(x)); }
 static int field_string_sorted(SEXP x) { return STRING_IS_SORTED(viewed(x)); }
 static int field_string_no_na(SEXP x) { return STRING_NO_NA(viewed(x)); }
 
+// The extraction of elements, and the extremes, of the vector viewed (table.rs).
+SEXP r8_extract(SEXP v, SEXP indx);
+int r8_extreme(SEXP v, int greatest, double *out);
+
+static SEXP field_Extract_subset(SEXP x, SEXP indx, SEXP call) {
+  (void) call;
+  return r8_extract(viewed(x), indx);
+}
+
+static SEXP extreme(SEXP x, int greatest) {
+  double out = 0;
+  if (!r8_extreme(viewed(x), greatest, &out)) {
+    return NULL;
+  }
+  return TYPEOF(x) == INTSXP ? Rf_ScalarInteger((int) out) : Rf_ScalarReal(out);
+}
+
+static SEXP field_Min(SEXP x, Rboolean narm) {
+  (void) narm;
+  return extreme(x, 0);
+}
+
+static SEXP field_Max(SEXP x, Rboolean narm) {
+  (void) narm;
+  return extreme(x, 1);
+}
+
 static void init_common(R_altrep_class_t cls) {
   R_set_altrep_Length_method(cls, field_Length);
   R_set_altrep_Inspect_method(cls, field_Inspect);
   R_set_altvec_Dataptr_method(cls, field_Dataptr);
   R_set_altvec_Dataptr_or_null_method(cls, field_Dataptr_or_null);
+  R_set_altvec_Extract_subset_method(cls, field_Extract_subset);
 }
 
 void r8_init_fields(DllInfo *dll) {
@@ -95,6 +123,8 @@ void r8_init_fields(DllInfo *dll) {
   R_set_altreal_Get_region_method(field_real, field_real_region);
   R_set_altreal_Is_sorted_method(field_real, field_real_sorted);
   R_set_altreal_No_NA_method(field_real, field_real_no_na);
+  R_set_altreal_Min_method(field_real, field_Min);
+  R_set_altreal_Max_method(field_real, field_Max);
 
   field_integer = R_make_altinteger_class("r8_field_integer", "R8", dll);
   init_common(field_integer);
@@ -102,6 +132,8 @@ void r8_init_fields(DllInfo *dll) {
   R_set_altinteger_Get_region_method(field_integer, field_int_region);
   R_set_altinteger_Is_sorted_method(field_integer, field_int_sorted);
   R_set_altinteger_No_NA_method(field_integer, field_int_no_na);
+  R_set_altinteger_Min_method(field_integer, field_Min);
+  R_set_altinteger_Max_method(field_integer, field_Max);
 
   field_logical = R_make_altlogical_class("r8_field_logical", "R8", dll);
   init_common(field_logical);
@@ -131,8 +163,18 @@ SEXP r8_view_again(SEXP x);
 // The bytes up to which a copy takes less than a view: R's small vectors.
 #define SMALL_BYTES 128
 
-// The atomic vector `v` of a value as a read gives it.
-static SEXP vector_out(SEXP v) {
+static int is_field_view(SEXP x) {
+  return ALTREP(x) && (R_altrep_inherits(x, field_real) || R_altrep_inherits(x, field_integer) ||
+                       R_altrep_inherits(x, field_logical) || R_altrep_inherits(x, field_raw) ||
+                       R_altrep_inherits(x, field_complex) || R_altrep_inherits(x, field_string));
+}
+
+// A view of the atomic vector `v`, without attributes; R_NilValue for a vector of
+// another type and for a small one.
+static SEXP view_of(SEXP v) {
+  while (is_field_view(v)) {
+    v = viewed(v);
+  }
   R_altrep_class_t cls;
   size_t width;
   switch (TYPEOF(v)) {
@@ -155,20 +197,30 @@ static SEXP vector_out(SEXP v) {
     cls = field_string, width = sizeof(SEXP);
     break;
   default:
-    return v;
+    return R_NilValue;
   }
   if ((size_t) XLENGTH(v) * width <= SMALL_BYTES) {
-    return Rf_duplicate(v);
+    return R_NilValue;
   }
   // Memory that a view reads in place belongs to Rust, which a write would
   // change under it.
   SEXP again = r8_view_again(v);
-  if (again != R_NilValue) {
-    return again;
-  }
-  SEXP x = PROTECT(R_new_altrep(cls, v, R_NilValue));
-  SHALLOW_DUPLICATE_ATTRIB(x, v);
+  SEXP x = again != R_NilValue ? again : R_new_altrep(cls, v, R_NilValue);
   MARK_NOT_MUTABLE(x);
+  return x;
+}
+
+// The atomic vector `v` of a value as a read gives it.
+static SEXP vector_out(SEXP v) {
+  if (!Rf_isVectorAtomic(v)) {
+    return v;
+  }
+  SEXP x = PROTECT(view_of(v));
+  if (x == R_NilValue) {
+    x = Rf_duplicate(v);
+  } else {
+    SHALLOW_DUPLICATE_ATTRIB(x, v);
+  }
   UNPROTECT(1);
   return x;
 }
@@ -197,14 +249,19 @@ SEXP r8_field_out(SEXP v) {
   return out;
 }
 
+// A view of `x` without attributes, for a stored form whose attributes alone
+// differ from those of `x`; NULL where a copy takes its place.
+SEXP r8_field_bare(SEXP x) {
+  SEXP v = view_of(x);
+  return v == R_NilValue ? NULL : v;
+}
+
 R_xlen_t r8_attrib_count(SEXP x);
 
 // The vector that `x` views, when `x` is a view without attributes of a vector
 // without attributes, so that a value made from a read holds the vector itself.
 SEXP r8_field_viewed(SEXP x) {
-  while (ALTREP(x) && (R_altrep_inherits(x, field_real) || R_altrep_inherits(x, field_integer) ||
-                       R_altrep_inherits(x, field_logical) || R_altrep_inherits(x, field_raw) ||
-                       R_altrep_inherits(x, field_complex) || R_altrep_inherits(x, field_string))) {
+  while (is_field_view(x)) {
     SEXP v = viewed(x);
     if (r8_attrib_count(x) != 0 || r8_attrib_count(v) != 0) {
       break;

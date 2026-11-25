@@ -58,6 +58,7 @@ Collate:
     'resolve.R'
     'roclet.R'
     'rules.R'
+    'table.R'
     'text.R'
     'traits.R'
     'utils.R'

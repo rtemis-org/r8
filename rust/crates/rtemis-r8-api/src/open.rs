@@ -22,7 +22,6 @@ use crate::keep::{self, Token};
 use crate::reader::{Node, Reader};
 use crate::rust_stored::{RustStored, module};
 use crate::signature::ParamType;
-use crate::state::{StateReader, StateWriter};
 use crate::sys::{self, SEXP};
 
 /// A kept R value.
@@ -326,12 +325,6 @@ impl<P: RustStored + Extensible> Field for SubtypeValue<P> {
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         Ok(self.current()?.token.get())
     }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        out.keep(self.current()?.token.get())
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        unsafe { Self::of(input.kept()?) }
-    }
     fn owned_bytes(&self) -> usize {
         let base: &P = match &self.base {
             // The R value accounts for its state.
@@ -454,12 +447,6 @@ impl<D: TraitObject + ?Sized + 'static> Field for ImplementorValue<D> {
     }
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         Ok(self.held.token.get())
-    }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        out.keep(self.held.token.get())
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        unsafe { Self::of(input.kept()?) }
     }
 }
 

@@ -6,7 +6,7 @@
  * code and the tests of the interface include it, with `R8_INTERNAL_ABI`
  * defined.
  *
- * ABI version 1. The Rust types in `rtemis_r8::abi` mirror these declarations
+ * ABI version 2. The Rust types in `rtemis_r8::abi` mirror these declarations
  * field for field; the crate `rtemis-r8-abi-check` compiles this header and asserts
  * that every size and offset matches.
  *
@@ -37,8 +37,7 @@
  *   protects it before the next allocation.
  * - Each side frees only what it allocated. A type's `state` is freed only by
  *   that type's `drop`, and only code of the codec's `module` reads it;
- *   encoded JSON passes through an `R8Writer` supplied by the caller; error
- *   text is written into the fixed buffers of `R8Error`.
+ *   error text is written into the fixed buffers of `R8Error`.
  * - Strings are UTF-8 and NUL-terminated.
  * - Everything an `R8Exports` points to is static: it stays valid while the
  *   package's shared object is loaded. R8 reads the declaration record and
@@ -65,7 +64,7 @@
 extern "C" {
 #endif
 
-#define R8_ABI_VERSION 1u
+#define R8_ABI_VERSION 2u
 
 /* Return status of every function that can fail. */
 typedef int32_t R8Status;
@@ -81,19 +80,6 @@ typedef struct R8Error {
   char code[64];
   char message[1024];
 } R8Error;
-
-/* A sink for bytes, and for the R values of a state, supplied by the caller of
- * `encode` and `write_state`. */
-typedef struct R8Writer {
-  void *context;
-  R8Status (*write)(void *context, const uint8_t *bytes, size_t len);
-  /* Keeps an R value that the state holds, such as the value of a field that
-   * admits values of types the codec does not know, beside the state's bytes,
-   * and stores its 0-based position among the kept values in `*index`, which
-   * the codec writes into the bytes. R serializes the kept values with the
-   * state, and `read_state` receives them. NULL in the writer of `encode`. */
-  R8Status (*keep)(void *context, SEXP value, size_t *index);
-} R8Writer;
 
 /* A part of a value that R8 has read and validated, lent to a codec for the
  * length of one call and read only through `R8Reader`. */
@@ -191,17 +177,6 @@ typedef struct R8Codec {
   /* Builds a state from the type's fields, `n` R values in declaration
    * order, which R8 has validated and converted to their stored forms. */
   R8Status (*from_fields)(const SEXP *fields, size_t n, void **state, R8Error *err);
-  /* Writes the state's JSON document, for export (`r8_to_json()`). */
-  R8Status (*encode)(const void *state, R8Writer *out, R8Error *err);
-  /* Writes the state's bytes, in a form of the package's choosing, for
-   * `saveRDS()` and parallel workers. R8 calls it twice per serialization,
-   * once to count the bytes and once to write them into a buffer of that
-   * size, so every call writes the same bytes and keeps the same number of
-   * values. */
-  R8Status (*write_state)(const void *state, R8Writer *out, R8Error *err);
-  /* Builds a state from bytes that `write_state` wrote and the list of the R
-   * values that it kept, R_NilValue when it kept none. */
-  R8Status (*read_state)(const uint8_t *bytes, size_t len, SEXP kept, void **state, R8Error *err);
   /* Reads one field as an R value. `owner` is the external pointer that
    * holds `state`; a field that views the state's memory, through
    * `R8Api.view_doubles` and its siblings, passes it as the view's owner,

@@ -249,11 +249,15 @@ format.r8_type <- function(x, ...) {
     if (!is.null(ir[["extends"]])) paste0(" extends ", ir[["extends"]]),
     ">"
   )
-  members <- if (identical(ir[["kind"]], "struct")) {
-    field_lines(ir[["fields"]], "  ")
-  } else {
+  members <- switch(
+    ir[["kind"]],
+    struct = field_lines(ir[["fields"]], "  "),
+    table = c(
+      field_lines(ir[["columns"]], "  "),
+      if (isTRUE(ir[["open"]])) "  and other columns"
+    ),
     unlist(lapply(ir[["variants"]], variant_lines))
-  }
+  )
   c(
     header,
     described(ir[["description"]]),

@@ -378,7 +378,7 @@ Panel <- R8::new_struct(
 #' @export
 shifted <- R8::generic(
   "shifted",
-  R8::params(x, by = R8::arg_double(finite = FALSE, default = 1)),
+  R8::params(x, by = R8::arg_double(infinite = TRUE, default = 1)),
   description = "Moves a value.",
   return_type = "Self"
 )

@@ -186,7 +186,8 @@ fn sample_types() -> Vec<FieldType> {
         FieldType::Double(DoubleType {
             lower: Some(Bound::exclusive(0.0)),
             upper: Some(Bound::inclusive(1e300)),
-            finite: false,
+            infinite: true,
+            nan: true,
             values: Some(Box::new([0.5, -0.0])),
         }),
         FieldType::Double(DoubleType::default()),
@@ -558,12 +559,31 @@ fn sample_impls() -> Vec<ImplDef> {
     ]
 }
 
+fn sample_table() -> TypeDef {
+    serde_json::from_value(json!({
+        "kind": "table", "name": "Rows", "description": "A table.", "version": 2, "open": true,
+        "columns": [
+            {"name": "id", "type": {"kind": "integer"}, "unique": true, "required": false},
+            {"name": "age", "type": {"kind": "option", "inner": {"kind": "double"}}, "unit": "a"}
+        ],
+        "rules": [{"id": "SIGN", "invariant": {">": [{"var": "age"}, 0]}}],
+        "migrations": [{"from_version": 1, "steps": []}],
+        "aliases": ["ns::Lines"],
+        "extensions": {"x:y": 1}
+    }))
+    .unwrap()
+}
+
 fn sample_record() -> (Name, Vec<Entry>) {
     let ns = name("ns");
     let mut entries = vec![
         Entry {
             namespace: ns.clone(),
             declaration: Declaration::Type(sample_struct()),
+        },
+        Entry {
+            namespace: ns.clone(),
+            declaration: Declaration::Type(sample_table()),
         },
         Entry {
             namespace: ns.clone(),

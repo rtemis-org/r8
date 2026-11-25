@@ -461,7 +461,7 @@ r8_field <- function(type, default, has_default, description, sensitive, unit, c
 #' `type_double()`.
 #' @keywords internal
 #' @noRd
-r8_ft_double <- function(min, max, exclusive_min, exclusive_max, finite, values) .Call(wrap__r8_ft_double, min, max, exclusive_min, exclusive_max, finite, values)
+r8_ft_double <- function(min, max, exclusive_min, exclusive_max, infinite, nan, values) .Call(wrap__r8_ft_double, min, max, exclusive_min, exclusive_max, infinite, nan, values)
 
 #' `type_character()`.
 #' @keywords internal
@@ -506,6 +506,15 @@ r8_rule <- function(invariant, when, message, id) .Call(wrap__r8_rule, invariant
 #' @noRd
 r8_logic <- function(expr) .Call(wrap__r8_logic, expr)
 
+#' Dates or date-times as a rule writes them.
+#'
+#' @param x Double: Days, or seconds, since 1970-01-01.
+#' @param datetime Logical: `x` holds seconds.
+#' @return Character.
+#' @keywords internal
+#' @noRd
+r8_date_literals <- function(x, datetime) .Call(wrap__r8_date_literals, x, datetime)
+
 #' The R spelling of each operator of the dialect: the dialect operators,
 #' named by the R function or operator that writes them.
 #' @keywords internal
@@ -546,6 +555,54 @@ r8_format_size <- function(bytes) .Call(wrap__r8_format_size, bytes)
 #' @keywords internal
 #' @noRd
 r8_native_symbols <- function() .Call(wrap__r8_native_symbols)
+
+#' A value of the table `type_name` of the columns of `columns`, a named list of
+#' vectors, or the problems of one.
+#'
+#' @param columns List: The columns by name.
+#' @param type_name Character: The qualified type name.
+#' @param own Logical: Copy each vector, for columns that a data.table holds.
+#' @param facts List or `NULL`: The units and descriptions of extra columns.
+#' @return The value or the problems.
+#' @keywords internal
+#' @noRd
+r8_table_new <- function(columns, type_name, own, facts) .Call(wrap__r8_table_new, columns, type_name, own, facts)
+
+#' The rows `i` and the columns `j` of the table value `x`, each an index or
+#' `NULL` for all of them.
+#'
+#' @param x A value of a table.
+#' @param i,j The indices; `i` is a list of one `rule()` for the rows where it is
+#'   true.
+#' @return The value, or an object of class `r8_refused` or `r8_problems`.
+#' @keywords internal
+#' @noRd
+r8_table_get <- function(x, i, j) .Call(wrap__r8_table_get, x, i, j)
+
+#' The columns of the table value `x`.
+#'
+#' @param x A value of a table.
+#' @return List: `name`, `type`, `unit`, `description`, and `declared`.
+#' @keywords internal
+#' @noRd
+r8_table_columns <- function(x) .Call(wrap__r8_table_columns, x)
+
+#' The table value `x` with the facts `facts` of its extra columns.
+#'
+#' @param x A value of a table.
+#' @param facts List: Per column, a list with `unit` and `description`.
+#' @return The value.
+#' @keywords internal
+#' @noRd
+r8_table_set_facts <- function(x, facts) .Call(wrap__r8_table_set_facts, x, facts)
+
+#' The rows of the table values `xs`, of one type and with the same columns.
+#'
+#' @param xs List of values.
+#' @return The value, or an object of class `r8_refused` or `r8_problems`.
+#' @keywords internal
+#' @noRd
+r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 
 #' The IR parameters of a generic or trait method, from `params()`.
 #'
@@ -672,7 +729,7 @@ r8_stored_form <- function(x, type) .Call(wrap__r8_stored_form, x, type)
 #' @return List: The lists of an `r8_text`.
 #' @keywords internal
 #' @noRd
-r8_layout_value <- function(x, display_types, display, summary, head) .Call(wrap__r8_layout_value, x, display_types, display, summary, head)
+r8_layout_value <- function(x, display_types, display, summary, head, width, unicode) .Call(wrap__r8_layout_value, x, display_types, display, summary, head, width, unicode)
 
 #' The default layout of a list or a data frame, as the lists of an
 #' `r8_text`: a header naming the class with the number of elements, or

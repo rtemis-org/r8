@@ -56,12 +56,28 @@ presence and is not a read: \code{is.null(a) || !is.null(b)} requires \code{b}
 whenever \code{a} is present.
 }
 
+\section{Rows}{
+
+A rule of a \code{\link[=new_table]{new_table()}} or a \code{type_table()} reads the cells of one row by the
+names of the columns; the cell of a factor is its label. A rule also chooses the
+rows of a table (\code{\link[=r8_filter]{r8_filter()}}), and then \code{mean()}, \code{sum()}, \code{min()}, and \code{max()}
+read whole columns. \code{pmin()} and \code{pmax()} are of the cells of a row.
+}
+
+\section{Missing values}{
+
+A comparison with a missing cell or with \code{NaN} is missing, and so is an operation
+with one, except \code{is.na()}; \code{FALSE && NA} is false and \code{TRUE || NA} is true, as in
+R. A check fails where the rule is false, and a filter keeps the rows where it is
+true.
+}
+
 \section{Vectors}{
 
 \verb{all(x, <condition>)} and \verb{any(x, <condition>)} test a condition on each
 element of the vector \code{x}, with \code{.x} the element: \code{all(values, .x > 0)}.
 A violation of an invariant that is an \code{all()} reports each failing
-element's path. \code{length()}, \code{sum()}, \code{min()}, \code{max()},
+element's path. \code{length()}, \code{sum()}, \code{mean()}, \code{min()}, \code{max()},
 \code{non_decreasing()}, and \code{non_increasing()} read a whole vector, without
 copying it. Paired elements of two vectors are columns of a
 \code{type_table()}, whose \code{rules} apply to each row.
@@ -69,26 +85,43 @@ copying it. Paired elements of two vectors are columns of a
 
 \section{Constants}{
 
-A bare name in a rule is always a field. \code{lit(expr)} is the value of the
-R expression \code{expr}, evaluated once when \code{rule()} runs: \code{cost <= lit(max_cost)}.
+A bare name in a rule is always a field. \code{val(expr)} is the value of the
+R expression \code{expr}, evaluated once when \code{rule()} runs: \code{cost <= val(max_cost)}.
 }
 
 \section{Operators and functions}{
 
 Comparisons (\code{==}, \code{!=}, \code{<}, \code{<=}, \code{>}, \code{>=}), arithmetic (\code{+}, \code{-},
 \code{*}, \code{/}, \code{\%\%}), logical operators (\code{&&}, \code{||}, \code{!}; \code{&} and \code{|} are the
-same as \code{&&} and \code{||}), \code{\%in\%}, \code{if}, \code{is.null()}, \code{is_variant()},
+same as \code{&&} and \code{||}), \code{\%in\%}, \code{if}, \code{is.na()}, \code{is.null()}, \code{is_variant()},
 \code{length()}, \code{nchar()}, \code{nrow()}, \code{ncol()}, \code{dim()}, \code{levels()},
-\code{abs()}, \code{floor()}, \code{ceiling()}, \code{round()}, \code{min()}, \code{max()}, \code{sum()},
+\code{abs()}, \code{sqrt()}, \code{log()}, \code{exp()}, \code{floor()}, \code{ceiling()}, \code{round()}, \code{min()},
+\code{max()}, \code{pmin()}, \code{pmax()}, \code{sum()}, \code{mean()},
 \code{all()}, \code{any()}, \code{subset()}, \code{non_decreasing()}, \code{non_increasing()},
-\code{paste0()}, \code{c()} of constants, and \code{lit()}.
+\code{paste0()}, \code{c()} of constants, and \code{val()}.
 
 Rules follow the strict semantics of R8's rule language, which is the
 same in every host: \code{==} is strict equality, so an integer never equals a
-string; strings do not order; division by zero is an error; and \code{==} on a
-double computed by arithmetic or \code{sum()} is a declaration error, since
-rounding makes it inexact: \code{abs(sum(p) - 1) <= 1e-9} states the
+string; strings do not order; a string compared with a date or a date-time is
+one, \code{"2020-01-31"} or \code{"2020-01-31T12:00:00Z"}; a division by zero, \code{sqrt()} of
+a negative number, and \code{log()} of a number that is not positive are errors;
+\code{sum()} is the exact sum, rounded once, and \code{mean()} that sum over the count; and
+\code{==} on a double computed by arithmetic, \code{sum()}, or \code{mean()} is a declaration
+error, since rounding makes it inexact: \code{abs(sum(p) - 1) <= 1e-9} states the
 tolerance.
+}
+
+\section{Rules of rules}{
+
+A rule is a value. \code{!}, \code{&}, and \code{|} make a rule of others, \code{!adult & woman},
+without an ID and a message.
+}
+
+\section{Package code}{
+
+\verb{R CMD check} takes a bare name in a function for a variable that nothing binds.
+A function of a package quotes the condition, \code{rule(quote(age >= val(cutoff)))},
+which is the same rule.
 }
 
 \section{Words that differ from R}{
@@ -102,7 +135,7 @@ the R functions of the same name, or exist in rules only:\tabular{ll}{
    \code{non_decreasing(x)}, \code{non_increasing(x)} \tab The vector \code{x} is in order. \cr
    \code{&}, \verb{\|} \tab The same as \code{&&} and \verb{\|\|}. \cr
    \code{==} \tab Strict equality: values of different types are never equal. \cr
-   \code{lit(expr)} \tab The value of the R expression \code{expr}, a constant. \cr
+   \code{val(expr)} \tab The value of the R expression \code{expr}, a constant. \cr
 }
 }
 
@@ -140,7 +173,7 @@ Model <- new_struct(
   ),
   rules = list(
     rule(lo < hi),
-    rule(cost <= lit(max_cost), message = "cost is at most max_cost."),
+    rule(cost <= val(max_cost), message = "cost is at most max_cost."),
     rule(abs(sum(weights) - 1) <= 1e-9, message = "weights sum to 1.", id = "WEIGHTS"),
     rule(kernel$gamma <= 10, when = is_variant(kernel, "Rbf"), message = "gamma is at most 10.")
   )

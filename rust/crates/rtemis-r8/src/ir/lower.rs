@@ -277,6 +277,14 @@ pub fn check_extends(
             );
             return out;
         }
+        Some(TypeDef::Table(_)) => {
+            report(
+                "extends_not_struct",
+                at,
+                format!("`{parent_name}` is a table; `extends` names a struct"),
+            );
+            return out;
+        }
         None => {
             report(
                 "extends_unknown",
@@ -382,7 +390,8 @@ fn fields_of<'a>(
                 _ => &[],
             }
         }
-        None => &[],
+        // A column has no default.
+        Some(TypeDef::Table(_)) | None => &[],
     }
 }
 
@@ -465,7 +474,7 @@ pub fn check_default_cycles(
                 (Some(v), i, at)
             })
             .collect(),
-        None => Vec::new(),
+        Some(TypeDef::Table(_)) | None => Vec::new(),
     };
     let mut out = Vec::new();
     for (variant, i, at) in starts {

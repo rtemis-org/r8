@@ -5,9 +5,11 @@
 //! so a rule's mistakes are declaration errors. The result is a typed tree
 //! that `eval` runs.
 
-use super::eval::Scalar;
+use super::eval::{Scalar, unwrap_option};
 use super::ty::{Members, Ty, TypeLookup, VariantFields, members};
-use crate::ir::{FieldDef, Logic, Operator};
+use crate::access::{valid_date, valid_posixct};
+use crate::canonical::{date_days, datetime_micros};
+use crate::ir::{FieldDef, FieldType, Logic, Operator};
 
 /// A problem in a rule expression, located by a JSON Pointer into the
 /// expression.
@@ -103,6 +105,48 @@ pub enum Op {
     Abs,
     Sum,
     Nchar,
+    Mean,
+    Sqrt,
+    Log,
+    Exp,
+}
+
+/// A column of the table whose rows an expression reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cell {
+    /// The column's name.
+    pub name: Box<str>,
+    /// The column's type.
+    pub ty: FieldType,
+    /// The cells are not shown.
+    pub sensitive: bool,
+}
+
+/// The columns of the table whose rows an expression reads.
+pub trait RowScope {
+    /// The column `name` and its unit.
+    fn column(&self, name: &str) -> Option<(Cell, Option<String>)>;
+    /// The name nearest to `name`.
+    fn nearest(&self, name: &str) -> Option<String>;
+}
+
+impl<C: crate::ir::Column> RowScope for &[C] {
+    fn column(&self, name: &str) -> Option<(Cell, Option<String>)> {
+        let f = self
+            .iter()
+            .map(|c| c.field())
+            .find(|f| f.name.as_str() == name)?;
+        let cell = Cell {
+            name: f.name.as_str().into(),
+            ty: f.ty.clone(),
+            sensitive: f.sensitive,
+        };
+        Some((cell, f.unit.as_deref().map(str::to_string)))
+    }
+
+    fn nearest(&self, name: &str) -> Option<String> {
+        crate::name::nearest(name, self.iter().map(|c| c.field().name.as_str())).map(str::to_string)
+    }
 }
 
 /// A compiled expression.
@@ -117,8 +161,19 @@ pub enum Expr {
     And(Vec<Expr>),
     Or(Vec<Expr>),
     Op(Op, Vec<Expr>),
+    /// A cell of the row: the column's place among those that the rule reads.
+    Cell(usize),
+    /// `mean`, `sum`, `min`, or `max` over all rows of every operand; `at` is
+    /// its place among the rule's.
+    Aggregate {
+        op: Op,
+        operands: Vec<Expr>,
+        at: usize,
+    },
     /// `is.null(x)`: a presence test, which does not count as a read.
     IsNull(Box<Expr>),
+    /// `is.na(x)`: missing, or `NaN`.
+    IsNa(Box<Expr>),
     IsVariant {
         value: Box<Expr>,
         variant: String,
@@ -137,11 +192,46 @@ pub enum Expr {
     },
 }
 
+/// What the names of an expression are.
+#[derive(Clone, Copy)]
+enum Names<'a> {
+    /// The fields of a value.
+    Fields(&'a [FieldDef]),
+    /// The columns of a table, whose cells a row reads; `aggregates` admits
+    /// the operators over all rows.
+    Columns {
+        columns: &'a dyn RowScope,
+        aggregates: bool,
+    },
+}
+
 struct Compiler<'a> {
     lookup: &'a dyn TypeLookup,
-    fields: &'a [FieldDef],
+    names: Names<'a>,
     element: Option<Ty>,
     errors: Vec<RuleError>,
+    /// The columns that the expression reads.
+    cells: Vec<Cell>,
+    /// The number of aggregates.
+    aggregates: usize,
+}
+
+/// Whether an expression reads a cell.
+fn reads_cell(e: &Expr) -> bool {
+    match e {
+        Expr::Cell(_) | Expr::Aggregate { .. } => true,
+        Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => xs.iter().any(reads_cell),
+        Expr::IsNa(x) | Expr::IsNull(x) => reads_cell(x),
+        _ => false,
+    }
+}
+
+/// The levels that the type of a column declares.
+fn levels(ty: &FieldType) -> Option<&[Box<str>]> {
+    match unwrap_option(ty) {
+        FieldType::Factor { levels, .. } => levels.as_deref(),
+        _ => None,
+    }
 }
 
 fn pointer_segment(s: &str) -> String {
@@ -230,7 +320,15 @@ fn evaluated(op: Operator) -> Option<(Op, std::ops::RangeInclusive<usize>)> {
         O::Abs => (Op::Abs, 1..=1),
         O::Sum => (Op::Sum, 1..=1),
         O::Nchar => (Op::Nchar, 1..=1),
+        O::Mean => (Op::Mean, 1..=1),
+        O::Pmin => (Op::Min, 2..=usize::MAX),
+        O::Pmax => (Op::Max, 2..=usize::MAX),
+        O::Sqrt => (Op::Sqrt, 1..=1),
+        O::Log => (Op::Log, 1..=1),
+        O::Exp => (Op::Exp, 1..=1),
         O::Var
+        | O::Path
+        | O::IsNa
         | O::LooseEq
         | O::LooseNe
         | O::IsNull
@@ -296,7 +394,17 @@ impl Compiler<'_> {
                     Ty::Array(Box::new(elem.unwrap_or(Ty::Any))),
                 )
             }
-            Logic::Var(p) => self.var_path(p, &format!("{path}/var")),
+            Logic::Var(p) => {
+                let at = format!("{path}/var");
+                match p.strip_prefix(".x.") {
+                    Some(rest) => {
+                        let names: Vec<&str> = [".x"].into_iter().chain(rest.split('.')).collect();
+                        self.var_path(&names, &at)
+                    }
+                    None if &**p == ".x" => self.var_path(&[".x"], &at),
+                    None => self.var_path(&p.split('.').collect::<Vec<_>>(), &at),
+                }
+            }
             Logic::Call { op, args, .. } => {
                 let args: Vec<&Logic> = args.iter().collect();
                 self.operation(
@@ -464,22 +572,38 @@ impl Compiler<'_> {
         self.same_unit(a, b, path, op);
     }
 
+    /// A `var` whose operand is not a string.
     fn var(&mut self, args: &[&Logic], path: &str) -> (Expr, Ty) {
         if !self.arity("var", args, 1..=1, path) {
             return (Expr::Lit(Scalar::Null), Ty::Any);
         }
-        let Some(p) = args[0].as_str() else {
-            return self.error("rule_var", path, "`var` takes a path string".to_string());
-        };
-        self.var_path(p, path)
+        match args[0].as_str() {
+            Some(_) => self.compile(
+                &Logic::Var(args[0].as_str().unwrap_or_default().into()),
+                path,
+            ),
+            None => self.error("rule_var", path, "`var` takes a path string".to_string()),
+        }
     }
 
-    /// Binds the path `p` of a `var` to a field and its static type.
-    fn var_path(&mut self, p: &str, path: &str) -> (Expr, Ty) {
-        let mut segments: Vec<&str> = p.split('.').collect();
+    /// A `path`, whose operands are the names.
+    fn path(&mut self, args: &[&Logic], path: &str) -> (Expr, Ty) {
+        let names: Option<Vec<&str>> = args.iter().map(|a| a.as_str()).collect();
+        match names {
+            Some(names) if !names.is_empty() => self.var_path(&names, path),
+            _ => self.error("rule_var", path, "`path` takes names".to_string()),
+        }
+    }
+
+    /// Binds the names of a path to a field and its static type.
+    fn var_path(&mut self, names: &[&str], path: &str) -> (Expr, Ty) {
+        let mut segments = names.to_vec();
         let mut steps = Vec::new();
-        let (root, mut ty) = if p == ".x" || p.starts_with(".x.") {
-            segments.drain(..2);
+        let first = segments.remove(0);
+        let mut cell = None;
+        let (root, mut ty) = if first == ".x"
+            && (self.element.is_some() || matches!(self.names, Names::Fields(_)))
+        {
             match &self.element {
                 Some(t) => (Root::Element, t.clone()),
                 None => {
@@ -491,23 +615,54 @@ impl Compiler<'_> {
                 }
             }
         } else {
-            let first = segments.remove(0);
-            match self.fields.iter().find(|f| f.name.as_str() == first) {
-                Some(f) => {
-                    steps.push(Step::Field(first.to_string()));
-                    (Root::Data, Ty::of(&f.ty, f.unit.as_deref()))
-                }
-                None => {
-                    let near =
-                        crate::name::nearest(first, self.fields.iter().map(|f| f.name.as_str()))
-                            .map(|n| format!("; the nearest field is `{n}`"))
+            match self.names {
+                Names::Fields(fields) => match fields.iter().find(|f| f.name.as_str() == first) {
+                    Some(f) => {
+                        steps.push(Step::Field(first.to_string()));
+                        (Root::Data, Ty::of(&f.ty, f.unit.as_deref()))
+                    }
+                    None => {
+                        let near =
+                            crate::name::nearest(first, fields.iter().map(|f| f.name.as_str()))
+                                .map(|n| format!("; the nearest field is `{n}`"))
+                                .unwrap_or_default();
+                        return self.error(
+                            "rule_field",
+                            path,
+                            format!("`{first}` is not a field in scope{near}"),
+                        );
+                    }
+                },
+                Names::Columns { columns, .. } => match columns.column(first) {
+                    Some((c, unit)) => {
+                        // A factor's cell is its label.
+                        let ty = match Ty::of(&c.ty, unit.as_deref()) {
+                            Ty::Factor { .. } => Ty::String,
+                            t => t,
+                        };
+                        let at = self
+                            .cells
+                            .iter()
+                            .position(|x| x.name == c.name)
+                            .unwrap_or_else(|| {
+                                self.cells.push(c);
+                                self.cells.len() - 1
+                            });
+                        cell = Some(at);
+                        (Root::Data, ty)
+                    }
+                    None => {
+                        let near = columns
+                            .nearest(first)
+                            .map(|n| format!("; the nearest column is `{n}`"))
                             .unwrap_or_default();
-                    return self.error(
-                        "rule_field",
-                        path,
-                        format!("`{first}` is not a field in scope{near}"),
-                    );
-                }
+                        return self.error(
+                            "rule_field",
+                            path,
+                            format!("`{first}` is not a column of the table{near}"),
+                        );
+                    }
+                },
             }
         };
         for seg in segments {
@@ -523,10 +678,193 @@ impl Compiler<'_> {
             return self.error(
                 "rule_type",
                 path,
-                format!("`{p}` is a host-only R value, which rules cannot read"),
+                format!(
+                    "`{}` is a host-only R value, which rules cannot read",
+                    names.join(".")
+                ),
             );
         }
-        (Expr::Var { root, steps }, ty)
+        match cell {
+            Some(at) => (Expr::Cell(at), ty),
+            None => (Expr::Var { root, steps }, ty),
+        }
+    }
+
+    /// Reads the string literals that are compared with a date or a date-time
+    /// as one: `at` is the operand of the other type.
+    fn read_dates(&mut self, parts: &mut [(Expr, Ty)], path: &str) {
+        let Some(of) = parts
+            .iter()
+            .map(|(_, t)| t.clone())
+            .find(|t| matches!(t, Ty::Date | Ty::Posixct))
+        else {
+            return;
+        };
+        let read = |text: &str| match of {
+            Ty::Date => valid_date(text).then(|| Scalar::Date(date_days(text))),
+            _ => {
+                // The fraction of a second may be left out.
+                let whole = text
+                    .strip_suffix('Z')
+                    .filter(|t| t.len() == 19)
+                    .map(|t| format!("{t}.000000Z"));
+                let text = whole.as_deref().unwrap_or(text);
+                valid_posixct(text).then(|| Scalar::DateTime(datetime_micros(text)))
+            }
+        };
+        for (i, (e, t)) in parts.iter_mut().enumerate() {
+            let refused = match e {
+                Expr::Lit(Scalar::Str(text)) => match read(text) {
+                    Some(v) => {
+                        *e = Expr::Lit(v);
+                        *t = of.clone();
+                        None
+                    }
+                    None => Some(text.clone()),
+                },
+                Expr::Lit(Scalar::Array(xs)) => {
+                    let mut refused = None;
+                    for x in xs.iter_mut() {
+                        if let Scalar::Str(text) = x {
+                            match read(text) {
+                                Some(v) => *x = v,
+                                None => refused = Some(text.clone()),
+                            }
+                        }
+                    }
+                    if matches!(t, Ty::Array(of) if **of == Ty::String) && refused.is_none() {
+                        *t = Ty::Array(Box::new(of.clone()));
+                    }
+                    refused
+                }
+                _ => None,
+            };
+            if let Some(text) = refused {
+                self.errors.push(RuleError {
+                    code: "rule_date",
+                    path: format!("{path}/{i}"),
+                    message: if of == Ty::Date {
+                        format!("\"{text}\" is compared with a date, and is not one: YYYY-MM-DD")
+                    } else {
+                        format!(
+                            "\"{text}\" is compared with a date-time, and is not one: YYYY-MM-DDTHH:MM:SSZ"
+                        )
+                    },
+                });
+                *e = Expr::Lit(Scalar::Null);
+                *t = Ty::Any;
+            }
+        }
+    }
+
+    /// A literal compared with a cell of a factor is one of the declared
+    /// levels.
+    fn labels(&mut self, parts: &[(Expr, Ty)], path: &str) {
+        let Some((name, known)) = parts.iter().find_map(|(e, _)| match e {
+            Expr::Cell(k) => {
+                let c = &self.cells[*k];
+                Some((c.name.clone(), levels(&c.ty)?.to_vec()))
+            }
+            _ => None,
+        }) else {
+            return;
+        };
+        for (i, (e, _)) in parts.iter().enumerate() {
+            let given: &[Scalar] = match e {
+                Expr::Lit(Scalar::Array(xs)) => xs,
+                Expr::Lit(x @ Scalar::Str(_)) => std::slice::from_ref(x),
+                _ => continue,
+            };
+            for x in given {
+                let Scalar::Str(text) = x else { continue };
+                if known.iter().any(|l| **l == **text) {
+                    continue;
+                }
+                let listed: Vec<String> = known.iter().map(|l| format!("\"{l}\"")).collect();
+                self.errors.push(RuleError {
+                    code: "rule_level",
+                    path: format!("{path}/{i}"),
+                    message: format!(
+                        "\"{text}\" is not a level of `{name}`, whose levels are {}",
+                        listed.join(", ")
+                    ),
+                });
+                return;
+            }
+        }
+    }
+
+    /// `mean`, `sum`, `min`, or `max` in a rule that reads rows: over all rows
+    /// of every operand.
+    fn aggregate(
+        &mut self,
+        code: Op,
+        op: &str,
+        args: &[&Logic],
+        admitted: bool,
+        path: &str,
+    ) -> (Expr, Ty) {
+        let many = matches!(code, Op::Min | Op::Max);
+        if !admitted {
+            let cells = if many && args.len() > 1 {
+                format!(
+                    "; `p{op}` is the {} of the cells of a row",
+                    if code == Op::Min { "least" } else { "greatest" }
+                )
+            } else {
+                String::new()
+            };
+            return self.error(
+                "rule_aggregate",
+                path,
+                format!("a rule of a table reads one row, and `{op}` reads whole columns{cells}; a rule that filters takes it"),
+            );
+        }
+        let range = if many { 1..=usize::MAX } else { 1..=1 };
+        if !self.arity(op, args, range, path) {
+            return (Expr::Lit(Scalar::Null), Ty::Any);
+        }
+        let parts = self.operands(args, path);
+        if !self.errors.is_empty() {
+            return (Expr::Lit(Scalar::Null), Ty::Any);
+        }
+        if !parts.iter().any(|(e, _)| reads_cell(e)) {
+            return self.error(
+                "rule_aggregate",
+                path,
+                format!("`{op}` reads whole columns, and its operands read none"),
+            );
+        }
+        let dates = many
+            && matches!(parts[0].1, Ty::Date | Ty::Posixct)
+            && parts.iter().all(|(_, t)| *t == parts[0].1);
+        let ty = if dates {
+            parts[0].1.clone()
+        } else {
+            let mut unit = unit_of(&parts[0].1).map(str::to_string);
+            for (i, (_, t)) in parts.iter().enumerate() {
+                self.expect_number(t, &format!("{path}/{i}"), op);
+                let a = Ty::Number {
+                    unit: unit.clone(),
+                    exact: true,
+                };
+                unit = self.same_unit(&a, t, path, op);
+            }
+            Ty::Number {
+                unit,
+                exact: code != Op::Mean && parts.iter().all(|(_, t)| exact_of(t)),
+            }
+        };
+        let at = self.aggregates;
+        self.aggregates += 1;
+        (
+            Expr::Aggregate {
+                op: code,
+                operands: parts.into_iter().map(|(e, _)| e).collect(),
+                at,
+            },
+            ty,
+        )
     }
 
     fn step(&mut self, ty: &Ty, seg: &str, path: &str) -> Option<(Step, Ty)> {
@@ -631,8 +969,67 @@ impl Compiler<'_> {
 
     fn operation(&mut self, operator: Operator, args: &[&Logic], path: &str) -> (Expr, Ty) {
         let op = operator.as_str();
+        if let Names::Columns { aggregates, .. } = self.names {
+            use Operator as O;
+            match operator {
+                O::Mean => return self.aggregate(Op::Mean, op, args, aggregates, path),
+                O::Sum => return self.aggregate(Op::Sum, op, args, aggregates, path),
+                O::Min => return self.aggregate(Op::Min, op, args, aggregates, path),
+                O::Max => return self.aggregate(Op::Max, op, args, aggregates, path),
+                O::IsNull => {
+                    return self.error(
+                        "rule_type",
+                        path,
+                        "`is_null` tests a field, and a row reads cells; `is_na` tests a cell"
+                            .to_string(),
+                    );
+                }
+                O::Length
+                | O::Subset
+                | O::NonIncreasing
+                | O::NonDecreasing
+                | O::Nrow
+                | O::Ncol
+                | O::Dim
+                | O::Levels
+                | O::All
+                | O::Any
+                | O::IsVariant => {
+                    return self.error(
+                        "rule_type",
+                        path,
+                        format!("`{op}` reads a whole field, and a row reads cells"),
+                    );
+                }
+                _ => {}
+            }
+        }
         match operator {
             Operator::Var => return self.var(args, path),
+            Operator::Path => return self.path(args, path),
+            Operator::IsNa => {
+                if !self.arity(op, args, 1..=1, path) {
+                    return (Expr::Lit(Scalar::Null), Ty::Bool);
+                }
+                let (e, t) = self.compile(args[0], &format!("{path}/0"));
+                if !matches!(
+                    t,
+                    Ty::Bool
+                        | Ty::Number { .. }
+                        | Ty::String
+                        | Ty::Date
+                        | Ty::Posixct
+                        | Ty::Any
+                        | Ty::Json
+                ) {
+                    return self.error(
+                        "rule_type",
+                        path,
+                        format!("`is_na` takes one value, found {}", t.describe()),
+                    );
+                }
+                return (Expr::IsNa(Box::new(e)), Ty::Bool);
+            }
             Operator::LooseEq | Operator::LooseNe => {
                 let strict = if operator == Operator::LooseEq {
                     "==="
@@ -734,7 +1131,14 @@ impl Compiler<'_> {
         if !self.arity(op, args, range, path) {
             return (Expr::Lit(Scalar::Null), Ty::Any);
         }
-        let parts = self.operands(args, path);
+        let mut parts = self.operands(args, path);
+        if matches!(
+            code,
+            Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::In
+        ) {
+            self.read_dates(&mut parts, path);
+            self.labels(&parts, path);
+        }
         let tys: Vec<Ty> = parts.iter().map(|(_, t)| t.clone()).collect();
         let result = self.type_op(code, op, &tys, path);
         // Strict equality of a double that arithmetic computed fails on a
@@ -743,7 +1147,21 @@ impl Compiler<'_> {
             for (i, (e, t)) in parts.iter().enumerate() {
                 let computed = matches!(
                     e,
-                    Expr::Op(Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Sum, _)
+                    Expr::Op(
+                        Op::Add
+                            | Op::Sub
+                            | Op::Mul
+                            | Op::Div
+                            | Op::Sum
+                            | Op::Mean
+                            | Op::Sqrt
+                            | Op::Log
+                            | Op::Exp,
+                        _
+                    ) | Expr::Aggregate {
+                        op: Op::Sum | Op::Mean,
+                        ..
+                    }
                 );
                 if computed && matches!(t, Ty::Number { exact: false, .. }) {
                     self.error(
@@ -828,11 +1246,22 @@ impl Compiler<'_> {
                     exact: exact_of(&t[0]),
                 }
             }
-            Op::Sum => match &t[0] {
+            // The unit of a root or a logarithm is not one of the field's.
+            Op::Sqrt | Op::Log | Op::Exp => {
+                self.expect_number(&t[0], &format!("{path}/0"), op);
+                Ty::Number {
+                    unit: None,
+                    exact: false,
+                }
+            }
+            Op::Sum | Op::Mean => match &t[0] {
                 Ty::Array(e) => {
                     self.expect_number(e, &format!("{path}/0"), op);
                     match &**e {
-                        n @ Ty::Number { .. } => n.clone(),
+                        Ty::Number { unit, exact } => Ty::Number {
+                            unit: unit.clone(),
+                            exact: *exact && code == Op::Sum,
+                        },
                         _ => num,
                     }
                 }
@@ -842,7 +1271,7 @@ impl Compiler<'_> {
                         "rule_type",
                         &format!("{path}/0"),
                         format!(
-                            "`sum` takes an array of numbers, found {}",
+                            "`{op}` takes an array of numbers, found {}",
                             other.describe()
                         ),
                     );
@@ -1082,6 +1511,17 @@ impl Compiler<'_> {
     }
 }
 
+fn compiler<'a>(names: Names<'a>, lookup: &'a dyn TypeLookup) -> Compiler<'a> {
+    Compiler {
+        lookup,
+        names,
+        element: None,
+        errors: Vec::new(),
+        cells: Vec::new(),
+        aggregates: 0,
+    }
+}
+
 /// Compiles one expression in the scope of `fields`. `what` names the
 /// expression's role in a message, such as "a rule's invariant"; `logical`
 /// requires a logical result.
@@ -1091,18 +1531,58 @@ pub fn compile(
     lookup: &dyn TypeLookup,
     logical: Option<&str>,
 ) -> Result<Expr, Vec<RuleError>> {
-    let mut c = Compiler {
-        lookup,
-        fields,
-        element: None,
-        errors: Vec::new(),
-    };
+    let mut c = compiler(Names::Fields(fields), lookup);
     let (expr, ty) = c.compile(logic, "");
     if let Some(what) = logical {
         c.expect_bool(&ty, "", what);
     }
     if c.errors.is_empty() {
         Ok(expr)
+    } else {
+        Err(c.errors)
+    }
+}
+
+/// The compiled conditions of a rule that reads rows.
+pub struct Rows {
+    pub invariant: Expr,
+    pub when: Option<Expr>,
+    /// The columns they read, by `Expr::Cell`.
+    pub cells: Vec<Cell>,
+    /// The number of aggregates in them.
+    pub aggregates: usize,
+}
+
+/// Compiles the conditions of a rule over the rows of a table. Error paths are
+/// relative to the rule.
+pub fn compile_rows(
+    invariant: &Logic,
+    when: Option<&Logic>,
+    columns: &dyn RowScope,
+    lookup: &dyn TypeLookup,
+    aggregates: bool,
+) -> Result<Rows, Vec<RuleError>> {
+    let mut c = compiler(
+        Names::Columns {
+            columns,
+            aggregates,
+        },
+        lookup,
+    );
+    let (expr, ty) = c.compile(invariant, "/invariant");
+    c.expect_bool(&ty, "/invariant", "a rule's invariant");
+    let when = when.map(|w| {
+        let (e, ty) = c.compile(w, "/when");
+        c.expect_bool(&ty, "/when", "a rule's `when` condition");
+        e
+    });
+    if c.errors.is_empty() {
+        Ok(Rows {
+            invariant: expr,
+            when,
+            cells: c.cells,
+            aggregates: c.aggregates,
+        })
     } else {
         Err(c.errors)
     }
@@ -1117,12 +1597,7 @@ pub fn compile_computed(
     lookup: &dyn TypeLookup,
     target: &Ty,
 ) -> Result<Expr, Vec<RuleError>> {
-    let mut c = Compiler {
-        lookup,
-        fields,
-        element: None,
-        errors: Vec::new(),
-    };
+    let mut c = compiler(Names::Fields(fields), lookup);
     let (expr, ty) = c.compile(logic, "");
     if let Ty::Number { .. } = target {
         c.expect_number(&ty, "", "a computed numeric field");

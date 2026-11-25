@@ -17,7 +17,8 @@ use serde_json::Value;
 use crate::canonical::{canonical_text, text_hash};
 use crate::ir::notation::notation;
 use crate::ir::{
-    Column, ColumnDef, EnumDef, FieldDef, FieldType, RuleDef, StructDef, TypeDef, VariantKind,
+    Column, ColumnDef, EnumDef, FieldDef, FieldType, RuleDef, StructDef, TableDef, TypeDef,
+    VariantKind,
 };
 use crate::name::QualifiedName;
 use crate::rules::{DocumentSet, TypeLookup};
@@ -186,6 +187,19 @@ impl Comparison<'_> {
                 Effect::Meaning,
                 format!("`{q}` was an enum, and is a struct"),
             ),
+            (TypeDef::Table(w), TypeDef::Table(i)) => self.tables(&of, w, i),
+            (TypeDef::Table(_), _) => self.report(
+                "type_changed",
+                &of,
+                Effect::Meaning,
+                format!("`{q}` was a table"),
+            ),
+            (_, TypeDef::Table(_)) => self.report(
+                "type_changed",
+                &of,
+                Effect::Meaning,
+                format!("`{q}` is a table"),
+            ),
         }
     }
 
@@ -196,6 +210,34 @@ impl Comparison<'_> {
                 of,
                 Effect::Meaning,
                 format!("the version of `{of}` was {was}, and is {is}"),
+            );
+        }
+    }
+
+    fn tables(&mut self, of: &str, was: &TableDef, is: &TableDef) {
+        self.version(of, was.version, is.version);
+        let cells =
+            |t: &TableDef| -> Vec<FieldDef> { t.columns.iter().map(|c| c.field.clone()).collect() };
+        self.fields(of, "", &cells(was), &cells(is));
+        self.rules(of, "", &was.rules, &is.rules);
+        for w in &was.columns {
+            if let Some(i) = is.columns.iter().find(|i| i.name == w.name)
+                && (w.unique != i.unique || w.required != i.required)
+            {
+                self.report(
+                    "constraint_changed",
+                    of,
+                    Effect::Form,
+                    format!("what column `{}` requires changed", w.name),
+                );
+            }
+        }
+        if was.open && !is.open {
+            self.report(
+                "constraint_changed",
+                of,
+                Effect::Form,
+                format!("`{of}` admitted other columns, and does not"),
             );
         }
     }

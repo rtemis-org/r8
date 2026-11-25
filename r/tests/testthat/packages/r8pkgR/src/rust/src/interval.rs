@@ -89,7 +89,7 @@ pub trait Shifted {
     fn shifted(
         &self,
         /// The distance, in the unit of the value.
-        #[r8(finite = false, default = "1")]
+        #[r8(infinite, default = "1")]
         by: f64,
     ) -> r8::Result<Self>
     where

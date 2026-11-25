@@ -11,12 +11,13 @@ use std::collections::HashSet;
 use crate::validate::MAX_NESTING;
 
 use super::decl::{
-    FieldDef, MethodDef, ParamDef, ReturnType, RuleDef, StructDef, TraitDef, VariantKind,
+    ColumnDef, FieldDef, MethodDef, ParamDef, ReturnType, RuleDef, StructDef, TableDef, TraitDef,
+    VariantKind,
 };
 use super::document::{IrDocument, TypeDef};
 use super::types::{FieldType, Resolve};
 use crate::name::{Name, QualifiedName, is_host_keyword, is_syntactic_r_name};
-use crate::rules::{CompiledRule, check_computed};
+use crate::rules::{CompiledRule, RowRule, check_computed};
 
 /// A problem in a declaration, located by a JSON Pointer into the document.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,7 +348,7 @@ impl Checker<'_> {
         );
     }
 
-    fn rules(&mut self, rules: &[RuleDef], scope: &[FieldDef], path: &str) {
+    fn rules(&mut self, rules: &[RuleDef], scope: &[FieldDef], rows: bool, path: &str) {
         for (i, r) in rules.iter().enumerate() {
             for (l, name) in [(Some(&r.invariant), "invariant"), (r.when.as_ref(), "when")] {
                 if l.is_some_and(|l| !logic_fits(l, MAX_NESTING)) {
@@ -385,7 +386,12 @@ impl Checker<'_> {
                     format!("rule {i} has a blank message"),
                 );
             }
-            if let Err(errors) = CompiledRule::compile(r, scope, self.doc) {
+            let errors = if rows {
+                RowRule::compile(r, &scope, self.doc).err()
+            } else {
+                CompiledRule::compile(r, scope, self.doc).err()
+            };
+            if let Some(errors) = errors {
                 for e in errors {
                     self.report(e.code, &format!("{path}/{i}{}", e.path), e.message);
                 }
@@ -434,6 +440,20 @@ impl Checker<'_> {
                         format!("min {lo} exceeds max {hi}"),
                     );
                 }
+                if c.infinite && (c.values.is_some() || (c.lower.is_some() && c.upper.is_some())) {
+                    self.report(
+                        "infinite_unused",
+                        path,
+                        format!(
+                            "`infinite` admits no infinity: the {}",
+                            if c.values.is_some() {
+                                "values are listed, and finite"
+                            } else {
+                                "range is bounded on both sides"
+                            }
+                        ),
+                    );
+                }
             }
             FieldType::Character(c) => self.pattern(c.pattern.as_deref(), path),
             FieldType::Factor { levels, .. } => {
@@ -467,23 +487,7 @@ impl Checker<'_> {
                     );
                 }
             }
-            FieldType::Table { columns, rules, .. } => {
-                let fields: Vec<FieldDef> = columns.iter().map(|c| c.field.clone()).collect();
-                self.fields(&fields, &format!("{path}/columns"), FieldsAt::Column);
-                self.rules(rules, &fields, &format!("{path}/rules"));
-                for (i, c) in columns.iter().enumerate() {
-                    if !is_column_type(&c.ty) {
-                        self.report(
-                            "table_column",
-                            &format!("{path}/columns/{i}/type"),
-                            format!(
-                                "column `{}` of a table holds a scalar, a factor, or `option()` of a scalar",
-                                c.name
-                            ),
-                        );
-                    }
-                }
-            }
+            FieldType::Table { columns, rules, .. } => self.columns(columns, rules, path),
             // Reached only outside `option()` at a field's own type: the
             // `Option` arm returns before descending into a host class there.
             FieldType::HostClass { class, .. } => {
@@ -762,13 +766,48 @@ impl Checker<'_> {
         }
     }
 
+    fn table_def(&mut self, t: &TableDef, path: &str) {
+        self.class_name(&t.name, "type", &format!("{path}/name"));
+        self.version(t.version, &format!("{path}/version"));
+        self.extensions(t.extensions.keys(), &format!("{path}/extensions"));
+        self.columns(&t.columns, &t.rules, path);
+        for (i, c) in t.columns.iter().enumerate() {
+            if c.default.is_some() {
+                self.report(
+                    "column_default",
+                    &format!("{path}/columns/{i}/default"),
+                    format!("column `{}` of a table has no default", c.name),
+                );
+            }
+        }
+    }
+
+    /// The columns and the row rules of a table declared at `path`.
+    fn columns(&mut self, columns: &[ColumnDef], rules: &[RuleDef], path: &str) {
+        let fields: Vec<FieldDef> = columns.iter().map(|c| c.field.clone()).collect();
+        self.fields(&fields, &format!("{path}/columns"), FieldsAt::Column);
+        self.rules(rules, &fields, true, &format!("{path}/rules"));
+        for (i, c) in columns.iter().enumerate() {
+            if !is_column_type(&c.ty) {
+                self.report(
+                    "table_column",
+                    &format!("{path}/columns/{i}/type"),
+                    format!(
+                        "column `{}` of a table holds a scalar, a factor, or `option()` of a scalar",
+                        c.name
+                    ),
+                );
+            }
+        }
+    }
+
     fn struct_def(&mut self, s: &StructDef, path: &str) {
         let before = self.errors.len();
         self.class_name(&s.name, "type", &format!("{path}/name"));
         self.version(s.version, &format!("{path}/version"));
         self.fields(&s.fields, &format!("{path}/fields"), FieldsAt::Struct);
         self.extensions(s.extensions.keys(), &format!("{path}/extensions"));
-        self.rules(&s.rules, &s.fields, &format!("{path}/rules"));
+        self.rules(&s.rules, &s.fields, false, &format!("{path}/rules"));
         self.errors.extend(super::lower::check_order(s, path));
         // A parent in another document is checked by the registry.
         if self.errors.len() == before
@@ -830,6 +869,11 @@ impl Checker<'_> {
                 "newtype_not_struct",
                 path,
                 format!("`{of}` is an enum; a newtype variant wraps a struct"),
+            ),
+            Some(TypeDef::Table(_)) => self.report(
+                "newtype_not_struct",
+                path,
+                format!("`{of}` is a table; a newtype variant wraps a struct"),
             ),
             None => self.report(
                 "newtype_unknown",
@@ -1107,6 +1151,7 @@ impl Checker<'_> {
         let doc = c.doc;
         match t {
             TypeDef::Struct(s) => c.struct_def(s, path),
+            TypeDef::Table(t) => c.table_def(t, path),
             TypeDef::Enum(e) => {
                 c.class_name(&e.name, "type", &format!("{path}/name"));
                 c.version(e.version, &format!("{path}/version"));
@@ -1145,7 +1190,7 @@ impl Checker<'_> {
                     }
                     if let VariantKind::Struct { fields, rules } = &v.kind {
                         c.fields(fields, &format!("{vpath}/fields"), FieldsAt::Variant);
-                        c.rules(rules, fields, &format!("{vpath}/rules"));
+                        c.rules(rules, fields, false, &format!("{vpath}/rules"));
                         if let Some(k) = fields.iter().position(|f| f.name == e.tag) {
                             c.report(
                             "field_is_tag",

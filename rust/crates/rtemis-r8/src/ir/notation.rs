@@ -75,10 +75,14 @@ pub fn notation(t: &FieldType) -> String {
 
 /// An interval with the ends `lower` and `upper`, each its text and whether
 /// it is excluded.
-fn interval(lower: Option<(String, bool)>, upper: Option<(String, bool)>, finite: bool) -> String {
+fn interval(
+    lower: Option<(String, bool)>,
+    upper: Option<(String, bool)>,
+    infinite: bool,
+) -> String {
     // An end without a bound admits every finite number, and the infinity
     // when the type admits it.
-    let open = if finite { ('(', ')') } else { ('[', ']') };
+    let open = if infinite { ('[', ']') } else { ('(', ')') };
     let (a, a_open) = match lower {
         Some((t, excluded)) => (t, if excluded { '(' } else { '[' }),
         None => ("-Inf".into(), open.0),
@@ -110,7 +114,7 @@ fn integer(t: &IntegerType) -> String {
         out.push_str(&interval(
             t.lower.map(|b| (b.value.to_string(), b.exclusive)),
             t.upper.map(|b| (b.value.to_string(), b.exclusive)),
-            true,
+            false,
         ));
     }
     if let Some(v) = &t.values {
@@ -122,18 +126,18 @@ fn integer(t: &IntegerType) -> String {
 fn double(t: &DoubleType) -> String {
     let mut out = String::from("double");
     let bounded = t.lower.is_some() || t.upper.is_some();
-    if bounded || !t.finite {
+    if bounded || t.infinite {
         out.push_str(&interval(
             t.lower.map(|b| (number_text(b.value), b.exclusive)),
             t.upper.map(|b| (number_text(b.value), b.exclusive)),
-            t.finite,
+            t.infinite,
         ));
-    }
-    if !bounded && !t.finite {
-        out.push_str(" or NaN");
     }
     if let Some(v) = &t.values {
         out.push_str(&set(v.iter().map(|x| number_text(*x))));
+    }
+    if t.nan {
+        out.push_str(" or NaN");
     }
     out
 }
@@ -213,13 +217,22 @@ mod tests {
                 "double (0, 1]",
             ),
             (
-                json!({"kind": "double", "finite": false}),
+                json!({"kind": "double", "infinite": true, "nan": true}),
                 "double [-Inf, Inf] or NaN",
             ),
             (
-                json!({"kind": "double", "min": 0.5, "finite": false}),
+                json!({"kind": "double", "min": 0.5, "infinite": true}),
                 "double [0.5, Inf]",
             ),
+            (
+                json!({"kind": "double", "min": 0.0, "max": 1.0, "nan": true}),
+                "double [0, 1] or NaN",
+            ),
+            (
+                json!({"kind": "double", "values": [1.0, 2.0], "nan": true}),
+                "double {1, 2} or NaN",
+            ),
+            (json!({"kind": "double", "nan": true}), "double or NaN"),
             (
                 json!({"kind": "character", "values": ["a", "b"]}),
                 "character {\"a\", \"b\"}",

@@ -9,7 +9,8 @@ type_double(
   max = NULL,
   exclusive_min = NULL,
   exclusive_max = NULL,
-  finite = TRUE,
+  infinite = FALSE,
+  nan = FALSE,
   values = NULL
 )
 }
@@ -24,7 +25,9 @@ with \code{min}, it raises \code{r8_declaration_error}.}
 \item{exclusive_max}{Optional Numeric: The value must be below it. Given
 with \code{max}, it raises \code{r8_declaration_error}.}
 
-\item{finite}{Logical: Restrict the domain to finite values.}
+\item{infinite}{Logical: If TRUE, admit \code{Inf} and \code{-Inf} within the bounds.}
+
+\item{nan}{Logical: If TRUE, admit \code{NaN}, whatever the bounds and \code{values} are.}
 
 \item{values}{Optional Numeric: The admitted values.}
 }
@@ -32,8 +35,16 @@ with \code{max}, it raises \code{r8_declaration_error}.}
 An \code{r8_field_type}.
 }
 \description{
-A double. The domain is finite unless \code{finite = FALSE}, which admits
-\code{Inf}, \code{-Inf}, and \code{NaN}.
+A double: a finite number within the bounds. \code{infinite = TRUE} admits the
+infinities that the bounds do not exclude, so that
+\code{type_double(min = 0, infinite = TRUE)} is \verb{[0, Inf]}. \code{nan = TRUE} admits \code{NaN},
+the result of a calculation that is undefined, which is in no range:
+\code{type_double(min = 0, max = 1, nan = TRUE)} is \verb{[0, 1] or NaN}. A missing value,
+\code{NA}, is admitted by \code{\link[=option]{option()}}, as of every type.
+}
+\details{
+A calculation on a value's field is R's and has no type. Its result is checked
+where it enters a field, a column, an argument, or a result that declares one.
 }
 \examples{
 type_double(exclusive_min = 0)

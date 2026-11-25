@@ -91,8 +91,8 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
     lib,
     c(
       sprintf("s <- readRDS(%s)", deparse(rds)),
-      "e <- tryCatch(s$values, error = function(e) conditionMessage(e))",
-      "cat('lazy', grepl('library(r8pkgR)', e, fixed = TRUE), '\\n')",
+      "cat('alone', s$name, s$values, '\\n')",
+      "invisible(serialize(s, NULL))",
       "suppressPackageStartupMessages(library(r8pkgR))",
       "cat('loaded', s$name, s$values, '\\n')",
       "mirai::daemons(1)",
@@ -106,7 +106,7 @@ test_that("Rust-stored values read, change, persist, and cross workers", {
     )
   )
   info <- paste(out, collapse = "\n")
-  expect_true("lazy TRUE " %in% out, info = info)
+  expect_true("alone a 1 2 3 " %in% out, info = info)
   expect_true("loaded a 1 2 3 " %in% out, info = info)
   expect_true("mirai 6 w 2 4 6 " %in% out, info = info)
   expect_true("future f 2 3 4 " %in% out, info = info)

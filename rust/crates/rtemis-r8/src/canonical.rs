@@ -254,6 +254,7 @@ fn reachable(
                 }
             }
         }
+        TypeDef::Table(_) => {}
     }
     for n in names {
         reachable(&n, lookup, strip, seen);
@@ -319,6 +320,13 @@ fn strip(def: &mut TypeDef) {
                     fields(fs);
                 }
             }
+        }
+        TypeDef::Table(t) => {
+            t.description.clear();
+            t.extensions.clear();
+            t.columns
+                .iter_mut()
+                .for_each(|c| fields(std::slice::from_mut(&mut c.field)));
         }
     }
 }
@@ -409,6 +417,12 @@ fn strip_neutral(def: &mut TypeDef) {
                     rules(rs);
                 }
             }
+        }
+        TypeDef::Table(t) => {
+            t.columns
+                .iter_mut()
+                .for_each(|c| fields(std::slice::from_mut(&mut c.field)));
+            rules(&mut t.rules);
         }
     }
 }
@@ -670,10 +684,7 @@ impl Envelope<'_> {
         let Some(listed) = &self.declarations else {
             return errors;
         };
-        let version = |def: &TypeDef| match def {
-            TypeDef::Struct(s) => s.version,
-            TypeDef::Enum(e) => e.version,
-        };
+        let version = TypeDef::version;
         let mut other: Vec<(QualifiedName, &str)> = Vec::new();
         for (name, hash) in listed {
             let Some(hash) = hash else {
@@ -812,13 +823,15 @@ pub fn read_document_cached(
         any_declaration: false,
         hash: &hash,
     };
-    let mut doc: Value = serde_json::from_str(text).map_err(|e| {
+    // The tree refuses a member that repeats, of which a `Value` keeps the last.
+    let read: crate::tree::Exact = serde_json::from_str(text).map_err(|e| {
         vec![document_error(
             "document_json",
             "",
             format!("not a JSON document: {e}"),
         )]
     })?;
+    let mut doc = read.0.to_value();
     let Some(m) = doc.as_object_mut() else {
         return Err(vec![document_error(
             "document_form",
@@ -1001,6 +1014,9 @@ fn contained_named<'a, A: Access<'a>>(
                 contained(v.member(f.name.as_str()), &f.ty, lookup, out);
             }
         }
+        TypeDef::Table(t) => {
+            out.insert(name.to_string(), t.version);
+        }
     }
 }
 
@@ -1082,6 +1098,8 @@ fn fill_named(t: &mut Tree, name: &QualifiedName, lookup: &dyn TypeLookup) {
                 _ => return,
             }
         }
+        // A column has no default.
+        TypeDef::Table(_) => return,
     };
     let Some(members) = t.members_mut() else {
         return;

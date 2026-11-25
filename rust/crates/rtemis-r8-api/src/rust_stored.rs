@@ -11,7 +11,6 @@ use rtemis_r8::abi::{self, ERROR, OK, Status};
 
 use crate::api::{Error, Result};
 use crate::keep;
-use crate::state::{StateReader, StateWriter};
 use crate::sys::SEXP;
 
 /// A struct whose values R8 holds in Rust. `#[derive(R8)]` with
@@ -50,12 +49,6 @@ pub trait RustStoredStruct: rtemis_r8::derive::R8 + Send + Sync + Sized + 'stati
     ///
     /// On R's main thread, with a valid `value`.
     unsafe fn with_field(&self, name: &str, value: SEXP) -> Result<Self>;
-
-    /// Writes the state's bytes.
-    fn write_state(&self, out: &mut StateWriter) -> Result<()>;
-
-    /// The value from bytes `write_state` wrote.
-    fn read_state(input: &mut StateReader) -> Result<Self>;
 
     /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
@@ -119,12 +112,6 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
     /// On R's main thread, with a valid `value`.
     unsafe fn with_field(&self, name: &str, value: SEXP) -> Result<Self>;
 
-    /// Writes the state's bytes.
-    fn write_state(&self, out: &mut StateWriter) -> Result<()>;
-
-    /// The value from bytes `write_state` wrote.
-    fn read_state(input: &mut StateReader) -> Result<Self>;
-
     /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
 
@@ -143,7 +130,7 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
 
 /// A Rust-stored type of either kind: its name, its codec table, its value
 /// from the fields of a value whose state is not lent, and what a field of the
-/// type reads and writes. `#[derive(R8)]` with `#[r8(storage = "rust")]`
+/// type reads. `#[derive(R8)]` with `#[r8(storage = "rust")]`
 /// implements it. A type that `r8::exports!` lists implements it, and a method
 /// of `#[r8::methods]` returns a value of one, and takes it as `&T`.
 #[diagnostic::on_unimplemented(
@@ -170,12 +157,6 @@ pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
     /// The value from a node of a value R8 has read from a document and
     /// validated.
     fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self>;
-
-    /// Writes the value's bytes.
-    fn write_bytes(&self, out: &mut StateWriter) -> Result<()>;
-
-    /// The value from bytes `write_bytes` wrote.
-    fn read_bytes(input: &mut StateReader) -> Result<Self>;
 
     /// The memory Rust owns for the value beyond its inline size.
     fn heap_bytes(&self) -> usize;
@@ -220,9 +201,6 @@ pub const fn codec<T: RustStoredStruct>() -> Shared<abi::Codec> {
         type_name: T::TYPE_NAME.as_ptr(),
         module: module(),
         from_fields: Some(from_fields::<T>),
-        encode: Some(struct_fns::encode::<T>),
-        write_state: Some(struct_fns::write_state::<T>),
-        read_state: Some(struct_fns::read_state::<T>),
         get_field: Some(struct_fns::get_field::<T>),
         with_field: Some(struct_fns::with_field::<T>),
         drop: Some(struct_fns::drop_state::<T>),
@@ -241,9 +219,6 @@ pub const fn enum_codec<T: RustStoredEnum>() -> Shared<abi::Codec> {
         type_name: T::TYPE_NAME.as_ptr(),
         module: module(),
         from_fields: None,
-        encode: Some(enum_fns::encode::<T>),
-        write_state: Some(enum_fns::write_state::<T>),
-        read_state: Some(enum_fns::read_state::<T>),
         get_field: Some(enum_fns::get_field::<T>),
         with_field: Some(enum_fns::with_field::<T>),
         drop: Some(enum_fns::drop_state::<T>),
@@ -341,60 +316,6 @@ macro_rules! shared_fns {
             use rtemis_r8::abi::{self, Status};
 
             use crate::api::Error;
-            use crate::state::{StateReader, StateWriter};
-
-            pub(super) unsafe extern "C" fn encode<T: super::$tr>(
-                s: *const c_void,
-                w: *mut abi::Writer,
-                err: *mut abi::Error,
-            ) -> Status {
-                super::guard(err, || {
-                    let doc = super::state::<T>(s).to_document().map_err(|errors| {
-                        let m: Vec<String> = errors
-                            .iter()
-                            .map(|e| format!("{} at {}", e.message, e.path))
-                            .collect();
-                        Error::new("encode_failed", m.join("; "))
-                    })?;
-                    StateWriter::new(w).write(doc.as_bytes())
-                })
-            }
-
-            pub(super) unsafe extern "C" fn write_state<T: super::$tr>(
-                s: *const c_void,
-                w: *mut abi::Writer,
-                err: *mut abi::Error,
-            ) -> Status {
-                super::guard(err, || {
-                    super::state::<T>(s).write_state(&mut StateWriter::new(w))
-                })
-            }
-
-            pub(super) unsafe extern "C" fn read_state<T: super::$tr>(
-                bytes: *const u8,
-                len: usize,
-                kept: abi::Sexp,
-                out: *mut *mut c_void,
-                err: *mut abi::Error,
-            ) -> Status {
-                super::guard(err, || {
-                    let b: &[u8] = if len == 0 {
-                        &[]
-                    } else {
-                        unsafe { std::slice::from_raw_parts(bytes, len) }
-                    };
-                    let mut r = StateReader::new(b, kept);
-                    let v = T::read_state(&mut r)?;
-                    if !r.is_done() {
-                        return Err(Error::new(
-                            "bad_state",
-                            "the state's bytes continue past the value",
-                        ));
-                    }
-                    unsafe { *out = Box::into_raw(Box::new(v)).cast() };
-                    Ok(())
-                })
-            }
 
             pub(super) unsafe extern "C" fn get_field<T: super::$tr>(
                 s: *const c_void,

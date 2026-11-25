@@ -78,7 +78,7 @@ fn a_numeric_type_holds_one_bound_per_side() {
         json!({"kind": "double", "exclusive_min": 0.0, "exclusive_max": 1.0}),
         json!({"kind": "double", "max": 1.0, "exclusive_min": 0.0}),
         json!({"kind": "integer", "min": 1, "exclusive_max": 10}),
-        json!({"kind": "double", "finite": false}),
+        json!({"kind": "double", "infinite": true, "nan": true}),
     ] {
         assert_eq!(serde_json::to_value(read(v.clone()).unwrap()).unwrap(), v);
     }

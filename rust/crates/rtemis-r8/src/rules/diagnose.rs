@@ -96,7 +96,7 @@ pub struct Diagnosis {
 impl Eq for Diagnosis {}
 
 /// The JSONLogic operator of a comparison.
-fn comparison(op: Op) -> Option<&'static str> {
+pub(super) fn comparison(op: Op) -> Option<&'static str> {
     Some(match op {
         Op::Eq => "===",
         Op::Ne => "!==",
@@ -123,11 +123,11 @@ fn field_paths(e: &Expr, out: &mut Vec<Vec<Step>>) {
                 out.push(steps.clone());
             }
         }
-        Expr::Var { .. } | Expr::Lit(_) => {}
+        Expr::Var { .. } | Expr::Lit(_) | Expr::Cell(_) | Expr::Aggregate { .. } => {}
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
             xs.iter().for_each(|x| field_paths(x, out));
         }
-        Expr::IsNull(x) => field_paths(x, out),
+        Expr::IsNull(x) | Expr::IsNa(x) => field_paths(x, out),
         Expr::IsVariant { value, .. } | Expr::Levels { value, .. } => field_paths(value, out),
         Expr::Quantifier {
             collection,
@@ -166,6 +166,7 @@ fn sensitive(scope: &[FieldDef], lookup: &dyn TypeLookup, path: &[Step]) -> bool
                         _ => Vec::new(),
                     })
                     .collect(),
+                Some(TypeDef::Table(t)) => t.columns.iter().map(|c| &c.field).collect(),
                 None => return false,
             },
             _ => return false,
@@ -174,7 +175,7 @@ fn sensitive(scope: &[FieldDef], lookup: &dyn TypeLookup, path: &[Step]) -> bool
     false
 }
 
-fn shown_scalar(s: Scalar) -> Shown {
+pub(super) fn shown_scalar(s: Scalar) -> Shown {
     match s {
         Scalar::Null => Shown::Absent,
         Scalar::Bool(b) => Shown::Bool(b),

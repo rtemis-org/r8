@@ -120,10 +120,12 @@ fn double_within(have: &DoubleType, want: &DoubleType) -> bool {
         return v
             .iter()
             .filter(|x| have.admits(**x))
-            .all(|x| want.admits(*x));
+            .all(|x| want.admits(*x))
+            && (!have.nan || want.nan);
     }
     want.values.is_none()
-        && (have.finite || !want.finite)
+        && (!have.infinite || want.infinite)
+        && (!have.nan || want.nan)
         && lower_within(have.lower, want.lower)
         && upper_within(have.upper, want.upper)
 }
@@ -181,6 +183,12 @@ impl Comparison<'_> {
                 &of,
                 format!("`{q}` is compiled as a struct, and declared as an enum"),
             ),
+            (TypeDef::Table(_), _) | (_, TypeDef::Table(_)) if have != want => self.report(
+                "type_changed",
+                &of,
+                format!("`{q}` is compiled as another table than the one declared"),
+            ),
+            (TypeDef::Table(_), _) | (_, TypeDef::Table(_)) => {}
         }
     }
 

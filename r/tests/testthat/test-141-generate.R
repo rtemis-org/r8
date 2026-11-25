@@ -61,7 +61,7 @@ test_that("every field type renders as R that declares the same IR", {
         i = type_integer(min = -1L, max = 10L),
         ie = type_integer(exclusive_min = -2L, exclusive_max = 11L),
         iv = type_integer(values = c(1L, 2L, 3L)),
-        d = type_double(exclusive_min = 0, finite = FALSE),
+        d = type_double(exclusive_min = 0, infinite = TRUE, nan = TRUE),
         dv = type_double(values = c(0.5, 1.25)),
         ch = type_character(pattern = "^[a-z]+$"),
         cv = type_character(values = c("a", "b")),

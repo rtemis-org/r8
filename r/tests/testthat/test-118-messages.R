@@ -257,3 +257,36 @@ test_that("list() is the empty map, and NULL stays absent", {
     expect_error(M(h = NULL, o = list()), "`h` is required.", fixed = TRUE)
   })
 })
+
+test_that("the problems of one kind in a vector are one entry", {
+  out <- declare_in("msg_many", {
+    new_struct(
+      "S",
+      fields = list(
+        x = vec(type_double(min = 0)),
+        y = vec(type_double()),
+        z = option(type_double())
+      )
+    )
+  })
+  msg <- function(...) conditionMessage(tryCatch(out(...), error = identity))
+  m <- msg(x = c(1, -1, -2, 3, -4, -5, -6), y = c(1, NaN, Inf, NaN), z = NaN)
+  expect_match(m, "4 problems", fixed = TRUE)
+  expect_match(
+    m,
+    "- `x[[2]]` must be at least 0; found -1. Also at x[[3]], x[[5]], x[[6]], and 1 more. [below_min]",
+    fixed = TRUE
+  )
+  expect_match(
+    m,
+    "- `y[[2]]` must be a number; found NaN. 2 of 4 elements are NaN. Where a calculation may give no number, `nan = TRUE` in the type admits NaN. [nan_value]",
+    fixed = TRUE
+  )
+  expect_match(
+    m,
+    "- `z` must be a number; found NaN. Where a calculation may give no number, `nan = TRUE` in the type admits NaN. [nan_value]",
+    fixed = TRUE
+  )
+  e <- tryCatch(out(x = c(-1, -2), y = 1), error = identity)
+  expect_identical(e$problems$where, c("x[[1]]", "x[[2]]"))
+})

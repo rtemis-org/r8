@@ -98,10 +98,20 @@ impl Writer<'_> {
                 if let Some(v) = &c.values {
                     m.insert("enum".into(), json!(v));
                 }
-                if c.finite {
+                // The strings of the values that JSON numbers do not hold.
+                let texts: Vec<&str> = [
+                    (f64::INFINITY, "Infinity"),
+                    (f64::NEG_INFINITY, "-Infinity"),
+                    (f64::NAN, "NaN"),
+                ]
+                .into_iter()
+                .filter(|(x, _)| c.admits(*x))
+                .map(|(_, t)| t)
+                .collect();
+                if texts.is_empty() {
                     n
                 } else {
-                    json!({"anyOf": [n, {"enum": ["Infinity", "-Infinity", "NaN"]}]})
+                    json!({"anyOf": [n, {"enum": texts}]})
                 }
             }
             FieldType::Character(c) => {
@@ -451,6 +461,22 @@ impl Writer<'_> {
             Some(TypeDef::Struct(s)) => {
                 with_description(self.object(&s.fields, &s.rules, extra), &s.description)
             }
+            Some(TypeDef::Table(t)) => {
+                let mut s = self.table(&t.columns, t.open, &t.rules);
+                if let Some(p) = s["properties"].as_object_mut() {
+                    if t.open {
+                        p.insert(
+                            "$order".into(),
+                            json!({"type": "array", "items": {"type": "string"}}),
+                        );
+                        p.insert("$facts".into(), json!({"type": "object"}));
+                    }
+                    for (k, v) in extra {
+                        p.insert((*k).into(), v.clone());
+                    }
+                }
+                with_description(s, &t.description)
+            }
             Some(TypeDef::Enum(e)) => {
                 if e.variants
                     .iter()
@@ -534,7 +560,7 @@ pub fn json_schema_with(ty: &QualifiedName, lookup: &dyn TypeLookup, closed: boo
         ("$ir", json!({"type": "array", "items": {"type": "object"}})),
     ];
     let root = match lookup.find(ty) {
-        Some(TypeDef::Struct(_)) => w.named(ty, &envelope),
+        Some(TypeDef::Struct(_) | TypeDef::Table(_)) => w.named(ty, &envelope),
         _ => {
             w.define(ty);
             reference(ty)

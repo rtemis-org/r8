@@ -417,6 +417,39 @@ pub struct StructDef {
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// `new_table()`: a table, whose values hold their columns, each a vector of
+/// the cells of one type, all of one length.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TableDef {
+    /// The table's name.
+    pub name: Name,
+    #[serde(default)]
+    /// The table's description.
+    pub description: String,
+    /// The table's version, which a migration increments.
+    pub version: u32,
+    /// The declared columns, in declaration order.
+    pub columns: Vec<ColumnDef>,
+    /// Columns other than the declared ones are admitted, after them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub open: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The rules every row satisfies, which read the row's cells by name.
+    pub rules: Vec<RuleDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The migrations from earlier versions.
+    pub migrations: Vec<Migration>,
+    /// Former qualified names, which readers accept.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<QualifiedName>,
+    /// Namespaced extensions that R8 stores and exports and does not
+    /// interpret.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, Value>,
+}
+
 /// The kind of an enum variant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

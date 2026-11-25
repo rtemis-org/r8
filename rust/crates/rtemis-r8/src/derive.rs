@@ -621,7 +621,8 @@ pub struct Constraints {
     pub exclusive_min: Option<f64>,
     pub exclusive_max: Option<f64>,
     pub pattern: Option<&'static str>,
-    pub finite: Option<bool>,
+    pub infinite: bool,
+    pub nan: bool,
     pub min_length: Option<u64>,
     pub max_length: Option<u64>,
     pub unique: bool,
@@ -710,13 +711,14 @@ pub fn constrain(mut ft: FieldType, c: Constraints, filled: bool) -> Result<Fiel
             if c.max.is_some() || c.exclusive_max.is_some() {
                 d.upper = bound(c.max, c.exclusive_max, ("max", "exclusive_max"))?;
             }
-            if let Some(f) = c.finite {
-                d.finite = f;
-            }
+            d.infinite |= c.infinite;
+            d.nan |= c.nan;
         }
         FieldType::Integer(i) => {
-            if c.pattern.is_some() || c.finite.is_some() {
-                return Err("`pattern` and `finite` do not apply to an integer field".to_string());
+            if c.pattern.is_some() || c.infinite || c.nan {
+                return Err(
+                    "`pattern`, `infinite`, and `nan` do not apply to an integer field".to_string(),
+                );
             }
             if c.min.is_some() || c.exclusive_min.is_some() {
                 i.lower = bound(
@@ -734,7 +736,7 @@ pub fn constrain(mut ft: FieldType, c: Constraints, filled: bool) -> Result<Fiel
             }
         }
         FieldType::Character(ch) => {
-            if numeric || c.finite.is_some() {
+            if numeric || c.infinite || c.nan {
                 return Err("numeric constraints do not apply to a String field".to_string());
             }
             if let Some(p) = c.pattern {
@@ -742,7 +744,7 @@ pub fn constrain(mut ft: FieldType, c: Constraints, filled: bool) -> Result<Fiel
             }
         }
         _ => {
-            if numeric || c.finite.is_some() || c.pattern.is_some() {
+            if numeric || c.infinite || c.nan || c.pattern.is_some() {
                 return Err("value constraints apply to a number or a String field".to_string());
             }
         }

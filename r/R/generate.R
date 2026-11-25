@@ -1197,7 +1197,8 @@ render_type <- function(t, ns) {
     double = call(
       "type_double",
       bounds(dbl),
-      if (isFALSE(t[["finite"]])) "finite = FALSE",
+      if (isTRUE(t[["infinite"]])) "infinite = TRUE",
+      if (isTRUE(t[["nan"]])) "nan = TRUE",
       arg(
         "values",
         if (!is.null(t[["values"]])) {
@@ -1476,6 +1477,17 @@ logic_to_r <- function(x) {
     }
     if (!is.list(operands) || !is.null(names(operands))) {
       operands <- list(operands)
+    }
+    if (op == "path") {
+      parts <- if (is.list(operands)) operands else list(operands)
+      if (!all(vapply(parts, is.character, NA))) {
+        fail()
+      }
+      out <- as.name(parts[[1L]])
+      for (p in parts[-1L]) {
+        out <- call("$", out, as.name(p))
+      }
+      return(out)
     }
     if (op == "is_variant") {
       if (length(operands) != 2L || !is.character(operands[[2L]])) {

@@ -103,11 +103,6 @@ fn is_true(x: SEXP) -> bool {
     sexptype(x) == SEXPTYPE::LGLSXP && xlen(x) == 1 && unsafe { *LOGICAL(x) } == 1
 }
 
-/// `isFALSE(x)`.
-fn is_false(x: SEXP) -> bool {
-    sexptype(x) == SEXPTYPE::LGLSXP && xlen(x) == 1 && unsafe { *LOGICAL(x) } == 0
-}
-
 /// The qualified name of an R8 type object.
 fn type_name(x: SEXP) -> Built<QualifiedName> {
     attr_string(x, sym_r8_name())
@@ -180,13 +175,19 @@ fn r8_ft_double(
     max: Robj,
     exclusive_min: Robj,
     exclusive_max: Robj,
-    finite: Robj,
+    infinite: Robj,
+    nan: Robj,
     values: Robj,
 ) -> Robj {
     written((|| {
         let b = bounds(&min, &max, &exclusive_min, &exclusive_max)?;
         let v = numbers(unsafe { values.get() }, "values")?;
-        build::double(b, !is_false(unsafe { finite.get() }), v.as_deref())
+        build::double(
+            b,
+            is_true(unsafe { infinite.get() }),
+            is_true(unsafe { nan.get() }),
+            v.as_deref(),
+        )
     })())
 }
 
@@ -477,6 +478,26 @@ fn r8_logic(expr: Robj) -> Robj {
     }
 }
 
+/// Dates or date-times as a rule writes them.
+///
+/// @param x Double: Days, or seconds, since 1970-01-01.
+/// @param datetime Logical: `x` holds seconds.
+/// @return Character.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_date_literals(x: Vec<f64>, datetime: bool) -> Vec<String> {
+    x.into_iter()
+        .map(|v| {
+            if datetime {
+                rtemis_r8::canonical::datetime_text((v * 1e6).round() as i64)
+            } else {
+                rtemis_r8::canonical::date_text(v as i64)
+            }
+        })
+        .collect()
+}
+
 /// The R functions and operators of a rule and the operators of the dialect
 /// they write, in the order `r8_rule_operators()` returns them.
 const OPERATORS: &[(&str, Operator)] = &[
@@ -511,7 +532,14 @@ const OPERATORS: &[(&str, Operator)] = &[
     ("min", Operator::Min),
     ("max", Operator::Max),
     ("abs", Operator::Abs),
+    ("sqrt", Operator::Sqrt),
+    ("log", Operator::Log),
+    ("exp", Operator::Exp),
     ("sum", Operator::Sum),
+    ("mean", Operator::Mean),
+    ("pmin", Operator::Pmin),
+    ("pmax", Operator::Pmax),
+    ("is.na", Operator::IsNa),
     ("nchar", Operator::Nchar),
     ("all", Operator::All),
     ("any", Operator::Any),
@@ -525,6 +553,41 @@ fn operator(name: &str) -> Option<Operator> {
         .iter()
         .find(|(r, _)| *r == name)
         .map(|&(_, op)| op)
+}
+
+/// A message on a rule with its operators as R writes them.
+pub(crate) fn in_r(message: &str) -> String {
+    const AFTER: [&str; 9] = [
+        " takes",
+        " compares",
+        " combines",
+        " searches",
+        " joins",
+        " counts",
+        " tests",
+        " reads whole",
+        " reads a whole",
+    ];
+    let mut out = message.to_string();
+    let mut seen: Vec<Operator> = Vec::new();
+    for &(r, op) in OPERATORS {
+        // The first spelling is the one that R shows.
+        if r == op.as_str() || seen.contains(&op) {
+            continue;
+        }
+        seen.push(op);
+        let name = format!("`{}`", op.as_str());
+        if !out.contains(&name) {
+            continue;
+        }
+        for after in AFTER {
+            out = out.replace(&format!("{name}{after}"), &format!("`{r}`{after}"));
+        }
+        for before in ["operand of ", "condition of "] {
+            out = out.replace(&format!("{before}{name}"), &format!("{before}`{r}`"));
+        }
+    }
+    out
 }
 
 /// The R spelling of each operator of the dialect: the dialect operators,
@@ -544,10 +607,10 @@ fn r8_rule_operators() -> Robj {
 }
 
 /// The functions of the dialect, as R writes them, for a message.
-const KNOWN_FUNCTIONS: &str = "comparisons, arithmetic, logical operators, %in%, if, is.null(), \
-is_variant(), length(), nchar(), nrow(), ncol(), dim(), levels(), abs(), floor(), ceiling(), \
-round(), min(), max(), sum(), all(), any(), subset(), non_increasing(), non_decreasing(), and \
-lit() for a constant from R";
+const KNOWN_FUNCTIONS: &str = "comparisons, arithmetic, logical operators, %in%, if, is.na(), \
+is.null(), is_variant(), length(), nchar(), nrow(), ncol(), dim(), levels(), abs(), sqrt(), log(), \
+exp(), floor(), ceiling(), round(), min(), max(), pmin(), pmax(), sum(), mean(), all(), any(), \
+subset(), non_increasing(), non_decreasing(), and val() for a constant from R";
 
 /// The function of rules nearest to `name`, as R writes it.
 fn nearest_function(name: &str) -> Option<String> {
@@ -556,7 +619,7 @@ fn nearest_function(name: &str) -> Option<String> {
         OPERATORS
             .iter()
             .map(|(r, _)| *r)
-            .chain(["if", "is_variant", "lit", "c"])
+            .chain(["if", "is_variant", "val", "c"])
             .filter(|r| {
                 r.chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
@@ -655,21 +718,22 @@ fn is_atomic(x: SEXP) -> bool {
     )
 }
 
-/// The path of `a`, `a$b`, `a$b$c`, as `a.b.c`.
-fn path(x: SEXP) -> Option<String> {
+/// The names of `a`, `a$b`, `a$b$c`, in order: a symbol is one name, and `$`
+/// makes a path.
+fn path(x: SEXP) -> Option<Vec<String>> {
     match sexptype(x) {
-        SEXPTYPE::SYMSXP => Some(symbol_name(x)),
+        SEXPTYPE::SYMSXP => Some(vec![symbol_name(x)]),
         SEXPTYPE::LANGSXP => {
             let f = unsafe { CAR(x) };
             let a = args(x);
             if sexptype(f) == SEXPTYPE::SYMSXP && symbol_name(f) == "$" && a.len() == 2 {
-                let head = path(a[0])?;
-                let tail = match sexptype(a[1]) {
+                let mut names = path(a[0])?;
+                names.push(match sexptype(a[1]) {
                     SEXPTYPE::SYMSXP => symbol_name(a[1]),
                     SEXPTYPE::STRSXP => string_elt(a[1], 0)?.into_owned(),
                     _ => return None,
-                };
-                Some(format!("{head}.{tail}"))
+                });
+                Some(names)
             } else {
                 None
             }
@@ -687,7 +751,8 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
         return constant(x).ok_or(BuildError::Constant);
     }
     if let Some(p) = path(x) {
-        return Ok(build::var(p));
+        let names: Vec<&str> = p.iter().map(String::as_str).collect();
+        return Ok(build::path(&names));
     }
     if sexptype(x) != SEXPTYPE::LANGSXP {
         return Err(BuildError::RuleOperand { expr: deparsed(x) });
@@ -796,5 +861,6 @@ extendr_module! {
     fn r8_ft_matrix;
     fn r8_rule;
     fn r8_logic;
+    fn r8_date_literals;
     fn r8_rule_operators;
 }

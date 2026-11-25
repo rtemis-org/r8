@@ -111,7 +111,8 @@
             "hash",
             "dispatch",
             "refine",
-            "update"
+            "update",
+            "filter"
           ]
         },
         "type": {
@@ -464,6 +465,77 @@
                       }
                     }
                   }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type",
+            "options"
+          ],
+          "properties": {
+            "op": {
+              "const": "filter"
+            },
+            "options": {
+              "type": "object",
+              "required": [
+                "rule"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "rule": true
+              }
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "rows"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "row_error"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "row_error": {
+                      "type": "object",
+                      "required": [
+                        "row",
+                        "count"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "row": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/$defs/errors"
                 }
               ]
             }

@@ -6632,7 +6632,7 @@
       }
     },
     {
-      "id": "finite-removed",
+      "id": "infinite-and-nan-added",
       "op": "refine",
       "type": "pa::S",
       "input": {
@@ -6674,7 +6674,618 @@
                 "name": "hi",
                 "type": {
                   "kind": "double",
-                  "finite": false
+                  "infinite": true,
+                  "nan": true
+                },
+                "description": "",
+                "unit": "cm"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer",
+                  "exclusive_min": 0,
+                  "max": 10
+                },
+                "description": ""
+              },
+              {
+                "name": "k",
+                "type": {
+                  "kind": "integer",
+                  "values": [
+                    1,
+                    2,
+                    3
+                  ]
+                },
+                "description": ""
+              },
+              {
+                "name": "name",
+                "type": {
+                  "kind": "character",
+                  "pattern": "^[a-z]+$"
+                },
+                "description": ""
+              },
+              {
+                "name": "label",
+                "type": {
+                  "kind": "character"
+                },
+                "description": ""
+              },
+              {
+                "name": "kind",
+                "type": {
+                  "kind": "character",
+                  "values": [
+                    "a",
+                    "b"
+                  ]
+                },
+                "description": ""
+              },
+              {
+                "name": "w",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "double"
+                  },
+                  "min_length": 1,
+                  "unique": true
+                },
+                "description": ""
+              },
+              {
+                "name": "note",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "character"
+                  }
+                },
+                "description": ""
+              },
+              {
+                "name": "inner",
+                "type": {
+                  "kind": "named",
+                  "name": "pa::Inner"
+                },
+                "description": ""
+              },
+              {
+                "name": "m",
+                "type": {
+                  "kind": "matrix",
+                  "element": {
+                    "kind": "double"
+                  },
+                  "ncol": 2
+                },
+                "description": ""
+              },
+              {
+                "name": "e",
+                "type": {
+                  "kind": "named",
+                  "name": "pa::E"
+                },
+                "description": ""
+              },
+              {
+                "name": "open",
+                "type": {
+                  "kind": "subtype",
+                  "of": "pa::Inner"
+                },
+                "description": ""
+              },
+              {
+                "name": "flag",
+                "type": {
+                  "kind": "logical"
+                },
+                "description": ""
+              },
+              {
+                "name": "map",
+                "type": {
+                  "kind": "btree_map",
+                  "value": {
+                    "kind": "double",
+                    "max": 1.0
+                  }
+                },
+                "description": ""
+              },
+              {
+                "name": "lev",
+                "type": {
+                  "kind": "factor",
+                  "levels": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "description": ""
+              },
+              {
+                "name": "tab",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "c1",
+                      "type": {
+                        "kind": "double",
+                        "min": 0.0
+                      },
+                      "description": ""
+                    },
+                    {
+                      "name": "c2",
+                      "type": {
+                        "kind": "character"
+                      },
+                      "description": "",
+                      "required": false
+                    }
+                  ]
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "ordered",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "lo"
+                    },
+                    {
+                      "var": "hi"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "E",
+            "description": "",
+            "version": 1,
+            "variants": [
+              {
+                "name": "U",
+                "description": "",
+                "kind": "unit"
+              },
+              {
+                "name": "F",
+                "description": "",
+                "kind": "struct",
+                "fields": [
+                  {
+                    "name": "x",
+                    "type": {
+                      "kind": "double",
+                      "min": 0.0
+                    },
+                    "description": ""
+                  }
+                ],
+                "rules": [
+                  {
+                    "invariant": {
+                      ">": [
+                        {
+                          "var": "x"
+                        },
+                        0
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "W",
+                "description": "",
+                "kind": "newtype",
+                "of": "pa::Inner"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0
+                },
+                "description": "",
+                "inherited_from": "pa::Inner"
+              },
+              {
+                "name": "z",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "pa::Inner"
+          }
+        ]
+      },
+      "expect": {
+        "differences": [
+          {
+            "code": "bound_loosened",
+            "type": "pa::S"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nan-added",
+      "op": "refine",
+      "type": "pa::S",
+      "input": {
+        "$ir": 1,
+        "namespace": "pa",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Inner",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0
+                },
+                "description": "",
+                "unit": "cm"
+              },
+              {
+                "name": "hi",
+                "type": {
+                  "kind": "double",
+                  "nan": true
+                },
+                "description": "",
+                "unit": "cm"
+              },
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer",
+                  "exclusive_min": 0,
+                  "max": 10
+                },
+                "description": ""
+              },
+              {
+                "name": "k",
+                "type": {
+                  "kind": "integer",
+                  "values": [
+                    1,
+                    2,
+                    3
+                  ]
+                },
+                "description": ""
+              },
+              {
+                "name": "name",
+                "type": {
+                  "kind": "character",
+                  "pattern": "^[a-z]+$"
+                },
+                "description": ""
+              },
+              {
+                "name": "label",
+                "type": {
+                  "kind": "character"
+                },
+                "description": ""
+              },
+              {
+                "name": "kind",
+                "type": {
+                  "kind": "character",
+                  "values": [
+                    "a",
+                    "b"
+                  ]
+                },
+                "description": ""
+              },
+              {
+                "name": "w",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "double"
+                  },
+                  "min_length": 1,
+                  "unique": true
+                },
+                "description": ""
+              },
+              {
+                "name": "note",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "character"
+                  }
+                },
+                "description": ""
+              },
+              {
+                "name": "inner",
+                "type": {
+                  "kind": "named",
+                  "name": "pa::Inner"
+                },
+                "description": ""
+              },
+              {
+                "name": "m",
+                "type": {
+                  "kind": "matrix",
+                  "element": {
+                    "kind": "double"
+                  },
+                  "ncol": 2
+                },
+                "description": ""
+              },
+              {
+                "name": "e",
+                "type": {
+                  "kind": "named",
+                  "name": "pa::E"
+                },
+                "description": ""
+              },
+              {
+                "name": "open",
+                "type": {
+                  "kind": "subtype",
+                  "of": "pa::Inner"
+                },
+                "description": ""
+              },
+              {
+                "name": "flag",
+                "type": {
+                  "kind": "logical"
+                },
+                "description": ""
+              },
+              {
+                "name": "map",
+                "type": {
+                  "kind": "btree_map",
+                  "value": {
+                    "kind": "double",
+                    "max": 1.0
+                  }
+                },
+                "description": ""
+              },
+              {
+                "name": "lev",
+                "type": {
+                  "kind": "factor",
+                  "levels": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "description": ""
+              },
+              {
+                "name": "tab",
+                "type": {
+                  "kind": "table",
+                  "columns": [
+                    {
+                      "name": "c1",
+                      "type": {
+                        "kind": "double",
+                        "min": 0.0
+                      },
+                      "description": ""
+                    },
+                    {
+                      "name": "c2",
+                      "type": {
+                        "kind": "character"
+                      },
+                      "description": "",
+                      "required": false
+                    }
+                  ]
+                },
+                "description": ""
+              }
+            ],
+            "rules": [
+              {
+                "id": "ordered",
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "lo"
+                    },
+                    {
+                      "var": "hi"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "enum",
+            "name": "E",
+            "description": "",
+            "version": 1,
+            "variants": [
+              {
+                "name": "U",
+                "description": "",
+                "kind": "unit"
+              },
+              {
+                "name": "F",
+                "description": "",
+                "kind": "struct",
+                "fields": [
+                  {
+                    "name": "x",
+                    "type": {
+                      "kind": "double",
+                      "min": 0.0
+                    },
+                    "description": ""
+                  }
+                ],
+                "rules": [
+                  {
+                    "invariant": {
+                      ">": [
+                        {
+                          "var": "x"
+                        },
+                        0
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "W",
+                "description": "",
+                "kind": "newtype",
+                "of": "pa::Inner"
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0
+                },
+                "description": "",
+                "inherited_from": "pa::Inner"
+              },
+              {
+                "name": "z",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "pa::Inner"
+          }
+        ]
+      },
+      "expect": {
+        "differences": [
+          {
+            "code": "bound_loosened",
+            "type": "pa::S"
+          }
+        ]
+      }
+    },
+    {
+      "id": "infinite-added",
+      "op": "refine",
+      "type": "pa::S",
+      "input": {
+        "$ir": 1,
+        "namespace": "pa",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Inner",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0
+                },
+                "description": "",
+                "unit": "cm"
+              },
+              {
+                "name": "hi",
+                "type": {
+                  "kind": "double",
+                  "infinite": true
                 },
                 "description": "",
                 "unit": "cm"

@@ -317,8 +317,10 @@ impl Eq<'_> {
             return false;
         }
         let n = x.rows as usize;
+        let of_y: std::collections::HashMap<&str, A> =
+            y.columns.iter().map(|(k, c)| (k.as_ref(), *c)).collect();
         x.columns.iter().all(|(name, cx)| {
-            let Some((_, cy)) = y.columns.iter().find(|(k, _)| k == name) else {
+            let Some(cy) = of_y.get(name.as_ref()) else {
                 return false;
             };
             let ty = match columns
@@ -326,7 +328,10 @@ impl Eq<'_> {
                 .find(|c| c.field().name.as_str() == name.as_ref())
             {
                 Some(c) => c.field().ty.clone(),
-                None => match (a.extra_column_type(name), b.extra_column_type(name)) {
+                None => match (
+                    a.extra_column_type(name, *cx),
+                    b.extra_column_type(name, *cy),
+                ) {
                     (Ok(p), Ok(q)) if p == q => p,
                     _ => return false,
                 },
@@ -388,6 +393,16 @@ impl Eq<'_> {
         let lookup = self.lookup;
         match lookup.find(name) {
             Some(TypeDef::Struct(s)) => self.fields(&s.fields, a, b),
+            Some(TypeDef::Table(t)) => {
+                // The names in order, and the units, of the extra columns.
+                let of = |v: A| -> Vec<_> {
+                    crate::access::extra_columns(&t.columns, t.open, v)
+                        .into_iter()
+                        .map(|(k, _, f)| (k, f.unit))
+                        .collect()
+                };
+                of(a) == of(b) && self.table(&t.columns, t.open, a, b)
+            }
             Some(TypeDef::Enum(e)) => {
                 let (Ok(va), Ok(vb)) = (a.variant(name, e), b.variant(name, e)) else {
                     return false;

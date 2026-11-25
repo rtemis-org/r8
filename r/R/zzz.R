@@ -466,4 +466,14 @@ declare_conversion <- function(converter, source, fn, env) {
     ),
     "R8"
   )
+  # The type of the tables without declared columns.
+  assign(
+    "Raven",
+    new_table(
+      "Raven",
+      open = TRUE,
+      description = "A table of any columns."
+    ),
+    envir = ns
+  )
 }

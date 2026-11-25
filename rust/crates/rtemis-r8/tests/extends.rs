@@ -26,7 +26,7 @@ fn st(v: serde_json::Value) -> StructDef {
             .unwrap();
     match doc.types.into_iter().next().unwrap() {
         TypeDef::Struct(s) => s,
-        TypeDef::Enum(_) => panic!("a struct"),
+        _ => panic!("a struct"),
     }
 }
 

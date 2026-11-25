@@ -240,6 +240,8 @@ fn r8_layout_value(
     display: Function,
     summary: Nullable<String>,
     head: i32,
+    width: i32,
+    unicode: bool,
 ) -> Result<List> {
     let xs = unsafe { x.get() };
     let type_name = crate::value::type_name(xs).ok_or_else(|| fail("`x` is not an R8 value"))?;
@@ -259,6 +261,8 @@ fn r8_layout_value(
             Nullable::NotNull(s) => Some(s),
             Nullable::Null => None,
         },
+        width: width.max(20) as usize,
+        unicode,
         ..LayoutOptions::default()
     };
     let mut failure: Option<Error> = None;

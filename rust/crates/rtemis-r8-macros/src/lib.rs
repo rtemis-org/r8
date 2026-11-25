@@ -15,8 +15,8 @@
 //! `tag = "type"` on an enum, `extensible` on a struct that others extend,
 //! and `rule(id = "...", invariant = "<JSONLogic>",
 //! when = "<JSONLogic>", message = "...")`, repeated per rule. On a field:
-//! `min`, `max`, `exclusive_min`, `exclusive_max`, `pattern`, `finite`,
-//! `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
+//! `min`, `max`, `exclusive_min`, `exclusive_max`, `pattern`, `infinite`,
+//! `nan`, `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
 //! `sensitive`, and `context`, for a field of type `Option<T>` that
 //! `r8_resolve(x, context)` fills. Doc comments are
 //! descriptions.
@@ -163,6 +163,17 @@ const OPERATORS: &[(&str, &str)] = &[
     ("if", "If"),
     ("and", "And"),
     ("or", "Or"),
+    ("abs", "Abs"),
+    ("sum", "Sum"),
+    ("nchar", "Nchar"),
+    ("path", "Path"),
+    ("mean", "Mean"),
+    ("pmin", "Pmin"),
+    ("pmax", "Pmax"),
+    ("sqrt", "Sqrt"),
+    ("log", "Log"),
+    ("exp", "Exp"),
+    ("is_na", "IsNa"),
 ];
 
 /// The construction of a `serde_json::Number`.
@@ -389,7 +400,7 @@ fn constraint(
 ) -> Result<bool> {
     let k = match key {
         "min" | "max" | "exclusive_min" | "exclusive_max" | "min_length" | "max_length"
-        | "pattern" | "finite" | "unique" => format_ident!("{}", key),
+        | "pattern" | "infinite" | "nan" | "unique" => format_ident!("{}", key),
         _ => return Ok(false),
     };
     let value = match key {
@@ -406,10 +417,6 @@ fn constraint(
         "pattern" => {
             let s: syn::LitStr = meta.value()?.parse()?;
             quote! { ::std::option::Option::Some(#s) }
-        }
-        "finite" => {
-            let b = meta.value()?.parse::<syn::LitBool>()?.value;
-            quote! { ::std::option::Option::Some(#b) }
         }
         _ => quote! { true },
     };
@@ -827,17 +834,14 @@ fn rust_stored_enum_impl(
     let mut variant = Vec::new();
     let mut get = Vec::new();
     let mut with = Vec::new();
-    let mut write = Vec::new();
-    let mut read = Vec::new();
     let mut bytes = Vec::new();
     let mut count = Vec::new();
     let mut names_of = Vec::new();
     let mut each = Vec::new();
-    for (k, v) in e.variants.iter().enumerate() {
+    for v in &e.variants {
         let vid = &v.ident;
         let vname = vid.to_string();
         let vname_c = c_str(&vname);
-        let idx = k as u32;
         match &v.fields {
             Fields::Unit => {
                 from.push(quote! {
@@ -852,8 +856,6 @@ fn rust_stored_enum_impl(
                 variant.push(quote! { Self::#vid => #vname_c });
                 get.push(quote! { Self::#vid => #unknown_field });
                 with.push(quote! { Self::#vid => #unknown_field });
-                write.push(quote! { Self::#vid => out.write(&#idx.to_le_bytes()) });
-                read.push(quote! { #idx => Ok(Self::#vid) });
                 bytes.push(quote! { Self::#vid => 0 });
                 count.push(quote! { Self::#vid => 0 });
                 each.push(quote! { Self::#vid => Ok(()) });
@@ -930,16 +932,6 @@ fn rust_stored_enum_impl(
                         _ => #unknown_field,
                     }
                 });
-                write.push(quote! {
-                    Self::#vid { #(#idents: #vars),* } => {
-                        out.write(&#idx.to_le_bytes())?;
-                        #(#api::Field::write(#vars, out)?;)*
-                        Ok(())
-                    }
-                });
-                read.push(quote! {
-                    #idx => Ok(Self::#vid { #(#idents: <#tys as #api::Field>::read(input)?),* })
-                });
                 bytes.push(quote! {
                     Self::#vid { #(#idents: #vars),* } => 0 #(+ #api::Field::owned_bytes(#vars))*
                 });
@@ -966,15 +958,6 @@ fn rust_stored_enum_impl(
                 with.push(quote! {
                     Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::RustStoredStruct>::with_field(inner, name, value) }?))
                 });
-                write.push(quote! {
-                    Self::#vid(inner) => {
-                        out.write(&#idx.to_le_bytes())?;
-                        <#inner as #api::RustStoredStruct>::write_state(inner, out)
-                    }
-                });
-                read.push(
-                    quote! { #idx => Ok(Self::#vid(<#inner as #api::RustStoredStruct>::read_state(input)?)) },
-                );
                 bytes.push(
                     quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::owned_bytes(inner) },
                 );
@@ -1043,15 +1026,6 @@ fn rust_stored_enum_impl(
             unsafe fn with_field(&self, name: &str, value: #api::sys::SEXP) -> #api::Result<Self> {
                 match self { #(#with,)* }
             }
-            fn write_state(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
-                match self { #(#write,)* }
-            }
-            fn read_state(input: &mut #api::StateReader) -> #api::Result<Self> {
-                match u32::from_le_bytes(input.take_array()?) {
-                    #(#read,)*
-                    i => Err(#api::Error::new("bad_state", format!("`{}` has no variant of index {}", #qualified, i))),
-                }
-            }
             fn owned_bytes(&self) -> usize {
                 match self { #(#bytes,)* }
             }
@@ -1075,12 +1049,6 @@ fn of_kind(kind: &Tokens) -> Tokens {
     quote! {
         fn from_node<'a>(r: &#api::Reader<'a>, n: #api::Node<'a>) -> #api::Result<Self> {
             <Self as #kind>::from_reader(r, n)
-        }
-        fn write_bytes(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
-            <Self as #kind>::write_state(self, out)
-        }
-        fn read_bytes(input: &mut #api::StateReader) -> #api::Result<Self> {
-            <Self as #kind>::read_state(input)
         }
         fn heap_bytes(&self) -> usize {
             <Self as #kind>::owned_bytes(self)
@@ -1246,17 +1214,6 @@ fn rust_stored_impl(
                     #(#with_arms,)*
                     _ => #with_rest,
                 }
-            }
-            fn write_state(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
-                #(<#base_ty as #api::RustStoredStruct>::write_state(&self.#base, out)?;)*
-                #(#api::Field::write(&self.#idents, out)?;)*
-                Ok(())
-            }
-            fn read_state(input: &mut #api::StateReader) -> #api::Result<Self> {
-                Ok(Self {
-                    #(#base: <#base_ty as #api::RustStoredStruct>::read_state(input)?,)*
-                    #(#idents: <#tys as #api::Field>::read(input)?),*
-                })
             }
             fn owned_bytes(&self) -> usize {
                 0

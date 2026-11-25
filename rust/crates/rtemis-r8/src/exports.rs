@@ -280,6 +280,11 @@ pub fn check_codec(
         TypeDef::Enum(_) => {
             v.variant.is_some() && v.from_variant.is_some() && v.from_fields.is_none()
         }
+        TypeDef::Table(_) => {
+            return Err(format!(
+                "`{name}` of `{package}` is a table, whose values R stores"
+            ));
+        }
     };
     if v.from_reader.is_none() {
         return Err(format!(
@@ -310,6 +315,7 @@ pub fn check_codec(
             },
             VariantKind::Unit => None,
         }),
+        TypeDef::Table(_) => None,
     };
     match found {
         Some(field) => Err(format!(

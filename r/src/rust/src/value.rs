@@ -32,6 +32,8 @@ static FIELDS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static VALUE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static FIT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static VIEWED: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static BARE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static TABLE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// The elements of an identity (`value.c`).
 const ID_TYPE: isize = 0;
@@ -40,14 +42,16 @@ const ID_NAMES: isize = 2;
 const ID_DECLARATION: isize = 3;
 const ID_RECORD: isize = 5;
 const ID_STAMP: isize = 6;
+const ID_FACTS: isize = 8;
 
 /// Receives the functions of `value.c` from `R_init_R8()`.
 ///
 /// # Safety
 ///
-/// `identity`, `held`, `id`, `fields`, `value`, `fit`, and `viewed` are
+/// `identity`, `held`, `id`, `fields`, `value`, `fit`, `viewed`, `bare`, and `table` are
 /// `r8_identity()`, `r8_held_identity()`, `r8_value_id()`, `r8_value_fields()`,
-/// `r8_value_new()`, `r8_fields_fit()`, and `r8_field_viewed()`.
+/// `r8_value_new()`, `r8_fields_fit()`, `r8_field_viewed()`,
+/// `r8_field_bare()`, and `r8_table_identity()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_set_value_functions(
     identity: *mut (),
@@ -57,6 +61,8 @@ pub unsafe extern "C" fn r8_set_value_functions(
     value: *mut (),
     fit: *mut (),
     viewed: *mut (),
+    bare: *mut (),
+    table: *mut (),
 ) {
     IDENTITY.store(identity, Ordering::Release);
     HELD.store(held, Ordering::Release);
@@ -65,6 +71,8 @@ pub unsafe extern "C" fn r8_set_value_functions(
     VALUE.store(value, Ordering::Release);
     FIT.store(fit, Ordering::Release);
     VIEWED.store(viewed, Ordering::Release);
+    BARE.store(bare, Ordering::Release);
+    TABLE.store(table, Ordering::Release);
 }
 
 fn loaded(f: &AtomicPtr<()>) -> *mut () {
@@ -126,6 +134,14 @@ pub(crate) fn viewed(x: SEXP) -> SEXP {
     unsafe { f(x) }
 }
 
+/// A view of the vector `x` without attributes, unprotected; `None` for a small
+/// vector and for an object that is not atomic.
+pub(crate) fn bare(x: SEXP) -> Option<SEXP> {
+    let f: unsafe extern "C" fn(SEXP) -> SEXP = unsafe { std::mem::transmute(loaded(&BARE)) };
+    let v = unsafe { f(x) };
+    (!v.is_null()).then_some(v)
+}
+
 /// Whether the values and lists in `fields`, the list of a value's fields, nest
 /// no deeper than a value may.
 pub(crate) fn fit(fields: SEXP) -> bool {
@@ -148,6 +164,9 @@ fn class(q: &QualifiedName, variant: Option<&str>, lookup: &dyn TypeLookup) -> V
     let mut out: Vec<String> = variant.iter().map(|v| format!("{q}@{v}")).collect();
     out.push(q.to_string());
     out.extend(lookup.ancestors(q).iter().map(|a| a.to_string()));
+    if matches!(lookup.find(q), Some(TypeDef::Table(_))) {
+        out.push("r8_table".to_string());
+    }
     out.push("r8_value".to_string());
     out
 }
@@ -176,6 +195,7 @@ pub(crate) fn field_names<'a>(
     }
     match def {
         TypeDef::Struct(s) => Some(names(&s.fields)),
+        TypeDef::Table(t) => Some(t.columns.iter().map(|c| c.name.as_str()).collect()),
         TypeDef::Enum(e) => {
             let v = e
                 .variants
@@ -326,6 +346,29 @@ unsafe fn symbols(text: &str) -> SEXP {
         Rf_unprotect(1);
         out
     }
+}
+
+/// The identity of a value of the registered table `q` whose columns are
+/// `names`, a character vector, and whose extra columns have the facts `facts`, a
+/// named list or `NULL`; unprotected.
+pub(crate) fn table_identity(
+    q: &QualifiedName,
+    names: SEXP,
+    facts: SEXP,
+    lookup: &dyn TypeLookup,
+) -> std::result::Result<SEXP, (&'static str, String)> {
+    let base = identity(q, None, lookup)?;
+    let f: unsafe extern "C" fn(SEXP, SEXP, SEXP) -> SEXP =
+        unsafe { std::mem::transmute(loaded(&TABLE)) };
+    Ok(unsafe { f(base, names, facts) })
+}
+
+/// The facts of the extra columns of the table value `x`, a named list, or
+/// `NULL`.
+pub(crate) fn table_facts(x: SEXP) -> SEXP {
+    id(x).map_or(unsafe { R_NilValue }, |id| unsafe {
+        VECTOR_ELT(id, ID_FACTS)
+    })
 }
 
 /// The text of a symbol.
@@ -678,6 +721,21 @@ fn updated(
     };
     let held = names_of(id);
     let from = fields(x);
+    if let TypeDef::Table(t) = def {
+        if is_current {
+            return Ok(None);
+        }
+        // The columns hold no value of another type; they are checked and put in
+        // the order of the declaration.
+        let given: Vec<String> = (0..crate::rview::xlen(held))
+            .filter_map(|i| string_elt(held, i).map(Cow::into_owned))
+            .collect();
+        return match crate::table::checked(from, &given, &q, t, table_facts(x), lookup) {
+            Ok(Ok(v)) => Ok(Some(v)),
+            Ok(Err(errors)) => Err(Refused::Invalid(q.to_string(), errors)),
+            Err(e) => Err(Refused::Other(e.to_string())),
+        };
+    }
     let mut changed = !is_current;
     let mut values: Vec<Robj> = Vec::with_capacity(names.len());
     for (k, n) in names.iter().enumerate() {

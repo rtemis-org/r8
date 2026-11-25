@@ -373,7 +373,8 @@ fn of_type(v: &mut Value, ty: &QualifiedName, types: &dyn TypeLookup, form: Form
                 _ => return,
             }
         }
-        None => return,
+        // A column holds no named type.
+        Some(TypeDef::Table(_)) | None => return,
     };
     for f in fields {
         if let Some(x) = v.get_mut(f.name.as_str()) {

@@ -1,4 +1,4 @@
-//! The interface between R8 and the compiled code of R packages, ABI version 1,
+//! The interface between R8 and the compiled code of R packages, ABI version 2,
 //! which packages reach through the crate `rtemis-r8-api`.
 //!
 //! These `#[repr(C)]` types mirror `r/inst/include/R8.h` field for field,
@@ -14,7 +14,7 @@
 use std::ffi::{c_char, c_void};
 
 /// The ABI major version, `R8_ABI_VERSION` in the header.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// An R value, `SEXP` in the header.
 pub type Sexp = *mut c_void;
@@ -39,20 +39,6 @@ pub struct Error {
     pub code: [c_char; 64],
     /// The message, NUL-terminated.
     pub message: [c_char; 1024],
-}
-
-/// `R8Writer`: a sink for bytes, and for the R values of a state, supplied by
-/// the caller of `encode` and `write_state`.
-#[repr(C)]
-pub struct Writer {
-    /// The caller's state, passed to `write` and `keep`.
-    pub context: *mut c_void,
-    /// Appends bytes to the sink.
-    pub write: Option<unsafe extern "C" fn(*mut c_void, *const u8, usize) -> Status>,
-    /// Keeps an R value that the state holds beside the state's bytes, and
-    /// gives its 0-based position among the kept values, which the codec
-    /// writes into the bytes; `None` in the writer of `encode`.
-    pub keep: Option<unsafe extern "C" fn(*mut c_void, Sexp, *mut usize) -> Status>,
 }
 
 /// `R8Node`: a part of a value that R8 has read and validated, lent to a
@@ -179,18 +165,6 @@ pub struct Codec {
     /// that R8 has validated and converted to their stored forms.
     pub from_fields:
         Option<unsafe extern "C" fn(*const Sexp, usize, *mut *mut c_void, *mut Error) -> Status>,
-    /// Writes the state's JSON document to a writer, for export.
-    pub encode: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
-    /// Writes the state's bytes, in a form of the package's choosing, for
-    /// persistence and parallel workers. R8 calls it twice per
-    /// serialization, to count the bytes and to write them, so every call
-    /// writes the same bytes.
-    pub write_state: Option<unsafe extern "C" fn(*const c_void, *mut Writer, *mut Error) -> Status>,
-    /// Builds a state from bytes that `write_state` wrote and the list of the
-    /// R values that it kept, `R_NilValue` when it kept none.
-    pub read_state: Option<
-        unsafe extern "C" fn(*const u8, usize, Sexp, *mut *mut c_void, *mut Error) -> Status,
-    >,
     /// Reads one field as an R value. `owner` is the external pointer that
     /// holds the state; a field that views the state's memory passes it as
     /// the view's owner. R8 calls it once per field and keeps the result.
@@ -432,9 +406,6 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
     vec![
         ("R8Error", size_of::<Error>()),
         ("R8Error.message", offset_of!(Error, message)),
-        ("R8Writer", size_of::<Writer>()),
-        ("R8Writer.write", offset_of!(Writer, write)),
-        ("R8Writer.keep", offset_of!(Writer, keep)),
         ("R8CallInputs", size_of::<CallInputs>()),
         ("R8CallInputs.flags", offset_of!(CallInputs, flags)),
         ("R8CallInputs.seed", offset_of!(CallInputs, seed)),
@@ -442,9 +413,6 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Codec.type_name", offset_of!(Codec, type_name)),
         ("R8Codec.module", offset_of!(Codec, module)),
         ("R8Codec.from_fields", offset_of!(Codec, from_fields)),
-        ("R8Codec.encode", offset_of!(Codec, encode)),
-        ("R8Codec.write_state", offset_of!(Codec, write_state)),
-        ("R8Codec.read_state", offset_of!(Codec, read_state)),
         ("R8Codec.get_field", offset_of!(Codec, get_field)),
         ("R8Codec.with_field", offset_of!(Codec, with_field)),
         ("R8Codec.drop", offset_of!(Codec, drop)),

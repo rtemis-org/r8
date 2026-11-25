@@ -62,8 +62,76 @@ s3_generic_info <- function(f) {
       return(list(name = name, package = "base"))
     }
   }
-  NULL
+  dispatching_info(f)
 } # /R8::s3_generic_info
+
+
+# %% dispatching_info ----
+#' The S3 generic of a package's function that does more than dispatch
+#'
+#' A function of a package whose body holds calls of `UseMethod()`, all for one
+#' generic of the package and all for the function's first argument, as
+#' `as.data.frame()`, `sort()`, and `dplyr::filter()`, which return early or check
+#' an argument first.
+#'
+#' @param f Function.
+#'
+#' @return List with `name` and `package`, or `NULL`.
+#'
+#' @keywords internal
+#' @noRd
+dispatching_info <- function(f) {
+  ns <- environment(f)
+  if (is.null(ns) || !isNamespace(ns)) {
+    return(NULL)
+  }
+  first <- names(formals(f))[1L]
+  calls <- use_method_calls(body(f))
+  generics <- vapply(
+    calls,
+    function(call) {
+      of <- call[["generic"]]
+      object <- call[["object"]]
+      on_first <- is.null(object) || identical(object, as.name(first))
+      if (is.character(of) && length(of) == 1L && on_first) of else ""
+    },
+    ""
+  )
+  name <- unique(generics)
+  if (length(name) != 1L || !nzchar(name) || !is.function(get0(name, ns))) {
+    return(NULL)
+  }
+  list(name = name, package = unname(getNamespaceName(ns)))
+} # /R8::dispatching_info
+
+
+# %% use_method_calls ----
+#' The calls of `UseMethod()` in an expression, outside the functions it defines
+#'
+#' @param e Language object.
+#'
+#' @return List of lists, each with the arguments `generic` and `object` of a call,
+#'   unevaluated, where `object` is absent for a call without it.
+#'
+#' @keywords internal
+#' @noRd
+use_method_calls <- function(e) {
+  if (!is.call(e) || identical(e[[1L]], as.name("function"))) {
+    return(list())
+  }
+  if (identical(e[[1L]], as.name("UseMethod"))) {
+    call <- as.list(match.call(function(generic, object) NULL, e))
+    return(list(call[c("generic", "object")]))
+  }
+  out <- list()
+  for (i in seq_along(e)) {
+    # An empty argument, as in x[i, ], is a symbol that no variable holds.
+    if (is.call(e[[i]])) {
+      out <- c(out, use_method_calls(e[[i]]))
+    }
+  }
+  out
+} # /R8::use_method_calls
 
 
 # %% is_s4_generic ----

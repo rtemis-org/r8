@@ -3100,6 +3100,147 @@
       "expect": {
         "errors": []
       }
+    },
+    {
+      "id": "infinite-within-two-bounds",
+      "description": "Two bounds leave no infinity to admit.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0,
+                  "max": 1.0,
+                  "infinite": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "infinite_unused",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "infinite-with-values",
+      "description": "The listed values are finite.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "values": [
+                    1.0
+                  ],
+                  "infinite": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "infinite_unused",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "infinite-within-one-bound",
+      "description": "The range ends at infinity.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0,
+                  "infinite": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "nan-with-bounds-and-values",
+      "description": "NaN is outside the bounds and the values.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0,
+                  "max": 3.0,
+                  "values": [
+                    1.0
+                  ],
+                  "nan": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
     }
   ]
 }

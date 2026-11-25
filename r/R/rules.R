@@ -38,34 +38,59 @@
 #' presence and is not a read: `is.null(a) || !is.null(b)` requires `b`
 #' whenever `a` is present.
 #'
+#' @section Rows:
+#' A rule of a [new_table()] or a `type_table()` reads the cells of one row by the
+#' names of the columns; the cell of a factor is its label. A rule also chooses the
+#' rows of a table ([r8_filter()]), and then `mean()`, `sum()`, `min()`, and `max()`
+#' read whole columns. `pmin()` and `pmax()` are of the cells of a row.
+#'
+#' @section Missing values:
+#' A comparison with a missing cell or with `NaN` is missing, and so is an operation
+#' with one, except `is.na()`; `FALSE && NA` is false and `TRUE || NA` is true, as in
+#' R. A check fails where the rule is false, and a filter keeps the rows where it is
+#' true.
+#'
 #' @section Vectors:
 #' `all(x, <condition>)` and `any(x, <condition>)` test a condition on each
 #' element of the vector `x`, with `.x` the element: `all(values, .x > 0)`.
 #' A violation of an invariant that is an `all()` reports each failing
-#' element's path. `length()`, `sum()`, `min()`, `max()`,
+#' element's path. `length()`, `sum()`, `mean()`, `min()`, `max()`,
 #' `non_decreasing()`, and `non_increasing()` read a whole vector, without
 #' copying it. Paired elements of two vectors are columns of a
 #' `type_table()`, whose `rules` apply to each row.
 #'
 #' @section Constants:
-#' A bare name in a rule is always a field. `lit(expr)` is the value of the
-#' R expression `expr`, evaluated once when `rule()` runs: `cost <= lit(max_cost)`.
+#' A bare name in a rule is always a field. `val(expr)` is the value of the
+#' R expression `expr`, evaluated once when `rule()` runs: `cost <= val(max_cost)`.
 #'
 #' @section Operators and functions:
 #' Comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`), arithmetic (`+`, `-`,
 #' `*`, `/`, `%%`), logical operators (`&&`, `||`, `!`; `&` and `|` are the
-#' same as `&&` and `||`), `%in%`, `if`, `is.null()`, `is_variant()`,
+#' same as `&&` and `||`), `%in%`, `if`, `is.na()`, `is.null()`, `is_variant()`,
 #' `length()`, `nchar()`, `nrow()`, `ncol()`, `dim()`, `levels()`,
-#' `abs()`, `floor()`, `ceiling()`, `round()`, `min()`, `max()`, `sum()`,
+#' `abs()`, `sqrt()`, `log()`, `exp()`, `floor()`, `ceiling()`, `round()`, `min()`,
+#' `max()`, `pmin()`, `pmax()`, `sum()`, `mean()`,
 #' `all()`, `any()`, `subset()`, `non_decreasing()`, `non_increasing()`,
-#' `paste0()`, `c()` of constants, and `lit()`.
+#' `paste0()`, `c()` of constants, and `val()`.
 #'
 #' Rules follow the strict semantics of R8's rule language, which is the
 #' same in every host: `==` is strict equality, so an integer never equals a
-#' string; strings do not order; division by zero is an error; and `==` on a
-#' double computed by arithmetic or `sum()` is a declaration error, since
-#' rounding makes it inexact: `abs(sum(p) - 1) <= 1e-9` states the
+#' string; strings do not order; a string compared with a date or a date-time is
+#' one, `"2020-01-31"` or `"2020-01-31T12:00:00Z"`; a division by zero, `sqrt()` of
+#' a negative number, and `log()` of a number that is not positive are errors;
+#' `sum()` is the exact sum, rounded once, and `mean()` that sum over the count; and
+#' `==` on a double computed by arithmetic, `sum()`, or `mean()` is a declaration
+#' error, since rounding makes it inexact: `abs(sum(p) - 1) <= 1e-9` states the
 #' tolerance.
+#'
+#' @section Rules of rules:
+#' A rule is a value. `!`, `&`, and `|` make a rule of others, `!adult & woman`,
+#' without an ID and a message.
+#'
+#' @section Package code:
+#' `R CMD check` takes a bare name in a function for a variable that nothing binds.
+#' A function of a package quotes the condition, `rule(quote(age >= val(cutoff)))`,
+#' which is the same rule.
 #'
 #' @section Words that differ from R:
 #' The dialect is R syntax with its own meanings; these words differ from
@@ -79,7 +104,7 @@
 #' | `non_decreasing(x)`, `non_increasing(x)` | The vector `x` is in order. |
 #' | `&`, `\|` | The same as `&&` and `\|\|`. |
 #' | `==` | Strict equality: values of different types are never equal. |
-#' | `lit(expr)` | The value of the R expression `expr`, a constant. |
+#' | `val(expr)` | The value of the R expression `expr`, a constant. |
 #'
 #' @section Violations:
 #' A violation is an `r8_value_error` that shows the rule's ID and message,
@@ -124,7 +149,7 @@
 #'   ),
 #'   rules = list(
 #'     rule(lo < hi),
-#'     rule(cost <= lit(max_cost), message = "cost is at most max_cost."),
+#'     rule(cost <= val(max_cost), message = "cost is at most max_cost."),
 #'     rule(abs(sum(weights) - 1) <= 1e-9, message = "weights sum to 1.", id = "WEIGHTS"),
 #'     rule(kernel$gamma <= 10, when = is_variant(kernel, "Rbf"), message = "gamma is at most 10.")
 #'   )
@@ -162,18 +187,67 @@ rule <- function(invariant, when = NULL, message = NULL, id = NULL) {
 } # /R8::rule
 
 
-# %% lit ----
+# %% Ops.r8_rule ----
+#' Rules of other rules
+#'
+#' @param e1,e2 Rules.
+#'
+#' @return For `!`, `&`, and `|`, the rule of the conditions, without an ID and a
+#'   message.
+#'
+#' @noRd
+#' @export
+Ops.r8_rule <- function(e1, e2) {
+  fn <- .Generic
+  if (!fn %in% c("!", "&", "|")) {
+    r8_abort(
+      "`",
+      fn,
+      "` is not an operation on rules; !, &, and | make a rule of others.",
+      class = "r8_type_error"
+    )
+  }
+  given <- if (missing(e2)) list(e1) else list(e1, e2)
+  for (r in given) {
+    if (!inherits(r, "r8_rule")) {
+      r8_abort(
+        "`",
+        fn,
+        "` makes a rule of two rules; a condition is a rule(), such as rule(age >= 18).",
+        class = "r8_type_error"
+      )
+    }
+    if (!is.null(r[["when"]])) {
+      r8_abort(
+        "`",
+        fn,
+        "` takes rules without `when`, which are one condition.",
+        class = "r8_type_error"
+      )
+    }
+  }
+  parts <- lapply(unname(given), `[[`, "invariant")
+  op <- c(`!` = "!", `&` = "and", `|` = "or")[[fn]]
+  structure(
+    list(invariant = stats::setNames(list(parts), op)),
+    class = "r8_rule"
+  )
+} # /R8::Ops.r8_rule
+
+
+# %% val ----
 #' A constant from R in a rule
 #'
 #' Declaration vocabulary of the rule dialect, without the `r8_` prefix of
-#' operations on values. In a rule, `lit(expr)` is the value of the R
+#' operations on values. In a rule, `val(expr)` is the value of the R
 #' expression `expr`, evaluated once, when `rule()` runs, in the environment
-#' that calls `rule()`; a bare name in a rule is always a field. The value is stored in the rule as a
-#' literal: one non-`NA` logical, integer, double, or string, or a vector of
-#' them as the right operand of `%in%`. In a package, the value is the one
-#' the expression has when the package is installed.
+#' that calls `rule()`; a bare name in a rule is a field or a column. The value is
+#' stored in the rule as a literal: one non-`NA` logical, integer, double, string,
+#' `Date`, or `POSIXct`, or a vector of them as the right operand of `%in%`. In a
+#' declaration of a package, the value is the one the expression has when the
+#' package is installed.
 #'
-#' Outside a rule, `lit(x)` returns `x`.
+#' Outside a rule, `val(x)` returns `x`.
 #'
 #' @param x The value.
 #'
@@ -181,25 +255,25 @@ rule <- function(invariant, when = NULL, message = NULL, id = NULL) {
 #'
 #' @examples
 #' max_cost <- 100
-#' rule(cost <= lit(max_cost), message = "cost is at most max_cost.")
+#' rule(cost <= val(max_cost), message = "cost is at most max_cost.")
 #' allowed <- c("linear", "rbf")
-#' rule(kernel %in% lit(allowed), message = "kernel is linear or rbf.")
+#' rule(kernel %in% val(allowed), message = "kernel is linear or rbf.")
 #'
 #' @export
-lit <- function(x) x
+val <- function(x) x
 
 
 # %% rule_expr ----
 #' Prepare a rule's R expression for translation
 #'
-#' Replaces each `lit()` call with its value, evaluated in `env`, and signals
+#' Replaces each `val()` call with its value, evaluated in `env`, and signals
 #' an error for a one-argument `all()` or `any()`, which writes the
 #' two-argument form.
 #'
 #' @param e The unevaluated expression.
 #' @param env Environment: Where `rule()` is called.
 #'
-#' @return The expression with each `lit()` call replaced by a constant, or a
+#' @return The expression with each `val()` call replaced by a constant, or a
 #'   call to `c()` of constants for a vector.
 #'
 #' @keywords internal
@@ -209,8 +283,8 @@ rule_expr <- function(e, env) {
     return(e)
   }
   head <- e[[1L]]
-  if (is_rule_fn(head, "lit")) {
-    return(lit_value(e, env))
+  if (is_rule_fn(head, "val")) {
+    return(val_value(e, env))
   }
   for (fn in c("all", "any")) {
     if (is_rule_fn(head, fn) && length(e) == 2L) {
@@ -246,35 +320,43 @@ is_rule_fn <- function(head, name) {
 } # /R8::is_rule_fn
 
 
-# %% lit_value ----
-#' The constant a lit() call gives
+# %% val_value ----
+#' The constant a val() call gives
 #'
-#' @param e The `lit()` call.
+#' @param e The `val()` call.
 #' @param env Environment: Where `rule()` is called.
 #'
 #' @return One constant, or a call to `c()` of constants.
 #'
 #' @keywords internal
 #' @noRd
-lit_value <- function(e, env) {
+val_value <- function(e, env) {
   text <- paste(deparse(e), collapse = " ")
   if (length(e) != 2L || (!is.null(names(e)) && nzchar(names(e)[[2L]]))) {
     r8_abort(
       "`",
       text,
-      "`: lit() takes one unnamed argument.",
+      "`: val() takes one unnamed argument.",
       class = "r8_declaration_error"
     )
   }
-  if (contains_lit(e[[2L]])) {
+  if (contains_val(e[[2L]])) {
     r8_abort(
       "`",
       text,
-      "`: lit() does not nest.",
+      "`: val() does not nest.",
       class = "r8_declaration_error"
     )
   }
   v <- eval(e[[2L]], env)
+  if (inherits(v, c("Date", "POSIXct")) && !anyNA(v)) {
+    days <- as.double(v)
+    if (
+      all(is.finite(days)) && (!inherits(v, "Date") || all(days == round(days)))
+    ) {
+      v <- r8_date_literals(days, inherits(v, "POSIXct"))
+    }
+  }
   ok <- (is.logical(v) || is.integer(v) || is.double(v) || is.character(v)) &&
     is.null(attr(v, "class", exact = TRUE)) &&
     length(v) >= 1L &&
@@ -285,7 +367,8 @@ lit_value <- function(e, env) {
       "`",
       text,
       "` is not a constant of a rule: one non-NA logical, integer, finite ",
-      "double, or string, or a vector of them on the right side of %in%.",
+      "double, string, date, or date-time, or a vector of them on the right ",
+      "side of %in%.",
       class = "r8_declaration_error"
     )
   }
@@ -294,11 +377,11 @@ lit_value <- function(e, env) {
     return(v)
   }
   as.call(c(as.name("c"), as.list(v)))
-} # /R8::lit_value
+} # /R8::val_value
 
 
-# %% contains_lit ----
-#' Whether an expression calls lit()
+# %% contains_val ----
+#' Whether an expression calls val()
 #'
 #' @param e An expression.
 #'
@@ -306,15 +389,15 @@ lit_value <- function(e, env) {
 #'
 #' @keywords internal
 #' @noRd
-contains_lit <- function(e) {
+contains_val <- function(e) {
   if (!is.call(e)) {
     return(FALSE)
   }
-  if (is_rule_fn(e[[1L]], "lit")) {
+  if (is_rule_fn(e[[1L]], "val")) {
     return(TRUE)
   }
-  any(vapply(as.list(e)[-1L], contains_lit, logical(1)))
-} # /R8::contains_lit
+  any(vapply(as.list(e)[-1L], contains_val, logical(1)))
+} # /R8::contains_val
 
 
 # %% rule_paths ----

@@ -216,7 +216,8 @@ value_required <- function(x) {
 #' The message of a list of problems
 #'
 #' One entry per problem; the violations of one rule at several paths, such
-#' as the failing elements of an `all()`, form one entry. A rule violation
+#' as the failing elements of an `all()`, form one entry, and so do the problems
+#' of one code of the elements of one vector. A rule violation
 #' adds a line with the rule's expression in R and, unless the option
 #' `r8.show_values` is `FALSE`, the values the rule read: its fields, its
 #' computed operands, and the failing elements `.x`, as the core collects
@@ -238,12 +239,8 @@ problems_message <- function(errors) {
   rule <- errors[["rule"]] %||% rep(NA_character_, n)
   index <- errors[["rule_index"]] %||% rep(NA_integer_, n)
   show <- !isFALSE(getOption("r8.show_values"))
-  is_rule <- errors[["code"]] == "rule_violation"
-  key <- ifelse(
-    is_rule,
-    paste(rule, index, errors[["message"]], sep = "\r"),
-    paste0("\r", seq_len(n))
-  )
+  is_rule <- errors[["code"]] %in% c("rule_violation", "rule_error")
+  key <- problem_keys(errors)
   out <- character()
   for (k in unique(key)) {
     i <- which(key == k)
@@ -269,6 +266,9 @@ problems_message <- function(errors) {
           "- ",
           errors[["message"]][[first]],
           if (!is.null(hint) && !is.na(hint)) paste0(" ", hint),
+          if (length(i) > 1L && errors[["code"]][[first]] != "nan_value") {
+            paste0(" Also at ", paths_text(paths[-1L]), ".")
+          },
           if (!is.na(id)) paste0(" (rule ", id, ")"),
           if (code_only) {
             paste0(" [", errors[["code"]][[first]], "]")
@@ -291,7 +291,20 @@ problems_message <- function(errors) {
       NULL
     }
     message <- errors[["message"]][[first]]
-    if (nzchar(message)) {
+    if (identical(errors[["code"]][[first]], "rule_error")) {
+      # The rule has no value: what its evaluation ended in.
+      out <- c(
+        out,
+        paste0(
+          head,
+          " ",
+          if (!is.null(line)) paste0(line, ": "),
+          message,
+          ".",
+          bracket
+        )
+      )
+    } else if (nzchar(message)) {
       out <- c(
         out,
         paste0(head, " ", message, bracket),
@@ -468,21 +481,27 @@ problems_data <- function(errors) {
 #' @param errors List: As `problems_message()` takes it.
 #'
 #' @return Character: One key per problem; the violations of one rule share
-#'   a key.
+#'   a key, and the problems of one code of the elements of one vector.
 #'
 #' @keywords internal
 #' @noRd
 problem_keys <- function(errors) {
   n <- length(errors[["code"]])
+  where <- errors[["where"]] %||% rep("", n)
+  element <- "\\[\\[[0-9]+\\]\\]$"
   ifelse(
-    errors[["code"]] == "rule_violation",
+    errors[["code"]] %in% c("rule_violation", "rule_error"),
     paste(
       errors[["rule"]] %||% rep(NA_character_, n),
       errors[["rule_index"]] %||% rep(NA_integer_, n),
       errors[["message"]],
       sep = "\r"
     ),
-    paste0("\r", seq_len(n))
+    ifelse(
+      grepl(element, where),
+      paste(errors[["code"]], sub(element, "", where), sep = "\r\r"),
+      paste0("\r", seq_len(n))
+    )
   )
 } # /R8::problem_keys
 
@@ -492,8 +511,8 @@ problem_keys <- function(errors) {
 #'
 #' A hint states the lossless conversion of a common R mistake: a whole
 #' double for an integer field, a factor for a character field, more than
-#' one value for a scalar field, and `NA` for a field that is not an
-#' `option()`.
+#' one value for a scalar field, `NA` for a field that is not an `option()`, and
+#' `NaN` for a type that does not admit it.
 #'
 #' @param errors List: As `problems_message()` takes it, with `where`.
 #' @param inputs Optional named list: The R objects given for the fields.
@@ -512,6 +531,10 @@ coercion_hints <- function(errors, inputs) {
     where <- errors[["where"]][[i]]
     code <- errors[["code"]][[i]]
     msg <- errors[["message"]][[i]]
+    if (code == "nan_value") {
+      out[[i]] <- nan_hint(inputs, where)
+      next
+    }
     if (!nzchar(where) || !where %in% names(inputs)) {
       next
     }
@@ -541,6 +564,36 @@ coercion_hints <- function(errors, inputs) {
   }
   out
 } # /R8::coercion_hints
+
+
+# %% nan_hint ----
+#' The hint for a value that is NaN
+#'
+#' @param inputs Named list: The R objects given for the fields.
+#' @param where Character: The path of the value.
+#'
+#' @return Character: The number of the elements that are `NaN`, for a vector given
+#'   for a field, and what admits them.
+#'
+#' @keywords internal
+#' @noRd
+nan_hint <- function(inputs, where) {
+  given <- inputs[[sub("\\[\\[[0-9]+\\]\\]$", "", where)]]
+  n <- length(given)
+  count <- if (is.double(given) && n > 1L) sum(is.nan(given)) else 0L
+  paste0(
+    if (count > 0L) {
+      paste0(
+        format(count, big.mark = ","),
+        " of ",
+        format(n, big.mark = ","),
+        " elements",
+        if (count == 1L) " is NaN. " else " are NaN. "
+      )
+    },
+    "Where a calculation may give no number, `nan = TRUE` in the type admits NaN."
+  )
+} # /R8::nan_hint
 
 
 # %% rules_skipped ----
@@ -589,6 +642,7 @@ rules_skipped <- function(errors, type_name, variant = "") {
 #' @param source Optional character: Where the value comes from, after the
 #'   label.
 #' @param class Character: The condition's classes, before `r8_error`.
+#' @param closing Optional character: The last line.
 #'
 #' @return Does not return; signals an error of class `class`, whose field
 #'   `problems` holds `problems_data(errors)`.
@@ -604,7 +658,8 @@ value_abort <- function(
   type_name = NULL,
   variant = "",
   source = NULL,
-  class = "r8_value_error"
+  class = "r8_value_error",
+  closing = NULL
 ) {
   errors[["hint"]] <- coercion_hints(errors, inputs)
   n <- length(unique(problem_keys(errors)))
@@ -628,6 +683,7 @@ value_abort <- function(
         if (skipped == 1L) " field is invalid." else " fields are invalid."
       )
     },
+    if (!is.null(closing)) paste0("\n", closing),
     class = class,
     data = list(problems = problems_data(errors))
   )
@@ -663,6 +719,7 @@ r8_construct <- function(type_name, fields, variant = "") {
 #' @param inputs Optional named list: The R objects given for the fields.
 #' @param assignment Optional character: The assignment that caused the
 #'   problems.
+#' @param closing Optional character: The last line of the message.
 #'
 #' @return Does not return; signals `r8_value_error`.
 #'
@@ -673,7 +730,8 @@ construct_error <- function(
   type_name,
   variant,
   inputs = NULL,
-  assignment = NULL
+  assignment = NULL,
+  closing = NULL
 ) {
   label <- if (nzchar(variant)) paste0(type_name, "@", variant) else type_name
   value_abort(
@@ -683,7 +741,8 @@ construct_error <- function(
     inputs = inputs,
     assignment = assignment,
     type_name = type_name,
-    variant = variant
+    variant = variant,
+    closing = closing
   )
 } # /R8::construct_error
 
@@ -916,10 +975,7 @@ new_dgc <- function(i, p, x, dim) {
 #' @export
 `[[.r8_value` <- function(x, i, ...) {
   if (!is.character(i) || length(i) != 1L) {
-    r8_abort(
-      "A field is read by name: x[[\"name\"]].",
-      class = "r8_value_error"
-    )
+    not_by_name(x, i, substitute(x), "[[")
   }
   v <- .Call(.r8_c_get, x, i)
   if (is.null(v)) field_get(x, i) else v
@@ -931,10 +987,7 @@ new_dgc <- function(i, p, x, dim) {
 #' @export
 `[.r8_value` <- function(x, i, ...) {
   if (missing(i) || !is.character(i) || ...length() > 0L) {
-    r8_abort(
-      "Fields are read by name: x[c(\"a\", \"b\")].",
-      class = "r8_value_error"
-    )
+    not_by_name(x, if (!missing(i) && ...length() == 0L) i, substitute(x), "[")
   }
   unknown <- is.na(match(i, attr(x, "names", exact = TRUE)))
   if (any(unknown)) {
@@ -965,10 +1018,7 @@ as.list.r8_value <- function(x, ...) {
 #' @export
 `[[<-.r8_value` <- function(x, i, value) {
   if (!is.character(i) || length(i) != 1L) {
-    r8_abort(
-      "A field is replaced by name: x[[\"name\"]] <- value.",
-      class = "r8_value_error"
-    )
+    not_by_name(x, i, NULL, "[[", " <- value")
   }
   field_set(x, i, value)
 } # /R8::[[<-.r8_value
@@ -990,6 +1040,121 @@ as.list.r8_value <- function(x, ...) {
   }
   res
 } # /R8::[<-.r8_value
+
+
+# %% not_by_name ----
+#' Signal that fields are read and replaced by name
+#'
+#' The message gives the call by name that the positions ask for.
+#'
+#' @param x An R8 value.
+#' @param i The index, or `NULL` for a call with none or with several.
+#' @param at Expression: The value in the caller's code, written in the message
+#'   when it is a name.
+#' @param op Character {"[[", "["}: The operator.
+#' @param then Character: The rest of the call.
+#'
+#' @return Does not return.
+#'
+#' @keywords internal
+#' @noRd
+not_by_name <- function(x, i, at, op, then = "") {
+  of <- if (is.name(at) && make.names(at) == as.character(at)) {
+    as.character(at)
+  } else {
+    "x"
+  }
+  verb <- if (nzchar(then)) "replaced" else "read"
+  fields <- attr(x, "names", exact = TRUE)
+  n <- length(fields)
+  one <- identical(op, "[[")
+  call <- function(names) {
+    quoted <- paste0("\"", names, "\"", collapse = ", ")
+    if (one) {
+      paste0(of, "[[", quoted, "]]", then)
+    } else if (length(names) == 1L) {
+      paste0(of, "[", quoted, "]", then)
+    } else {
+      paste0(of, "[c(", quoted, ")]", then)
+    }
+  }
+  # A table's fields are its columns.
+  part <- if (inherits(x, "r8_table")) "column" else "field"
+  parts <- paste0(part, "s")
+  rule <- paste0(
+    if (one) {
+      paste0("A ", part, " is ")
+    } else {
+      paste0(toupper(substr(parts, 1L, 1L)), substring(parts, 2L), " are ")
+    },
+    verb,
+    " by name"
+  )
+  whole <- is.numeric(i) &&
+    length(i) > 0L &&
+    length(i) <= 5L &&
+    (!one || length(i) == 1L) &&
+    !anyNA(i) &&
+    all(i == trunc(i)) &&
+    all(i >= 1)
+  if (whole && all(i <= n)) {
+    # The call that the positions ask for.
+    names <- fields[i]
+    which <- if (length(i) == 1L) paste0(part, " ") else paste0(parts, " ")
+    is <- if (length(i) == 1L) " is `" else " are `"
+    r8_abort(
+      rule,
+      "; ",
+      which,
+      paste(i, collapse = ", "),
+      is,
+      paste(names, collapse = "`, `"),
+      "`: ",
+      call(names),
+      if (!nzchar(then)) {
+        paste0("; names(", of, ") gives the ", part, " names")
+      },
+      ".",
+      class = "r8_value_error"
+    )
+  }
+  if (whole) {
+    r8_abort(
+      rule,
+      ", and `",
+      of,
+      "` has ",
+      n,
+      " ",
+      if (n == 1L) part else parts,
+      if (n > 0L) {
+        paste0(
+          ": `",
+          paste(utils::head(fields, 8L), collapse = "`, `"),
+          "`",
+          if (n > 8L) ", and others"
+        )
+      },
+      ".",
+      class = "r8_value_error"
+    )
+  }
+  r8_abort(
+    rule,
+    ": ",
+    call(
+      if (n == 0L) {
+        "name"
+      } else if (one) {
+        fields[1L]
+      } else {
+        utils::head(fields, 2L)
+      }
+    ),
+    ".",
+    class = "r8_value_error"
+  )
+} # /R8::not_by_name
 
 
 # %% field_get ----
@@ -1024,6 +1189,25 @@ field_get <- function(x, name) {
 unknown_field <- function(x, name) {
   variant <- value_variant(x)
   fields <- attr(x, "names", exact = TRUE)
+  if (inherits(x, "r8_table")) {
+    r8_abort(
+      "`",
+      name,
+      "` is not a column",
+      if (length(fields) > 0L && length(fields) <= 8L) {
+        paste0("; the columns are `", paste(fields, collapse = "`, `"), "`")
+      } else if (length(fields) > 8L) {
+        near <- agrep(name, fields, max.distance = 0.2, value = TRUE)
+        if (length(near) > 0L) {
+          paste0("; a column is named `", near[[1L]], "`")
+        } else {
+          paste0(" of the ", length(fields))
+        }
+      },
+      ".",
+      class = "r8_value_error"
+    )
+  }
   r8_abort(
     "`",
     name,
@@ -1074,7 +1258,10 @@ field_set <- function(x, name, value) {
       value_type(x),
       if (is.null(variant)) "" else variant,
       inputs = structure(list(value), names = name),
-      assignment = paste0("x$", name, " <- value")
+      assignment = paste0("x$", name, " <- value"),
+      closing = if (inherits(x, "r8_table")) {
+        column_closing(x, name, res[["errors"]])
+      }
     )
   }
   res

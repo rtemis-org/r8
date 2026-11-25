@@ -39,7 +39,8 @@ arg_double(
   max = NULL,
   exclusive_min = NULL,
   exclusive_max = NULL,
-  finite = TRUE,
+  infinite = FALSE,
+  nan = FALSE,
   values = NULL,
   default
 )
@@ -84,7 +85,7 @@ the elements or of a present value.}
 bounds and admitted values, as \code{\link[=type_integer]{type_integer()}} and \code{\link[=type_double]{type_double()}} take
 them; \code{values} of \code{arg_character()} as \code{\link[=type_character]{type_character()}} takes it.}
 
-\item{finite}{Logical: As \code{\link[=type_double]{type_double()}} takes it.}
+\item{infinite, nan}{Logical: As \code{\link[=type_double]{type_double()}} takes them.}
 
 \item{pattern}{Optional Character: As \code{\link[=type_character]{type_character()}} takes it.}
 

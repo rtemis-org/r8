@@ -1185,7 +1185,7 @@
       "type": "ns::T"
     },
     {
-      "description": "finite = FALSE admits the non-finite strings.",
+      "description": "`infinite` and `nan` admit the non-finite strings.",
       "expect": {
         "valid": true
       },
@@ -1201,7 +1201,7 @@
       "expect": {
         "errors": [
           {
-            "code": "not_finite",
+            "code": "nan_value",
             "path": "/fin"
           }
         ]
@@ -1585,7 +1585,8 @@
               "kind": "option",
               "inner": {
                 "kind": "double",
-                "finite": false
+                "infinite": true,
+                "nan": true
               }
             },
             "description": ""

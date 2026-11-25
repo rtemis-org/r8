@@ -103,6 +103,8 @@ pub fn check_tags(
 /// of a variant, or an enum's own tag.
 fn tag_field(lookup: &dyn TypeLookup, ty: &QualifiedName, tag: &str) -> Option<&'static str> {
     match lookup.find(ty)? {
+        // The members of a table's document are its columns.
+        TypeDef::Table(_) => Some("a possible column"),
         TypeDef::Struct(s) => s
             .fields
             .iter()

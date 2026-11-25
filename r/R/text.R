@@ -400,7 +400,9 @@ layout_value <- function(x, summary = NULL, head = 8L) {
     display_types(),
     display_parts,
     summary,
-    as.integer(head)
+    as.integer(head),
+    getOption("width", 80L),
+    isTRUE(l10n_info()[["UTF-8"]])
   ))
 } # /R8::layout_value
 

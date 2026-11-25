@@ -17,7 +17,8 @@ use crate::declare::registry;
 use crate::rview::xlen;
 
 static WRAP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static BUILD: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static FIELDS_READ: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static GIVE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static STATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static PARTS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static MEMORY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -28,14 +29,15 @@ static SYMBOLS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 ///
 /// # Safety
 ///
-/// `wrap`, `build`, `state`, `parts`, `memory`, `protect`, and `symbols` are
-/// `r8_rust_stored_wrap()`, `r8_rust_stored_build()`, `r8_rust_stored_state()`,
-/// `r8_rust_stored_parts()`, `r8_rust_stored_memory()`, `r8_protect()`, and
-/// `r8_native_symbols()`.
+/// `wrap`, `fields_read`, `give`, `state`, `parts`, `memory`, `protect`, and
+/// `symbols` are `r8_rust_stored_wrap()`, `r8_rust_stored_fields_read()`,
+/// `r8_rust_stored_give()`, `r8_rust_stored_state()`, `r8_rust_stored_parts()`,
+/// `r8_rust_stored_memory()`, `r8_protect()`, and `r8_native_symbols()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_set_rust_stored_functions(
     wrap: *mut (),
-    build: *mut (),
+    fields_read: *mut (),
+    give: *mut (),
     state: *mut (),
     parts: *mut (),
     memory: *mut (),
@@ -43,7 +45,8 @@ pub unsafe extern "C" fn r8_set_rust_stored_functions(
     symbols: *mut (),
 ) {
     WRAP.store(wrap, Ordering::Release);
-    BUILD.store(build, Ordering::Release);
+    FIELDS_READ.store(fields_read, Ordering::Release);
+    GIVE.store(give, Ordering::Release);
     STATE.store(state, Ordering::Release);
     PARTS.store(parts, Ordering::Release);
     MEMORY.store(memory, Ordering::Release);
@@ -182,18 +185,68 @@ pub(crate) fn state_of(x: SEXP) -> Option<(*const c_void, *const Codec)> {
     (!state.is_null()).then_some((state, vt))
 }
 
-/// Builds the state of a Rust-stored value that was read before its codec was
-/// registered; an error is its code and message.
-fn build(x: SEXP) -> Result<(), (String, String)> {
-    let f = BUILD.load(Ordering::Acquire);
+/// The fields of a Rust-stored value that a stream gave and that has no state;
+/// `None` for any other object.
+fn fields_read(x: SEXP) -> Option<SEXP> {
+    let f = FIELDS_READ.load(Ordering::Acquire);
     assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
-    let f: unsafe extern "C" fn(SEXP, *mut Error) -> i32 = unsafe { std::mem::transmute(f) };
-    let mut err = blank();
-    if unsafe { f(x, &mut err) } == 1 {
-        Ok(())
-    } else {
-        Err((report_text(&err.code), report_text(&err.message)))
+    let f: unsafe extern "C" fn(SEXP) -> SEXP = unsafe { std::mem::transmute(f) };
+    let fields = unsafe { f(x) };
+    (!fields.is_null()).then_some(fields)
+}
+
+/// Builds the state of a Rust-stored value that a stream gave, once its fields
+/// are validated; a value that has its state, or whose type has no codec, stays
+/// as it is. An error is its code and message.
+pub(crate) fn build(x: SEXP) -> Result<(), (&'static str, String)> {
+    let Some(fields) = fields_read(x) else {
+        return Ok(());
+    };
+    let name = crate::value::type_name(x).unwrap_or_default();
+    let q = QualifiedName::parse(&name).map_err(|e| ("unknown_type", e.to_string()))?;
+    let docs = registry().snapshot();
+    let lookup: &dyn TypeLookup = &*docs;
+    if lookup.find(&q).is_none() {
+        return Err((
+            "unknown_type",
+            format!("`{q}` is not declared; load the package that declares it"),
+        ));
     }
+    let Some(vt) = crate::exports::codec(&name).map_err(|m| ("declaration_changed", m))? else {
+        return Ok(());
+    };
+    let variant = crate::value::variant(x);
+    let id =
+        crate::value::id(x).ok_or(("state_absent", "the object is not a value".to_string()))?;
+    let registered = crate::value::identity(&q, variant.as_deref(), lookup)?;
+    let names = |id: SEXP| unsafe { Robj::from_sexp(crate::value::names_of(id)) };
+    if !crate::value::current(id) || names(id) != names(registered) {
+        return Err((
+            "declaration_changed",
+            format!("the declaration of `{q}` differs from the one the value was saved with"),
+        ));
+    }
+    let errors = crate::construct::with_cache(|cache| {
+        let v = crate::rview::RView::Whole(x);
+        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
+    });
+    if let Some(e) = errors.first() {
+        return Err((
+            "invalid_value",
+            format!("the saved `{q}` is invalid: {}", e.message),
+        ));
+    }
+    let state = match variant.as_deref() {
+        None => from_fields(vt, fields),
+        Some(v) => from_variant(vt, v, fields),
+    }
+    .map_err(|m| ("codec", m))?;
+    let f = GIVE.load(Ordering::Acquire);
+    assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
+    let f: unsafe extern "C" fn(SEXP, *const Codec, *mut c_void) =
+        unsafe { std::mem::transmute(f) };
+    unsafe { f(x, vt, state) };
+    Ok(())
 }
 
 /// An empty error report, for a callee to fill.
@@ -789,78 +842,4 @@ fn lend(
             format!("the value is a `{held}`, not a `{name}`"),
         )
     })
-}
-
-/// The package that registers the codec of the Rust-stored type `name`, which
-/// `Serialized_state` records with the state's bytes, one string, or `NULL`
-/// when the type is not registered.
-///
-/// # Safety
-///
-/// `type_name` is NUL-terminated; called on R's main thread.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_rust_stored_package(type_name: *const c_char) -> Sexp {
-    let nil = unsafe { extendr_ffi::R_NilValue }.cast();
-    let result = catch_unwind(AssertUnwindSafe(|| -> Option<Sexp> {
-        let name = c_text(type_name)?;
-        let q = QualifiedName::parse(&name).ok()?;
-        registry().snapshot().find(&q)?;
-        let package = crate::exports::codec_package(&name).unwrap_or_default();
-        Some(unsafe { crate::value::strings(&[&package]) }.cast())
-    }));
-    result.ok().flatten().unwrap_or(nil)
-}
-
-/// The codec that reads a state recorded as a value of `type_name` with the
-/// declaration `declaration`, the text of an identity; NULL, with `err`
-/// filled, when no package has registered it or its declaration differs.
-///
-/// # Safety
-///
-/// `type_name` and `declaration` are NUL-terminated; `err` is writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_rust_stored_codec(
-    type_name: *const c_char,
-    declaration: *const c_char,
-    err: *mut Error,
-) -> *const Codec {
-    let result = catch_unwind(AssertUnwindSafe(
-        || -> Result<*const Codec, (&'static str, String)> {
-            let name = c_text(type_name).unwrap_or_default();
-            let found = crate::exports::codec(&name).map_err(|m| ("declaration_changed", m))?;
-            let Some(vt) = found else {
-                return Err((
-                    "codec_missing",
-                    format!("no loaded package registers the codec of `{name}`"),
-                ));
-            };
-            let q = QualifiedName::parse(&name).map_err(|e| ("unknown_type", e.to_string()))?;
-            let docs = registry().snapshot();
-            let lookup: &dyn TypeLookup = &*docs;
-            if lookup.find(&q).is_none() {
-                return Err(("unknown_type", format!("`{name}` is not a registered type")));
-            }
-            let recorded = c_text(declaration).unwrap_or_default();
-            if crate::value::declaration(&q, lookup) != recorded {
-                return Err((
-                    "declaration_changed",
-                    format!(
-                        "the declaration of `{name}` differs from the one the value was saved with"
-                    ),
-                ));
-            }
-            Ok(vt)
-        },
-    ));
-    match result {
-        Ok(Ok(vt)) => vt,
-        Ok(Err((code, message))) => {
-            set_error(err, code, &message);
-            std::ptr::null()
-        }
-        Err(_) => {
-            set_error(err, "panic", "R8 panicked while finding a codec");
-            std::ptr::null()
-        }
-    }
 }

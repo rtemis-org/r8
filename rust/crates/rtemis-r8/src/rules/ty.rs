@@ -455,6 +455,7 @@ pub enum VariantFields<'a> {
 /// The members of a named type, when the lookup holds it.
 pub fn members<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Members<'a>> {
     match lookup.find(name)? {
+        TypeDef::Table(_) => None,
         TypeDef::Struct(s) => Some(Members::Struct(&s.fields)),
         TypeDef::Enum(e) => {
             let unit_only = e
@@ -991,6 +992,7 @@ fn reached_into(
                 }
             }
         }
+        TypeDef::Table(_) => {}
     }
     // The type follows the types it reaches.
     let me = out.remove(mark);

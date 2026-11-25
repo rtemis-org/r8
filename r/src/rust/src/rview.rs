@@ -951,6 +951,29 @@ impl<'a> Access<'a> for RView<'a> {
         } as usize)
     }
 
+    fn text_keys(self, start: usize, out: &mut [usize]) -> bool {
+        // R holds one object for the strings of one encoding and one text.
+        let Some(x) = self.sexp() else { return false };
+        if sexptype(x) != SEXPTYPE::STRSXP || xlen(x) < start + out.len() {
+            return false;
+        }
+        let na = unsafe { R_NaString };
+        let key = |c: SEXP| if c == na { 0 } else { c as usize };
+        match data::<SEXP>(x) {
+            Some(s) => {
+                for (o, &c) in out.iter_mut().zip(&s[start..]) {
+                    *o = key(c);
+                }
+            }
+            None => {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = key(unsafe { STRING_ELT(x, (start + k) as R_xlen_t) });
+                }
+            }
+        }
+        true
+    }
+
     fn sorted_without_na(self) -> Option<bool> {
         // R's sortedness codes: 1 and 2 increasing, -1 and -2 decreasing, 0
         // unsorted, INT_MIN unknown (R_ext/Altrep.h). A base wrapper reports
@@ -1263,10 +1286,13 @@ impl<'a> Access<'a> for RView<'a> {
         let Some(x) = self.sexp() else {
             return Err(r_type("expected a data.frame"));
         };
-        if sexptype(x) != SEXPTYPE::VECSXP || !inherits(x, "data.frame") {
+        // A value of a named table, and the columns that one is made from, are
+        // lists of columns; a table field is a data frame.
+        let named = matches!(self, RView::Draft(..)) || is_table_value(x);
+        if sexptype(x) != SEXPTYPE::VECSXP || !(named || inherits(x, "data.frame")) {
             return Err(r_type("expected a data.frame"));
         }
-        let rows = table_rows(x)?;
+        let rows = if named { list_rows(x) } else { table_rows(x)? };
         let names = attr(x, sym_names());
         names_text(names)?;
         let columns = (0..xlen(x))
@@ -1284,15 +1310,62 @@ impl<'a> Access<'a> for RView<'a> {
         })
     }
 
-    fn extra_column_type(self, name: &str) -> Read<FieldType> {
-        let col = match self.member(name) {
+    fn extra_column_type(self, name: &str, cells: Self) -> Read<FieldType> {
+        let col = match cells {
             RView::Whole(c) => c,
             _ => return Err(r_type(format!("column `{name}` is absent"))),
         };
         infer_column(col).ok_or_else(|| {
-            r_type(format!("column `{name}` holds no column type: logical, integer, double, character, factor, Date, or POSIXct"))
-                .at(format!("/{}", name.replace('~', "~0").replace('/', "~1")))
+            let class = attr(col, sym_class());
+            let class = (!is_null(class)).then(|| string_elt(class, 0)).flatten();
+            let is = match &class {
+                Some(c) => format!("is a `{c}`"),
+                None if sexptype(col) == SEXPTYPE::VECSXP => "is a list".to_string(),
+                None => "is of another type".to_string(),
+            };
+            let as_one = match class.as_deref() {
+                Some("difftime") => "; as.numeric(x, units = \"hours\") gives numbers, whose unit r8_set_columns() records",
+                Some("integer64") => "; as.character() gives its digits, and as.numeric() its numbers up to 2^53",
+                Some("units") => "; as.numeric() gives its numbers, whose unit r8_set_columns() records",
+                Some("POSIXlt") => "; as.POSIXct() gives a column",
+                Some("haven_labelled") => "; haven::as_factor() gives a factor",
+                _ => "",
+            };
+            Form::new(
+                "column_type",
+                format!("column `{name}` {is}; a column is a logical, an integer, a double, a character vector, a factor, a Date, or a POSIXct{as_one}"),
+            )
         })
+    }
+
+    fn column_facts(self, name: &str) -> Read<rtemis_r8::access::ColumnFacts> {
+        let mut out = rtemis_r8::access::ColumnFacts::default();
+        let RView::Whole(x) = self else {
+            return Ok(out);
+        };
+        let of = list_member(crate::value::table_facts(x), name);
+        if let Some(of) = of.filter(|f| sexptype(*f) == SEXPTYPE::VECSXP) {
+            let text = |k: &str| {
+                list_member(of, k)
+                    .and_then(|s| string_elt(s, 0))
+                    .map(Cow::into_owned)
+            };
+            out.unit = text("unit");
+            out.description = text("description");
+        }
+        Ok(out)
+    }
+
+    fn holds_only(self, ty: &FieldType) -> bool {
+        let RView::Whole(x) = self else {
+            return false;
+        };
+        matches!(
+            (ty, sexptype(x)),
+            (FieldType::Logical, SEXPTYPE::LGLSXP)
+                | (FieldType::Integer(_), SEXPTYPE::INTSXP)
+                | (FieldType::Double(_), SEXPTYPE::REALSXP)
+        )
     }
 
     fn row(self, i: usize) -> Self {
@@ -1481,6 +1554,19 @@ pub(crate) fn list_member_at(x: SEXP, hint: usize, name: &str) -> Option<SEXP> {
 
 /// The number of rows of a data.frame with automatic row names: the compact
 /// form `c(NA, -n)` or `c(NA, n)`, or `1:n`.
+/// Whether `x` is a value of a named table.
+pub(crate) fn is_table_value(x: SEXP) -> bool {
+    crate::value::is_value(x) && inherits(x, "r8_table")
+}
+
+/// The number of rows of a list of columns: the length of the first.
+pub(crate) fn list_rows(x: SEXP) -> u64 {
+    if sexptype(x) != SEXPTYPE::VECSXP || xlen(x) == 0 {
+        return 0;
+    }
+    xlen(unsafe { VECTOR_ELT(x, 0) }) as u64
+}
+
 pub(crate) fn table_rows(x: SEXP) -> Read<u64> {
     let rn = attrib_raw(x, sym_row_names());
     if is_null(rn) {
@@ -1513,6 +1599,13 @@ pub(crate) fn table_rows(x: SEXP) -> Read<u64> {
 /// The column type of an extra column of an open table, from its R class;
 /// cells may be missing, so the type is `option()` of the class's type.
 pub(crate) fn infer_column(col: SEXP) -> Option<FieldType> {
+    // A vector of another class, such as a `difftime` or an `integer64`, has a
+    // meaning that its numbers alone do not have.
+    let class = attr(col, sym_class());
+    let known = ["factor", "Date", "POSIXct"];
+    if !is_null(class) && !known.iter().any(|c| inherits(col, c)) {
+        return None;
+    }
     let base = if inherits(col, "factor") {
         FieldType::Factor {
             levels: None,
@@ -1526,7 +1619,11 @@ pub(crate) fn infer_column(col: SEXP) -> Option<FieldType> {
         match sexptype(col) {
             SEXPTYPE::LGLSXP => FieldType::Logical,
             SEXPTYPE::INTSXP => FieldType::Integer(Default::default()),
-            SEXPTYPE::REALSXP => FieldType::Double(Default::default()),
+            SEXPTYPE::REALSXP => FieldType::Double(rtemis_r8::ir::DoubleType {
+                infinite: true,
+                nan: true,
+                ..Default::default()
+            }),
             SEXPTYPE::STRSXP => FieldType::Character(Default::default()),
             _ => return None,
         }
@@ -1549,6 +1646,19 @@ fn json_form(x: SEXP, suffix: &str, levels: u32) -> Read<()> {
             let names = attr(x, sym_names());
             if let Err(f) = names_text(names) {
                 return Err(f.at(suffix.to_string()));
+            }
+            if sexptype(names) == SEXPTYPE::STRSXP
+                && let Some(k) = rtemis_r8::tree::repeated(
+                    (0..xlen(names)).map(|i| string_elt(names, i).unwrap_or_default()),
+                )
+            {
+                return Err(Form::new(
+                    "duplicate_key",
+                    format!(
+                        "two elements are named `{k}`; the members of a JSON object have distinct names"
+                    ),
+                )
+                .at(suffix.to_string()));
             }
             for i in 0..xlen(x) {
                 let s = match string_elt_opt(names, i) {

@@ -415,9 +415,9 @@ test_that("the signatures of compiled impls are those of their traits", {
       # Another declaration of a generic that Rust declares.
       "status <- function() { x <- R8:::r8_exports_compare(ptr, 'pkgr'); x$status[x$type_name == 'pkgr::shifted'] }",
       "cat('before', status(), '\\n')",
-      "shifted <- generic('shifted', params(x, by = arg_double(finite = FALSE, default = 2)), return_type = 'Self')",
+      "shifted <- generic('shifted', params(x, by = arg_double(infinite = TRUE, default = 2)), return_type = 'Self')",
       "cat('after', status(), '\\n')",
-      "shifted <- generic('shifted', params(x, by = arg_double(finite = FALSE, default = 1)), description = 'Another text.', return_type = 'Self')",
+      "shifted <- generic('shifted', params(x, by = arg_double(infinite = TRUE, default = 1)), description = 'Another text.', return_type = 'Self')",
       "cat('described', status(), '\\n')",
       "e <- tryCatch(R8:::check_exports('p', list(type_name = 'p::f', status = 'missing', codec = FALSE, hash = ''), character()), error = conditionMessage)",
       "cat('absent', grepl('`p::f` is declared in the compiled exports and has no R declaration', e, fixed = TRUE), '\\n')"

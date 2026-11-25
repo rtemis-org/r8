@@ -480,3 +480,61 @@ test_that("a constructor forces its arguments in order and reports a missing one
   })
   expect_error(Rect(w = 1, h = 2), "WIDE", class = "r8_value_error")
 })
+
+test_that("names that repeat are refused in a table, a map, JSON, and a document", {
+  out <- declare_in("rep", {
+    table <- type_table(columns = list(a = column(type_double())), open = TRUE)
+    list(
+      T = new_struct(
+        "T",
+        fields = list(
+          x = type_double(),
+          tab = option(table),
+          m = option(btree_map(type_double())),
+          j = option(vec(type_json()))
+        )
+      )
+    )
+  })
+  T <- out[["T"]]
+  two <- function(...) stats::setNames(data.frame(a = 1, b = 2, c = 3), c(...))
+  for (d in list(two("a", "a", "b"), two("a", "b", "b"))) {
+    expect_error(
+      T(x = 1, tab = d),
+      "two columns are named",
+      class = "r8_value_error"
+    )
+    expect_error(
+      r8_check(d, type_table(columns = list(), open = TRUE)),
+      "duplicate_column",
+      class = "r8_value_error"
+    )
+  }
+  expect_error(
+    T(x = 1, m = list(a = 1, b = 2, a = 3)),
+    "duplicate_key",
+    class = "r8_value_error"
+  )
+  for (j in list(list(a = 1, a = 2), list(list(b = list(a = 1, a = 2))))) {
+    expect_error(
+      T(x = 1, j = list(j)),
+      "two elements are named `a`",
+      class = "r8_value_error"
+    )
+  }
+  for (text in c(
+    '"x":1,"x":2',
+    '"x":1,"m":{"a":1,"a":2}',
+    '"x":1,"tab":{"$length":1,"a":[1],"a":[2]}',
+    '"x":1,"j":[{"a":1,"a":2}]'
+  )) {
+    expect_error(
+      r8_from_json(
+        T,
+        paste0('{"$type":"rep::T","$types":{"rep::T":1},', text, "}")
+      ),
+      "repeats",
+      class = "r8_value_error"
+    )
+  }
+})

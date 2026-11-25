@@ -589,8 +589,24 @@ impl Encoder<'_> {
         if !x.inherits("data.frame") {
             return self.err("r_type", path, "expected a data.frame".to_string());
         }
+        self.table_of(x, columns, open, path)
+    }
+
+    /// The JSON form of a data frame, of a table's value, or of the list of the
+    /// columns of one.
+    fn table_of<C: rtemis_r8::ir::Column>(
+        &mut self,
+        x: &Robj,
+        columns: &[C],
+        open: bool,
+        path: &str,
+    ) -> Value {
         // Automatic row names are the compact form c(NA, -n) or c(NA, n).
-        let n = match x.get_attrib("row.names") {
+        let n = match x
+            .get_attrib("row.names")
+            .filter(|_| x.inherits("data.frame"))
+        {
+            None if !x.inherits("data.frame") => crate::rview::list_rows(unsafe { x.get() }) as i64,
             Some(rn) => match rn.as_integer_slice() {
                 Some([na, k]) if *na == i32::MIN => i64::from(k.abs()),
                 Some(s) if s.iter().enumerate().all(|(i, &v)| v == i as i32 + 1) => s.len() as i64,
@@ -746,6 +762,34 @@ impl Encoder<'_> {
         };
         let mut m = Map::new();
         match def {
+            TypeDef::Table(t) => {
+                let Value::Object(mut m) = self.table_of(x, &t.columns, t.open, path) else {
+                    return Value::Null;
+                };
+                let v = crate::rview::RView::Whole(unsafe { x.get() });
+                let extras = rtemis_r8::access::extra_columns(&t.columns, t.open, v);
+                if extras.len() > 1 {
+                    let order: Vec<&str> = extras.iter().map(|(k, _, _)| k.as_ref()).collect();
+                    m.insert("$order".into(), Value::from(order));
+                }
+                let facts: Map<String, Value> = extras
+                    .iter()
+                    .filter_map(|(k, _, f)| {
+                        let mut o = Map::new();
+                        if let Some(u) = &f.unit {
+                            o.insert("unit".into(), Value::from(u.as_str()));
+                        }
+                        if let Some(d) = &f.description {
+                            o.insert("description".into(), Value::from(d.as_str()));
+                        }
+                        (!o.is_empty()).then(|| (k.to_string(), Value::Object(o)))
+                    })
+                    .collect();
+                if !facts.is_empty() {
+                    m.insert("$facts".into(), Value::Object(facts));
+                }
+                Value::Object(m)
+            }
             TypeDef::Struct(s) => {
                 for f in &s.fields {
                     m.insert(
@@ -853,30 +897,9 @@ fn is_scalar(ft: &FieldType) -> bool {
     )
 }
 
-/// The column type of an extra column of an open table, from its R class;
-/// cells may be missing, so the type is `option()` of the class's type.
+/// The column type of an extra column of an open table.
 fn infer_column(col: &Robj) -> Option<FieldType> {
-    let base = if col.inherits("factor") {
-        FieldType::Factor {
-            levels: None,
-            ordered: col.inherits("ordered"),
-        }
-    } else if col.inherits("Date") {
-        FieldType::Date
-    } else if col.inherits("POSIXct") {
-        FieldType::Posixct
-    } else {
-        match col.rtype() {
-            Rtype::Logicals => FieldType::Logical,
-            Rtype::Integers => FieldType::Integer(Default::default()),
-            Rtype::Doubles => FieldType::Double(Default::default()),
-            Rtype::Strings => FieldType::Character(Default::default()),
-            _ => return None,
-        }
-    };
-    Some(FieldType::Option {
-        inner: Box::new(base),
-    })
+    crate::rview::infer_column(unsafe { col.get() })
 }
 
 // ------------------------------------------------------------------ decode
@@ -1230,6 +1253,55 @@ impl Decoder<'_> {
         Ok(r)
     }
 
+    /// A value of the table `name`.
+    fn named_table<'a, N: Node<'a>>(
+        &self,
+        v: N,
+        name: &QualifiedName,
+        def: &rtemis_r8::ir::TableDef,
+    ) -> Result<Robj> {
+        let mut df = self.table(v, &def.columns)?;
+        let listed: Vec<String> = df
+            .names()
+            .map(|n| n.map(str::to_string).collect())
+            .unwrap_or_default();
+        // The declared columns in declaration order, then the others in theirs.
+        let order: Vec<&str> = v
+            .get("$order")
+            .map(|o| items(o).filter_map(Node::as_str).collect())
+            .unwrap_or_default();
+        let place = |k: &str| -> usize {
+            let d = def.columns.len();
+            match def.columns.iter().position(|c| c.name.as_str() == k) {
+                Some(i) => i,
+                None => d + order.iter().position(|o| *o == k).unwrap_or(0),
+            }
+        };
+        let mut at: Vec<usize> = (0..listed.len()).collect();
+        at.sort_by_key(|&i| place(&listed[i]));
+        let cols: Vec<Robj> = df
+            .as_list()
+            .map(|l| l.values().collect())
+            .unwrap_or_default();
+        let facts = match v.get("$facts").and_then(Node::entries) {
+            None => ().into(),
+            Some(listed) => {
+                let mut names = Vec::new();
+                let mut of = Vec::new();
+                for (k, f) in listed {
+                    names.push(k.to_string());
+                    of.push(self.json(f)?);
+                }
+                let mut r: Robj = List::from_values(of).into();
+                r.set_names(names)?;
+                r
+            }
+        };
+        df = List::from_values(at.iter().map(|&i| cols[i].clone())).into();
+        let names: Vec<&str> = at.iter().map(|&i| listed[i].as_str()).collect();
+        unsafe { crate::table::value(name, df.get(), &names, facts.get(), self.lookup) }
+    }
+
     fn json<'a, N: Node<'a>>(&self, v: N) -> Result<Robj> {
         if v.is_null() {
             return Ok(().into());
@@ -1296,6 +1368,7 @@ impl Decoder<'_> {
                 .collect()
         };
         let (values, variant) = match &def {
+            TypeDef::Table(t) => return self.named_table(v, name, t),
             TypeDef::Struct(s) => (fields_of(&s.fields)?, None),
             TypeDef::Enum(e) => {
                 let unit_only = e

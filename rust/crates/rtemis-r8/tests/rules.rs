@@ -1,7 +1,7 @@
 //! Evaluation of compiled rules over JSON values.
 
 use rtemis_r8::ir::{FieldType, IrDocument, RuleDef, TypeDef};
-use rtemis_r8::rules::{CompiledRule, Outcome};
+use rtemis_r8::rules::{CompiledRule, Outcome, RowRule};
 use serde_json::{Value, json};
 
 const SVM: &str = include_str!("fixtures/svm.ir.json");
@@ -202,7 +202,7 @@ fn row_rules_report_the_cell_and_decode_factors() {
         panic!()
     };
     let fields: Vec<_> = columns.iter().map(|c| c.field.clone()).collect();
-    let end_fits = CompiledRule::compile(&rules[0], &fields, &doc).unwrap();
+    let end_fits = RowRule::compile(&rules[0], &fields.as_slice(), &doc).unwrap();
     let ranges = json!({
         "$length": 3,
         "seqnames": {"levels": ["chr1", "chr2"], "codes": [1, 1, 2]},
@@ -267,4 +267,29 @@ fn round_halves_to_even_as_r_does() {
             "round({x})"
         );
     }
+}
+
+#[test]
+fn the_order_of_the_operands_does_not_decide_a_rule() {
+    let doc = svm_doc();
+    let of =
+        |invariant: Value, v: Value| compile(&doc, 1, json!({"invariant": invariant})).check(&v);
+    let (a, b) = (
+        json!({">": [{"var": "kernel.gamma"}, 0]}),
+        json!({">": [{"var": "cost"}, 10]}),
+    );
+    // `kernel.gamma` is absent and `cost` fails.
+    let v = json!({"cost": 1.0, "kernel": {"type": "Linear"}});
+    for both in [json!({"and": [a, b]}), json!({"and": [b, a]})] {
+        assert_eq!(of(both, v.clone()).unwrap(), violated(&[""]));
+    }
+    for either in [json!({"or": [a, b]}), json!({"or": [b, a]})] {
+        assert_eq!(of(either, v.clone()).unwrap(), Outcome::Holds);
+    }
+    // An operand that decides absorbs an error.
+    let error = json!({">": [{"/": [1, {"-": [{"var": "cost"}, 1]}]}, 0]});
+    for both in [json!({"and": [error, b]}), json!({"and": [b, error]})] {
+        assert_eq!(of(both, v.clone()).unwrap(), violated(&[""]));
+    }
+    assert!(of(json!({"or": [b, error]}), v).is_err());
 }

@@ -188,3 +188,37 @@ test_that("an assignment states its fields by name and their values in a list", 
     class = "r8_value_error"
   )
 })
+
+test_that("a field asked for by position is an error that gives the call by name", {
+  P <- declare_in("pos", {
+    new_struct(
+      "P",
+      fields = list(
+        id = type_integer(),
+        age = type_double(),
+        s = type_character()
+      )
+    )
+  })
+  r <- P(id = 1L, age = 40, s = "a")
+  says <- function(expr, text) {
+    expect_error(expr, text, fixed = TRUE, class = "r8_value_error")
+  }
+  says(r[[1]], "field 1 is `id`: r[[\"id\"]]; names(r) gives the field names.")
+  says(r[[3L]], "field 3 is `s`: r[[\"s\"]]")
+  says(list(r)[[1]][[2]], "field 2 is `age`: x[[\"age\"]]")
+  says(r[2], "field 2 is `age`: r[\"age\"];")
+  says(r[c(1, 3)], "fields 1, 3 are `id`, `s`: r[c(\"id\", \"s\")];")
+  says(r[[4]], "`r` has 3 fields: `id`, `age`, `s`.")
+  says(r[c(1, 9)], "`r` has 3 fields")
+  says(r[[2]] <- 1, "field 2 is `age`: x[[\"age\"]] <- value.")
+  for (i in list(-1L, 0, 1.5, NA, TRUE, NULL, list("id"), c("id", "age"))) {
+    says(r[[i]], "A field is read by name: r[[\"id\"]].")
+  }
+  says(r[-1], "Fields are read by name: r[c(\"id\", \"age\")].")
+  says(r[1:2, ], "Fields are read by name: r[c(\"id\", \"age\")].")
+  says(r[], "Fields are read by name")
+  # What goes through a list by position goes through as.list().
+  says(Map(identity, r), "names(x) gives the field names")
+  expect_identical(Map(identity, as.list(r)), as.list(r))
+})

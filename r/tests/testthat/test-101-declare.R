@@ -126,7 +126,7 @@ test_that("rules compile from R expressions to JSONLogic", {
       )
     )
   )
-  expect_error(compile(quote(mean(x) > 1)), class = "r8_declaration_error")
+  expect_error(compile(quote(median(x) > 1)), class = "r8_declaration_error")
   expect_error(compile(quote(x == NA)), class = "r8_declaration_error")
 })
 
@@ -669,7 +669,7 @@ test_that("a default is an R value of its type, written in its JSON form", {
           type_posixct(),
           default = as.POSIXct("2026-01-02", tz = "UTC")
         ),
-        limit = field(type_double(finite = FALSE), default = Inf),
+        limit = field(type_double(infinite = TRUE), default = Inf),
         bytes = field(type_raw(), default = as.raw(1:3)),
         cells = field(vec(option(type_double())), default = c(1, NA)),
         weights = field(btree_map(type_double()), default = c(a = 1, b = 2)),

@@ -334,6 +334,21 @@ pub struct Table<'a, A> {
     pub problems: Vec<Form>,
 }
 
+/// What a value says of an extra column of a table beyond its type.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ColumnFacts {
+    /// The unit of the cells.
+    pub unit: Option<String>,
+    /// The description.
+    pub description: Option<String>,
+}
+
+/// Whether `name` is a name that an extra column of a table may have: a
+/// document keeps the names that begin with `$`.
+pub fn is_column_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('$')
+}
+
 /// The 1-based codes of a factor: `i32::MIN` for a missing cell, and, in
 /// codes read from another form, 0 for a cell whose problem is among the
 /// factor's `problems`. The validator checks that every other code lies in
@@ -437,7 +452,8 @@ pub trait Access<'a>: Copy + 'a {
     fn logical(self) -> Read<bool>;
     /// A whole number; the validator checks the integer range.
     fn integer(self) -> Read<i64>;
-    /// A double, non-finite values included; the validator checks `finite`.
+    /// A double, non-finite values included; the validator checks whether the type
+    /// admits it.
     fn double(self) -> Read<f64>;
     /// A string.
     fn character(self) -> Read<Cow<'a, str>>;
@@ -462,7 +478,8 @@ pub trait Access<'a>: Copy + 'a {
 
     /// The doubles of a sequence held as one array, where the host form has
     /// one; a missing item is R's `NA_real_`, the `NaN` whose low word is
-    /// 1954. The validator scans the array and reads items one by one only
+    /// 1954. Dates held so are days, and date-times seconds, a missing one a
+    /// `NaN`. The validator scans the array and reads items one by one only
     /// to report a problem.
     fn f64_slice(self) -> Option<&'a [f64]> {
         None
@@ -485,6 +502,13 @@ pub trait Access<'a>: Copy + 'a {
     /// [`Access::f64_region`] copies doubles; a missing item is `i32::MIN`.
     fn i32_region(self, _start: usize, _buf: &mut [i32]) -> Option<usize> {
         None
+    }
+
+    /// Writes a key of each string of a sequence from item `start` into `out`,
+    /// where the host holds one object for each text: items with one key are
+    /// one text, and 0 is a missing item. `false` where the host has no keys.
+    fn text_keys(self, _start: usize, _out: &mut [usize]) -> bool {
+        false
     }
 
     /// `Some(true)` when the host records the sequence as sorted in
@@ -652,8 +676,23 @@ pub trait Access<'a>: Copy + 'a {
     /// A table whose type declares `columns`; `open` admits other columns.
     fn table<C: crate::ir::Column>(self, columns: &[C], open: bool) -> Read<Table<'a, Self>>;
     /// The type of a column of an open table that the declaration does not
-    /// list, from the host form.
-    fn extra_column_type(self, name: &str) -> Read<FieldType>;
+    /// list, from the host form; `cells` is the column's handle.
+    fn extra_column_type(self, name: &str, cells: Self) -> Read<FieldType>;
+    /// What a value of a named table says of its extra column `name`.
+    fn column_facts(self, _name: &str) -> Read<ColumnFacts> {
+        Ok(ColumnFacts::default())
+    }
+    /// The problems with the order of the extra columns of a value of a named
+    /// table, in a host form whose members have no order.
+    fn column_order(self, _extra: &[Cow<'a, str>]) -> Vec<Form> {
+        Vec::new()
+    }
+    /// Whether every item of a sequence is known, from its host form, to be a
+    /// value of the scalar type `ty`, which has no constraints, or missing, so
+    /// that no item has anything to check.
+    fn holds_only(self, _ty: &FieldType) -> bool {
+        false
+    }
     /// Row `i` of a table, whose members are the row's cells.
     fn row(self, i: usize) -> Self;
 
@@ -710,6 +749,27 @@ pub fn concrete<'a, A: Access<'a>>(
         FieldType::Subtype { .. } => Some(v.named_type()),
         _ => None,
     }
+}
+
+/// The extra columns of a table, in the order of the value, each with its type
+/// and its facts.
+pub fn extra_columns<'a, A: Access<'a>, C: crate::ir::Column>(
+    columns: &[C],
+    open: bool,
+    v: A,
+) -> Vec<(Cow<'a, str>, FieldType, ColumnFacts)> {
+    let Ok(t) = v.table(columns, open) else {
+        return Vec::new();
+    };
+    t.columns
+        .into_iter()
+        .filter(|(k, _)| !columns.iter().any(|c| c.field().name.as_str() == k))
+        .filter_map(|(k, cells)| {
+            let ft = v.extra_column_type(&k, cells).ok()?;
+            let facts = v.column_facts(&k).unwrap_or_default();
+            Some((k, ft, facts))
+        })
+        .collect()
 }
 
 /// A lookup that holds no type.
@@ -1519,13 +1579,23 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
                 }
             }
         }
-        let columns = m
+        let mut columns: Vec<(Cow<'a, str>, Self)> = m
             .entries()
             .unwrap_or_default()
             .into_iter()
             .filter(|(k, _)| !k.starts_with('$'))
             .map(|(k, v)| (Cow::Borrowed(k), JsonOf::V(v)))
             .collect();
+        // A document of a named table holds the order of its extra columns,
+        // which follow the declared ones.
+        if let Some(order) = m.get("$order").filter(|_| open) {
+            let place = |k: &str| {
+                let listed = (0..order.array_len().unwrap_or(0))
+                    .position(|i| order.item(i).and_then(Node::as_str) == Some(k));
+                listed.unwrap_or(usize::MAX)
+            };
+            columns.sort_by_key(|(k, _)| place(k));
+        }
         Ok(Table {
             rows,
             columns,
@@ -1533,7 +1603,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         })
     }
 
-    fn extra_column_type(self, name: &str) -> Read<FieldType> {
+    fn extra_column_type(self, name: &str, _cells: Self) -> Read<FieldType> {
         let listed = self
             .val()
             .and_then(|v| v.get("$columns"))
@@ -1549,6 +1619,85 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
             Some(Ok(ft)) => Ok(ft),
             _ => Err(fail()),
         }
+    }
+
+    fn column_facts(self, name: &str) -> Read<ColumnFacts> {
+        let Some(of) = self
+            .val()
+            .and_then(|v| v.get("$facts"))
+            .and_then(|f| f.get(name))
+        else {
+            return Ok(ColumnFacts::default());
+        };
+        let mut facts = ColumnFacts::default();
+        for (k, v) in of.entries().unwrap_or_default() {
+            let fact = match k {
+                "unit" => &mut facts.unit,
+                "description" => &mut facts.description,
+                _ => {
+                    return Err(Form::new(
+                        "column_facts",
+                        format!("`{k}` is not a fact of a column: `unit` or `description`"),
+                    )
+                    .at(format!("/$facts/{}", esc(name))));
+                }
+            };
+            *fact = match v.as_str() {
+                Some(s) => Some(s.to_string()),
+                None => {
+                    return Err(Form::new("column_facts", format!("`{k}` is a string"))
+                        .at(format!("/$facts/{}/{k}", esc(name))));
+                }
+            };
+        }
+        Ok(facts)
+    }
+
+    fn column_order(self, extra: &[Cow<'a, str>]) -> Vec<Form> {
+        let Some(m) = self.val() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(listed) = m.get("$facts").and_then(Node::entries) {
+            for (k, _) in listed {
+                if !extra.iter().any(|e| e == k) {
+                    out.push(
+                        Form::new(
+                            "column_facts",
+                            format!(
+                                "`$facts` lists `{k}`, which is not an extra column of the table"
+                            ),
+                        )
+                        .at(format!("/$facts/{}", esc(k))),
+                    );
+                }
+            }
+        }
+        let listed: Option<Vec<&str>> = m.get("$order").map(|o| {
+            (0..o.array_len().unwrap_or(0))
+                .filter_map(|i| o.item(i).and_then(Node::as_str))
+                .collect()
+        });
+        let same = match &listed {
+            None => extra.len() < 2,
+            Some(l) => {
+                let mut a = l.clone();
+                let mut b: Vec<&str> = extra.iter().map(|e| e.as_ref()).collect();
+                a.sort_unstable();
+                b.sort_unstable();
+                a == b
+            }
+        };
+        if !same {
+            out.push(
+                Form::new(
+                    "column_order",
+                    "`$order` lists the extra columns of the table, each once",
+                )
+                .at("/$order"),
+            );
+        }
+        out
     }
 
     fn row(self, i: usize) -> Self {

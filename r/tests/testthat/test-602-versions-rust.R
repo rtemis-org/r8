@@ -212,8 +212,8 @@ scenario(
   "E23",
   "a saved value of Rust is read after its package changed the type",
   situation = "A user saves a value whose fields Rust holds. pa 2.0.0 reorders the fields, at the same version of the type, and the user reads the value.",
-  risk = "The Rust code reads the saved bytes in another layout: the numbers are wrong.",
-  result = "The value is refused, since its declaration is not the one that it was saved with.",
+  risk = "The Rust code takes one field for another: the numbers are wrong.",
+  result = "The fields read by their names, without pa too. The Rust code of pa 2.0.0 is not given the value, and r8_update() makes one that it takes.",
   how = "installed",
   code = {
     first <- rust_first()
@@ -224,12 +224,29 @@ scenario(
     )
     pa <- pa_rust_library(pa_rust("pub y: f64, #[r8(min = 0)] pub x: f64"))
     code <- c(
-      "library(pa)",
       sprintf("p <- readRDS(%s)", deparse(rds)),
-      "say('read', c(p$x, p$y))"
+      "say('alone', c(p$x, p$y))",
+      "library(pa)",
+      "say('read', c(p$x, p$y))",
+      "say('validate', R8::r8_validate(p)$x)",
+      "say('set', {q <- p; q$x <- 1; q$x})",
+      "say('update', {u <- R8::r8_update(p); c(u$x, u$y, R8::r8_validate(u)$x)})"
     )
-    expect_said(said(first$pa, code), read = "^6 2$")
-    expect_said(said(pa$lib, code), read = "^error: .*declaration_changed")
+    expect_said(
+      said(first$pa, code),
+      alone = "^6 2$",
+      read = "^6 2$",
+      validate = "^6$",
+      set = "^1$"
+    )
+    expect_said(
+      said(pa$lib, code),
+      alone = "^6 2$",
+      read = "^6 2$",
+      validate = "^error: ",
+      set = "^error: ",
+      update = "^6 2 6$"
+    )
   }
 )
 
@@ -279,7 +296,7 @@ scenario(
         "signal(of(name = type_character(pattern = '^a'), values = vec(type_double(min = 0), min_length = 1)), list(rule(name != 'b')))",
         "say('tightened', says(peak(g, s(name = a, values = v))))",
         "# Others.",
-        "signal(of(values = vec(type_double(finite = FALSE))))",
+        "signal(of(values = vec(type_double(infinite = TRUE, nan = TRUE))))",
         "say('loosened', says(peak(g, s(name = a, values = v))))",
         "signal(of(values = field(vec(type_double()), unit = 'cm')))",
         "say('unit', says(peak(g, s(name = a, values = v))))",

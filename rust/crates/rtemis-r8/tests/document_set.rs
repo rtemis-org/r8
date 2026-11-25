@@ -19,10 +19,7 @@ fn q(s: &str) -> QualifiedName {
 }
 
 fn version(set: &DocumentSet, name: &str) -> Option<u32> {
-    match set.find(&q(name))? {
-        TypeDef::Struct(s) => Some(s.version),
-        TypeDef::Enum(e) => Some(e.version),
-    }
+    set.find(&q(name)).map(TypeDef::version)
 }
 
 #[test]

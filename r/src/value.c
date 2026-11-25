@@ -22,11 +22,21 @@
 //   like         a list with the attributes of a value
 //   stamp        c(generation, current), what value.rs found at a generation
 //                of the registry
+//   base         in a table's value, the identity of its type, or NULL
+//   facts        in a table's value, the units and descriptions of its extra
+//                columns, a named list, or NULL
+//
+// A value of a table has its own columns, so its identity is its own: it holds
+// the names of its columns, takes the other parts from the identity of its type,
+// its `base`, and is no part of `identities`. The values that operations on the
+// rows give share it, and it is freed with them. A value with the columns that
+// its type declares, all of them and no other, has the identity of the type.
 //
 // spec: R8/class-system#values-in-r
 
 #define R8_INTERNAL_ABI
 #include <R8.h>
+#include <string.h>
 #include <R_ext/Altrep.h>
 
 enum {
@@ -37,6 +47,8 @@ enum {
   ID_LIKE,
   ID_RECORD,
   ID_STAMP,
+  ID_BASE,
+  ID_FACTS,
   ID_LENGTH
 };
 
@@ -48,6 +60,7 @@ static SEXP identities = NULL;
 // The identity in a Rust-stored value, or R_NilValue for any other object
 // (rust_stored.c).
 SEXP r8_rust_stored_id(SEXP x);
+SEXP r8_rust_stored_fields_read(SEXP x);
 
 // The value of `sym` in `env`, or `absent` (view.c).
 SEXP r8_get_var(SEXP sym, SEXP env, SEXP absent);
@@ -141,6 +154,26 @@ SEXP r8_identity(SEXP type, SEXP variant, SEXP names, SEXP cls, SEXP declaration
   return id;
 }
 
+// The identity of a table's value whose columns are `names` and whose facts are
+// `facts`, of the type whose identity is `base`.
+SEXP r8_table_identity(SEXP base, SEXP names, SEXP facts) {
+  if (facts == R_NilValue && same_strings(VECTOR_ELT(base, ID_NAMES), names)) {
+    return base;
+  }
+  SEXP id = PROTECT(Rf_allocVector(VECSXP, ID_LENGTH));
+  for (int i = 0; i < ID_BASE; i++) {
+    SET_VECTOR_ELT(id, i, VECTOR_ELT(base, i));
+  }
+  SET_VECTOR_ELT(id, ID_NAMES, names);
+  SEXP cls = Rf_getAttrib(VECTOR_ELT(base, ID_LIKE), R_ClassSymbol);
+  SET_VECTOR_ELT(id, ID_LIKE, like_list(names, cls));
+  SET_VECTOR_ELT(id, ID_BASE, base);
+  SET_VECTOR_ELT(id, ID_FACTS, facts);
+  MARK_NOT_MUTABLE(names);
+  UNPROTECT(1);
+  return id;
+}
+
 // Whether the attributes of `x`, which R code can set, are those of a value of
 // the identity `id`: the names of its fields, and a class vector that holds
 // `r8_value`, which unclass() removes.
@@ -221,13 +254,22 @@ static SEXP as_symbol(SEXP string) {
   return string == R_NilValue ? R_NilValue : Rf_installTrChar(STRING_ELT(string, 0));
 }
 
-// list(type, variant, declaration, record), of the identity `id`.
+// list(type, variant, declaration, record), of the identity `id`, and, for that of
+// a table's value, list(columns, facts) of the columns that its type declares and
+// of the facts of its own.
 SEXP r8_identity_state(SEXP id) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 4));
+  SEXP base = VECTOR_ELT(id, ID_BASE);
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, base == R_NilValue ? 4 : 5));
   SET_VECTOR_ELT(out, 0, as_symbol(VECTOR_ELT(id, ID_TYPE)));
   SET_VECTOR_ELT(out, 1, as_symbol(VECTOR_ELT(id, ID_VARIANT)));
   SET_VECTOR_ELT(out, 2, VECTOR_ELT(id, ID_DECLARATION));
   SET_VECTOR_ELT(out, 3, VECTOR_ELT(id, ID_RECORD));
+  if (base != R_NilValue) {
+    SEXP table = Rf_allocVector(VECSXP, 2);
+    SET_VECTOR_ELT(out, 4, table);
+    SET_VECTOR_ELT(table, 0, VECTOR_ELT(base, ID_NAMES));
+    SET_VECTOR_ELT(table, 1, VECTOR_ELT(id, ID_FACTS));
+  }
   UNPROTECT(1);
   return out;
 }
@@ -276,6 +318,34 @@ static int is_symbols(SEXP x) {
   return 1;
 }
 
+// Whether `facts` is a list of the facts of columns of `names`, or NULL: each a
+// list of strings with the names `unit` and `description`.
+static int is_facts(SEXP facts, SEXP names) {
+  if (facts == R_NilValue) {
+    return 1;
+  }
+  SEXP of = TYPEOF(facts) == VECSXP ? Rf_getAttrib(facts, R_NamesSymbol) : R_NilValue;
+  if (TYPEOF(of) != STRSXP || TYPEOF(names) != STRSXP) {
+    return 0;
+  }
+  for (R_xlen_t i = 0; i < XLENGTH(facts); i++) {
+    SEXP f = VECTOR_ELT(facts, i);
+    SEXP keys = TYPEOF(f) == VECSXP ? Rf_getAttrib(f, R_NamesSymbol) : R_NilValue;
+    if (TYPEOF(keys) != STRSXP || STRING_ELT(of, i) == NA_STRING) {
+      return 0;
+    }
+    for (R_xlen_t k = 0; k < XLENGTH(f); k++) {
+      const char *key = CHAR(STRING_ELT(keys, k));
+      SEXP v = VECTOR_ELT(f, k);
+      if ((strcmp(key, "unit") != 0 && strcmp(key, "description") != 0) || TYPEOF(v) != STRSXP ||
+          XLENGTH(v) != 1 || STRING_ELT(v, 0) == NA_STRING) {
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
 // The identity that `state` names, of an object with the attributes `attr` and
 // of `n` fields, or of any number where `n` is negative; an R error for a state
 // of another form.
@@ -283,7 +353,8 @@ SEXP r8_identity_of_state(SEXP state, SEXP attr, R_xlen_t n) {
   check_attributes(attr);
   SEXP names = attribute(attr, R_NamesSymbol);
   SEXP cls = attribute(attr, R_ClassSymbol);
-  if (TYPEOF(state) != VECSXP || XLENGTH(state) != 4 || TYPEOF(VECTOR_ELT(state, 0)) != SYMSXP ||
+  R_xlen_t parts = TYPEOF(state) == VECSXP ? XLENGTH(state) : 0;
+  if ((parts != 4 && parts != 5) || TYPEOF(VECTOR_ELT(state, 0)) != SYMSXP ||
       TYPEOF(VECTOR_ELT(state, 2)) != SYMSXP ||
       (VECTOR_ELT(state, 1) != R_NilValue && TYPEOF(VECTOR_ELT(state, 1)) != SYMSXP) ||
       !is_symbols(VECTOR_ELT(state, 3)) || (cls != R_NilValue && TYPEOF(cls) != STRSXP) ||
@@ -293,11 +364,26 @@ SEXP r8_identity_of_state(SEXP state, SEXP attr, R_xlen_t n) {
   PROTECT(names = names == R_NilValue ? Rf_allocVector(STRSXP, 0) : names);
   SEXP type = PROTECT(as_string(VECTOR_ELT(state, 0)));
   SEXP variant = PROTECT(as_string(VECTOR_ELT(state, 1)));
-  SEXP id = r8_identity(type, variant, names, cls, VECTOR_ELT(state, 2), VECTOR_ELT(state, 3), 0);
+  SEXP declared = names, facts = R_NilValue;
+  if (parts == 5) {
+    SEXP table = VECTOR_ELT(state, 4);
+    if (TYPEOF(table) != VECSXP || XLENGTH(table) != 2 || TYPEOF(VECTOR_ELT(table, 0)) != STRSXP ||
+        !is_facts(VECTOR_ELT(table, 1), names)) {
+      Rf_error("a saved R8 value is damaged");
+    }
+    declared = VECTOR_ELT(table, 0);
+    facts = VECTOR_ELT(table, 1);
+  }
+  SEXP id =
+      r8_identity(type, variant, declared, cls, VECTOR_ELT(state, 2), VECTOR_ELT(state, 3), 0);
+  if (parts == 5) {
+    id = r8_table_identity(id, names, facts);
+  }
+  PROTECT(id);
   if ((n >= 0 && XLENGTH(names) != n) || !same_strings(VECTOR_ELT(id, ID_NAMES), names)) {
     Rf_error("a saved R8 value is damaged");
   }
-  UNPROTECT(3);
+  UNPROTECT(4);
   return id;
 }
 
@@ -336,16 +422,17 @@ static SEXP value_Serialized_state(SEXP x) {
 #define MAX_NESTING 100
 
 // Whether the values and the lists in `x` nest at most `levels` deep. The fields
-// of a Rust-stored value are in its state and are not read.
+// of a Rust-stored value with a state are in it and are not read.
 static int fits(SEXP x, int levels) {
   if (TYPEOF(x) != VECSXP) {
     return 1;
   }
   if (ALTREP(x)) {
-    if (!R_altrep_inherits(x, value_class)) {
+    SEXP read = r8_rust_stored_fields_read(x);
+    if (read == NULL && !R_altrep_inherits(x, value_class)) {
       return 1;
     }
-    x = R_altrep_data1(x);
+    x = read != NULL ? read : R_altrep_data1(x);
   }
   if (levels == 0) {
     return 0;
@@ -365,15 +452,23 @@ static int fits(SEXP x, int levels) {
 // value is within the stack.
 int r8_fields_fit(SEXP fields) { return fits(fields, MAX_NESTING + 1); }
 
-// The R-stored value of a state list(identity, fields).
-SEXP r8_value_of_state(SEXP state, SEXP attr) {
-  if (TYPEOF(state) != VECSXP || XLENGTH(state) != 2 || TYPEOF(VECTOR_ELT(state, 1)) != VECSXP) {
+// The fields of a saved value, list(identity, fields); an R error for a state of
+// another form.
+SEXP r8_fields_of_state(SEXP state) {
+  if (TYPEOF(state) != VECSXP || XLENGTH(state) != 2 || TYPEOF(VECTOR_ELT(state, 1)) != VECSXP ||
+      ALTREP(VECTOR_ELT(state, 1))) {
     Rf_error("a saved R8 value is damaged");
   }
   SEXP fields = VECTOR_ELT(state, 1);
   if (!r8_fields_fit(fields)) {
     Rf_error("a saved R8 value nests deeper than %d levels", MAX_NESTING);
   }
+  return fields;
+}
+
+// The R-stored value of a state list(identity, fields).
+static SEXP value_of_state(SEXP state, SEXP attr) {
+  SEXP fields = r8_fields_of_state(state);
   SEXP id = PROTECT(r8_identity_of_state(VECTOR_ELT(state, 0), attr, XLENGTH(fields)));
   MARK_NOT_MUTABLE(fields);
   SEXP ans = PROTECT(R_new_altrep(value_class, fields, id));
@@ -386,7 +481,7 @@ static SEXP value_UnserializeEX(SEXP cls, SEXP state, SEXP attr, int objf, int l
   (void) cls;
   (void) objf;
   (void) levs;
-  return r8_value_of_state(state, attr);
+  return value_of_state(state, attr);
 }
 
 static Rboolean value_Inspect(SEXP x, int pre, int deep, int pvec,

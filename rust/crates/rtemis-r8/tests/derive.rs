@@ -267,3 +267,27 @@ fn a_newtype_variant_is_flattened_with_the_tag() {
     assert_eq!(bad.to_document().unwrap_err()[0].code, "below_min");
     assert!(rtemis_r8::ir::check_document(&Rows::declarations().documents()[0]).is_empty());
 }
+
+/// A rule of each operator of one kind of operand, as the derive writes it.
+#[derive(R8)]
+#[r8(namespace = "operators", version = 1)]
+#[r8(rule(invariant = r#"{"<": [{"abs": [{"var": "x"}]}, 10]}"#))]
+#[r8(rule(
+    invariant = r#"{"<": [{"sqrt": [{"exp": [{"log": [{"pmax": [{"var": "x"}, 1]}]}]}]}, 10]}"#
+))]
+#[r8(rule(invariant = r#"{"<": [{"pmin": [{"var": "x"}, 1]}, 2]}"#))]
+#[r8(rule(invariant = r#"{"!": [{"is_na": [{"path": ["x"]}]}]}"#))]
+#[r8(rule(invariant = r#"{"<": [{"nchar": [{"var": "s"}]}, 10]}"#))]
+#[r8(rule(invariant = r#"{"<": [{"mean": [{"var": "v"}]}, {"sum": [{"var": "v"}]}]}"#))]
+#[allow(dead_code)]
+struct Operators {
+    x: f64,
+    s: String,
+    v: Vec<f64>,
+}
+
+#[test]
+fn a_derived_rule_takes_every_operator() {
+    let set = Operators::declarations();
+    assert_eq!(rtemis_r8::ir::check_document(&set.documents()[0]), vec![]);
+}

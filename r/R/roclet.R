@@ -84,7 +84,13 @@ is_implement_call <- function(call) {
 #' @keywords internal
 #' @noRd
 type_kind <- function(type) {
-  if (inherits(type, "r8_enum_type")) "enum" else "struct"
+  if (inherits(type, "r8_enum_type")) {
+    "enum"
+  } else if (inherits(type, "r8_table_type")) {
+    "table"
+  } else {
+    "struct"
+  }
 } # /R8::type_kind
 
 

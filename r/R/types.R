@@ -77,8 +77,15 @@ type_integer <- function(
 # %% type_double ----
 #' Double field type
 #'
-#' A double. The domain is finite unless `finite = FALSE`, which admits
-#' `Inf`, `-Inf`, and `NaN`.
+#' A double: a finite number within the bounds. `infinite = TRUE` admits the
+#' infinities that the bounds do not exclude, so that
+#' `type_double(min = 0, infinite = TRUE)` is `[0, Inf]`. `nan = TRUE` admits `NaN`,
+#' the result of a calculation that is undefined, which is in no range:
+#' `type_double(min = 0, max = 1, nan = TRUE)` is `[0, 1] or NaN`. A missing value,
+#' `NA`, is admitted by [option()], as of every type.
+#'
+#' A calculation on a value's field is R's and has no type. Its result is checked
+#' where it enters a field, a column, an argument, or a result that declares one.
 #'
 #' @param min Optional Numeric: Smallest admitted value.
 #' @param max Optional Numeric: Largest admitted value.
@@ -86,7 +93,8 @@ type_integer <- function(
 #'   with `min`, it raises `r8_declaration_error`.
 #' @param exclusive_max Optional Numeric: The value must be below it. Given
 #'   with `max`, it raises `r8_declaration_error`.
-#' @param finite Logical: Restrict the domain to finite values.
+#' @param infinite Logical: If TRUE, admit `Inf` and `-Inf` within the bounds.
+#' @param nan Logical: If TRUE, admit `NaN`, whatever the bounds and `values` are.
 #' @param values Optional Numeric: The admitted values.
 #'
 #' @return An `r8_field_type`.
@@ -100,10 +108,19 @@ type_double <- function(
   max = NULL,
   exclusive_min = NULL,
   exclusive_max = NULL,
-  finite = TRUE,
+  infinite = FALSE,
+  nan = FALSE,
   values = NULL
 ) {
-  declared(r8_ft_double(min, max, exclusive_min, exclusive_max, finite, values))
+  declared(r8_ft_double(
+    min,
+    max,
+    exclusive_min,
+    exclusive_max,
+    infinite,
+    nan,
+    values
+  ))
 } # /R8::type_double
 
 

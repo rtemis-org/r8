@@ -224,7 +224,7 @@ scenario(
 scenario(
   "F10",
   "a long call ends when a time limit is reached",
-  situation = "A user sets a time limit, or interrupts, while R8 checks, hashes, or writes a value of hundreds of thousands of values.",
+  situation = "A user sets a time limit, or interrupts, while R8 checks, hashes, or writes a value of hundreds of thousands of values, or filters a table of millions of rows.",
   risk = "The call goes on to its end, whatever the user does.",
   result = "The call ends with an error that says why, and R8 works afterwards.",
   code = {
@@ -232,10 +232,18 @@ scenario(
       P <- new_struct("P", fields = list(x = type_double()))
       list(P = P, H = new_struct("H", fields = list(ps = vec(P))))
     })
-    h <- out$H(ps = rep(list(out$P(x = 1)), 2e5))
-    for (f in list(r8_validate, r8_hash, r8_to_json, function(h) {
-      out$H(ps = h$ps)
-    })) {
+    # R looks at the time every 0.05 s.
+    h <- out$H(ps = rep(list(out$P(x = 1)), 8e5))
+    r <- Raven(x = runif(3e6))
+    for (f in list(
+      r8_validate,
+      r8_hash,
+      r8_to_json,
+      function(h) out$H(ps = h$ps),
+      function(h) {
+        r8_filter(r, rule(log(x + exp(x)) > 1 && nchar(paste0("", x)) > 2))
+      }
+    )) {
       message <- tryCatch(
         {
           setTimeLimit(elapsed = 0.01, transient = TRUE)

@@ -72,7 +72,7 @@ scenario(
   "a value of Rust code holds values of types that the code does not know",
   situation = "A struct in the Rust code of pa has a field for any interval. A user puts in an interval that pb, or the user, declared later.",
   risk = "The code treats the value as one that it knows, or loses the fields that it does not.",
-  result = "The value is kept and given back unchanged, its known part is read, and a saved value names the package that it needs.",
+  result = "The value is kept and given back unchanged, its known part is read, and the fields of a saved value read without the packages that declare them.",
   how = "installed",
   code = {
     skip_if_not_installed("mirai")
@@ -211,7 +211,8 @@ scenario(
         out,
       info = info
     )
-    # A value read before its package is loaded names each package it needs.
+    # The fields of a value read before its packages are loaded; a method is given
+    # the value once the packages that declare its parts are.
     out <- run_r(
       lib,
       c(
@@ -222,35 +223,17 @@ scenario(
           deparse(rds[[1]]),
           deparse(rds[[2]])
         ),
-        "say('first', msg(q$frame))",
+        "say('first', q$frame$hi, q$range$number)",
         "suppressPackageStartupMessages(library(r8pkgR))",
-        "say('second', msg(q$frame)); say('third', msg(contents(q)))",
+        "say('second', q$frame$hi); say('third', msg(contents(q)))",
         "suppressPackageStartupMessages(library(r8pkgS))",
         "say('then', contents(q), q$range$number, m$range$hi)"
       )
     )
     info <- paste(out, collapse = "\n")
-    needs <- function(type, pkg) {
-      paste0(
-        "this `",
-        type,
-        "` value needs the codec of the package `",
-        pkg,
-        "`"
-      )
-    }
-    expect_true(
-      any(startsWith(out, paste("first", needs("pkgr::Panel", "r8pkgR")))),
-      info = info
-    )
-    expect_true(
-      any(startsWith(out, paste("second", needs("pkgs::Tile", "r8pkgS")))),
-      info = info
-    )
-    expect_true(
-      any(startsWith(out, paste("third `x`:", needs("pkgs::Tile", "r8pkgS")))),
-      info = info
-    )
+    expect_true("first 2 2 " %in% out, info = info)
+    expect_true("second 2 " %in% out, info = info)
+    expect_true(any(grepl("^third .*pkgs::Tile", out)), info = info)
     expect_true(
       "then pkgs::Tile; none; square 1; 4 2 2 " %in% out,
       info = info
@@ -263,13 +246,14 @@ scenario(
         session,
         "g <- Grid(cell = frame, method = Resampler@Custom(train = 1:2, test = 3L), extent = Band(lo = 0, hi = 8, label = 'b', weights = 1), figure = Square(side = 3))",
         "pj <- r8_to_json(p); gj <- r8_to_json(g)",
-        "run <- function() list(contents(moved(p, 2, 9)), moved(q, 2, 9)$range$number, banded(p, 'n')$range$weights, r8_from_json(Panel, pj)$range$weights, r8_from_json(Grid, gj)$method$train, unserialize(serialize(p, NULL))$range$weights, unserialize(serialize(g, NULL))$extent$weights, lower(tile)$hi, r8_from_json(Grid, gj)$cell$hi)",
+        "run <- function() list(contents(moved(p, 2, 9)), moved(q, 2, 9)$range$number, banded(p, 'n')$range$weights, r8_from_json(Panel, pj)$range$weights, r8_from_json(Grid, gj)$method$train, unserialize(serialize(p, NULL))$range$weights, contents(unserialize(serialize(p, NULL))), unserialize(serialize(g, NULL))$extent$weights, lower(tile)$hi, r8_from_json(Grid, gj)$cell$hi)",
         "a <- run(); gctorture2(1); b <- run(); gctorture2(0)",
         "say('torture', identical(a, b), unlist(b[-1]))"
       )
     )
     expect_true(
-      "torture TRUE 2 1 2 1 2 1 2 1 2 1 2 2 " %in% out,
+      "torture TRUE 2 1 2 1 2 1 2 1 2 strip 7; s 3; square 4; 5 1 2 2 " %in%
+        out,
       info = paste(out, collapse = "\n")
     )
   }

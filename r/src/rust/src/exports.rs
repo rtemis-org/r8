@@ -101,15 +101,6 @@ pub(crate) fn codec(name: &str) -> std::result::Result<Option<*const Codec>, Str
     Ok(Some(v.table))
 }
 
-/// The package that registered the codec of the Rust-stored type `name`.
-pub(crate) fn codec_package(name: &str) -> Option<String> {
-    let c = compiled().lock().ok()?;
-    c.owned
-        .iter()
-        .find(|(_, o)| o.types.iter().any(|t| t == name))
-        .map(|(p, _)| p.clone())
-}
-
 /// The registered Rust-stored types and whether each codec table holds
 /// every function.
 ///
@@ -128,9 +119,6 @@ fn r8_compiled_types() -> Result<List> {
         .map(|n| {
             let v = unsafe { &*c.types[*n].table };
             v.from_fields.is_some()
-                && v.encode.is_some()
-                && v.write_state.is_some()
-                && v.read_state.is_some()
                 && v.get_field.is_some()
                 && v.with_field.is_some()
                 && v.drop.is_some()
@@ -155,7 +143,7 @@ fn type_tables(e: &Exports) -> Result<Vec<*const Codec>> {
     let stride = unsafe { (*e.types).size };
     if stride < CODEC_SIZE {
         return Err(fail(format!(
-            "the codec tables have size {stride}; ABI version 1 requires at least {CODEC_SIZE}"
+            "the codec tables have size {stride}; ABI version {ABI_VERSION} requires at least {CODEC_SIZE}"
         )));
     }
     let mut out = Vec::with_capacity(e.n_types);
@@ -182,7 +170,7 @@ fn impl_entries(e: &Exports) -> Result<Vec<&ImplEntry>> {
     let size = std::mem::size_of::<ImplEntry>();
     if e.impl_size < size {
         return Err(fail(format!(
-            "the impl entries have size {}; ABI version 1 requires at least {size}",
+            "the impl entries have size {}; ABI version {ABI_VERSION} requires at least {size}",
             e.impl_size
         )));
     }
@@ -519,7 +507,7 @@ fn r8_exports_document(ptr: Robj, ns: crate::utf8::Utf8) -> Result<Robj> {
 fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
     match t {
         TypeDef::Struct(s) => s.extends.as_ref(),
-        TypeDef::Enum(_) => None,
+        TypeDef::Enum(_) | TypeDef::Table(_) => None,
     }
 }
 

@@ -253,16 +253,62 @@ fn atomic_ok(x: SEXP, inner: &FieldType, extra: usize) -> bool {
     }
 }
 
+/// Whether the elements of `x` are those of its stored form as the scalar type
+/// `inner`, whatever its attributes.
+fn elements_ok(x: SEXP, inner: &FieldType) -> bool {
+    let t = sexptype(x);
+    match inner {
+        FieldType::Logical => t == SEXPTYPE::LGLSXP,
+        FieldType::Integer(_) => t == SEXPTYPE::INTSXP,
+        FieldType::Double(_) | FieldType::Date => t == SEXPTYPE::REALSXP,
+        FieldType::Character(_) => t == SEXPTYPE::STRSXP,
+        FieldType::Posixct => t == SEXPTYPE::REALSXP && micros_exact(x),
+        _ => false,
+    }
+}
+
+/// Sets the attributes of the stored form of the scalar type `inner`.
+fn set_stored_attributes(r: &Robj, inner: &FieldType) {
+    match inner {
+        FieldType::Date => set_attr(r, sym_class(), unsafe { character(&["Date"]).get() }),
+        FieldType::Posixct => unsafe {
+            set_attr(r, sym_class(), character(&["POSIXct", "POSIXt"]).get());
+            set_attr(r, sym_tzone(), character(&["UTC"]).get());
+        },
+        _ => {}
+    }
+}
+
+/// The stored form of the atomic vector `x` as the scalar type `inner`, whose
+/// attributes or elements differ from those of `x`: a view of `x` where the
+/// attributes alone differ, and a new vector otherwise, and always with
+/// `own_vector`.
+fn stored(x: SEXP, inner: &FieldType, own_vector: bool) -> Robj {
+    if !own_vector
+        && elements_ok(x, inner)
+        && let Some(v) = crate::value::bare(x)
+    {
+        let r = unsafe {
+            let r = own(Rf_protect(v));
+            Rf_unprotect(1);
+            r
+        };
+        set_stored_attributes(&r, inner);
+        return r;
+    }
+    build_atomic(inner, (0..xlen(x)).map(|i| (x, i)))
+}
+
 /// An atomic vector in the stored form of the scalar type `inner`, from
 /// elements of atomic vectors.
-fn build_atomic(inner: &FieldType, items: &[(SEXP, usize)]) -> Robj {
+fn build_atomic(inner: &FieldType, items: impl ExactSizeIterator<Item = (SEXP, usize)>) -> Robj {
     let n = items.len() as R_xlen_t;
     let number = number_elt;
     unsafe {
         let v = match inner {
             FieldType::Logical => {
                 let v = Rf_protect(Rf_allocVector(SEXPTYPE::LGLSXP, n));
-                for (k, &(x, i)) in items.iter().enumerate() {
+                for (k, (x, i)) in items.enumerate() {
                     *LOGICAL(v).add(k) = if sexptype(x) == SEXPTYPE::LGLSXP {
                         int_elt(x, i)
                     } else {
@@ -273,21 +319,21 @@ fn build_atomic(inner: &FieldType, items: &[(SEXP, usize)]) -> Robj {
             }
             FieldType::Integer(_) => {
                 let v = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, n));
-                for (k, &(x, i)) in items.iter().enumerate() {
+                for (k, (x, i)) in items.enumerate() {
                     *INTEGER(v).add(k) = number(x, i).map_or(NA_INT, |d| d as i32);
                 }
                 v
             }
             FieldType::Character(_) => {
                 let v = Rf_protect(Rf_allocVector(SEXPTYPE::STRSXP, n));
-                for (k, &(x, i)) in items.iter().enumerate() {
+                for (k, (x, i)) in items.enumerate() {
                     SET_STRING_ELT(v, k as R_xlen_t, STRING_ELT(x, i as R_xlen_t));
                 }
                 v
             }
             FieldType::Posixct => {
                 let v = Rf_protect(Rf_allocVector(SEXPTYPE::REALSXP, n));
-                for (k, &(x, i)) in items.iter().enumerate() {
+                for (k, (x, i)) in items.enumerate() {
                     *REAL(v).add(k) = match number(x, i) {
                         Some(s) if !s.is_nan() => ((s * 1e6).round() as i64) as f64 / 1e6,
                         _ => NA_REAL,
@@ -297,7 +343,7 @@ fn build_atomic(inner: &FieldType, items: &[(SEXP, usize)]) -> Robj {
             }
             _ => {
                 let v = Rf_protect(Rf_allocVector(SEXPTYPE::REALSXP, n));
-                for (k, &(x, i)) in items.iter().enumerate() {
+                for (k, (x, i)) in items.enumerate() {
                     *REAL(v).add(k) = match sexptype(x) {
                         SEXPTYPE::REALSXP => real_elt(x, i),
                         _ => number(x, i).unwrap_or(NA_REAL),
@@ -308,20 +354,9 @@ fn build_atomic(inner: &FieldType, items: &[(SEXP, usize)]) -> Robj {
         };
         let r = own(v);
         Rf_unprotect(1);
-        match inner {
-            FieldType::Date => set_attr(&r, sym_class(), character(&["Date"]).get()),
-            FieldType::Posixct => {
-                set_attr(&r, sym_class(), character(&["POSIXct", "POSIXt"]).get());
-                set_attr(&r, sym_tzone(), character(&["UTC"]).get());
-            }
-            _ => {}
-        }
+        set_stored_attributes(&r, inner);
         r
     }
-}
-
-fn elements(x: SEXP) -> Vec<(SEXP, usize)> {
-    (0..xlen(x)).map(|i| (x, i)).collect()
 }
 
 /// The stored R form of a computed value of the field type `ft`: a scalar
@@ -401,9 +436,9 @@ pub(crate) fn scalar_to_r(v: &rtemis_r8::rules::Scalar, ft: &FieldType) -> Resul
 }
 
 /// The stored form of an atomic vector of the scalar type `inner`, or
-/// `None` when `x` is in it.
-fn atomic(x: SEXP, inner: &FieldType) -> Option<Robj> {
-    (!atomic_ok(x, inner, 0)).then(|| build_atomic(inner, &elements(x)))
+/// `None` when `x` is in it. With `own_vector`, the stored form shares no vector.
+pub(crate) fn atomic(x: SEXP, inner: &FieldType, own_vector: bool) -> Option<Robj> {
+    (!atomic_ok(x, inner, 0)).then(|| stored(x, inner, own_vector))
 }
 
 /// The stored form of a valid value `x` of the field type `ft`, or `None`
@@ -419,7 +454,7 @@ pub(crate) fn normalize(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> Res
         | FieldType::Double(_)
         | FieldType::Character(_)
         | FieldType::Date
-        | FieldType::Posixct => atomic(x, ft),
+        | FieldType::Posixct => atomic(x, ft, false),
         FieldType::Raw
         | FieldType::HostClass { .. }
         | FieldType::Named { .. }
@@ -428,12 +463,12 @@ pub(crate) fn normalize(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> Res
         FieldType::Vec { element, .. } => {
             let inner = unwrap_option(element);
             if is_scalar(inner) {
-                atomic(x, inner)
+                atomic(x, inner, false)
             } else {
                 list_items(x, element, lookup)?
             }
         }
-        FieldType::Factor { levels, ordered } => factor(x, levels.as_deref(), *ordered),
+        FieldType::Factor { levels, ordered } => factor(x, levels.as_deref(), *ordered, false),
         FieldType::BtreeMap { value, .. } => map(x, value, false, lookup)?,
         FieldType::IndexMap { value, .. } => map(x, value, true, lookup)?,
         FieldType::Json => json(x),
@@ -483,7 +518,12 @@ fn list_items(x: SEXP, element: &FieldType, lookup: &dyn TypeLookup) -> Result<O
     }
 }
 
-fn factor(x: SEXP, declared: Option<&[Box<str>]>, ordered: bool) -> Option<Robj> {
+pub(crate) fn factor(
+    x: SEXP,
+    declared: Option<&[Box<str>]>,
+    ordered: bool,
+    own_vector: bool,
+) -> Option<Robj> {
     let class: &[&str] = if ordered {
         &["ordered", "factor"]
     } else {
@@ -515,16 +555,27 @@ fn factor(x: SEXP, declared: Option<&[Box<str>]>, ordered: bool) -> Option<Robj>
         None => (1..=current.len() as i32).collect(),
     };
     let n = xlen(x);
+    let same_codes =
+        sexptype(x) == SEXPTYPE::INTSXP && map.iter().enumerate().all(|(i, &c)| c == i as i32 + 1);
+    let shared = (same_codes && !own_vector)
+        .then(|| crate::value::bare(x))
+        .flatten();
     unsafe {
-        let v = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, n as R_xlen_t));
-        let out = std::slice::from_raw_parts_mut(INTEGER(v), n);
-        for_ints(x, 0, n, |k, c| {
-            out[k] = c
-                .checked_sub(1)
-                .and_then(|i| usize::try_from(i).ok())
-                .and_then(|i| map.get(i).copied())
-                .unwrap_or(NA_INT);
-        });
+        let v = match shared {
+            Some(v) => Rf_protect(v),
+            None => {
+                let v = Rf_protect(Rf_allocVector(SEXPTYPE::INTSXP, n as R_xlen_t));
+                let out = std::slice::from_raw_parts_mut(INTEGER(v), n);
+                for_ints(x, 0, n, |k, c| {
+                    out[k] = c
+                        .checked_sub(1)
+                        .and_then(|i| usize::try_from(i).ok())
+                        .and_then(|i| map.get(i).copied())
+                        .unwrap_or(NA_INT);
+                });
+                v
+            }
+        };
         let r = own(v);
         Rf_unprotect(1);
         let lv: Vec<&str> = match declared {
@@ -572,7 +623,7 @@ fn map(x: SEXP, value: &FieldType, ordered: bool, lookup: &dyn TypeLookup) -> Re
                 }
             })
             .collect();
-        let r = build_atomic(inner, &items);
+        let r = build_atomic(inner, items.into_iter());
         set_attr(&r, sym_names(), unsafe { character(&sorted_keys).get() });
         return Ok(Some(r));
     }
@@ -594,7 +645,7 @@ fn map(x: SEXP, value: &FieldType, ordered: bool, lookup: &dyn TypeLookup) -> Re
         } else if RView::Elem(x, k).is_absent() {
             ().into()
         } else {
-            build_atomic(inner, &[(x, k)])
+            build_atomic(inner, [(x, k)].into_iter())
         };
         items.push(item);
     }
@@ -618,14 +669,14 @@ fn map(x: SEXP, value: &FieldType, ordered: bool, lookup: &dyn TypeLookup) -> Re
 fn json(x: SEXP) -> Option<Robj> {
     match sexptype(x) {
         SEXPTYPE::LGLSXP | SEXPTYPE::STRSXP | SEXPTYPE::REALSXP if attrib_count(x) == 0 => None,
-        SEXPTYPE::LGLSXP => Some(build_atomic(&FieldType::Logical, &[(x, 0)])),
+        SEXPTYPE::LGLSXP => Some(build_atomic(&FieldType::Logical, [(x, 0)].into_iter())),
         SEXPTYPE::STRSXP => Some(build_atomic(
             &FieldType::Character(Default::default()),
-            &[(x, 0)],
+            [(x, 0)].into_iter(),
         )),
         SEXPTYPE::REALSXP | SEXPTYPE::INTSXP => Some(build_atomic(
             &FieldType::Double(Default::default()),
-            &[(x, 0)],
+            [(x, 0)].into_iter(),
         )),
         SEXPTYPE::VECSXP => {
             let n = xlen(x);
@@ -666,7 +717,7 @@ fn dense(x: SEXP, inner: &FieldType) -> Option<Robj> {
     if !dn_named && atomic_ok(x, inner, 1 + usize::from(has_dn)) {
         return None;
     }
-    let r = build_atomic(inner, &elements(x));
+    let r = stored(x, inner, false);
     set_attr(&r, sym_dim(), attr(x, sym_dim()));
     if has_dn {
         unsafe {
@@ -711,6 +762,7 @@ fn table<C: rtemis_r8::ir::Column>(x: SEXP, columns: &[C]) -> Result<Option<Robj
     let n = table_rows(x).map_err(|f| fail(f.message))? as i32;
     let names = attr(x, sym_names());
     let k = xlen(x);
+    let by_reference = inherits(x, "data.table");
     let mut changed: Vec<(usize, Robj)> = Vec::new();
     for i in 0..k {
         let col = unsafe { VECTOR_ELT(x, i as R_xlen_t) };
@@ -727,14 +779,15 @@ fn table<C: rtemis_r8::ir::Column>(x: SEXP, columns: &[C]) -> Result<Option<Robj
         };
         let inner = unwrap_option(&ft);
         let r = match inner {
-            FieldType::Factor { levels, ordered } => factor(col, levels.as_deref(), *ordered),
-            _ => atomic(col, inner),
+            FieldType::Factor { levels, ordered } => {
+                factor(col, levels.as_deref(), *ordered, by_reference)
+            }
+            _ => atomic(col, inner, by_reference),
         };
         if let Some(r) = r {
             changed.push((i, r));
         }
     }
-    let by_reference = inherits(x, "data.table");
     unsafe {
         let v = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, k as R_xlen_t));
         for i in 0..k {
@@ -784,6 +837,10 @@ pub(crate) fn assemble(
         .ok_or_else(|| fail(format!("`{q}` is not registered")))?;
     let (defs, variant): (&[FieldDef], Option<&str>) = match def {
         TypeDef::Struct(s) => (&s.fields, None),
+        TypeDef::Table(t) => {
+            let facts = crate::value::table_facts(fields);
+            return crate::table::assemble(fields, q, t, facts, false, lookup);
+        }
         TypeDef::Enum(e) => {
             let kind = e
                 .variants
@@ -1045,6 +1102,12 @@ fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
         .find(&q)
         .ok_or_else(|| fail(format!("`{q}` is not registered")))?;
     let (fields, rules): (&[FieldDef], &[rtemis_r8::ir::RuleDef]) = match def {
+        TypeDef::Table(t) => {
+            return Ok(match crate::table::replaced(xs, &q, t, changes, lookup)? {
+                Ok(v) => Replaced::Value(v),
+                Err(errors) => Replaced::Problems(errors),
+            });
+        }
         TypeDef::Struct(s) => (&s.fields, &s.rules),
         TypeDef::Enum(e) => {
             let v = variant.as_deref().unwrap_or_default();
@@ -1154,6 +1217,7 @@ fn replaced(x: &Robj, changes: &[(&str, SEXP)]) -> Result<Replaced> {
         return Ok(Replaced::Problems(errors));
     }
     let id = crate::value::identity(&q, variant.as_deref(), lookup).map_err(|(_, m)| fail(m))?;
+    crate::rust_stored::build(xs).map_err(|(_, m)| fail(m))?;
     // A Rust-stored value: the codec builds the new state, one field at a
     // time, and the new value reads its fields from it on demand, keeping the
     // fields the old value has read, except the replaced ones; the rules then
@@ -1267,15 +1331,22 @@ fn reading_rule_errors(
                             });
                         }
                     }
-                    Err(e) => errors.push(ValueError {
-                        code: "rule_error",
-                        path: String::new(),
-                        rule: rule.id.clone(),
-                        rule_index: Some(ri),
-                        message: e,
-                        diagnosis: None,
-                        ..Default::default()
-                    }),
+                    Err(e) => {
+                        let mut d = rtemis_r8::validate::diagnosis(
+                            r,
+                            rule.diagnose_access(RView::Whole(os), fields, lookup, &[]),
+                        );
+                        d.operands.clear();
+                        errors.push(ValueError {
+                            code: "rule_error",
+                            path: String::new(),
+                            rule: rule.id.clone(),
+                            rule_index: Some(ri),
+                            message: e,
+                            diagnosis: Some(d),
+                            ..Default::default()
+                        });
+                    }
                 }
             }
         });

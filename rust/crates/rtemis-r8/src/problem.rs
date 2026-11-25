@@ -83,6 +83,8 @@ pub enum Problem {
     IntegerRange,
     /// A finite number.
     Finite,
+    /// A number, which `NaN` is not.
+    Number,
     /// One of the allowed values, of which `total` exist.
     OneOf {
         /// The first allowed values, at most [`LISTED`].
@@ -214,6 +216,7 @@ impl Problem {
             Problem::Below(b) => format!("be below {}", lit(b)),
             Problem::IntegerRange => "be an integer from -2147483647 to 2147483647".to_string(),
             Problem::Finite => "be finite".to_string(),
+            Problem::Number => "be a number".to_string(),
             Problem::OneOf { values, total } => {
                 format!("be one of {}", one_of(values, *total, &lit))
             }

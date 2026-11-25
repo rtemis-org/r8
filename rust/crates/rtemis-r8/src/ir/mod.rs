@@ -26,7 +26,7 @@ pub use check::{
 pub use decl::{
     ClassSystem, Column, ColumnDef, EnumDef, FieldDef, HostDefault, ImplDef, ImplMethod, MethodDef,
     Migration, MigrationStep, Param, ParamDef, RequiredField, ReturnType, RuleDef, SelfMarker,
-    SplitTarget, StructDef, TraitDef, TypeRef, TypedImplMethod, VariantDef, VariantKind,
+    SplitTarget, StructDef, TableDef, TraitDef, TypeRef, TypedImplMethod, VariantDef, VariantKind,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use fit::fits;

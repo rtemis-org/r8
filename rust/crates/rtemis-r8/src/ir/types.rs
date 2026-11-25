@@ -11,14 +11,6 @@ use super::decl::RuleDef;
 use super::logic::Logic;
 use crate::name::QualifiedName;
 
-fn yes() -> bool {
-    true
-}
-
-fn is_true(b: &bool) -> bool {
-    *b
-}
-
 fn is_false(b: &bool) -> bool {
     !*b
 }
@@ -225,16 +217,19 @@ impl schemars::JsonSchema for IntegerType {
     }
 }
 
-/// Constraints of `type_double()`. `finite = false` admits `Inf`, `-Inf`,
-/// and `NaN`.
-#[derive(Debug, Clone, PartialEq)]
+/// Constraints of `type_double()`. A number is finite, unless `infinite`
+/// admits the infinities, which the bounds hold for; `NaN` lies outside the
+/// bounds and the admitted values, and `nan` admits it.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct DoubleType {
     /// The lower bound.
     pub lower: Option<Bound<f64>>,
     /// The upper bound.
     pub upper: Option<Bound<f64>>,
-    /// Values are finite: no `Inf`, `-Inf`, or `NaN`.
-    pub finite: bool,
+    /// The infinities within the bounds are values.
+    pub infinite: bool,
+    /// `NaN` is a value.
+    pub nan: bool,
     /// The admitted values.
     pub values: Option<Box<[f64]>>,
 }
@@ -269,25 +264,18 @@ impl DoubleType {
     /// Whether `x`, which is not a missing value, is a value of the type.
     #[inline(always)]
     pub fn admits(&self, x: f64) -> bool {
-        (!self.finite || x.is_finite())
+        if x.is_nan() {
+            return self.nan;
+        }
+        (self.infinite || x.is_finite())
             && self.in_range(x)
             && self.values.as_ref().is_none_or(|v| v.contains(&x))
     }
 }
 
-impl Default for DoubleType {
-    fn default() -> Self {
-        DoubleType {
-            lower: None,
-            upper: None,
-            finite: true,
-            values: None,
-        }
-    }
-}
-
-/// Constraints of `type_double()`. `finite = false` admits `Inf`, `-Inf`,
-/// and `NaN`.
+/// Constraints of `type_double()`. A number is finite, unless `infinite`
+/// admits the infinities, which the bounds hold for; `NaN` lies outside the
+/// bounds and the admitted values, and `nan` admits it.
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename = "DoubleType"))]
@@ -305,9 +293,12 @@ struct DoubleTypeJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Values are below this.
     exclusive_max: Option<f64>,
-    #[serde(default = "yes", skip_serializing_if = "is_true")]
-    /// Values are finite: no `Inf`, `-Inf`, or `NaN`.
-    finite: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    /// The infinities within the bounds are values.
+    infinite: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    /// `NaN` is a value.
+    nan: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The admitted values.
     values: Option<Box<[f64]>>,
@@ -319,7 +310,8 @@ impl TryFrom<DoubleTypeJson> for DoubleType {
         Ok(DoubleType {
             lower: side(j.min, j.exclusive_min, ("min", "exclusive_min"))?,
             upper: side(j.max, j.exclusive_max, ("max", "exclusive_max"))?,
-            finite: j.finite,
+            infinite: j.infinite,
+            nan: j.nan,
             values: j.values,
         })
     }
@@ -334,7 +326,8 @@ impl From<DoubleType> for DoubleTypeJson {
             max,
             exclusive_min,
             exclusive_max,
-            finite: t.finite,
+            infinite: t.infinite,
+            nan: t.nan,
             values: t.values,
         }
     }

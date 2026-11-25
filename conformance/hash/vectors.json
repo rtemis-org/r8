@@ -69,7 +69,8 @@
                 "kind": "option",
                 "inner": {
                   "kind": "double",
-                  "finite": false
+                  "infinite": true,
+                  "nan": true
                 }
               }
             },
@@ -129,7 +130,7 @@
         ]
       },
       "expect": {
-        "hash": "sha256:b9aa53cf727639bfdc8223a1ca76d50236546fa648e6f1f426ed7e2c007bc2f4"
+        "hash": "sha256:9d850b043e3effbc397fab318eac40d24362c5ad2eee0e883f3230bee9e3480d"
       }
     },
     {
@@ -147,7 +148,7 @@
         "s": []
       },
       "expect": {
-        "hash": "sha256:300479559c18b4761a7434a27fd0bba3abc04d284ee15a35b8ca7378e736995a"
+        "hash": "sha256:39e0d8122358b6a6ea3182b20724c243856f6134c848807efdf702473a641e99"
       }
     },
     {
@@ -189,7 +190,7 @@
         ]
       },
       "expect": {
-        "hash": "sha256:b9aa53cf727639bfdc8223a1ca76d50236546fa648e6f1f426ed7e2c007bc2f4"
+        "hash": "sha256:9d850b043e3effbc397fab318eac40d24362c5ad2eee0e883f3230bee9e3480d"
       }
     },
     {

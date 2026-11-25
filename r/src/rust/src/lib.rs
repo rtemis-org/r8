@@ -25,6 +25,7 @@ mod reader;
 mod rust_stored;
 mod rview;
 mod signature;
+mod table;
 mod text;
 mod utf8;
 mod value;
@@ -41,6 +42,7 @@ extendr_module! {
     use exports;
     use fieldtype;
     use rust_stored;
+    use table;
     use reader;
     use signature;
     use text;
@@ -58,6 +60,7 @@ extendr_module! {
     use exports;
     use fieldtype;
     use rust_stored;
+    use table;
     use reader;
     use oracle;
     use signature;

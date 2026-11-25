@@ -252,7 +252,7 @@ test_that("a constant default is checked against its type at the declaration", {
       params(
         x,
         d = arg_date(default = as.Date("2026-01-01")),
-        w = arg_double(finite = FALSE, default = -Inf),
+        w = arg_double(infinite = TRUE, default = -Inf),
         v = arg_vec(option(type_double()), default = c(1, NA)),
         h = arg(host_class("function"), NULL)
       )

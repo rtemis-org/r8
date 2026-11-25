@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 use extendr_api::prelude::*;
 use extendr_ffi::{SEXP, SEXPTYPE, VECTOR_ELT};
 use rtemis_r8::ir::build::BuildError;
-use rtemis_r8::ir::{EnumDef, FieldDef, FieldType, RuleDef, StructDef, TypeDef, VariantDef};
+use rtemis_r8::ir::{
+    EnumDef, FieldDef, FieldType, RuleDef, StructDef, TableDef, TypeDef, VariantDef,
+};
 use rtemis_r8::name::{Name, NameError, QualifiedName};
 use rtemis_r8::rules::TypeLookup;
 use rtemis_r8::tree::{Exact, Tree};
@@ -28,7 +30,7 @@ use crate::rview::{
 pub(crate) struct Problem {
     code: &'static str,
     path: String,
-    message: String,
+    pub(crate) message: String,
 }
 
 type Read<T> = std::result::Result<T, Problem>;
@@ -412,6 +414,18 @@ fn r8_declare(
                 aliases: Vec::new(),
                 extensions: BTreeMap::new(),
             })
+        } else if kind == "table" || kind == "open_table" {
+            TypeDef::Table(TableDef {
+                name: n,
+                description: description.to_string(),
+                version,
+                columns: columns(m, lookup, "/columns")?,
+                open: kind == "open_table",
+                rules: self::rules(unsafe { rules.get() }, "/rules")?,
+                migrations: Vec::new(),
+                aliases: Vec::new(),
+                extensions: BTreeMap::new(),
+            })
         } else {
             TypeDef::Struct(StructDef {
                 name: n,
@@ -556,6 +570,13 @@ fn extended(
                 format!("`{pq}` is an enum; `extends` names a struct"),
             ));
         }
+        Some(TypeDef::Table(_)) => {
+            return Err(problem(
+                "extends_not_struct",
+                "/extends",
+                format!("`{pq}` is a table; `extends` names a struct"),
+            ));
+        }
         None => {
             return Err(problem(
                 "extends_unknown",
@@ -599,7 +620,10 @@ fn decl_problems(errors: &[rtemis_r8::ir::DeclError]) -> List {
             .map(|e| e.code.to_string())
             .collect::<Vec<_>>(),
         path = errors.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
-        message = errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>()
+        message = errors
+            .iter()
+            .map(|e| crate::fieldtype::in_r(&e.message))
+            .collect::<Vec<_>>()
     )
 }
 

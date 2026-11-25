@@ -1,30 +1,42 @@
 //! The rule dialect: strict JSONLogic, extended by R8's intrinsics.
 //!
 //! A rule states what must hold. [`CompiledRule::compile`] binds it
-//! to the fields in scope, a struct's, a variant's, or a table row's,
-//! and reports declaration errors: an unknown operator or field, a type or
-//! unit mismatch, an unknown variant, loose equality. [`CompiledRule::check`]
-//! evaluates it over a value's JSON form. A rule holds when its `when`
-//! condition is `false`, or when a field its invariant or condition reads is
-//! absent; `is_null()` is a presence test and does not count as a read.
+//! to the fields in scope, a struct's or a variant's, and [`RowRule::compile`]
+//! to the columns of a table, whose rows it reads. Both report declaration
+//! errors: an unknown operator or field, a type or unit mismatch, an unknown
+//! variant, loose equality. [`CompiledRule::check`] evaluates a rule over a
+//! value's JSON form, and [`RowRule::failing`] one over the rows of a table. A
+//! rule holds when its `when` condition is `false`, or when its condition or
+//! its invariant is missing: an absent field, a missing cell, and a comparison
+//! with `NaN` are missing, and so is an operator with a missing operand, save
+//! an `and` with a false operand and an `or` with a true one. `is_null()` is
+//! a presence test, and `is_na()` tests a value; neither is missing.
+//! [`RowRule::choose`] gives the rows where a rule is true.
 //!
-//! Operators: `var`, `if`, `and`, `or`, `!`, `===`, `!==`, `<`, `<=`, `>`,
-//! `>=`, `+`, `-`, `*`, `/`, `%`, `min`, `max`, `in`, and `cat`. Intrinsics:
-//! `length`, `subset`, `non_increasing`, `non_decreasing`, `floor`, `ceiling`,
-//! `round`, `is_null`, `is_variant`, `levels`, `nrow`, `ncol`, `dim`, `all`,
-//! and `any`; inside `all()` and `any()`, `.x` is the element.
+//! Operators: `var`, `path`, `if`, `and`, `or`, `!`, `===`, `!==`, `<`, `<=`,
+//! `>`, `>=`, `+`, `-`, `*`, `/`, `%`, `min`, `max`, `in`, and `cat`.
+//! Intrinsics: `length`, `subset`, `non_increasing`, `non_decreasing`, `abs`,
+//! `floor`, `ceiling`, `round`, `sqrt`, `log`, `exp`, `sum`, `mean`, `pmin`,
+//! `pmax`, `nchar`, `is_null`, `is_na`, `is_variant`, `levels`, `nrow`,
+//! `ncol`, `dim`, `all`, and `any`; inside `all()` and `any()`, `.x` is the
+//! element. In a rule over rows, a name is the cell of the row, and the whole
+//! column in an operand of `mean`, `sum`, `min`, and `max`, which a rule that
+//! chooses rows takes, and a rule of a table's declaration does not.
 
 mod compile;
 mod diagnose;
 mod eval;
+mod exact;
+mod rows;
 mod ty;
 
 use serde_json::Value;
 
 use crate::access::{Access, Json};
 
-pub use compile::RuleError;
+pub use compile::{Cell, RowScope, RuleError};
 pub use diagnose::{Diagnosis, SHOWN_CHARS, Shown};
+pub use rows::{NotChosen, RowError, RowRule, choose_rows};
 pub(crate) use ty::dollar_type;
 pub use ty::implementors;
 pub use ty::{DocumentSet, Ty, TypeLookup};
@@ -208,48 +220,6 @@ impl CompiledRule {
         })?;
         Ok(failing)
     }
-
-    /// Checks a table's row rule against every row of the table's JSON form.
-    pub fn check_rows(&self, table: &Value) -> Result<Vec<Vec<crate::problem::Segment>>, String> {
-        let rows = table
-            .get("$length")
-            .and_then(Value::as_u64)
-            .ok_or("a table has `$length`")? as usize;
-        self.check_rows_access(Json::new(table), rows, &[], &NoLookup)
-    }
-
-    /// Checks a table's row rule against rows `0..rows` of a table in any
-    /// host form, whose columns are `scope`. Each violation's path is the
-    /// cell of the first column the rule reads, relative to the table, such
-    /// as the column `start` and the row 4; a rule that reads no column
-    /// reports the row alone.
-    pub fn check_rows_access<'a, A: Access<'a>>(
-        &self,
-        table: A,
-        rows: usize,
-        scope: &[FieldDef],
-        lookup: &dyn TypeLookup,
-    ) -> Result<Vec<Vec<crate::problem::Segment>>, String> {
-        use crate::problem::Segment;
-        let first =
-            first_column(&self.invariant).or_else(|| self.when.as_ref().and_then(first_column));
-        let mut paths = Vec::new();
-        for i in 0..rows {
-            if let Outcome::Violated(_) = self.check_access(table.row(i), scope, lookup)? {
-                let mut path = Vec::with_capacity(2);
-                if let Some(c) = &first {
-                    path.push(Segment::Column(c.clone()));
-                }
-                path.push(Segment::Element(i as u64));
-                paths.push(path);
-                // One path past the limit marks the list as truncated.
-                if paths.len() > crate::validate::ERROR_LIMIT {
-                    break;
-                }
-            }
-        }
-        Ok(paths)
-    }
 }
 
 /// A logical result; a reference to a logical field is read in place.
@@ -369,22 +339,33 @@ pub enum Computed<A> {
 /// expression names them.
 pub fn reads(logic: &crate::ir::Logic) -> Vec<String> {
     use crate::ir::{Logic, Operator};
-    fn push(path: &str, out: &mut Vec<String>) {
-        let head = path.split('.').next().unwrap_or_default();
-        if !head.starts_with('.') && !out.iter().any(|x| x == head) {
+    fn push(head: &str, out: &mut Vec<String>) {
+        if !out.iter().any(|x| x == head) {
             out.push(head.to_string());
+        }
+    }
+    fn var(path: &str, out: &mut Vec<String>) {
+        let head = path.split('.').next().unwrap_or_default();
+        // `.x` is the element of a quantifier.
+        if !head.is_empty() {
+            push(head, out);
         }
     }
     fn walk(l: &Logic, out: &mut Vec<String>) {
         match l {
-            Logic::Var(p) => push(p, out),
+            Logic::Var(p) => var(p, out),
             Logic::Call {
-                op: Operator::Var,
+                op: op @ (Operator::Var | Operator::Path),
                 args,
                 ..
             } => {
-                if let Some(p) = args.first().and_then(Logic::as_str) {
-                    push(p, out);
+                let Some(p) = args.first().and_then(Logic::as_str) else {
+                    return;
+                };
+                match op {
+                    Operator::Var => var(p, out),
+                    _ if p == ".x" => {}
+                    _ => push(p, out),
                 }
             }
             Logic::Call { args, .. } | Logic::Array(args) => args.iter().for_each(|x| walk(x, out)),
@@ -404,27 +385,4 @@ fn prefix(errors: Vec<RuleError>, p: &str) -> Vec<RuleError> {
             e
         })
         .collect()
-}
-
-/// The first field an expression reads, in evaluation order.
-fn first_column(e: &Expr) -> Option<String> {
-    match e {
-        Expr::Var {
-            root: Root::Data,
-            steps,
-        } => match steps.first() {
-            Some(Step::Field(k) | Step::Column(k)) => Some(k.clone()),
-            _ => None,
-        },
-        Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
-            xs.iter().find_map(first_column)
-        }
-        Expr::IsVariant { value, .. } | Expr::Levels { value, .. } => first_column(value),
-        Expr::Quantifier {
-            collection,
-            condition,
-            ..
-        } => first_column(collection).or_else(|| first_column(condition)),
-        _ => None,
-    }
 }

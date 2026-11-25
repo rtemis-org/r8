@@ -1,0 +1,855 @@
+{
+  "$corpus": 1,
+  "description": "Tables: declared and extra columns, their order, and their facts.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "table",
+        "name": "Vitals",
+        "description": "",
+        "version": 1,
+        "columns": [
+          {
+            "name": "age",
+            "type": {
+              "kind": "double",
+              "min": 0.0
+            },
+            "description": "Age",
+            "unit": "a"
+          },
+          {
+            "name": "sbp",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "id",
+            "type": {
+              "kind": "integer"
+            },
+            "description": "",
+            "unique": true,
+            "required": false
+          }
+        ],
+        "open": true,
+        "rules": [
+          {
+            "id": "ADULT",
+            "invariant": {
+              "<": [
+                {
+                  "var": "age"
+                },
+                130
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "table",
+        "name": "Closed",
+        "description": "",
+        "version": 1,
+        "columns": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "integer"
+            },
+            "description": ""
+          },
+          {
+            "name": "f",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "factor",
+                "levels": [
+                  "a",
+                  "b"
+                ]
+              }
+            },
+            "description": ""
+          }
+        ]
+      },
+      {
+        "kind": "table",
+        "name": "Raven",
+        "description": "",
+        "version": 1,
+        "columns": [],
+        "open": true
+      },
+      {
+        "kind": "struct",
+        "name": "Fit",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "cases",
+            "type": {
+              "kind": "named",
+              "name": "ns::Raven"
+            },
+            "description": ""
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "declared",
+      "description": "A column that is not required may be absent.",
+      "op": "decode",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1.0,
+          2.0
+        ],
+        "sbp": [
+          null,
+          3.0
+        ]
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "any-name",
+      "description": "An extra column has any name that does not begin with $, and its type admits NaN.",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40.0,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "no-columns",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 0
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "bound",
+      "op": "decode",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1.0,
+          -2.0
+        ],
+        "sbp": [
+          1.0,
+          2.0
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "below_min",
+            "path": "/age/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing-cell",
+      "op": "decode",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 1,
+        "age": [
+          null
+        ],
+        "sbp": [
+          1.0
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_value",
+            "path": "/age/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing-column",
+      "op": "decode",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 1,
+        "age": [
+          1.0
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_column",
+            "path": "/sbp"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unique",
+      "op": "decode",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1.0,
+          2.0
+        ],
+        "sbp": [
+          1.0,
+          2.0
+        ],
+        "id": [
+          1,
+          1
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_unique",
+            "path": "/id/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "row-rule",
+      "op": "decode",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1.0,
+          130.0
+        ],
+        "sbp": [
+          1.0,
+          2.0
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/age/1",
+            "rule": "ADULT"
+          }
+        ]
+      }
+    },
+    {
+      "id": "length",
+      "op": "decode",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1.0
+        ],
+        "sbp": [
+          1.0,
+          2.0
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_length",
+            "path": "/age"
+          }
+        ]
+      }
+    },
+    {
+      "id": "closed",
+      "op": "decode",
+      "type": "ns::Closed",
+      "input": {
+        "$length": 1,
+        "x": [
+          1
+        ],
+        "f": [
+          "a"
+        ],
+        "y": [
+          2
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_column",
+            "path": "/y"
+          }
+        ]
+      }
+    },
+    {
+      "id": "factor-missing",
+      "op": "decode",
+      "type": "ns::Closed",
+      "input": {
+        "$length": 2,
+        "x": [
+          1,
+          2
+        ],
+        "f": [
+          "b",
+          null
+        ]
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "factor-level",
+      "op": "decode",
+      "type": "ns::Closed",
+      "input": {
+        "$length": 1,
+        "x": [
+          1
+        ],
+        "f": [
+          "c"
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_a_level",
+            "path": "/f/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "no-type",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40.0,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_type",
+            "path": "/$columns/if"
+          }
+        ]
+      }
+    },
+    {
+      "id": "order-short",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40.0,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_order",
+            "path": "/$order"
+          }
+        ]
+      }
+    },
+    {
+      "id": "order-absent",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40.0,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_order",
+            "path": "/$order"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-blank",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40.0,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "if": {
+            "unit": " a"
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unit_blank",
+            "path": "/if"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fact-unknown",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40.0,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "if": {
+            "units": "a"
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_facts",
+            "path": "/$facts/if"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fact-of-no-column",
+      "op": "decode",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40.0,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "absent": {
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_facts",
+            "path": "/$facts/absent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nested",
+      "op": "decode",
+      "type": "ns::Fit",
+      "input": {
+        "cases": {
+          "$length": 2,
+          "Sepal.Length": [
+            5.1,
+            "NaN"
+          ],
+          "Age (years)": [
+            40.0,
+            null
+          ],
+          "if": [
+            "a",
+            null
+          ],
+          "$columns": {
+            "Sepal.Length": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "Age (years)": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "if": {
+              "kind": "option",
+              "inner": {
+                "kind": "character"
+              }
+            }
+          },
+          "$order": [
+            "if",
+            "Sepal.Length",
+            "Age (years)"
+          ],
+          "$facts": {
+            "Age (years)": {
+              "description": "Age",
+              "unit": "a"
+            }
+          }
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "nested-no-type",
+      "op": "decode",
+      "type": "ns::Fit",
+      "input": {
+        "cases": {
+          "$length": 1,
+          "a": [
+            "x"
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "column_type",
+            "path": "/cases/$columns/a"
+          }
+        ]
+      }
+    }
+  ]
+}

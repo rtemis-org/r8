@@ -18,7 +18,7 @@
       "items": {
         "$ref": "#/$defs/TypeDef"
       },
-      "description": "The structs and enums."
+      "description": "The structs, the enums, and the tables."
     },
     "traits": {
       "type": "array",
@@ -215,9 +215,78 @@
             "variants"
           ],
           "description": "An enum."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "table"
+            },
+            "name": {
+              "$ref": "#/$defs/Name",
+              "description": "The table's name."
+            },
+            "description": {
+              "type": "string",
+              "description": "The table's description.",
+              "default": ""
+            },
+            "version": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0,
+              "description": "The table's version, which a migration increments."
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ColumnDef"
+              },
+              "description": "The declared columns, in declaration order."
+            },
+            "open": {
+              "type": "boolean",
+              "description": "Columns other than the declared ones are admitted, after them."
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuleDef"
+              },
+              "description": "The rules every row satisfies, which read the row's cells by name."
+            },
+            "migrations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Migration"
+              },
+              "description": "The migrations from earlier versions."
+            },
+            "aliases": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/QualifiedName"
+              },
+              "description": "Former qualified names, which readers accept."
+            },
+            "extensions": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Namespaced extensions that R8 stores and exports and does not\ninterpret."
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "version",
+            "columns"
+          ],
+          "description": "A table."
         }
       ],
-      "description": "A struct or an enum."
+      "description": "A struct, an enum, or a table."
     },
     "FieldDef": {
       "type": "object",
@@ -397,9 +466,13 @@
               "format": "double",
               "description": "Values are below this."
             },
-            "finite": {
+            "infinite": {
               "type": "boolean",
-              "description": "Values are finite: no `Inf`, `-Inf`, or `NaN`."
+              "description": "The infinities within the bounds are values."
+            },
+            "nan": {
+              "type": "boolean",
+              "description": "`NaN` is a value."
             },
             "values": {
               "type": [

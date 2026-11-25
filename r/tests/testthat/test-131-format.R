@@ -235,7 +235,7 @@ test_that("a type object prints its fields, defaults, and rules", {
         e = field(t$Loss, default = t$Loss@Absolute),
         f = field(t$Interval, default = t$Interval(lo = 0, hi = 1)),
         g = field(btree_map(type_integer()), default = c(k = 1L)),
-        h = field(type_double(finite = FALSE), default = -Inf),
+        h = field(type_double(infinite = TRUE), default = -Inf),
         i = field(option(type_logical()), default = TRUE)
       )
     )

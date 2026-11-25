@@ -127,7 +127,7 @@ arg_shorthand <- function(constructor) {
 #' @param min,max,exclusive_min,exclusive_max,values Optional Numeric: The
 #'   bounds and admitted values, as [type_integer()] and [type_double()] take
 #'   them; `values` of `arg_character()` as [type_character()] takes it.
-#' @param finite Logical: As [type_double()] takes it.
+#' @param infinite,nan Logical: As [type_double()] takes them.
 #' @param pattern Optional Character: As [type_character()] takes it.
 #' @param levels Optional Character: As [type_factor()] takes it.
 #' @param ordered Logical: As [type_factor()] takes it.

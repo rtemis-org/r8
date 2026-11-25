@@ -319,6 +319,7 @@ fn conformance_corpus() {
                     run_dispatch(ir.as_ref(), &case["type"], &case["input"], &case["expect"])
                 }
                 "update" => run_update(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
+                "filter" => run_filter(ir.as_ref(), case),
                 "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 op @ ("canonical" | "hash") => run_canonical(
                     op,
@@ -349,6 +350,45 @@ fn conformance_corpus() {
     println!("conformance: {passed} passed, {skipped} skipped");
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(passed > 0, "no conformance case ran");
+}
+
+/// Runs one `filter` case.
+fn run_filter(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
+    use rtemis_r8::ir::{Logic, TypeDef};
+    use rtemis_r8::rules::{NotChosen, TypeLookup, choose_rows};
+    let Some(docs) = ir else {
+        return Some("a `filter` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(case["type"].as_str()?).ok()?;
+    let Some(TypeDef::Table(def)) = docs.find(&ty) else {
+        return Some(format!("`{ty}` is not a table of the suite's `ir`"));
+    };
+    let problems = validate(&case["input"], &ty, docs);
+    if !problems.is_empty() {
+        return Some(format!("the input is invalid: {problems:?}"));
+    }
+    let rule = Logic::from_value(&case["options"]["rule"]);
+    let table = rtemis_r8::access::Json::new(&case["input"]);
+    let got = match choose_rows(table, def, &rule, docs) {
+        Ok(rows) => serde_json::json!({ "rows": rows }),
+        Err(NotChosen::Row(e)) => {
+            serde_json::json!({ "row_error": { "row": e.row, "count": e.count } })
+        }
+        Err(NotChosen::Rule(errors)) => {
+            let got = sorted_errors(
+                errors
+                    .into_iter()
+                    .map(|e| (e.path.replacen("/invariant", "", 1), e.code.into(), None)),
+            );
+            if case["expect"].get("errors").is_none() {
+                return Some(format!("errors {got:?}, expected {}", case["expect"]));
+            }
+            let want = expected_errors(&case["expect"]);
+            return (got != want).then(|| format!("errors {got:?}, expected {want:?}"));
+        }
+        Err(NotChosen::Table(m)) => return Some(m),
+    };
+    (got != case["expect"]).then(|| format!("{got}, expected {}", case["expect"]))
 }
 
 fn run_refine(

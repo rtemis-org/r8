@@ -47,6 +47,8 @@ install_test_packages <- function() {
         "CMD",
         "INSTALL",
         paste0("--library=", lib),
+        # An object file of an earlier R8.h is current to make.
+        if (identical(p, "r8pkgAbi")) "--preclean",
         test_path("packages", p)
       ),
       stdout = TRUE,
