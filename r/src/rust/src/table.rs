@@ -879,7 +879,7 @@ fn r8_table_get(x: Robj, i: Robj, j: Robj) -> Result<Robj> {
                 .find(|&&r| std::mem::replace(&mut seen[r as usize], true))
             {
                 return Ok(refused(format!(
-                    "the index asks for row {} twice, and the values of column `{}` are distinct; as_raven(x)[i, ] gives the rows without the type",
+                    "the index asks for row {} twice, and the values of column `{}` are distinct; Raven(x)[i, ] gives the rows without the type",
                     r + 1,
                     unique[0]
                 )));
@@ -1020,6 +1020,446 @@ pub(crate) fn replaced(
     .map(Ok)
 }
 
+/// The table value `x` with the columns `from` named `to`, or the problems of it. A
+/// value that keeps its type keeps the order of its declared columns; without a
+/// column that the type requires, it is a raven, in the order it has. The facts of a
+/// column go with it.
+///
+/// @param x A value of a table.
+/// @param from The columns.
+/// @param to Character: The new names.
+/// @return The value, or an object of class `r8_refused` or `r8_problems`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_table_rename(x: Robj, from: Robj, to: Robj) -> Result<Robj> {
+    let h = match Held::of(unsafe { x.get() }) {
+        Ok(h) => h,
+        Err(m) => return Ok(refused(m)),
+    };
+    let at = match column_positions(unsafe { from.get() }, &h.names) {
+        Ok(at) => at,
+        Err(m) => return Ok(refused(m)),
+    };
+    let given = strings(unsafe { to.get() });
+    if given.len() != at.len() {
+        return Ok(refused(format!(
+            "`to` has one name for each column of `from`; it has {}, and `from` {}",
+            given.len(),
+            at.len()
+        )));
+    }
+    let mut names = h.names.clone();
+    for (&k, name) in at.iter().zip(&given) {
+        let name = name.as_deref().unwrap_or_default();
+        if !rtemis_r8::access::is_column_name(name) {
+            return Ok(refused(format!(
+                "`{name}` is not a name of a column: a name is not empty and does not begin with `$`"
+            )));
+        }
+        names[k as usize] = name.to_string();
+    }
+    let mut seen = HashSet::new();
+    if let Some(k) = names.iter().find(|n| !seen.insert(n.as_str())) {
+        return Ok(refused(format!(
+            "two columns are named `{k}`; the columns of a table have distinct names"
+        )));
+    }
+    // The facts by the new names, those of the type included.
+    let old: Vec<&str> = h.names.iter().map(String::as_str).collect();
+    let mut facts = all_facts(&h, &old)?;
+    if !is_null(unsafe { facts.get() }) {
+        let keys: Vec<String> = names_of(unsafe { facts.get() })
+            .into_iter()
+            .map(|k| {
+                let i = old.iter().position(|o| *o == k);
+                i.map_or(k, |i| names[i].clone())
+            })
+            .collect();
+        facts.set_names(keys)?;
+    }
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let set: HashSet<&str> = refs.iter().copied().collect();
+    let keeps = satisfies(h.def(), &set)
+        && (h.def().open
+            || refs
+                .iter()
+                .all(|n| h.def().columns.iter().any(|c| c.name.as_str() == *n)));
+    let (q, def) = if keeps {
+        (h.q.clone(), h.def())
+    } else {
+        let q = raven();
+        match h.docs.find(&q) {
+            Some(TypeDef::Table(t)) => (q, t),
+            _ => return Err(fail("`R8::Raven` is not registered")),
+        }
+    };
+    // A column that takes a declared name is checked as that column.
+    let takes = at.iter().any(|&k| {
+        def.columns
+            .iter()
+            .any(|c| c.name.as_str() == names[k as usize])
+    });
+    if takes {
+        return match checked(h.columns, &names, &q, def, unsafe { facts.get() }, &*h.docs)? {
+            Ok(v) => Ok(v),
+            Err(errors) => problems(&errors),
+        };
+    }
+    let order = placed(def, &refs);
+    let list: Vec<SEXP> = order.iter().map(|&k| h.column(k)).collect();
+    let refs: Vec<&str> = order.iter().map(|&k| refs[k]).collect();
+    let facts = facts_of(unsafe { facts.get() }, def, &refs);
+    let list = named_list(&list, &refs);
+    unsafe { value(&q, list.get(), &refs, facts.get(), &*h.docs) }
+}
+
+/// The key of a missing cell, above every other.
+const LAST: u64 = u64::MAX;
+
+/// A key of each cell of `x`, in whose order the cells are: numbers, dates, and
+/// date-times by value, logicals from `FALSE`, strings by code point, and factors by
+/// level; a missing cell and `NaN` last, also where the others descend.
+fn sort_keys(x: SEXP, descending: bool) -> Vec<u64> {
+    let n = xlen(x);
+    let mut out: Vec<u64> = Vec::with_capacity(n);
+    match sexptype(x) {
+        SEXPTYPE::REALSXP => {
+            let key = |v: f64| {
+                if v.is_nan() {
+                    return LAST;
+                }
+                // Adding 0 makes one zero of the two.
+                let bits = (v + 0.0).to_bits();
+                if bits >> 63 == 1 {
+                    !bits
+                } else {
+                    bits | 1 << 63
+                }
+            };
+            let p = unsafe { DATAPTR_OR_NULL(x) };
+            if p.is_null() {
+                out.extend((0..n).map(|i| key(unsafe { REAL_ELT(x, i as R_xlen_t) })));
+            } else {
+                let s = unsafe { std::slice::from_raw_parts(p.cast::<f64>(), n) };
+                out.extend(s.iter().map(|&v| key(v)));
+            }
+        }
+        SEXPTYPE::STRSXP => return text_keys(x, descending),
+        _ => {
+            let key = |v: i32| {
+                if v == i32::MIN {
+                    LAST
+                } else {
+                    (i64::from(v) - i64::from(i32::MIN)) as u64
+                }
+            };
+            let p = unsafe { DATAPTR_OR_NULL(x) };
+            if p.is_null() {
+                let logical = sexptype(x) == SEXPTYPE::LGLSXP;
+                out.extend((0..n as R_xlen_t).map(|i| {
+                    key(if logical {
+                        unsafe { LOGICAL_ELT(x, i) }
+                    } else {
+                        unsafe { INTEGER_ELT(x, i) }
+                    })
+                }));
+            } else {
+                let s = unsafe { std::slice::from_raw_parts(p.cast::<i32>(), n) };
+                out.extend(s.iter().map(|&v| key(v)));
+            }
+        }
+    }
+    if descending {
+        for k in out.iter_mut().filter(|k| **k != LAST) {
+            // No key but that of a missing cell is the greatest.
+            *k = LAST - 1 - *k;
+        }
+    }
+    out
+}
+
+/// The places of the texts of a character vector by the addresses that R keeps them
+/// at: one object for each text of one encoding.
+struct Places {
+    /// An address and one more than its place; an address of 0 is free.
+    held: Vec<(usize, u32)>,
+    shift: u32,
+    used: usize,
+}
+
+impl Places {
+    fn new() -> Places {
+        Places {
+            held: vec![(0, 0); 1 << 10],
+            shift: 64 - 10,
+            used: 0,
+        }
+    }
+
+    /// The slot of `key`: its own, or the free one where it goes.
+    fn slot(&self, key: usize) -> usize {
+        // An address is a multiple of 8; the product spreads its bits.
+        let mut at = ((key as u64 >> 3).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> self.shift) as usize;
+        while self.held[at].0 != key && self.held[at].0 != 0 {
+            at = (at + 1) & (self.held.len() - 1);
+        }
+        at
+    }
+
+    /// The place of `key`, which `new` gives where there is none.
+    fn place(&mut self, key: usize, new: impl FnOnce() -> u32) -> u32 {
+        let at = self.slot(key);
+        if self.held[at].0 == key {
+            return self.held[at].1;
+        }
+        let place = new();
+        self.held[at] = (key, place);
+        self.used += 1;
+        if self.used * 2 > self.held.len() {
+            let old = std::mem::take(&mut self.held);
+            self.held = vec![(0, 0); old.len() * 4];
+            self.shift -= 2;
+            for (k, v) in old.into_iter().filter(|(k, _)| *k != 0) {
+                let at = self.slot(k);
+                self.held[at] = (k, v);
+            }
+        }
+        place
+    }
+}
+
+/// The keys of a character vector, by the code points of its texts: each text is
+/// ranked once.
+fn text_keys(x: SEXP, descending: bool) -> Vec<u64> {
+    let n = xlen(x);
+    let mut places = Places::new();
+    let mut texts: Vec<std::borrow::Cow<'_, str>> = Vec::new();
+    let mut of: Vec<u32> = Vec::with_capacity(n);
+    let p = unsafe { DATAPTR_OR_NULL(x) };
+    for i in 0..n {
+        let c = if p.is_null() {
+            unsafe { STRING_ELT(x, i as R_xlen_t) }
+        } else {
+            unsafe { *p.cast::<SEXP>().add(i) }
+        };
+        of.push(places.place(c as usize, || match string_elt(x, i) {
+            Some(t) => {
+                texts.push(t);
+                texts.len() as u32
+            }
+            // A missing cell.
+            None => 0,
+        }));
+    }
+    // What every text begins with says nothing of their order.
+    let first = texts.first().map_or(&[][..], |t| t.as_bytes());
+    let common = texts.iter().fold(first.len(), |c, t| {
+        let t = t.as_bytes();
+        (0..c.min(t.len()))
+            .find(|&i| t[i] != first[i])
+            .unwrap_or(c.min(t.len()))
+    });
+    // The eight bytes that follow, as a number, decide most comparisons.
+    let rest = |k: u32| &texts[k as usize].as_bytes()[common..];
+    let mut order: Vec<(u64, u32)> = (0..texts.len() as u32)
+        .map(|k| {
+            let t = rest(k);
+            let mut head = [0u8; 8];
+            let m = t.len().min(8);
+            head[..m].copy_from_slice(&t[..m]);
+            (u64::from_be_bytes(head), k)
+        })
+        .collect();
+    let after = |k: u32| rest(k).get(8..).unwrap_or(&[]);
+    order.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| after(a.1).cmp(after(b.1))));
+    let mut rank = vec![LAST; texts.len() + 1];
+    let mut at = 0u64;
+    for (i, &(head, k)) in order.iter().enumerate() {
+        // One text in two encodings has one rank.
+        if i > 0 {
+            let (h, j) = order[i - 1];
+            if h != head || rest(j) != rest(k) {
+                at += 1;
+            }
+        }
+        rank[k as usize + 1] = at;
+    }
+    if descending {
+        for r in &mut rank[1..] {
+            *r = at - *r;
+        }
+    }
+    of.into_iter().map(|k| rank[k as usize]).collect()
+}
+
+/// The rows above which a second thread takes part in an order.
+const ROWS_FOR_THREADS: usize = 1 << 19;
+
+/// Orders the positions `at` by `keys`, and leaves those of one key in the order they
+/// are in.
+fn sort_by_keys(at: &mut Vec<u32>, keys: &[u64]) {
+    let Some(&first) = at.first() else { return };
+    let first = keys[first as usize];
+    let differ = keys.iter().fold(0u64, |d, &k| d | (k ^ first));
+    // Passes over the positions, of which each reads a key far from the last, serve
+    // keys that differ in few bits. For others, the keys are moved along.
+    let passes = (0..64)
+        .step_by(16)
+        .filter(|s| (differ >> s) as u16 != 0)
+        .count();
+    if at.len() < 1 << 16 || passes <= 2 {
+        sort_part(at, keys);
+        return;
+    }
+    let mut pairs: Vec<(u64, u32)> = at.iter().map(|&k| (keys[k as usize], k)).collect();
+    let mut spare = vec![(0u64, 0u32); pairs.len()];
+    let bounds = by_first_digit(&mut pairs, &mut spare);
+    // The buckets of the first digit are apart, and go to the threads by halves.
+    let half = match bounds.iter().position(|b| *b >= pairs.len() / 2) {
+        Some(i) if pairs.len() >= ROWS_FOR_THREADS => bounds[i],
+        _ => pairs.len(),
+    };
+    let (low, high) = pairs.split_at_mut(half);
+    let (spare_low, spare_high) = spare.split_at_mut(half);
+    let each = |from: usize, part: &mut [(u64, u32)], spare: &mut [(u64, u32)]| {
+        let end = from + part.len();
+        for w in bounds.windows(2).filter(|w| w[0] >= from && w[1] <= end) {
+            let (a, b) = (w[0] - from, w[1] - from);
+            sort_bucket(&mut part[a..b], &mut spare[a..b]);
+        }
+    };
+    let started = high.is_empty()
+        || std::thread::scope(|s| {
+            // A platform without threads, such as webR, orders in one.
+            let other = std::thread::Builder::new()
+                .spawn_scoped(s, || each(half, &mut *high, &mut *spare_high));
+            each(0, &mut *low, &mut *spare_low);
+            other.is_ok()
+        });
+    if high.is_empty() {
+        each(0, low, spare_low);
+    } else if !started {
+        each(half, high, spare_high);
+    }
+    for (to, (_, k)) in at.iter_mut().zip(pairs) {
+        *to = k;
+    }
+}
+
+/// Moves pairs to the buckets of the highest bits in which their keys differ, in the
+/// order they are in, and gives the bounds of the buckets.
+fn by_first_digit(pairs: &mut [(u64, u32)], spare: &mut [(u64, u32)]) -> Vec<usize> {
+    let first = pairs.first().map_or(0, |p| p.0);
+    let differ = pairs.iter().fold(0u64, |d, p| d | (p.0 ^ first));
+    if differ == 0 {
+        return vec![0, pairs.len()];
+    }
+    let bits = (usize::BITS - pairs.len().leading_zeros()).clamp(8, 16) - 3;
+    let shift = (64 - differ.leading_zeros()).saturating_sub(bits);
+    let mask = (1u64 << bits) - 1;
+    let digit = |k: u64| ((k >> shift) & mask) as usize;
+    let mut bounds = vec![0usize; (1 << bits) + 1];
+    pairs.iter().for_each(|p| bounds[digit(p.0) + 1] += 1);
+    for i in 1..bounds.len() {
+        bounds[i] += bounds[i - 1];
+    }
+    let mut next = bounds.clone();
+    for p in pairs.iter() {
+        let to = &mut next[digit(p.0)];
+        spare[*to] = *p;
+        *to += 1;
+    }
+    pairs.copy_from_slice(spare);
+    bounds
+}
+
+/// Orders pairs by their keys, and leaves those of one key in the order they are in.
+fn sort_bucket(pairs: &mut [(u64, u32)], spare: &mut [(u64, u32)]) {
+    if pairs.len() < 1 << 10 {
+        pairs.sort_by_key(|p| p.0);
+        return;
+    }
+    if pairs.windows(2).all(|w| w[0].0 <= w[1].0) {
+        return;
+    }
+    for w in by_first_digit(pairs, spare).windows(2) {
+        sort_bucket(&mut pairs[w[0]..w[1]], &mut spare[w[0]..w[1]]);
+    }
+}
+
+/// Orders positions by their keys, as [`sort_by_keys`], in one thread: by one pass
+/// per 16 bits in which the keys differ.
+fn sort_part(at: &mut Vec<u32>, keys: &[u64]) {
+    const BITS: u32 = 16;
+    // The counts of a pass cost more than the comparisons of a short vector.
+    if at.len() < 1 << 12 {
+        at.sort_by_key(|&k| keys[k as usize]);
+        return;
+    }
+    let first = keys[at[0] as usize];
+    let differ = at.iter().fold(0u64, |d, &k| d | (keys[k as usize] ^ first));
+    let mut next = vec![0u32; at.len()];
+    for shift in (0..64).step_by(BITS as usize) {
+        if (differ >> shift) as u16 == 0 {
+            continue;
+        }
+        let digit = |k: u32| (keys[k as usize] >> shift) as u16 as usize;
+        let mut count = vec![0u32; 1 << BITS];
+        at.iter().for_each(|&k| count[digit(k)] += 1);
+        let mut from = 0u32;
+        for c in &mut count {
+            from += std::mem::replace(c, from);
+        }
+        for &k in at.iter() {
+            let c = &mut count[digit(k)];
+            next[*c as usize] = k;
+            *c += 1;
+        }
+        std::mem::swap(at, &mut next);
+    }
+}
+
+/// The rows of the table value `x` in the order of the columns `by`, the first
+/// foremost; rows of one key stay in the order they are in.
+///
+/// @param x A value of a table.
+/// @param by The columns.
+/// @param descending The columns of `by` that descend.
+/// @return The value, or an object of class `r8_refused`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_table_sort(x: Robj, by: Robj, descending: Robj) -> Result<Robj> {
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let h = match Held::of(unsafe { x.get() }) {
+            Ok(h) => h,
+            Err(m) => return Ok(refused(m)),
+        };
+        let of = |j: &Robj| column_positions(unsafe { j.get() }, &h.names);
+        let (by, down) = match (of(&by), of(&descending)) {
+            (Ok(b), Ok(d)) => (b, d),
+            (Err(m), _) | (_, Err(m)) => return Ok(refused(m)),
+        };
+        if let Some(k) = down.iter().find(|k| !by.contains(k)) {
+            return Ok(refused(format!(
+                "`{}` descends, and is not among the columns of `by`",
+                h.names[*k as usize]
+            )));
+        }
+        let n = list_rows(h.columns) as usize;
+        let mut at: Vec<u32> = (0..n as u32).collect();
+        for k in by.iter().rev() {
+            let keys = sort_keys(h.column(*k as usize), down.contains(k));
+            sort_by_keys(&mut at, &keys);
+        }
+        let cols: Vec<usize> = (0..h.names.len()).collect();
+        let from: Vec<SEXP> = cols.iter().map(|&k| h.column(k)).collect();
+        let rows = gathered(&from, &at);
+        with_columns(&h, &cols, &|k| unsafe { rows[k].get() })
+    })
+}
+
 /// The columns of the table value `x`.
 ///
 /// @param x A value of a table.
@@ -1116,7 +1556,7 @@ fn r8_table_bind(xs: List) -> Result<Robj> {
     for (k, h) in held.iter().enumerate().skip(1) {
         if h.q != first.q {
             return Ok(refused(format!(
-                "value {} is a `{}`, and the first a `{}`; as_raven() gives values of one type",
+                "value {} is a `{}`, and the first a `{}`; Raven() gives values of one type",
                 k + 1,
                 h.q,
                 first.q
@@ -1224,5 +1664,7 @@ extendr_module! {
     fn r8_table_get;
     fn r8_table_columns;
     fn r8_table_set_facts;
+    fn r8_table_rename;
+    fn r8_table_sort;
     fn r8_table_bind;
 }

@@ -2,34 +2,35 @@
 % Please edit documentation in R/table.R
 \name{r8_columns}
 \alias{r8_columns}
-\alias{r8_set_columns}
+\alias{r8_annotate}
 \title{The columns of a table}
 \usage{
 r8_columns(x)
 
-r8_set_columns(x, columns)
+r8_annotate(x, unit = NULL, description = NULL)
 }
 \arguments{
 \item{x}{A value of a table.}
 
-\item{columns}{Named list: By the name of a column, a list with \code{unit}, a UCUM
-code by convention, and \code{description}, each one string, or \code{NULL} to remove it;
-\code{NULL} in place of the list removes both.}
+\item{unit, description}{Optional named character: The units, UCUM codes by
+convention, and the descriptions, by the names of columns; \code{NA} removes one.}
 }
 \value{
 \code{r8_columns()}, a data frame with the variables \code{name}, \code{type}, \code{unit},
-\code{description}, and \code{declared}. \code{r8_set_columns()}, the new value.
+\code{description}, and \code{declared}. \code{r8_annotate()}, the new value.
 }
 \description{
 \code{r8_columns()} describes the columns of a value of a table (\code{\link[=new_table]{new_table()}}), and
-\code{r8_set_columns()} gives a value with the unit or the description of a column that
-its type does not declare. Those of a declared column are its type's.
+\code{r8_annotate()} gives a value with the units or the descriptions of columns that
+its type does not declare. Those of a declared column are its type's. A column that
+is replaced has neither.
 }
 \examples{
 r <- Raven(age = c(40, 52), sex = c("f", "m"))
-r <- r8_set_columns(
+r <- r8_annotate(
   r,
-  list(age = list(unit = "a", description = "Age at admission"))
+  unit = c(age = "a"),
+  description = c(age = "Age at admission")
 )
 r
 r8_columns(r)

@@ -360,6 +360,12 @@ struct Validator<'l, 'c> {
     errors: Vec<ValueError>,
     /// The number of errors found, including those past the limit.
     count: usize,
+    /// The number of errors that are listed.
+    limit: usize,
+    /// The number of elements with an error, in an order in which the errors
+    /// of one element follow one another, and the last such element.
+    elements: u64,
+    last: Option<u64>,
     cache: &'c mut RuleCache,
     /// The depth of `sensitive` fields around the value being checked.
     sensitive: u32,
@@ -373,6 +379,9 @@ impl<'l, 'c> Validator<'l, 'c> {
             lookup,
             errors: Vec::new(),
             count: 0,
+            limit: ERROR_LIMIT,
+            elements: 0,
+            last: None,
             cache,
             sensitive: 0,
             nesting: 0,
@@ -381,7 +390,13 @@ impl<'l, 'c> Validator<'l, 'c> {
 
     fn push(&mut self, e: ValueError) {
         self.count += 1;
-        if self.errors.len() < ERROR_LIMIT {
+        if let Some(Segment::Element(i)) = e.segments.last()
+            && self.last != Some(*i)
+        {
+            self.last = Some(*i);
+            self.elements += 1;
+        }
+        if self.errors.len() < self.limit {
             self.errors.push(e);
         }
     }
@@ -1394,39 +1409,7 @@ impl<'l> Validator<'l, '_> {
         }
         for (name, ty, unique, cells) in &cells {
             let p = P::Col(path, name);
-            let (inner, optional) = unwrap_option(ty);
-            if let FieldType::Factor { levels, ordered } = inner {
-                if let Some(len) = self.factor(levels.as_deref(), *ordered, optional, *cells, &p)
-                    && len as u64 != n
-                {
-                    self.report(
-                        "column_length",
-                        &p,
-                        Problem::Cells(n),
-                        Some(Shown::Length(len as u64)),
-                        None,
-                    );
-                }
-                continue;
-            }
-            let len = match cells.vec(inner) {
-                Ok(len) => len,
-                Err(f) => {
-                    self.form(f, &p);
-                    continue;
-                }
-            };
-            if len as u64 != n {
-                self.report(
-                    "column_length",
-                    &p,
-                    Problem::Cells(n),
-                    Some(Shown::Length(len as u64)),
-                    None,
-                );
-                continue;
-            }
-            self.sequence(inner, *cells, len, &p, optional, *unique);
+            self.cells(ty, *unique, *cells, n, &p);
         }
         if !rules.is_empty() && self.count == before {
             for (ri, r) in rules.iter().enumerate() {
@@ -1466,6 +1449,47 @@ impl<'l> Validator<'l, '_> {
             }
         }
         Some(extra)
+    }
+
+    /// Checks the cells of a column of `n` rows; `false` where the column is
+    /// not of the type's kind or has another length, so that its cells are not
+    /// read.
+    fn cells<'a, A: Access<'a>>(
+        &mut self,
+        ty: &FieldType,
+        unique: bool,
+        cells: A,
+        n: u64,
+        p: &P,
+    ) -> bool {
+        let (inner, optional) = unwrap_option(ty);
+        let len = if let FieldType::Factor { levels, ordered } = inner {
+            match self.factor(levels.as_deref(), *ordered, optional, cells, p) {
+                Some(len) if len as u64 == n => return true,
+                Some(len) => len,
+                None => return false,
+            }
+        } else {
+            match cells.vec(inner) {
+                Ok(len) if len as u64 == n => {
+                    self.sequence(inner, cells, len, p, optional, unique);
+                    return true;
+                }
+                Ok(len) => len,
+                Err(f) => {
+                    self.form(f, p);
+                    return false;
+                }
+            }
+        };
+        self.report(
+            "column_length",
+            p,
+            Problem::Cells(n),
+            Some(Shown::Length(len as u64)),
+            None,
+        );
+        false
     }
 
     fn compiled(
@@ -1782,6 +1806,42 @@ impl<'l> Validator<'l, '_> {
             Err(Unnamed::Unknown(msg)) => self.error("unknown_type", path, msg),
             Err(Unnamed::NotValue(found)) => self.not_subtype(of, found, path),
         }
+    }
+}
+
+/// What a check of a column found.
+#[derive(Debug, Clone, Default)]
+pub struct ColumnCheck {
+    /// The first problems, at most as many as asked for, whose paths are the
+    /// column's name and the row.
+    pub errors: Vec<ValueError>,
+    /// The number of rows with a problem.
+    pub rows: u64,
+    /// The column is of the type's kind and length, so that its cells were
+    /// read.
+    pub read: bool,
+}
+
+/// Checks the cells of the column `name` of a table of `rows` rows against its
+/// type, and lists at most `limit` problems.
+#[allow(clippy::too_many_arguments)]
+pub fn check_column<'a, A: Access<'a>>(
+    name: &str,
+    ty: &FieldType,
+    unique: bool,
+    cells: A,
+    rows: u64,
+    lookup: &dyn TypeLookup,
+    cache: &mut RuleCache,
+    limit: usize,
+) -> ColumnCheck {
+    let mut v = Validator::new(lookup, cache);
+    v.limit = limit;
+    let read = v.cells(ty, unique, cells, rows, &P::Col(&P::Root(""), name));
+    ColumnCheck {
+        rows: v.elements,
+        read,
+        errors: v.errors,
     }
 }
 

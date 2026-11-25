@@ -288,7 +288,7 @@ scenario(
   "a vector that data.table changes in place is found on demand",
   situation = "A user gives a data frame to a field, turns that data frame into a data.table with setDT(), and changes a column in place. Or the user calls set() on the data frame that a field gives.",
   risk = "The value changes without a check: the vectors are shared, since a copy of each would double the memory, and data.table does not ask R before it changes one.",
-  result = "The value holds the change, and r8_validate() reports it. A large data.table that is changed in place is held in a field of host_class(), which R8 does not check, and r8_check() checks it against a type where the code asks.",
+  result = "The value holds the change, and r8_validate() reports it. A large data.table that is changed in place is held in a field of host_class(), which R8 does not check, and r8_validate() checks it against a type where the code asks.",
   code = {
     skip_if_not_installed("data.table")
     W <- sharing_table("f12")
@@ -307,6 +307,6 @@ scenario(
     data.table::set(d$data, 1L, "a", 2)
     expect_identical(d$data$a, c(2, -1))
     type <- type_table(columns = list(a = column(type_double(min = 0))))
-    expect_error(r8_check(d$data, type), "0", class = "r8_value_error")
+    expect_error(r8_validate(d$data, type), "0", class = "r8_value_error")
   }
 )

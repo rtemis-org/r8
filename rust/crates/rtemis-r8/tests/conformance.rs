@@ -320,6 +320,7 @@ fn conformance_corpus() {
                 }
                 "update" => run_update(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 "filter" => run_filter(ir.as_ref(), case),
+                "check" => run_check(ir.as_ref(), case),
                 "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 op @ ("canonical" | "hash") => run_canonical(
                     op,
@@ -350,6 +351,66 @@ fn conformance_corpus() {
     println!("conformance: {passed} passed, {skipped} skipped");
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(passed > 0, "no conformance case ran");
+}
+
+/// Runs one `check` case.
+fn run_check(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
+    use rtemis_r8::ir::{RuleDef, TypeDef};
+    use rtemis_r8::report::{Kind, Of, check_rules, check_table};
+    use rtemis_r8::rules::TypeLookup;
+    let Some(docs) = ir else {
+        return Some("a `check` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(case["type"].as_str()?).ok()?;
+    let Some(TypeDef::Table(def)) = docs.find(&ty) else {
+        return Some(format!("`{ty}` is not a table of the suite's `ir`"));
+    };
+    let table = rtemis_r8::access::Json::new(&case["input"]);
+    let done = match case.get("options").and_then(|o| o.get("rules")) {
+        Some(rules) => {
+            let rules: Vec<RuleDef> = serde_json::from_value(rules.clone()).unwrap();
+            check_rules(table, &rules, docs, 10)
+        }
+        None => check_table(table, &def.columns, def.open, &def.rules, docs, 10),
+    };
+    let (rows, lines) = match done {
+        Ok(found) => found,
+        Err(f) => return Some(f.message),
+    };
+    let lines: Vec<Value> = lines
+        .into_iter()
+        .map(|l| {
+            let mut out = serde_json::json!({
+                "checked": l.checked, "failed": l.failed, "missing": l.missing, "errors": l.errors,
+            });
+            match &l.of {
+                Of::Column(c) => out["column"] = c.as_str().into(),
+                Of::Rule(i) => out["rule"] = (*i).into(),
+            }
+            let problems: Vec<Value> = l
+                .problems
+                .iter()
+                .map(|p| {
+                    let code = match &p.kind {
+                        Kind::Value(e) => e.code,
+                        Kind::Violation(_) => "rule_violation",
+                        Kind::Error(..) => "rule_error",
+                        Kind::Unread(e) => e[0].code,
+                    };
+                    match p.row {
+                        Some(r) => serde_json::json!({ "row": r, "code": code }),
+                        None => serde_json::json!({ "code": code }),
+                    }
+                })
+                .collect();
+            if !problems.is_empty() {
+                out["problems"] = problems.into();
+            }
+            out
+        })
+        .collect();
+    let got = serde_json::json!({ "rows": rows, "lines": lines });
+    (got != case["expect"]).then(|| format!("{got}, expected {}", case["expect"]))
 }
 
 /// Runs one `filter` case.

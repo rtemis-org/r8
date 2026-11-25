@@ -108,7 +108,7 @@
 - A rule that ends in an error, such as a division by zero, shows the rule, the values it read, and the rows.
 - A `derive(R8)` rule takes `abs`, `sum`, and `nchar`.
 - A table prints as a grid with the types, units, and missing cells of its columns, its first and last rows, and what it leaves out.
-- `new_table()` declares a table, a type whose values hold columns, and `Raven` is the table of any columns. A table reads as a list of its columns and, with `x[i, j]`, as a data frame; it shares the vectors that it is made from, and copies those of a data.table. `r8_columns()` and `r8_set_columns()` give and set the units and descriptions of columns.
+- `new_table()` declares a table, a type whose values hold columns, and `Raven` is the table of any columns. A table reads as a list of its columns and, with `x[i, j]`, as a data frame; it shares the vectors that it is made from, and copies those of a data.table. `r8_columns()` describes the columns, and `r8_annotate()` gives them units and descriptions. `r8_set()`, `r8_drop()`, and `r8_rename()` give a table with columns added, replaced, removed, or renamed, and `r8_sort()` one with its rows in order.
 - The extra columns of an open `type_table()` have any name that does not begin with `$`, and a double column among them holds `NaN` and infinite values.
 - A field asked for by position is an error that gives the call by name: "field 1 is `id`: r[["id"]]".
 - Names that repeat are refused: two columns of a table (`duplicate_column`), two keys of a `btree_map()` or two members of a `type_json()` value (`duplicate_key`), and two members of one name in an object of a JSON document.
@@ -116,8 +116,9 @@
 - A Rust-stored value is saved as its fields, which read without the package that declares the type, and after the type changed; R8 checks them before Rust code takes the value. `R8Codec.write_state`, `read_state`, and `encode`, and `R8Writer`, are removed, and the interface is ABI version 2: a package with compiled exports is reinstalled.
 - No operation copies a vector, a matrix, a factor, or a column of a data frame, unless the field's type asks for other elements; a `POSIXct` in another time zone is shared and read in UTC.
 - A field read gives a vector as a view that R copies before it changes it, and a table as a data frame of its own, so that `setDT()`, `:=`, and `setattr()` on what a read gave leave the value as it is. The columns of a data.table given to a constructor are copied; vectors and data frames are not.
-- `r8_check(x, type)` checks any object against a field type or an R8 type.
-- `r8_save_rds()` and `r8_read_rds()` write and read an RDS file with a checksum: a damaged file is an `r8_file_error`.
+- `r8_check(x, against)` holds a table, or a data frame as it was read, against rules or a type, and gives a report: the rows that hold, fail, have no answer, and are errors, for each rule, and the problems with their rows, values, and explanations. `r8_validate(x, against)` holds any object against a type or rules, and raises an error.
+- `r8_to_data_frame()` is `as.data.frame()` of a table.
+- `r8_write_rds()` and `r8_read_rds()` write and read an RDS file with a checksum: a damaged file is an `r8_file_error`.
 - `print()`, `format()`, and `str()` of a value show `<sensitive>` for a field declared `sensitive = TRUE`.
 - A constructor builds a default that is a value of another package's type from the registered declaration of that type.
 - A value of a struct that its parent's change left stale refuses a field write and a comparison.

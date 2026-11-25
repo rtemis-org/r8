@@ -596,6 +596,30 @@ r8_table_columns <- function(x) .Call(wrap__r8_table_columns, x)
 #' @noRd
 r8_table_set_facts <- function(x, facts) .Call(wrap__r8_table_set_facts, x, facts)
 
+#' The table value `x` with the columns `from` named `to`, or the problems of it. A
+#' value that keeps its type keeps the order of its declared columns; without a
+#' column that the type requires, it is a raven, in the order it has. The facts of a
+#' column go with it.
+#'
+#' @param x A value of a table.
+#' @param from The columns.
+#' @param to Character: The new names.
+#' @return The value, or an object of class `r8_refused` or `r8_problems`.
+#' @keywords internal
+#' @noRd
+r8_table_rename <- function(x, from, to) .Call(wrap__r8_table_rename, x, from, to)
+
+#' The rows of the table value `x` in the order of the columns `by`, the first
+#' foremost; rows of one key stay in the order they are in.
+#'
+#' @param x A value of a table.
+#' @param by The columns.
+#' @param descending The columns of `by` that descend.
+#' @return The value, or an object of class `r8_refused`.
+#' @keywords internal
+#' @noRd
+r8_table_sort <- function(x, by, descending) .Call(wrap__r8_table_sort, x, by, descending)
+
 #' The rows of the table values `xs`, of one type and with the same columns.
 #'
 #' @param xs List of values.
@@ -662,6 +686,27 @@ r8_ft_table <- function(columns, open, rules) .Call(wrap__r8_ft_table, columns, 
 #' @keywords internal
 #' @noRd
 r8_default_canonical <- function(x, type) .Call(wrap__r8_default_canonical, x, type)
+
+#' The rows of a table held against rules, or against a table type.
+#'
+#' @param columns List: The columns by name.
+#' @param value A value of a table, or `NULL`.
+#' @param rules List of `rule()`, or `NULL`.
+#' @param type An R8 table type, `type_table()`, or `NULL`.
+#' @param limit Integer: The problems kept of each line.
+#' @return List, as `written()` gives it, or the message of what is refused.
+#' @keywords internal
+#' @noRd
+r8_report <- function(columns, value, rules, type, limit) .Call(wrap__r8_report, columns, value, rules, type, limit)
+
+#' The problems of an object that is not a table, held against a type.
+#'
+#' @param x An object.
+#' @param type A field type, or an R8 type.
+#' @return List, as `written()` gives it.
+#' @keywords internal
+#' @noRd
+r8_report_object <- function(x, type) .Call(wrap__r8_report_object, x, type)
 
 #' The notation of a field type (`rtemis_r8::ir::notation`).
 #'

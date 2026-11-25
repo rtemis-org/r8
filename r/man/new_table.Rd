@@ -61,7 +61,8 @@ value again.
 gives columns. \code{i} is a \code{\link[=rule]{rule()}}, whose names are columns, \code{x[rule(age > 40), ]}, or
 holds positions, all positive or all negative, or is a logical vector with one value
 per row; \code{j} holds names or positions. \code{\link[=r8_filter]{r8_filter()}} and \code{\link[=r8_select]{r8_select()}} are functions
-for the two. \code{x$a <- value}
+for the two; \code{\link[=r8_sort]{r8_sort()}} orders rows, and \code{\link[=r8_set]{r8_set()}} and the functions with it change
+columns. \code{x$a <- value}
 replaces a column, adds one to an open table, and, with \code{NULL}, removes one;
 the new column is checked, with the rules that read it. A result without a column
 that its type requires is a \link{Raven}. \code{rbind()} binds the rows of values of one

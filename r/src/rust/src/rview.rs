@@ -1324,9 +1324,9 @@ impl<'a> Access<'a> for RView<'a> {
                 None => "is of another type".to_string(),
             };
             let as_one = match class.as_deref() {
-                Some("difftime") => "; as.numeric(x, units = \"hours\") gives numbers, whose unit r8_set_columns() records",
+                Some("difftime") => "; as.numeric(x, units = \"hours\") gives numbers, whose unit r8_annotate() records",
                 Some("integer64") => "; as.character() gives its digits, and as.numeric() its numbers up to 2^53",
-                Some("units") => "; as.numeric() gives its numbers, whose unit r8_set_columns() records",
+                Some("units") => "; as.numeric() gives its numbers, whose unit r8_annotate() records",
                 Some("POSIXlt") => "; as.POSIXct() gives a column",
                 Some("haven_labelled") => "; haven::as_factor() gives a factor",
                 _ => "",

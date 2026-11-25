@@ -1287,7 +1287,10 @@ fields_refused <- function(x, fields, values, res = NULL) {
     refuse("Fields are replaced by name: x[c(\"a\", \"b\")] <- list(v, w).")
   }
   unknown <- is.na(match(fields, attr(x, "names", exact = TRUE)))
-  if (any(unknown)) {
+  # A table may take a column that it does not have.
+  if (
+    any(unknown) && !(inherits(x, "r8_table") && inherits(res, "r8_problems"))
+  ) {
     unknown_field(x, fields[unknown][[1L]])
   }
   if (anyDuplicated(fields)) {
@@ -1335,7 +1338,10 @@ fields_refused <- function(x, fields, values, res = NULL) {
       "x[",
       if (length(fields) == 1L) index else paste0("c(", index, ")"),
       "] <- value"
-    )
+    ),
+    closing = if (inherits(x, "r8_table") && length(fields) == 1L) {
+      column_closing(x, fields, res[["errors"]])
+    }
   )
 } # /R8::fields_refused
 

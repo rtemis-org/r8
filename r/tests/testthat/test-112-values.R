@@ -505,7 +505,7 @@ test_that("names that repeat are refused in a table, a map, JSON, and a document
       class = "r8_value_error"
     )
     expect_error(
-      r8_check(d, type_table(columns = list(), open = TRUE)),
+      r8_validate(d, type_table(columns = list(), open = TRUE)),
       "duplicate_column",
       class = "r8_value_error"
     )

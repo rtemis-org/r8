@@ -46,7 +46,8 @@
 #' gives columns. `i` is a [rule()], whose names are columns, `x[rule(age > 40), ]`, or
 #' holds positions, all positive or all negative, or is a logical vector with one value
 #' per row; `j` holds names or positions. [r8_filter()] and [r8_select()] are functions
-#' for the two. `x$a <- value`
+#' for the two; [r8_sort()] orders rows, and [r8_set()] and the functions with it change
+#' columns. `x$a <- value`
 #' replaces a column, adds one to an open table, and, with `NULL`, removes one;
 #' the new column is checked, with the rules that read it. A result without a column
 #' that its type requires is a [Raven]. `rbind()` binds the rows of values of one
@@ -119,11 +120,9 @@ new_table <- function(
 #' infinite values. The name of a column is any text that does not begin with `$`.
 #'
 #' @param ... One data frame or list, or the columns by name.
-#' @param x An object that `Raven()` takes.
-#'
-#' @return A value of `R8::Raven`. `as_raven()` returns a raven as it is, and gives
-#'   a value of another table as a raven with the units and the descriptions that its
-#'   type declares.
+#' @return A value of `R8::Raven`: of a raven, the same value, and of a value of
+#'   another table, its columns, with the units and the descriptions that its type
+#'   declares.
 #'
 #' @examples
 #' r <- Raven(iris)
@@ -134,15 +133,6 @@ new_table <- function(
 #' @name Raven
 #' @export
 Raven <- NULL
-
-#' @rdname Raven
-#' @export
-as_raven <- function(x) {
-  if (inherits(x, "R8::Raven") && is_value(x)) {
-    return(x)
-  }
-  Raven(x)
-} # /R8::as_raven
 
 
 # %% table_value ----
@@ -157,6 +147,15 @@ as_raven <- function(x) {
 #' @keywords internal
 #' @noRd
 table_value <- function(qname, args, type) {
+  if (
+    identical(qname, "R8::Raven") &&
+      length(args) == 1L &&
+      is.null(names(args)) &&
+      inherits(args[[1L]], "R8::Raven") &&
+      is_value(args[[1L]])
+  ) {
+    return(args[[1L]])
+  }
   given <- table_columns(args, sub("^.*::", "", qname))
   res <- r8_table_new(
     given[["columns"]],
@@ -320,7 +319,7 @@ column_closing <- function(x, name, errors) {
     name,
     "` is declared by `",
     value_type(x),
-    "`. A transformed column takes another name, or as_raven(x) gives the ",
+    "`. A transformed column takes another name, or Raven(x) gives the ",
     "columns without the type."
   )
 } # /R8::column_closing
@@ -534,23 +533,7 @@ r8_filter <- function(x, rule) {
 #' @export
 r8_select <- function(x, columns) {
   check_table(x)
-  columns <- index_value(
-    columns,
-    x,
-    substitute(columns),
-    parent.frame(),
-    "c(%s)"
-  )
-  positions <- is.numeric(columns) &&
-    !is.object(columns) &&
-    all(is.finite(columns)) &&
-    all(columns >= 1)
-  if (!is.character(columns) && !positions) {
-    r8_abort(
-      "`columns` are names, such as c(\"age\", \"sex\"), or positions, such as 1:2.",
-      class = "r8_argument_error"
-    )
-  }
+  columns <- table_columns_arg(x, columns, substitute(columns), parent.frame())
   table_result(r8_table_get(x, NULL, columns), x)
 } # /R8::r8_select
 
@@ -605,6 +588,27 @@ as.data.frame.r8_table <- function(
 } # /R8::as.data.frame.r8_table
 
 
+# %% r8_to_data_frame ----
+#' A table as a data frame
+#'
+#' The columns of a table ([new_table()]) as a data frame, which shares them.
+#' `as.data.frame()` of a table, which `lm()` and other functions of R call, is the
+#' same.
+#'
+#' @param x A value of a table.
+#'
+#' @return A data frame.
+#'
+#' @examples
+#' r8_to_data_frame(Raven(a = 1:3))
+#'
+#' @export
+r8_to_data_frame <- function(x) {
+  check_table(x)
+  as.data.frame(x)
+} # /R8::r8_to_data_frame
+
+
 # %% head.r8_table ----
 #' @exportS3Method utils::head
 head.r8_table <- function(x, n = 6L, ...) {
@@ -643,26 +647,217 @@ rbind.r8_table <- function(..., deparse.level = 1) {
 } # /R8::rbind.r8_table
 
 
+# %% r8_set ----
+#' Change the columns of a table
+#'
+#' `r8_set()` gives a table ([new_table()]) with columns added or replaced,
+#' `r8_drop()` without columns, and `r8_rename()` with columns under other names. Each
+#' gives a new value, which shares the columns it keeps, and leaves `x` as it is.
+#'
+#' @section Columns of a declared table:
+#' A declared column that is replaced, and a column that takes its name, is checked,
+#' with the rules that read it. A table without a column that its type requires is a
+#' [Raven], with the units and descriptions of the declaration.
+#'
+#' @section Units and descriptions:
+#' A column that is added or replaced has none. A renamed column keeps its own.
+#'
+#' @param x A value of a table.
+#' @param columns `r8_set()`: Named list, data frame, or table: The columns, each a
+#'   vector with one element for each row. `r8_drop()`: Character or numeric: The
+#'   columns, by name or by position, each once.
+#' @param from Character or numeric: The columns, by name or by position, each once.
+#' @param to Character: The new names, one for each column of `from`.
+#'
+#' @return A value of the type of `x`, or a [Raven].
+#'
+#' @examples
+#' r <- Raven(weight = c(60, 82), height = c(1.62, 1.80))
+#' r <- r8_set(r, list(bmi = r$weight / r$height^2))
+#' r <- r8_rename(r, "weight", "mass")
+#' r8_drop(r, "height")
+#'
+#' @export
+r8_set <- function(x, columns) {
+  check_table(x)
+  if (is_value(columns) && inherits(columns, "r8_table")) {
+    columns <- as.list(columns)
+  }
+  keys <- names(columns) %||% character()
+  if (
+    !is.list(columns) ||
+      (is.object(columns) && !is.data.frame(columns)) ||
+      length(keys) != length(columns) ||
+      anyNA(keys) ||
+      !all(nzchar(keys))
+  ) {
+    r8_abort(
+      "`columns` is a named list: r8_set(x, list(bmi = w / h^2)).",
+      class = "r8_argument_error"
+    )
+  }
+  own <- inherits(columns, "data.table")
+  columns <- as.list(unclass(columns))
+  attributes(columns) <- list(names = keys)
+  absent <- vapply(columns, is.null, NA)
+  if (any(absent)) {
+    r8_abort(
+      "Column `",
+      keys[absent][[1L]],
+      "` is NULL; r8_drop() gives the table without a column.",
+      class = "r8_argument_error"
+    )
+  }
+  if (own) {
+    # data.table changes its columns in place.
+    columns <- lapply(columns, function(v) {
+      v <- rep_len(v, length(v))
+      v
+    })
+  }
+  if (length(columns) == 0L) {
+    return(x)
+  }
+  res <- .Call(wrap__r8_set_fields, x, keys, columns)
+  if (!is_value(res)) {
+    if (inherits(res, "r8_problems")) {
+      construct_error(
+        res,
+        value_type(x),
+        "",
+        inputs = columns,
+        assignment = "r8_set()",
+        closing = if (length(keys) == 1L) {
+          column_closing(x, keys, res[["errors"]])
+        }
+      )
+    }
+    fields_refused(x, keys, columns, res)
+  }
+  res
+} # /R8::r8_set
+
+
+# %% r8_drop ----
+#' @rdname r8_set
+#' @export
+r8_drop <- function(x, columns) {
+  check_table(x)
+  columns <- table_columns_arg(x, columns, substitute(columns), parent.frame())
+  # Positions and names are read as r8_select() reads them.
+  at <- match(
+    names(table_result(r8_table_get(x, NULL, columns), x)),
+    names(x)
+  )
+  table_result(r8_table_get(x, NULL, setdiff(seq_along(x), at)), x)
+} # /R8::r8_drop
+
+
+# %% r8_rename ----
+#' @rdname r8_set
+#' @export
+r8_rename <- function(x, from, to) {
+  check_table(x)
+  from <- table_columns_arg(x, from, substitute(from), parent.frame(), "from")
+  if (!is.character(to) || is.object(to) || anyNA(to)) {
+    r8_abort(
+      "`to` holds names, such as c(\"age\", \"sex\").",
+      class = "r8_argument_error"
+    )
+  }
+  table_result(r8_table_rename(x, from, to), x)
+} # /R8::r8_rename
+
+
+# %% r8_sort ----
+#' Order the rows of a table
+#'
+#' Rows in the order of one or more columns: numbers, dates, and date-times by
+#' value, logicals from `FALSE`, strings by the code points of their characters, as in
+#' every host and locale, and factors by their levels. Missing cells and `NaN` come
+#' last, also in a column that descends. Rows that are equal in every column of `by`
+#' stay in the order they are in.
+#'
+#' @param x A value of a table.
+#' @param by Character or numeric: The columns, the first foremost, by name or by
+#'   position.
+#' @param descending Optional character or numeric: The columns of `by` that descend.
+#'
+#' @return A value of the type of `x`.
+#'
+#' @examples
+#' r <- Raven(site = c("b", "a", "b"), age = c(40, 52, 61))
+#' r8_sort(r, c("site", "age"), descending = "age")
+#'
+#' @export
+r8_sort <- function(x, by, descending = NULL) {
+  check_table(x)
+  by <- table_columns_arg(x, by, substitute(by), parent.frame(), "by")
+  if (!is.null(descending)) {
+    descending <- table_columns_arg(
+      x,
+      descending,
+      substitute(descending),
+      parent.frame(),
+      "descending"
+    )
+  }
+  table_result(r8_table_sort(x, by, descending %||% character()), x)
+} # /R8::r8_sort
+
+
+# %% table_columns_arg ----
+#' The columns that an argument asks for
+#'
+#' @param x The table.
+#' @param value The argument, not yet evaluated.
+#' @param e Language object: The argument as written.
+#' @param env Environment: The caller's.
+#' @param arg Character: The argument's name.
+#'
+#' @return Names or positive positions; signals `r8_argument_error`.
+#'
+#' @keywords internal
+#' @noRd
+table_columns_arg <- function(x, value, e, env, arg = "columns") {
+  value <- index_value(value, x, e, env, "c(%s)")
+  positions <- is.numeric(value) &&
+    !is.object(value) &&
+    all(is.finite(value)) &&
+    all(value >= 1)
+  if (!is.character(value) && !positions) {
+    r8_abort(
+      "`",
+      arg,
+      "` are names, such as c(\"age\", \"sex\"), or positions, such as 1:2.",
+      class = "r8_argument_error"
+    )
+  }
+  value
+} # /R8::table_columns_arg
+
+
 # %% r8_columns ----
 #' The columns of a table
 #'
 #' `r8_columns()` describes the columns of a value of a table ([new_table()]), and
-#' `r8_set_columns()` gives a value with the unit or the description of a column that
-#' its type does not declare. Those of a declared column are its type's.
+#' `r8_annotate()` gives a value with the units or the descriptions of columns that
+#' its type does not declare. Those of a declared column are its type's. A column that
+#' is replaced has neither.
 #'
 #' @param x A value of a table.
-#' @param columns Named list: By the name of a column, a list with `unit`, a UCUM
-#'   code by convention, and `description`, each one string, or `NULL` to remove it;
-#'   `NULL` in place of the list removes both.
+#' @param unit,description Optional named character: The units, UCUM codes by
+#'   convention, and the descriptions, by the names of columns; `NA` removes one.
 #'
 #' @return `r8_columns()`, a data frame with the variables `name`, `type`, `unit`,
-#'   `description`, and `declared`. `r8_set_columns()`, the new value.
+#'   `description`, and `declared`. `r8_annotate()`, the new value.
 #'
 #' @examples
 #' r <- Raven(age = c(40, 52), sex = c("f", "m"))
-#' r <- r8_set_columns(
+#' r <- r8_annotate(
 #'   r,
-#'   list(age = list(unit = "a", description = "Age at admission"))
+#'   unit = c(age = "a"),
+#'   description = c(age = "Age at admission")
 #' )
 #' r
 #' r8_columns(r)
@@ -677,113 +872,99 @@ r8_columns <- function(x) {
 } # /R8::r8_columns
 
 
-# %% r8_set_columns ----
+# %% r8_annotate ----
 #' @rdname r8_columns
 #' @export
-r8_set_columns <- function(x, columns) {
+r8_annotate <- function(x, unit = NULL, description = NULL) {
   check_table(x)
-  changes <- columns
   about <- r8_table_columns(x)
-  keys <- names(changes)
-  if (
-    !is.list(changes) ||
-      is.object(changes) ||
-      (length(changes) > 0L && (is.null(keys) || !all(nzchar(keys))))
-  ) {
-    r8_abort(
-      "`columns` is a list by the names of columns: ",
-      "r8_set_columns(x, list(age = list(unit = \"a\"))).",
-      class = "r8_argument_error"
-    )
-  }
   facts <- list()
-  for (k in seq_along(about[["name"]])[!about[["declared"]]]) {
+  for (k in which(!about[["declared"]])) {
     f <- list(
       unit = about[["unit"]][[k]],
       description = about[["description"]][[k]]
     )
     facts[[about[["name"]][[k]]]] <- f[!vapply(f, is.na, NA)]
   }
+  given <- list(unit = unit, description = description)
+  for (fact in names(given)) {
+    facts <- column_facts(facts, fact, given[[fact]], about, x)
+  }
+  facts <- facts[lengths(facts) > 0L]
+  r8_table_set_facts(x, if (length(facts) > 0L) facts)
+} # /R8::r8_annotate
+
+
+# %% column_facts ----
+#' The facts of columns after a change
+#'
+#' @param held List: The facts by the names of columns.
+#' @param fact Character: The fact.
+#' @param given Named character, or `NULL`: The fact by the names of columns.
+#' @param about List: The columns of the table.
+#' @param x The table.
+#'
+#' @return List; signals `r8_argument_error`.
+#'
+#' @keywords internal
+#' @noRd
+column_facts <- function(held, fact, given, about, x) {
+  if (is.null(given)) {
+    return(held)
+  }
+  refuse <- function(...) r8_abort(..., class = "r8_argument_error")
+  keys <- names(given)
+  if (
+    (!is.character(given) && !(is.logical(given) && all(is.na(given)))) ||
+      is.object(given) ||
+      is.null(keys) ||
+      anyNA(keys) ||
+      !all(nzchar(keys)) ||
+      anyDuplicated(keys) > 0L
+  ) {
+    refuse(
+      "`",
+      fact,
+      "` is a character vector by the names of columns: ",
+      fact,
+      " = c(age = ",
+      if (identical(fact, "unit")) "\"a\"" else "\"Age at admission\"",
+      ")."
+    )
+  }
   for (key in keys) {
     at <- match(key, about[["name"]])
     if (is.na(at)) {
-      r8_abort(
-        "`",
-        key,
-        "` is not a column of `x`.",
-        class = "r8_argument_error"
-      )
+      refuse("`", key, "` is not a column of `x`.")
     }
     if (about[["declared"]][[at]]) {
-      r8_abort(
+      refuse(
         "Column `",
         key,
         "` is declared by `",
         value_type(x),
-        "`, with its unit and description; as_raven(x) gives a value without them.",
-        class = "r8_argument_error"
+        "`, with its unit and description; Raven(x) gives a value without them."
       )
     }
-    facts[[key]] <- column_facts(changes[[key]], facts[[key]], key)
-  }
-  facts <- facts[lengths(facts) > 0L]
-  r8_table_set_facts(x, if (length(facts) > 0L) facts)
-} # /R8::r8_set_columns
-
-
-# %% column_facts ----
-#' The facts of a column after a change
-#'
-#' @param change List or `NULL`.
-#' @param held List: The facts of the column.
-#' @param key Character: The column, for messages.
-#'
-#' @return List.
-#'
-#' @keywords internal
-#' @noRd
-column_facts <- function(change, held, key) {
-  if (is.null(change)) {
-    return(list())
-  }
-  if (
-    !is.list(change) ||
-      is.null(names(change)) ||
-      !all(names(change) %in% c("unit", "description"))
-  ) {
-    r8_abort(
-      "What is set of column `",
-      key,
-      "` is a list with `unit` and `description`: ",
-      key,
-      " = list(unit = \"a\").",
-      class = "r8_argument_error"
-    )
-  }
-  for (fact in names(change)) {
-    v <- change[[fact]]
-    if (is.null(v)) {
-      held[[fact]] <- NULL
+    v <- as.character(given[[key]])
+    if (is.na(v)) {
+      held[[key]][[fact]] <- NULL
       next
     }
-    blank <- !is.character(v) ||
-      length(v) != 1L ||
-      is.na(v) ||
-      !nzchar(v) ||
-      (identical(fact, "unit") && !identical(trimws(v), as.character(v)))
-    if (blank) {
-      r8_abort(
+    if (!nzchar(v) || (identical(fact, "unit") && !identical(trimws(v), v))) {
+      refuse(
         "The ",
         fact,
         " of column `",
         key,
-        "` is one string that is not empty",
+        "` is not empty",
         if (identical(fact, "unit")) " and has no surrounding spaces",
-        ".",
-        class = "r8_argument_error"
+        "."
       )
     }
-    held[[fact]] <- as.character(v)
+    of <- as.list(held[[key]])
+    of[[fact]] <- v
+    held[[key]] <- of
   }
   held
 } # /R8::column_facts

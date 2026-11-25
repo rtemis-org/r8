@@ -36,7 +36,8 @@ use crate::access::{Access, Json};
 
 pub use compile::{Cell, RowScope, RuleError};
 pub use diagnose::{Diagnosis, SHOWN_CHARS, Shown};
-pub use rows::{NotChosen, RowError, RowRule, choose_rows};
+pub(crate) use rows::Held;
+pub use rows::{NotChosen, RowError, RowRule, Tally, choose_rows};
 pub(crate) use ty::dollar_type;
 pub use ty::implementors;
 pub use ty::{DocumentSet, Ty, TypeLookup};

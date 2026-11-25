@@ -94,10 +94,13 @@ fn exported_schemas_agree_with_validation() {
             one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
-        // Value cases; a `dispatch` case names a trait, and the input of a
-        // `refine` and an `update` case are declarations.
+        // Value cases; a `dispatch` case names a trait, the input of a `refine`
+        // and an `update` case are declarations, and that of a `check` case is
+        // a table that its type may refuse.
         for case in suite["cases"].as_array().unwrap() {
-            if ["dispatch", "refine", "update"].contains(&case["op"].as_str().unwrap_or_default()) {
+            if ["dispatch", "refine", "update", "check"]
+                .contains(&case["op"].as_str().unwrap_or_default())
+            {
                 continue;
             }
             let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
@@ -182,10 +185,13 @@ fn closed_schemas_list_the_registered_implementors() {
             one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
-        // Value cases; a `dispatch` case names a trait, and the input of a
-        // `refine` and an `update` case are declarations.
+        // Value cases; a `dispatch` case names a trait, the input of a `refine`
+        // and an `update` case are declarations, and that of a `check` case is
+        // a table that its type may refuse.
         for case in suite["cases"].as_array().unwrap() {
-            if ["dispatch", "refine", "update"].contains(&case["op"].as_str().unwrap_or_default()) {
+            if ["dispatch", "refine", "update", "check"]
+                .contains(&case["op"].as_str().unwrap_or_default())
+            {
                 continue;
             }
             let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();

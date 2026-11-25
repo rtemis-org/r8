@@ -53,6 +53,7 @@ pub mod reader;
 pub mod record;
 pub mod refine;
 pub mod registry;
+pub mod report;
 pub mod rules;
 pub mod text;
 pub mod tree;

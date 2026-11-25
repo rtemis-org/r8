@@ -75,7 +75,7 @@ test_that("a table is declared, and its values hold its columns", {
       age = cases()$age,
       grp = cases()$grp
     ),
-    V(as_raven(v)),
+    V(Raven(v)),
     V(Raven(cases()))
   )
   for (x in same) {
@@ -246,7 +246,7 @@ test_that("rbind() binds values of one table", {
   expect_identical(b$sex, c("f", "m", "f", "f"))
   expect_identical(b$grp, factor(c("a", NA, "b", "a"), levels = c("a", "b")))
   expect_identical(rbind(v), v)
-  refuses(rbind(v, Raven(cases())), "as_raven() gives values of one type")
+  refuses(rbind(v, Raven(cases())), "Raven() gives values of one type")
   refuses(rbind(v, v[, 1:3]), "has the columns")
   refuses(rbind(v, cases()), "takes values of one table")
   a <- Raven(f = factor("a"))
@@ -255,7 +255,7 @@ test_that("rbind() binds values of one table", {
   refuses(
     rbind(
       Raven(x = 1),
-      r8_set_columns(Raven(x = 1), list(x = list(unit = "kg")))
+      r8_annotate(Raven(x = 1), unit = c(x = "kg"))
     ),
     "units or descriptions"
   )
@@ -264,8 +264,8 @@ test_that("rbind() binds values of one table", {
   })
   refuses(rbind(U(id = 1:2), U(id = 2:3)), "not_unique")
   expect_identical(rbind(U(id = 1:2), U(id = 3L))$id, 1:3)
-  refuses(U(id = 1:2)[c(1, 1), ], "as_raven(x)[i, ]")
-  expect_identical(as_raven(U(id = 1:2))[c(1, 1), ]$id, c(1L, 1L))
+  refuses(U(id = 1:2)[c(1, 1), ], "Raven(x)[i, ]")
+  expect_identical(Raven(U(id = 1:2))[c(1, 1), ]$id, c(1L, 1L))
 })
 
 test_that("the columns of a table have units and descriptions", {
@@ -280,20 +280,23 @@ test_that("the columns of a table have units and descriptions", {
     r8_columns(Raven(iris))$type,
     c(rep("double", 4L), "factor")
   )
-  r <- as_raven(v)
+  r <- Raven(v)
   expect_identical(r8_columns(r)$unit, c("a", NA, NA, NA))
   expect_identical(r8_columns(r[2:1, c("sbp", "age")])$unit, c(NA, "a"))
-  r <- r8_set_columns(
+  r <- r8_annotate(
     r,
-    list(sbp = list(unit = "mm[Hg]", description = "Pressure"))
+    unit = c(sbp = "mm[Hg]"),
+    description = c(sbp = "Pressure")
   )
   expect_match(format(r), "[mm[Hg]]", fixed = TRUE, all = FALSE)
-  r <- r8_set_columns(r, list(sbp = list(description = NULL), age = NULL))
+  expect_identical(r8_columns(r)$description[1:2], c("Age", "Pressure"))
+  r <- r8_annotate(r, unit = c(age = NA), description = c(age = NA, sbp = NA))
   expect_identical(r8_columns(r)$unit, c(NA, "mm[Hg]", NA, NA))
   expect_identical(r8_columns(r)$description, rep(NA_character_, 4L))
+  expect_identical(r8_annotate(r), r)
   # A replaced column and a removed one take their facts along; the others keep
   # theirs.
-  r <- r8_set_columns(r, list(age = list(unit = "a")))
+  r <- r8_annotate(r, unit = c(age = "a"))
   r$sbp <- c(1, 2, 3)
   expect_identical(r8_columns(r)$unit, c("a", NA, NA, NA))
   r["age"] <- list(c(0.1, 0.2, 0.3))
@@ -305,16 +308,13 @@ test_that("the columns of a table have units and descriptions", {
   bad <- function(expr, text) {
     expect_error(expr, text, fixed = TRUE, class = "r8_argument_error")
   }
-  bad(
-    r8_set_columns(v, list(age = list(unit = "mo"))),
-    "is declared by `tb6::Vitals`"
-  )
-  bad(r8_set_columns(r, list(nope = list(unit = "a"))), "not a column")
-  bad(r8_set_columns(r, list(age = list(unit = " a"))), "no surrounding spaces")
-  bad(
-    r8_set_columns(r, list(age = list(units = "a"))),
-    "`unit` and `description`"
-  )
+  bad(r8_annotate(v, unit = c(age = "mo")), "is declared by `tb6::Vitals`")
+  bad(r8_annotate(r, unit = c(nope = "a")), "not a column")
+  bad(r8_annotate(r, unit = c(age = " a")), "no surrounding spaces")
+  bad(r8_annotate(r, description = c(age = "")), "is not empty")
+  bad(r8_annotate(r, unit = "a"), "unit = c(age = \"a\")")
+  bad(r8_annotate(r, unit = list(age = "a")), "by the names of columns")
+  bad(r8_annotate(r, unit = c(age = "a", age = "b")), "by the names of columns")
   bad(r8_columns(cases()), "a value of a table")
 })
 
@@ -365,13 +365,13 @@ test_that("equality and the hash cover the order and the units, not descriptions
     Raven(b = c("x", "y"), a = c(1, NA)),
     Raven(a = c(1, NaN), b = c("x", "y")),
     Raven(a = c(1L, NA), b = c("x", "y")),
-    r8_set_columns(r, list(a = list(unit = "kg")))
+    r8_annotate(r, unit = c(a = "kg"))
   )
   for (x in differs) {
     expect_false(r8_equal(r, x))
     expect_false(identical(r8_hash(r), r8_hash(x)))
   }
-  d <- r8_set_columns(r, list(a = list(description = "Weight")))
+  d <- r8_annotate(r, description = c(a = "Weight"))
   expect_true(r8_equal(r, d))
   expect_identical(r8_hash(r), r8_hash(d))
   expect_false(identical(r, d) && identical(r8_columns(r), r8_columns(d)))
@@ -465,7 +465,7 @@ test_that("no operation on a table copies a column that it does not change", {
     few
   )
   expect_lt(memory(r8_validate(r)), few)
-  expect_lt(memory(as_raven(r)), few)
+  expect_lt(memory(Raven(r)), few)
   # The rows of a table are new columns.
   expect_lt(memory(r[1:10, ]), few)
 })
@@ -487,12 +487,12 @@ test_that("a table prints as a grid that says what it leaves out", {
       "146           6.7          3.0           5.2          2.3  virginica"
     )
   )
-  r <- r8_set_columns(
+  r <- r8_annotate(
     Raven(
       a = c(1.25, NA, 100),
       b = c("x", NA, "long text that is cut somewhere")
     ),
-    list(a = list(unit = "kg"))
+    unit = c(a = "kg")
   )
   expect_identical(
     lines(r),
@@ -621,7 +621,7 @@ test_that("a table of another declaration is refused and updated", {
 
 test_that("a saved table reads in a session that did not declare it", {
   V <- vitals("tb10")
-  r <- r8_set_columns(Raven(iris), list(Sepal.Length = list(unit = "cm")))
+  r <- r8_annotate(Raven(iris), unit = c(Sepal.Length = "cm"))
   v <- V(cases())
   path <- tempfile(fileext = ".rds")
   saveRDS(list(r, v), path)

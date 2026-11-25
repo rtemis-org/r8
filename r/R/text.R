@@ -367,6 +367,9 @@ value_text <- function(x, summary = NULL) {
   if (!is.null(f)) {
     return(as_r8_text(f(x)))
   }
+  if (inherits(x, "R8::Report")) {
+    return(report_text(x))
+  }
   layout_value(x, summary = summary)
 } # /R8::value_text
 

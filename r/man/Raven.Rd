@@ -2,22 +2,17 @@
 % Please edit documentation in R/table.R
 \name{Raven}
 \alias{Raven}
-\alias{as_raven}
 \title{A table of any columns}
 \usage{
 Raven(...)
-
-as_raven(x)
 }
 \arguments{
 \item{...}{One data frame or list, or the columns by name.}
-
-\item{x}{An object that \code{Raven()} takes.}
 }
 \value{
-A value of \code{R8::Raven}. \code{as_raven()} returns a raven as it is, and gives
-a value of another table as a raven with the units and the descriptions that its
-type declares.
+A value of \code{R8::Raven}: of a raven, the same value, and of a value of
+another table, its columns, with the units and the descriptions that its type
+declares.
 }
 \description{
 \code{Raven} is a table (\code{\link[=new_table]{new_table()}}) that declares no column and takes any: a data

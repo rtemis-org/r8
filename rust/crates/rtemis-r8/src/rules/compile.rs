@@ -124,14 +124,15 @@ pub struct Cell {
 
 /// The columns of the table whose rows an expression reads.
 pub trait RowScope {
-    /// The column `name` and its unit.
-    fn column(&self, name: &str) -> Option<(Cell, Option<String>)>;
+    /// The column `name` and its unit, `None` where there is none of the name,
+    /// and an error where its cells do not read.
+    fn column(&self, name: &str) -> Option<Result<(Cell, Option<String>), String>>;
     /// The name nearest to `name`.
     fn nearest(&self, name: &str) -> Option<String>;
 }
 
 impl<C: crate::ir::Column> RowScope for &[C] {
-    fn column(&self, name: &str) -> Option<(Cell, Option<String>)> {
+    fn column(&self, name: &str) -> Option<Result<(Cell, Option<String>), String>> {
         let f = self
             .iter()
             .map(|c| c.field())
@@ -141,7 +142,7 @@ impl<C: crate::ir::Column> RowScope for &[C] {
             ty: f.ty.clone(),
             sensitive: f.sensitive,
         };
-        Some((cell, f.unit.as_deref().map(str::to_string)))
+        Some(Ok((cell, f.unit.as_deref().map(str::to_string))))
     }
 
     fn nearest(&self, name: &str) -> Option<String> {
@@ -634,7 +635,8 @@ impl Compiler<'_> {
                     }
                 },
                 Names::Columns { columns, .. } => match columns.column(first) {
-                    Some((c, unit)) => {
+                    Some(Err(message)) => return self.error("column_type", path, message),
+                    Some(Ok((c, unit))) => {
                         // A factor's cell is its label.
                         let ty = match Ty::of(&c.ty, unit.as_deref()) {
                             Ty::Factor { .. } => Ty::String,

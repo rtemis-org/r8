@@ -192,7 +192,7 @@ test_that("a data.table given is copied, and one made from a read changes no val
   expect_identical(class(w$tab), "data.frame")
 })
 
-test_that("r8_check() checks an object against a type, with every problem", {
+test_that("r8_validate() checks an object against a type, with every problem", {
   Features <- type_table(
     columns = list(
       age = column(type_double(min = 0)),
@@ -202,30 +202,30 @@ test_that("r8_check() checks an object against a type, with every problem", {
   )
   data <- data.frame(age = c(40, 52), sex = factor(c("f", "m")), more = 1:2)
   expect_identical(
-    withVisible(r8_check(data, Features)),
+    withVisible(r8_validate(data, Features)),
     list(value = data, visible = FALSE)
   )
   bad <- data
   bad$age <- c(-1, NA)
   bad$sex <- factor(c("f", "x"))
   expect_error(
-    r8_check(bad, Features),
+    r8_validate(bad, Features),
     "Invalid `bad`",
     class = "r8_value_error"
   )
   expect_error(
-    r8_check(bad, Features),
+    r8_validate(bad, Features),
     "`bad\\$age\\[\\[1\\]\\]` must be at least 0"
   )
-  expect_error(r8_check(1, vec(type_character())), class = "r8_value_error")
-  expect_identical(r8_check(1:3, vec(type_integer(min = 1L))), 1:3)
+  expect_error(r8_validate(1, vec(type_character())), class = "r8_value_error")
+  expect_identical(r8_validate(1:3, vec(type_integer(min = 1L))), 1:3)
   P <- declare_in("sh5", new_struct("P", fields = list(x = type_double())))
-  expect_identical(r8_check(P(x = 1), P), P(x = 1))
-  expect_error(r8_check(1, P), class = "r8_value_error")
-  expect_error(r8_check(1, "double"), class = "r8_type_error")
+  expect_identical(r8_validate(P(x = 1), P), P(x = 1))
+  expect_error(r8_validate(1, P), class = "r8_value_error")
+  expect_error(r8_validate(1, "double"), class = "r8_argument_error")
   skip_if_not_installed("data.table")
   dt <- data.table::as.data.table(data)
-  expect_identical(r8_check(dt, Features), dt)
+  expect_identical(r8_validate(dt, Features), dt)
 })
 
 test_that("a data.table of host_class() is held, and read, by reference", {
@@ -332,7 +332,7 @@ test_that("no operation on a value copies a vector, a matrix, or a data frame", 
   expect_lt(taken(V(id = 1L, d = v$d, tab = v$tab, t = v$t)), few)
   expect_lt(taken(out[["H"]](v = v, data = given[["tab"]])), few)
   expect_lt(taken(r8_validate(v)), few)
-  expect_lt(taken(r8_check(d, vec(type_double(min = 0)))), few)
+  expect_lt(taken(r8_validate(d, vec(type_double(min = 0)))), few)
   expect_lt(taken(r8_equal(V(id = 1L, d = d), same)), few)
   expect_lt(taken(r8_hash(V(id = 1L, m = given[["m"]]))), few)
   expect_lt(taken(out[["size_of"]](v)), few)

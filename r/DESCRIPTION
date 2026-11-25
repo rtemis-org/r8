@@ -55,6 +55,7 @@ Collate:
     'params.R'
     'rds.R'
     'register.R'
+    'report.R'
     'resolve.R'
     'roclet.R'
     'rules.R'

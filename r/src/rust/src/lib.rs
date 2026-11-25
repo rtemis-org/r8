@@ -22,6 +22,7 @@ mod irser;
 mod oracle;
 mod pins;
 mod reader;
+mod report;
 mod rust_stored;
 mod rview;
 mod signature;
@@ -44,6 +45,7 @@ extendr_module! {
     use rust_stored;
     use table;
     use reader;
+    use report;
     use signature;
     use text;
     use value;
@@ -62,6 +64,7 @@ extendr_module! {
     use rust_stored;
     use table;
     use reader;
+    use report;
     use oracle;
     use signature;
     use text;

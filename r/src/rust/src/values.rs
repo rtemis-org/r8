@@ -1588,7 +1588,7 @@ pub(crate) fn r_path(segments: &[rtemis_r8::problem::Segment]) -> String {
 }
 
 /// How R writes the parts of a validation message.
-struct RSyntax;
+pub(crate) struct RSyntax;
 
 impl rtemis_r8::problem::Syntax for RSyntax {
     fn path(&self, segments: &[rtemis_r8::problem::Segment]) -> String {
@@ -1618,7 +1618,7 @@ impl rtemis_r8::problem::Syntax for RSyntax {
 /// exact form, `TRUE` or `FALSE`, a quoted string, a date, `NULL` for an
 /// absent value, and `<sensitive>`; `None` for a value shown by its size or
 /// not shown.
-fn shown_value(s: &rtemis_r8::rules::Shown) -> Option<String> {
+pub(crate) fn shown_value(s: &rtemis_r8::rules::Shown) -> Option<String> {
     use rtemis_r8::rules::Shown;
     Some(match s {
         Shown::Number(t) | Shown::Date(t) | Shown::DateTime(t) => t.clone(),
@@ -1641,7 +1641,7 @@ fn shown_value(s: &rtemis_r8::rules::Shown) -> Option<String> {
 
 /// The line of a value of a diagnosis at `path`, as R writes it: `lo = 2`,
 /// `length(values) = 14`, `dim(m) = 3 x 4`; `None` for a value not shown.
-fn shown_text(s: &rtemis_r8::rules::Shown, path: &str) -> Option<String> {
+pub(crate) fn shown_text(s: &rtemis_r8::rules::Shown, path: &str) -> Option<String> {
     use rtemis_r8::rules::Shown;
     match s {
         Shown::Length(n) => Some(format!("length({path}) = {n}")),
@@ -1823,7 +1823,7 @@ fn r8_value_to_document(x: Robj, declarations: bool) -> Result<List> {
         let json = rtemis_r8::canonical::document_with(v, &q, lookup, declarations, &hash);
         if json.len() > i32::MAX as usize {
             return Err(fail(format!(
-                "the document takes {}, and R holds at most 2 GiB in one string; save the value with r8_save_rds()",
+                "the document takes {}, and R holds at most 2 GiB in one string; write the value with r8_write_rds()",
                 rtemis_r8::text::format_size(json.len() as u64)
             )));
         }

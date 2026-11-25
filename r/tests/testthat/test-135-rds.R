@@ -2,7 +2,7 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Files with a checksum: `r8_save_rds()` and `r8_read_rds()`.
+# Files with a checksum: `r8_write_rds()` and `r8_read_rds()`.
 
 test_that("an object is read as it was saved, with each compression", {
   Point <- declare_in("rds1", {
@@ -17,7 +17,7 @@ test_that("an object is read as it was saved, with each compression", {
       NULL,
       1:1e5
     )) {
-      expect_identical(r8_save_rds(x, file, compress), file)
+      expect_identical(r8_write_rds(x, file, compress), file)
       expect_identical(r8_read_rds(file), x)
       expect_identical(readRDS(file), x)
     }
@@ -32,7 +32,7 @@ test_that("a file with a damaged byte is an error, whichever byte it is", {
   on.exit(unlink(file))
   x <- Point(x = 1, y = 2)
   for (compress in list(FALSE, "gzip", "bzip2", "xz")) {
-    r8_save_rds(x, file, compress)
+    r8_write_rds(x, file, compress)
     whole <- readBin(file, "raw", file.size(file))
     read <- function(bytes) {
       writeBin(bytes, file)
@@ -52,7 +52,7 @@ test_that("a file with a damaged byte is an error, whichever byte it is", {
   }
 })
 
-test_that("a file that r8_save_rds() did not write is refused, with what reads it", {
+test_that("a file that r8_write_rds() did not write is refused, with what reads it", {
   file <- tempfile(fileext = ".rds")
   on.exit(unlink(file))
   saveRDS(list(1), file)
@@ -68,6 +68,6 @@ test_that("a file that r8_save_rds() did not write is refused, with what reads i
   )
   expect_error(r8_read_rds(tempdir()), "is not a file", class = "r8_file_error")
   expect_error(r8_read_rds(1), class = "r8_type_error")
-  expect_error(r8_save_rds(1, NA_character_), class = "r8_type_error")
-  expect_error(r8_save_rds(1, file, "zip"), class = "r8_type_error")
+  expect_error(r8_write_rds(1, NA_character_), class = "r8_type_error")
+  expect_error(r8_write_rds(1, file, "zip"), class = "r8_type_error")
 })

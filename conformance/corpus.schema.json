@@ -112,7 +112,8 @@
             "dispatch",
             "refine",
             "update",
-            "filter"
+            "filter",
+            "check"
           ]
         },
         "type": {
@@ -538,6 +539,91 @@
                   "$ref": "#/$defs/errors"
                 }
               ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "check"
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "rules": {
+                  "type": "array"
+                }
+              }
+            },
+            "expect": {
+              "type": "object",
+              "required": [
+                "rows",
+                "lines"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "rows": {
+                  "type": "integer"
+                },
+                "lines": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "checked",
+                      "failed",
+                      "missing",
+                      "errors"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "rule": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "checked": {
+                        "type": "integer"
+                      },
+                      "failed": {
+                        "type": "integer"
+                      },
+                      "missing": {
+                        "type": "integer"
+                      },
+                      "errors": {
+                        "type": "integer"
+                      },
+                      "problems": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "code"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "row": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "code": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }

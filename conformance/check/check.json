@@ -1,0 +1,739 @@
+{
+  "$corpus": 1,
+  "description": "The report of a table held against a type or against rules: the rows by what each column and rule is in them, and the problems.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "table",
+        "name": "Visits",
+        "description": "",
+        "version": 1,
+        "columns": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "integer",
+              "min": 1
+            },
+            "description": "",
+            "unique": true
+          },
+          {
+            "name": "age",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "min": 0.0,
+                "max": 130.0
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "dbp",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          },
+          {
+            "name": "sbp",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double"
+              }
+            },
+            "description": "",
+            "required": false
+          },
+          {
+            "name": "day",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "date"
+              }
+            },
+            "description": "",
+            "required": false
+          }
+        ],
+        "open": true,
+        "rules": [
+          {
+            "id": "PRESSURES",
+            "invariant": {
+              "<": [
+                {
+                  "var": "dbp"
+                },
+                {
+                  "var": "sbp"
+                }
+              ]
+            }
+          },
+          {
+            "id": "AGE",
+            "invariant": {
+              ">=": [
+                {
+                  "var": "age"
+                },
+                18
+              ]
+            },
+            "when": {
+              ">": [
+                {
+                  "var": "dbp"
+                },
+                60
+              ]
+            }
+          },
+          {
+            "id": "RATIO",
+            "invariant": {
+              ">": [
+                {
+                  "/": [
+                    {
+                      "var": "sbp"
+                    },
+                    {
+                      "var": "dbp"
+                    }
+                  ]
+                },
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "table",
+        "name": "Closed",
+        "description": "",
+        "version": 1,
+        "columns": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "integer",
+              "min": 1
+            },
+            "description": "",
+            "unique": true
+          },
+          {
+            "name": "age",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "min": 0.0,
+                "max": 130.0
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "dbp",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          },
+          {
+            "name": "sbp",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double"
+              }
+            },
+            "description": "",
+            "required": false
+          },
+          {
+            "name": "day",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "date"
+              }
+            },
+            "description": "",
+            "required": false
+          }
+        ],
+        "rules": [
+          {
+            "id": "PRESSURES",
+            "invariant": {
+              "<": [
+                {
+                  "var": "dbp"
+                },
+                {
+                  "var": "sbp"
+                }
+              ]
+            }
+          },
+          {
+            "id": "AGE",
+            "invariant": {
+              ">=": [
+                {
+                  "var": "age"
+                },
+                18
+              ]
+            },
+            "when": {
+              ">": [
+                {
+                  "var": "dbp"
+                },
+                60
+              ]
+            }
+          },
+          {
+            "id": "RATIO",
+            "invariant": {
+              ">": [
+                {
+                  "/": [
+                    {
+                      "var": "sbp"
+                    },
+                    {
+                      "var": "dbp"
+                    }
+                  ]
+                },
+                1
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "type",
+      "description": "Rules are read in rows whose other cells are refused; a duplicate and a value out of range are problems of their rows.",
+      "op": "check",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 4,
+        "id": [
+          1,
+          2,
+          2,
+          4
+        ],
+        "age": [
+          40.0,
+          152.0,
+          null,
+          17.0
+        ],
+        "dbp": [
+          80.0,
+          130.0,
+          50.0,
+          0.0
+        ],
+        "sbp": [
+          120.0,
+          118.0,
+          null,
+          110.0
+        ]
+      },
+      "expect": {
+        "rows": 4,
+        "lines": [
+          {
+            "column": "id",
+            "checked": 4,
+            "failed": 1,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "row": 2,
+                "code": "not_unique"
+              }
+            ]
+          },
+          {
+            "column": "age",
+            "checked": 4,
+            "failed": 1,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "row": 1,
+                "code": "above_max"
+              }
+            ]
+          },
+          {
+            "column": "dbp",
+            "checked": 4,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "sbp",
+            "checked": 4,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "day",
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "rule": 0,
+            "checked": 4,
+            "failed": 1,
+            "missing": 1,
+            "errors": 0,
+            "problems": [
+              {
+                "row": 1,
+                "code": "rule_violation"
+              }
+            ]
+          },
+          {
+            "rule": 1,
+            "checked": 4,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "rule": 2,
+            "checked": 4,
+            "failed": 1,
+            "missing": 1,
+            "errors": 1,
+            "problems": [
+              {
+                "row": 1,
+                "code": "rule_violation"
+              },
+              {
+                "row": 3,
+                "code": "rule_error"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unread-columns",
+      "description": "A column that is missing, one of another kind, and a rule on either, are not checked.",
+      "op": "check",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 2,
+        "id": [
+          1,
+          2
+        ],
+        "age": [
+          "forty",
+          "50"
+        ],
+        "sbp": [
+          120.0,
+          130.0
+        ],
+        "day": [
+          "2026-01-01",
+          "2026-02-30"
+        ]
+      },
+      "expect": {
+        "rows": 2,
+        "lines": [
+          {
+            "column": "id",
+            "checked": 2,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "age",
+            "checked": 2,
+            "failed": 2,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "row": 0,
+                "code": "type_mismatch"
+              },
+              {
+                "row": 1,
+                "code": "type_mismatch"
+              }
+            ]
+          },
+          {
+            "column": "dbp",
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "code": "missing_column"
+              }
+            ]
+          },
+          {
+            "column": "sbp",
+            "checked": 2,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "day",
+            "checked": 2,
+            "failed": 1,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "row": 1,
+                "code": "invalid_date"
+              }
+            ]
+          },
+          {
+            "rule": 0,
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "code": "rule_field"
+              }
+            ]
+          },
+          {
+            "rule": 1,
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "code": "rule_field"
+              }
+            ]
+          },
+          {
+            "rule": 2,
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "code": "rule_field"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "closed",
+      "description": "A column that the type does not have.",
+      "op": "check",
+      "type": "ns::Closed",
+      "input": {
+        "$length": 1,
+        "id": [
+          1
+        ],
+        "age": [
+          20.0
+        ],
+        "dbp": [
+          70.0
+        ],
+        "sbp": [
+          120.0
+        ],
+        "day": [
+          "2026-01-01"
+        ],
+        "other": [
+          1
+        ]
+      },
+      "expect": {
+        "rows": 1,
+        "lines": [
+          {
+            "column": "id",
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "age",
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "dbp",
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "sbp",
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "day",
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "column": "other",
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "code": "unknown_column"
+              }
+            ]
+          },
+          {
+            "rule": 0,
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "rule": 1,
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "rule": 2,
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "rules",
+      "description": "Rules on a table of any columns: a row, the whole table, a column that it does not have, and a kind that does not fit.",
+      "op": "check",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 3,
+        "a": [
+          1.0,
+          null,
+          3.0
+        ],
+        "b": [
+          "x",
+          "y",
+          "x"
+        ],
+        "$columns": {
+          "a": {
+            "kind": "option",
+            "inner": {
+              "kind": "double"
+            }
+          },
+          "b": {
+            "kind": "character"
+          }
+        }
+      },
+      "options": {
+        "rules": [
+          {
+            "invariant": {
+              ">": [
+                {
+                  "var": "a"
+                },
+                2
+              ]
+            }
+          },
+          {
+            "invariant": {
+              ">": [
+                {
+                  "max": [
+                    {
+                      "if": [
+                        {
+                          "is_na": [
+                            {
+                              "var": "a"
+                            }
+                          ]
+                        },
+                        0,
+                        {
+                          "var": "a"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                2
+              ]
+            }
+          },
+          {
+            "invariant": {
+              ">": [
+                {
+                  "var": "z"
+                },
+                2
+              ]
+            }
+          },
+          {
+            "invariant": {
+              ">": [
+                {
+                  "var": "b"
+                },
+                2
+              ]
+            }
+          },
+          {
+            "invariant": {
+              "===": [
+                {
+                  "var": "b"
+                },
+                "x"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "rows": 3,
+        "lines": [
+          {
+            "rule": 0,
+            "checked": 3,
+            "failed": 1,
+            "missing": 1,
+            "errors": 0,
+            "problems": [
+              {
+                "row": 0,
+                "code": "rule_violation"
+              }
+            ]
+          },
+          {
+            "rule": 1,
+            "checked": 1,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0
+          },
+          {
+            "rule": 2,
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "code": "rule_field"
+              }
+            ]
+          },
+          {
+            "rule": 3,
+            "checked": 0,
+            "failed": 0,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "code": "rule_type"
+              }
+            ]
+          },
+          {
+            "rule": 4,
+            "checked": 3,
+            "failed": 1,
+            "missing": 0,
+            "errors": 0,
+            "problems": [
+              {
+                "row": 1,
+                "code": "rule_violation"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

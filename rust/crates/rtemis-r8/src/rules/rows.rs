@@ -195,6 +195,73 @@ impl RowRule {
         })
     }
 
+    /// Compiles a rule over the rows of a table for a report, which may read
+    /// whole columns.
+    pub fn report(
+        rule: &RuleDef,
+        columns: &dyn RowScope,
+        lookup: &dyn TypeLookup,
+    ) -> Result<RowRule, Vec<RuleError>> {
+        Ok(RowRule {
+            id: rule.id.clone(),
+            message: rule.message.clone(),
+            rows: compile_rows(&rule.invariant, rule.when.as_ref(), columns, lookup, true)?,
+        })
+    }
+
+    /// The columns that the rule reads, in the order it reads them.
+    pub fn columns(&self) -> impl Iterator<Item = &str> {
+        self.rows.cells.iter().map(|c| &*c.name)
+    }
+
+    /// Counts the rows of `0..rows` by what the rule is in them, and gives the
+    /// first `limit` rows that fail, with the values it reads there. A rule
+    /// that reads whole columns only is read once, for the table.
+    pub fn tally<'a, A: Access<'a>>(
+        &self,
+        table: A,
+        rows: usize,
+        limit: usize,
+    ) -> Result<Tally, String> {
+        let mut out = Tally::default();
+        if rows == 0 {
+            return Ok(out);
+        }
+        let eval = Eval::new(&self.rows, table, rows)?;
+        let by_row =
+            reads_row(&self.rows.invariant) || self.rows.when.as_ref().is_some_and(reads_row);
+        let last = if by_row { rows } else { 1 };
+        out.checked = last as u64;
+        for lo in (0..last).step_by(BLOCK) {
+            let hi = (lo + BLOCK).min(last);
+            for (i, &v) in eval.results(&self.rows, lo, hi)?.iter().enumerate() {
+                let error = match v {
+                    1 => continue,
+                    NA => {
+                        out.missing += 1;
+                        continue;
+                    }
+                    0 => {
+                        out.failed += 1;
+                        None
+                    }
+                    e => {
+                        out.errors += 1;
+                        Some(STATES[e as usize - 1])
+                    }
+                };
+                if out.found.len() < limit {
+                    let mut d = self.diagnosis(&eval, lo + i);
+                    if error.is_some() {
+                        d.operands.clear();
+                    }
+                    out.found.push((by_row.then_some(lo + i), error, d));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// The paths of the rows of a table's JSON form that fail the rule; the
     /// error of a row is an `Err`.
     pub fn check_rows(&self, table: &Value) -> Result<Vec<Vec<Segment>>, String> {
@@ -214,14 +281,18 @@ impl RowRule {
     /// The values that the rule reads in the row `row`, and the computed
     /// operands of the comparison that it tests.
     pub fn diagnose<'a, A: Access<'a>>(&self, table: A, rows: usize, row: usize) -> Diagnosis {
+        match Eval::new(&self.rows, table, rows) {
+            Ok(eval) => self.diagnosis(&eval, row),
+            Err(_) => Diagnosis::default(),
+        }
+    }
+
+    fn diagnosis<'a, A: Access<'a>>(&self, eval: &Eval<'a, A>, row: usize) -> Diagnosis {
         let mut out = Diagnosis::default();
-        let Ok(eval) = Eval::new(&self.rows, table, rows) else {
-            return out;
-        };
         let shown = |e: &Expr| match eval.block(e, row, row + 1) {
             Ok(b) => match b.scalar() {
                 Some(s) => shown_scalar(s),
-                None => Shown::Absent,
+                None => Shown::Missing,
             },
             Err(_) => Shown::Other,
         };
@@ -247,6 +318,32 @@ impl RowRule {
     }
 }
 
+/// What a rule is in the rows of a table.
+#[derive(Debug, Clone, Default)]
+pub struct Tally {
+    /// The rows read: one for a rule that reads whole columns only.
+    pub checked: u64,
+    /// The rows where the rule is false.
+    pub failed: u64,
+    /// The rows where it is missing.
+    pub missing: u64,
+    /// The rows where it is an error.
+    pub errors: u64,
+    /// The first rows where it is false or an error: the row, unless the rule
+    /// is of the table, the error, and the values that the rule reads.
+    pub found: Vec<(Option<usize>, Option<&'static str>, Diagnosis)>,
+}
+
+/// Whether an expression reads a cell of the row, and not only whole columns.
+fn reads_row(e: &Expr) -> bool {
+    match e {
+        Expr::Cell(_) => true,
+        Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => xs.iter().any(reads_row),
+        Expr::IsNa(x) | Expr::IsNull(x) => reads_row(x),
+        _ => false,
+    }
+}
+
 /// Why a condition chooses no rows of a table.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NotChosen {
@@ -258,26 +355,36 @@ pub enum NotChosen {
     Table(String),
 }
 
-/// The columns of a table's value.
-struct Held<'t, 'a, A> {
-    def: &'t TableDef,
-    table: A,
-    columns: Vec<(Cow<'a, str>, A)>,
+/// The columns that a table has: those that a type declares with its types, and
+/// the others with the types that their vectors have.
+pub(crate) struct Held<'t, 'a, A, C> {
+    pub declared: &'t [C],
+    pub table: A,
+    pub columns: &'t [(Cow<'a, str>, A)],
 }
 
-impl<'a, A: Access<'a>> RowScope for Held<'_, 'a, A> {
-    fn column(&self, name: &str) -> Option<(Cell, Option<String>)> {
-        let (_, cells) = self.columns.iter().find(|(k, _)| k == name)?;
-        if let Some(found) = (&*self.def.columns).column(name) {
+impl<'a, A: Access<'a>, C: crate::ir::Column> RowScope for Held<'_, 'a, A, C> {
+    fn column(&self, name: &str) -> Option<Result<(Cell, Option<String>), String>> {
+        let mut of = self.columns.iter().filter(|(k, _)| k == name);
+        let (_, cells) = of.next()?;
+        if of.next().is_some() {
+            return Some(Err(format!("two columns are named `{name}`")));
+        }
+        if let Some(found) = self.declared.column(name) {
             return Some(found);
         }
-        let cell = Cell {
-            name: name.into(),
-            ty: self.table.extra_column_type(name, *cells).ok()?,
-            sensitive: false,
-        };
-        let facts = self.table.column_facts(name).unwrap_or_default();
-        Some((cell, facts.unit))
+        Some(match self.table.extra_column_type(name, *cells) {
+            Ok(ty) => {
+                let cell = Cell {
+                    name: name.into(),
+                    ty,
+                    sensitive: false,
+                };
+                let facts = self.table.column_facts(name).unwrap_or_default();
+                Ok((cell, facts.unit))
+            }
+            Err(f) => Err(f.message),
+        })
     }
 
     fn nearest(&self, name: &str) -> Option<String> {
@@ -298,9 +405,9 @@ pub fn choose_rows<'a, A: Access<'a>>(
         .map_err(|f| NotChosen::Table(f.message))?;
     let rows = t.rows as usize;
     let held = Held {
-        def,
+        declared: &def.columns,
         table,
-        columns: t.columns,
+        columns: &t.columns,
     };
     RowRule::filter(condition, &held, lookup)
         .map_err(NotChosen::Rule)?
@@ -682,6 +789,16 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
     /// What the rule is in each row of `lo..hi`: true where its `when` is
     /// false or missing.
     fn holds(&self, of: &Rows, lo: usize, hi: usize) -> Result<Vec<u8>, String> {
+        let mut out = self.results(of, lo, hi)?;
+        if of.when.is_some() {
+            out.iter_mut().filter(|x| **x == NA).for_each(|x| *x = 1);
+        }
+        Ok(out)
+    }
+
+    /// What the rule is in each row of `lo..hi`: true where its `when` is
+    /// false, and missing where that is.
+    fn results(&self, of: &Rows, lo: usize, hi: usize) -> Result<Vec<u8>, String> {
         crate::progress::tick_block();
         let mut out = self.block(&of.invariant, lo, hi)?.logicals(hi - lo)?;
         if let Some(w) = &of.when {
@@ -689,7 +806,7 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             for (x, w) in out.iter_mut().zip(when) {
                 match w {
                     1 => {}
-                    0 | NA => *x = 1,
+                    0 => *x = 1,
                     e => *x = e,
                 }
             }

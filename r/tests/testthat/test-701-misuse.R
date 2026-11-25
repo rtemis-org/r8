@@ -202,7 +202,7 @@ scenario(
   "a calculation gives values that the type of its source does not admit",
   situation = "A user standardizes a column that is declared to be at least 0, takes the logarithm of another, which gives NaN, and computes a column from two.",
   risk = "The calculation is an error that the user did not expect, or its result keeps a range, a rule, or a unit that is not its own.",
-  result = "A calculation is R's, and its result keeps nothing of its source: under another name, it is a column without a range, a rule, or a unit. Where it replaces the declared column, the error says so, and gives another name and as_raven(), whose replaced column has no unit.",
+  result = "A calculation is R's, and its result keeps nothing of its source: under another name, it is a column without a range, a rule, or a unit. Where it replaces the declared column, the error says so, and gives another name and Raven(), whose replaced column has no unit.",
   code = {
     Patients <- declare_in("f15", {
       new_table(
@@ -226,15 +226,15 @@ scenario(
     expect_identical(is.nan(p$log_dose), c(TRUE, FALSE))
     expect_error(
       p$weight <- z,
-      "A transformed column takes another name, or as_raven(x)",
+      "A transformed column takes another name, or Raven(x)",
       fixed = TRUE
     )
     expect_error(p$auc <- c(0.4, NaN), "auc >= 0.5", fixed = TRUE)
-    r <- as_raven(p)
+    r <- Raven(p)
     r$weight <- z
     expect_identical(r8_columns(r)$unit[1:2], c(NA, "m"))
     # A check, and a rule, for what is new.
-    expect_identical(r8_check(p$bmi, vec(type_double(min = 0))), p$bmi)
+    expect_identical(r8_validate(p$bmi, vec(type_double(min = 0))), p$bmi)
     expect_identical(nrow(r8_filter(p, rule(bmi > 24))), 1L)
   }
 )
