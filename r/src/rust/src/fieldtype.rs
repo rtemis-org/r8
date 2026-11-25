@@ -98,9 +98,14 @@ fn string(x: SEXP, arg: &'static str) -> Built<Option<String>> {
     }
 }
 
-/// `isTRUE(x)`.
-fn is_true(x: SEXP) -> bool {
-    sexptype(x) == SEXPTYPE::LGLSXP && xlen(x) == 1 && unsafe { *LOGICAL(x) } == 1
+/// One `TRUE` or `FALSE`.
+fn flag(x: SEXP, arg: &'static str) -> Built<bool> {
+    let given = (sexptype(x) == SEXPTYPE::LGLSXP && xlen(x) == 1).then(|| unsafe { *LOGICAL(x) });
+    match given {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err(BuildError::NotFlag { arg }),
+    }
 }
 
 /// The qualified name of an R8 type object.
@@ -184,8 +189,8 @@ fn r8_ft_double(
         let v = numbers(unsafe { values.get() }, "values")?;
         build::double(
             b,
-            is_true(unsafe { infinite.get() }),
-            is_true(unsafe { nan.get() }),
+            flag(unsafe { infinite.get() }, "infinite")?,
+            flag(unsafe { nan.get() }, "nan")?,
             v.as_deref(),
         )
     })())
@@ -208,10 +213,10 @@ fn r8_ft_character(pattern: Robj, values: Robj) -> Robj {
 /// @noRd
 #[extendr]
 fn r8_ft_factor(levels: Robj, ordered: Robj) -> Robj {
-    written(
-        strings(unsafe { levels.get() }, "levels")
-            .map(|l| build::factor(l, is_true(unsafe { ordered.get() }))),
-    )
+    written((|| {
+        let l = strings(unsafe { levels.get() }, "levels")?;
+        Ok(build::factor(l, flag(unsafe { ordered.get() }, "ordered")?))
+    })())
 }
 
 /// A field-type argument as the R list a container holds: an
@@ -279,17 +284,17 @@ fn r8_field(
         Ok(t) => t,
         Err(e) => return message(e),
     };
-    let resolve = (|| {
+    let read = (|| {
         let c = unsafe { compute.get() };
         let expr = if is_null(c) { None } else { Some(logic(c)?) };
-        build::resolve(expr, is_true(unsafe { context.get() }))
+        let resolve = build::resolve(expr, flag(unsafe { context.get() }, "context")?)?;
+        Ok((resolve, flag(unsafe { sensitive.get() }, "sensitive")?))
     })();
-    let resolve = match resolve {
+    let (resolve, s) = match read {
         Ok(r) => r,
         Err(e) => return message(e),
     };
-    let flag = |x: &Robj| Robj::from(is_true(unsafe { x.get() }));
-    let s = flag(&sensitive);
+    let s = Robj::from(s);
     let has = Robj::from(has_default);
     let mut b = crate::irser::Builder::named(7 + usize::from(resolve.is_some()));
     if let Some(r) = &resolve {
@@ -323,13 +328,14 @@ fn r8_ft_vec(r#type: Robj, min_length: Robj, max_length: Robj, unique: Robj) -> 
             number(min_length.get(), "min_length")?,
             number(max_length.get(), "max_length")?,
         )?;
+        let unique = flag(unique.get(), "unique")?;
         Ok(container(
             "vec",
             &[
                 ("element", Some(Member::Object(&el))),
                 ("min_length", lo.map(Member::Count)),
                 ("max_length", hi.map(Member::Count)),
-                ("unique", is_true(unique.get()).then_some(Member::Flag)),
+                ("unique", unique.then_some(Member::Flag)),
             ],
         ))
     })();
@@ -678,31 +684,73 @@ fn args(x: SEXP) -> Vec<SEXP> {
 }
 
 /// A constant of a rule: one value of an atomic vector, not `NA`.
-fn constant(x: SEXP) -> Option<Logic> {
+fn constant(x: SEXP) -> Built<Logic> {
+    signed(x, false)
+}
+
+/// [`constant`], of which `negative` gives the negative, as of a number.
+fn signed(x: SEXP, negative: bool) -> Built<Logic> {
     if xlen(x) != 1 {
-        return None;
+        return Err(BuildError::Constant);
     }
+    let number = |d: f64| {
+        if d.is_infinite() {
+            Err(BuildError::InfiniteConstant)
+        } else if d.is_nan() {
+            Err(BuildError::Constant)
+        } else {
+            Ok(Logic::Number(Number::F64(d)))
+        }
+    };
     unsafe {
         match sexptype(x) {
-            SEXPTYPE::LGLSXP => match *LOGICAL(x) {
-                NA_INTEGER => None,
-                b => Some(Logic::Bool(b != 0)),
-            },
             SEXPTYPE::INTSXP => match *INTEGER(x) {
-                NA_INTEGER => None,
-                i => Some(Logic::Number(if i >= 0 {
-                    Number::U64(i as u64)
-                } else {
-                    Number::I64(i64::from(i))
-                })),
+                NA_INTEGER => Err(BuildError::Constant),
+                i => {
+                    let i = if negative { -i } else { i };
+                    Ok(Logic::Number(if i >= 0 {
+                        Number::U64(i as u64)
+                    } else {
+                        Number::I64(i64::from(i))
+                    }))
+                }
             },
-            SEXPTYPE::REALSXP => {
-                let d = *REAL(x);
-                d.is_finite().then_some(Logic::Number(Number::F64(d)))
-            }
-            SEXPTYPE::STRSXP => string_elt(x, 0).map(|s| Logic::String(s.as_ref().into())),
-            _ => None,
+            SEXPTYPE::REALSXP if negative => number(-*REAL(x)),
+            SEXPTYPE::REALSXP => number(*REAL(x)),
+            SEXPTYPE::LGLSXP if !negative => match *LOGICAL(x) {
+                NA_INTEGER => Err(BuildError::Constant),
+                b => Ok(Logic::Bool(b != 0)),
+            },
+            SEXPTYPE::STRSXP if !negative => string_elt(x, 0)
+                .map(|s| Logic::String(s.as_ref().into()))
+                .ok_or(BuildError::Constant),
+            _ => Err(BuildError::Constant),
         }
+    }
+}
+
+/// The constant that an expression writes: a value, `-1`, or `+1`; `None` for
+/// another expression. R reads `-1` as a call of `-`.
+fn literal(x: SEXP) -> Option<Built<Logic>> {
+    if is_atomic(x) {
+        return Some(constant(x));
+    }
+    if sexptype(x) != SEXPTYPE::LANGSXP {
+        return None;
+    }
+    let f = unsafe { CAR(x) };
+    let sign = match sexptype(f) {
+        SEXPTYPE::SYMSXP => symbol_name(f),
+        _ => return None,
+    };
+    let a = args(x);
+    let [of] = a.as_slice() else { return None };
+    let number = matches!(sexptype(*of), SEXPTYPE::INTSXP | SEXPTYPE::REALSXP);
+    match sign.as_str() {
+        "-" if number => Some(signed(*of, true)),
+        "+" if number => Some(signed(*of, false)),
+        "(" => literal(*of),
+        _ => None,
     }
 }
 
@@ -747,8 +795,8 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
     if is_null(x) {
         return Ok(Logic::Null);
     }
-    if is_atomic(x) {
-        return constant(x).ok_or(BuildError::Constant);
+    if let Some(c) = literal(x) {
+        return c;
     }
     if let Some(p) = path(x) {
         let names: Vec<&str> = p.iter().map(String::as_str).collect();
@@ -808,12 +856,9 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
         ),
         "c" => build::array_literal(
             a.iter()
-                .map(|&v| {
-                    if is_atomic(v) {
-                        constant(v).ok_or(BuildError::ArrayLiteral)
-                    } else {
-                        Err(BuildError::ArrayLiteral)
-                    }
+                .map(|&v| match literal(v) {
+                    Some(Err(BuildError::Constant)) | None => Err(BuildError::ArrayLiteral),
+                    Some(c) => c,
                 })
                 .collect::<Built<Vec<_>>>()?,
         ),
@@ -825,7 +870,7 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
             [v, name] => build::is_variant(
                 logic(*v)?,
                 if is_atomic(*name) {
-                    constant(*name).ok_or(BuildError::VariantName)?
+                    constant(*name).map_err(|_| BuildError::VariantName)?
                 } else {
                     return Err(BuildError::VariantName);
                 },

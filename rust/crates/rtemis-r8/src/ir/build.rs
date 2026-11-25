@@ -42,6 +42,11 @@ pub enum BuildError {
         /// The exclusive bound's argument.
         exclusive: &'static str,
     },
+    /// A flag that is not one `TRUE` or `FALSE`.
+    NotFlag {
+        /// The argument.
+        arg: &'static str,
+    },
     /// A list of numbers that holds one that is not finite.
     NotFinite {
         /// The argument.
@@ -70,6 +75,8 @@ pub enum BuildError {
     ComputeContext,
     /// A rule constant that is not one value or is missing.
     Constant,
+    /// A rule constant that is not a finite number.
+    InfiniteConstant,
     /// An array literal in a rule that holds an operand other than a
     /// constant.
     ArrayLiteral,
@@ -160,6 +167,7 @@ impl fmt::Display for BuildError {
                 f,
                 "`{inclusive}` and `{exclusive}` bound the same side; give one of them."
             ),
+            BuildError::NotFlag { arg } => write!(f, "`{arg}` is TRUE or FALSE."),
             BuildError::NotFinite { arg } => write!(f, "`{arg}` holds finite numbers."),
             BuildError::NotOneString { arg } => write!(f, "`{arg}` is one string."),
             BuildError::MissingString { arg } => write!(f, "`{arg}` holds no missing string."),
@@ -175,6 +183,7 @@ impl fmt::Display for BuildError {
             BuildError::Constant => f.write_str(
                 "A constant in a rule is one value, not NA; write an array as c(...).",
             ),
+            BuildError::InfiniteConstant => f.write_str("A number in a rule is finite."),
             BuildError::ArrayLiteral => f.write_str("c() in a rule holds literal values."),
             BuildError::NotStrings { arg } => write!(f, "`{arg}` is a character vector."),
             BuildError::NotFieldType => f.write_str(

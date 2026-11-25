@@ -124,7 +124,13 @@ column <- function(
     extensions
   ))
   structure(
-    c(unclass(f), list(unique = isTRUE(unique), required = isTRUE(required))),
+    c(
+      unclass(f),
+      list(
+        unique = check_flag(unique, "unique"),
+        required = check_flag(required, "required")
+      )
+    ),
     class = c("r8_column", "r8_field")
   )
 } # /R8::column
@@ -766,7 +772,7 @@ new_struct <- function(
     as_rules(rules),
     parent.frame(),
     "r8_struct_type",
-    rust_stored = isTRUE(rust_stored),
+    rust_stored = rust_stored,
     extends = extends,
     defaults = defaults
   )

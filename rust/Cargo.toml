@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rtemis-r8", "crates/rtemis-r8-macros", "crates/rtemis-r8-api", "crates/rtemis-r8-abi-check"]
+members = ["crates/rtemis-r8", "crates/rtemis-r8-macros", "crates/rtemis-r8-api", "crates/rtemis-r8-abi-check", "crates/rtemis-r8-io"]
 resolver = "3"
 
 [workspace.package]

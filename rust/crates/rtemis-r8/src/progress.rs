@@ -38,8 +38,9 @@ pub fn tick_block() {
     }
 }
 
+/// Calls the hook, after a step that is as long as many.
 #[cold]
-fn call() {
+pub fn call() {
     if let Some(f) = HOOK.get() {
         f();
     }

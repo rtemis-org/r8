@@ -15,13 +15,15 @@ use extendr_ffi::{
 };
 use rtemis_r8::ir::{FieldType, TableDef, TypeDef};
 use rtemis_r8::name::QualifiedName;
+use rtemis_r8::progress::{self, tick, tick_block};
 use rtemis_r8::rules::{NotChosen, TypeLookup, choose_rows};
 use rtemis_r8::validate::{ValueError, validate_access, validate_field_access};
 
 use crate::construct::{atomic, factor, problems, with_cache};
 use crate::declare::registry;
 use crate::rview::{
-    RView, attr, inherits, is_null, list_rows, sexptype, string_elt, strings, sym_names, xlen,
+    MAX_ROWS, RView, attr, inherits, is_null, list_rows, sexptype, string_elt, strings, sym_names,
+    too_many_rows, xlen,
 };
 
 #[allow(improper_ctypes)]
@@ -502,7 +504,10 @@ pub unsafe extern "C" fn r8_extreme(v: SEXP, greatest: i32, out: *mut f64) -> i3
                     *l = if sign * v < *l { sign * v } else { *l };
                 }
             }
-            (!nan).then(|| sign * least.iter().copied().fold(f64::INFINITY, f64::min))
+            // Which of the two zeros is the least is R's to say.
+            (!nan)
+                .then(|| sign * least.iter().copied().fold(f64::INFINITY, f64::min))
+                .filter(|x| *x != 0.0)
         }
         SEXPTYPE::INTSXP => {
             let x = unsafe { std::slice::from_raw_parts(p.cast::<i32>(), n) };
@@ -522,6 +527,14 @@ pub unsafe extern "C" fn r8_extreme(v: SEXP, greatest: i32, out: *mut f64) -> i3
             1
         }
         None => 0,
+    }
+}
+
+/// A number as R writes it.
+fn number_text(x: f64) -> String {
+    match rtemis_r8::rules::Shown::number(x) {
+        rtemis_r8::rules::Shown::Number(t) => t,
+        _ => x.to_string(),
     }
 }
 
@@ -551,7 +564,9 @@ fn positions(i: SEXP, n: usize, what: &str) -> Asked {
         for k in 0..len {
             match unsafe { LOGICAL_ELT(i, k as R_xlen_t) } {
                 0 => {}
-                v if v == i32::MIN => return Err(format!("the index of {what} {} is NA", k + 1)),
+                v if v == i32::MIN => {
+                    return Err(format!("element {} of the index is NA", k + 1));
+                }
                 _ => out.push(k as u32),
             }
         }
@@ -583,10 +598,18 @@ fn positions(i: SEXP, n: usize, what: &str) -> Asked {
             if d.is_nan() {
                 return Err(format!("element {} of the index is NA", k + 1));
             }
-            if d.fract() != 0.0 || d.abs() > 9e15 {
+            if d.is_infinite() || d.fract() != 0.0 {
                 return Err(format!(
-                    "element {} of the index, {d}, is not a whole number",
-                    k + 1
+                    "element {} of the index, {}, is not a whole number",
+                    k + 1,
+                    number_text(d)
+                ));
+            }
+            if d.abs() > n as f64 {
+                return Err(format!(
+                    "the index asks for {what} {}; there are {}",
+                    number_text(d),
+                    count(n)
                 ));
             }
             d as i64
@@ -681,6 +704,10 @@ fn refused(message: String) -> Robj {
 /// The 0-based positions of the rows of the table value `x` where the rule
 /// `rule`, a list of one `rule()`, is true.
 fn chosen(h: &Held, x: SEXP, rule: SEXP) -> Asked {
+    let one = xlen(rule) == 1 && inherits(unsafe { VECTOR_ELT(rule, 0) }, "r8_rule");
+    if !one {
+        return Err("a list in the place of the rows holds one rule()".to_string());
+    }
     let rules = crate::reader::rules(rule, "/rules").map_err(|e| e.message)?;
     let [rule] = rules.as_slice() else {
         return Err("rows are chosen by one rule".to_string());
@@ -727,6 +754,9 @@ fn chosen(h: &Held, x: SEXP, rule: SEXP) -> Asked {
     })
 }
 
+/// The elements between two ticks of a walk.
+const WALK: usize = 1 << 14;
+
 /// The cells that a second thread takes part in gathering from.
 const CELLS_FOR_THREADS: usize = 1 << 20;
 
@@ -749,15 +779,19 @@ impl Numbers {
     /// for each.
     unsafe fn gather(self, at: &[u32]) {
         unsafe {
-            match self {
-                Numbers::Doubles(from, to) => {
-                    for (i, &k) in at.iter().enumerate() {
-                        *to.add(i) = *from.add(k as usize);
+            for (b, part) in at.chunks(WALK).enumerate() {
+                tick_block();
+                let lo = b * WALK;
+                match self {
+                    Numbers::Doubles(from, to) => {
+                        for (i, &k) in part.iter().enumerate() {
+                            *to.add(lo + i) = *from.add(k as usize);
+                        }
                     }
-                }
-                Numbers::Integers(from, to) => {
-                    for (i, &k) in at.iter().enumerate() {
-                        *to.add(i) = *from.add(k as usize);
+                    Numbers::Integers(from, to) => {
+                        for (i, &k) in part.iter().enumerate() {
+                            *to.add(lo + i) = *from.add(k as usize);
+                        }
                     }
                 }
             }
@@ -793,6 +827,9 @@ fn gathered(columns: &[SEXP], at: &[u32]) -> Vec<Robj> {
                 }
                 _ => {
                     for (i, &k) in at.iter().enumerate() {
+                        if i % 1024 == 0 {
+                            tick_block();
+                        }
                         let (i, k) = (i as R_xlen_t, k as R_xlen_t);
                         match t {
                             SEXPTYPE::REALSXP => *REAL(v).offset(i) = REAL_ELT(x, k),
@@ -1033,6 +1070,11 @@ pub(crate) fn replaced(
 /// @noRd
 #[extendr]
 fn r8_table_rename(x: Robj, from: Robj, to: Robj) -> Result<Robj> {
+    crate::interrupt::interruptible(unsafe { x.get() }, || renamed(&x, &from, &to))
+}
+
+/// [`r8_table_rename`].
+fn renamed(x: &Robj, from: &Robj, to: &Robj) -> Result<Robj> {
     let h = match Held::of(unsafe { x.get() }) {
         Ok(h) => h,
         Err(m) => return Ok(refused(m)),
@@ -1238,6 +1280,9 @@ fn text_keys(x: SEXP, descending: bool) -> Vec<u64> {
     let mut of: Vec<u32> = Vec::with_capacity(n);
     let p = unsafe { DATAPTR_OR_NULL(x) };
     for i in 0..n {
+        if i % 1024 == 0 {
+            tick_block();
+        }
         let c = if p.is_null() {
             unsafe { STRING_ELT(x, i as R_xlen_t) }
         } else {
@@ -1272,7 +1317,10 @@ fn text_keys(x: SEXP, descending: bool) -> Vec<u64> {
         })
         .collect();
     let after = |k: u32| rest(k).get(8..).unwrap_or(&[]);
-    order.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| after(a.1).cmp(after(b.1))));
+    order.sort_unstable_by(|a, b| {
+        tick();
+        a.0.cmp(&b.0).then_with(|| after(a.1).cmp(after(b.1)))
+    });
     let mut rank = vec![LAST; texts.len() + 1];
     let mut at = 0u64;
     for (i, &(head, k)) in order.iter().enumerate() {
@@ -1376,6 +1424,7 @@ fn by_first_digit(pairs: &mut [(u64, u32)], spare: &mut [(u64, u32)]) -> Vec<usi
 
 /// Orders pairs by their keys, and leaves those of one key in the order they are in.
 fn sort_bucket(pairs: &mut [(u64, u32)], spare: &mut [(u64, u32)]) {
+    tick_block();
     if pairs.len() < 1 << 10 {
         pairs.sort_by_key(|p| p.0);
         return;
@@ -1417,6 +1466,7 @@ fn sort_part(at: &mut Vec<u32>, keys: &[u64]) {
             *c += 1;
         }
         std::mem::swap(at, &mut next);
+        progress::call();
     }
 }
 
@@ -1451,7 +1501,9 @@ fn r8_table_sort(x: Robj, by: Robj, descending: Robj) -> Result<Robj> {
         let mut at: Vec<u32> = (0..n as u32).collect();
         for k in by.iter().rev() {
             let keys = sort_keys(h.column(*k as usize), down.contains(k));
+            progress::call();
             sort_by_keys(&mut at, &keys);
+            progress::call();
         }
         let cols: Vec<usize> = (0..h.names.len()).collect();
         let from: Vec<SEXP> = cols.iter().map(|&k| h.column(k)).collect();
@@ -1543,6 +1595,11 @@ fn r8_table_set_facts(x: Robj, facts: Robj) -> Result<Robj> {
 /// @noRd
 #[extendr]
 fn r8_table_bind(xs: List) -> Result<Robj> {
+    crate::interrupt::interruptible_if(true, || bound(&xs))
+}
+
+/// The rows of the table values `xs`.
+fn bound(xs: &List) -> Result<Robj> {
     let mut held = Vec::with_capacity(xs.len());
     for x in xs.values() {
         match Held::of(unsafe { x.get() }) {
@@ -1597,6 +1654,9 @@ fn r8_table_bind(xs: List) -> Result<Robj> {
         }
     }
     let rows: usize = held.iter().map(|h| list_rows(h.columns) as usize).sum();
+    if rows as u64 > MAX_ROWS {
+        return Ok(refused(too_many_rows(rows as u64).message));
+    }
     let mut out: Vec<Robj> = Vec::with_capacity(first.names.len());
     for i in 0..first.names.len() {
         let parts: Vec<SEXP> = held.iter().map(|h| h.column(i)).collect();
@@ -1641,6 +1701,9 @@ fn append(parts: &[SEXP], n: usize) -> Robj {
         for &x in parts {
             let m = xlen(x);
             for k in 0..m {
+                if k % 1024 == 0 {
+                    tick_block();
+                }
                 let (i, j) = ((at + k) as R_xlen_t, k as R_xlen_t);
                 match t {
                     SEXPTYPE::REALSXP => *REAL(out).add(at + k) = REAL_ELT(x, j),

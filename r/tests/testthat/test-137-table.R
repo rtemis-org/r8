@@ -407,6 +407,59 @@ test_that("a table reads as a data frame in R's own functions", {
   )
 })
 
+test_that("R's functions of data frames read a table or name R8's", {
+  x <- Raven(
+    a = c(1, 1, 2, NA),
+    b = c(2, 2, 7, 1),
+    g = c("u", "u", "v", "v")
+  )
+  d <- as.data.frame(x)
+  n <- r8_select(x, c("a", "b"))
+  m <- as.data.frame(n)
+  for (f in list(as.matrix, t, is.na, summary, dim)) {
+    expect_identical(f(n), f(m))
+  }
+  expect_identical(apply(n, 1, sum), apply(m, 1, sum))
+  expect_identical(scale(n), scale(m))
+  expect_identical(duplicated(x), duplicated(d))
+  expect_identical(anyDuplicated(x), anyDuplicated(d))
+  expect_identical(stats::model.frame(n), stats::model.frame(m))
+  expect_identical(unique(x), x[c(1, 3, 4), ])
+  expect_identical(stats::na.omit(x), x[1:3, ])
+  expect_identical(nrow(stats::na.omit(Raven(a = c(NA, NA_real_)))), 0L)
+  parts <- split(x, x$g)
+  expect_identical(parts, list(u = x[1:2, ], v = x[3:4, ]))
+  expect_identical(split(x, ~g), parts)
+  for (f in list(
+    function() cbind(x, x),
+    function() cbind(1, x),
+    function() transform(x, z = a),
+    function() within(x, z <- a)
+  )) {
+    expect_error(f(), "r8_set(x, ", fixed = TRUE, class = "r8_value_error")
+  }
+  expect_error(subset(x, a > 1), "r8_filter(", fixed = TRUE)
+  for (f in list(sort, order)) {
+    expect_error(f(x), "r8_sort(", fixed = TRUE, class = "r8_value_error")
+  }
+  for (z in list(c(0, -0, 1), c(-0, 0, -1), c(0, -0))) {
+    v <- Raven(z = z)$z
+    expect_identical(1 / min(v), 1 / min(z))
+    expect_identical(1 / max(v), 1 / max(z))
+  }
+})
+
+
+test_that("a table has at most as many rows as R counts", {
+  refuses <- function(expr) {
+    expect_error(expr, "at most 2,147,483,647 rows", class = "r8_value_error")
+  }
+  refuses(Raven(a = seq_len(2^31)))
+  x <- Raven(a = seq_len(2^30))
+  refuses(rbind(x, x))
+})
+
+
 test_that("data.table changes no table that it is given or that it is read from", {
   skip_if_not_installed("data.table")
   n <- 1000L
@@ -694,6 +747,23 @@ test_that("what a call means does not depend on the table or on the session", {
   r$keep <- c(1L, 1L)
   expect_identical(as.data.frame(r[keep, "x"]), before)
 })
+
+test_that("an index that asks for no row says so", {
+  x <- Raven(a = 1:3)
+  refuses <- function(expr, text) {
+    expect_error(expr, text, fixed = TRUE, class = "r8_value_error")
+  }
+  refuses(x[list(1), ], "A list in the place of the rows holds one rule().")
+  refuses(x[2^60, ], "asks for row 1152921504606847000; there are 3 rows")
+  refuses(x[1e300, ], "e+300; there are 3 rows")
+  refuses(x[Inf, ], "Element 1 of the index, Inf, is not a whole number")
+  refuses(x[1.5, ], "Element 1 of the index, 1.5, is not a whole number")
+  refuses(x[, NA], "Element 1 of the index is NA")
+  d <- data.frame(a = 1, b = 2)
+  names(d)[[2L]] <- NA
+  refuses(Raven(d), "the name of column 2 is missing")
+})
+
 
 test_that("a slip in an index is an error that gives the form", {
   r <- Raven(iris)

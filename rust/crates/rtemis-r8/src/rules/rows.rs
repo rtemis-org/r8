@@ -158,6 +158,11 @@ impl RowRule {
         if rows == 0 {
             return Ok(Ok(out));
         }
+        if u32::try_from(rows).is_err() {
+            return Err(format!(
+                "rows are chosen in a table of at most 4,294,967,295; this one has {rows}"
+            ));
+        }
         let mut error: Option<RowError> = None;
         let eval = Eval::new(&self.rows, table, rows)?;
         for lo in (0..rows).step_by(BLOCK) {
@@ -296,7 +301,12 @@ impl RowRule {
             },
             Err(_) => Shown::Other,
         };
-        for (k, c) in self.rows.cells.iter().enumerate() {
+        let mut read = vec![false; self.rows.cells.len()];
+        read_cells(&self.rows.invariant, &mut read);
+        if let Some(w) = &self.rows.when {
+            read_cells(w, &mut read);
+        }
+        for (k, c) in self.rows.cells.iter().enumerate().filter(|(k, _)| read[*k]) {
             let s = if c.sensitive {
                 Shown::Sensitive
             } else {
@@ -332,6 +342,19 @@ pub struct Tally {
     /// The first rows where it is false or an error: the row, unless the rule
     /// is of the table, the error, and the values that the rule reads.
     pub found: Vec<(Option<usize>, Option<&'static str>, Diagnosis)>,
+}
+
+/// Marks the cells of the row that an expression reads, without those of columns
+/// that it reads as a whole only.
+fn read_cells(e: &Expr, out: &mut [bool]) {
+    match e {
+        Expr::Cell(k) => out[*k] = true,
+        Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
+            xs.iter().for_each(|x| read_cells(x, out));
+        }
+        Expr::IsNa(x) | Expr::IsNull(x) => read_cells(x, out),
+        _ => {}
+    }
 }
 
 /// Whether an expression reads a cell of the row, and not only whole columns.

@@ -277,6 +277,7 @@ impl<'de> Visitor<'de> for TreeVisitor {
         if self.exact {
             let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
             while let Some(x) = seq.next_element::<Exact>()? {
+                crate::progress::tick();
                 items.push(x.0);
             }
             return Ok(Tree::Array(items.into_boxed_slice()));
@@ -287,6 +288,7 @@ impl<'de> Visitor<'de> for TreeVisitor {
         let mut numbers = false;
         let mut nodes: Option<Vec<Tree>> = None;
         while let Some(item) = seq.next_element::<Tree>()? {
+            crate::progress::tick();
             if let Some(v) = nodes.as_mut() {
                 v.push(item);
                 continue;

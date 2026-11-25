@@ -1,0 +1,28 @@
+[package]
+name = 'r8-io-r'
+publish = false
+version = '0.4.0'
+edition = '2024'
+rust-version = '1.88'
+
+# The crate is its own workspace root, so it builds the same inside the r8
+# checkout, in R CMD check directories, and from the source tarball.
+[workspace]
+
+[lib]
+crate-type = [ 'rlib', 'staticlib' ]
+name = 'r8_io_r'
+
+[[bin]]
+name = 'document'
+path = 'document.rs'
+
+[dependencies]
+extendr-api = '0.9'
+extendr-ffi = '0.9'
+rtemis-r8 = '0.4'
+rtemis-r8-io = '0.4'
+
+[profile.release]
+lto = true
+codegen-units = 1

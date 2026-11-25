@@ -661,12 +661,20 @@ impl<'l> Validator<'l, '_> {
             return;
         }
         let mut seen: HashSet<Key> = HashSet::new();
-        let mut dup = |this: &mut Self, i: usize, k: Key, shown: &dyn Fn() -> String| {
+        let mut dup = |this: &mut Self, i: usize, k: Key, shown: &dyn Fn() -> Shown| {
             if !seen.insert(k) {
-                this.error(
+                let found = shown();
+                let text = if this.sensitive > 0 {
+                    crate::problem::Syntax::shown(&crate::problem::Neutral, &Shown::Sensitive)
+                } else {
+                    crate::problem::Syntax::shown(&crate::problem::Neutral, &found)
+                };
+                this.report(
                     "not_unique",
                     &P::Idx(path, i),
-                    format!("{} appears more than once", shown()),
+                    Problem::Text(format!("{text} appears more than once")),
+                    Some(found),
+                    None,
                 );
             }
         };
@@ -677,7 +685,7 @@ impl<'l> Validator<'l, '_> {
                         self.double(c, x, &P::Idx(path, i));
                     }
                     if unique {
-                        dup(self, i, number_key(x), &|| x.to_string());
+                        dup(self, i, number_key(x), &|| Shown::number(x));
                     }
                 }
                 Ok(None) if optional => {}
@@ -690,7 +698,7 @@ impl<'l> Validator<'l, '_> {
                         self.integer(c, x, &P::Idx(path, i));
                     }
                     if unique {
-                        dup(self, i, number_key(x as f64), &|| x.to_string());
+                        dup(self, i, number_key(x as f64), &|| Shown::number(x as f64));
                     }
                 }
                 Ok(None) if optional => {}
@@ -700,7 +708,7 @@ impl<'l> Validator<'l, '_> {
             FieldType::Logical => v.each_logical(n, |i, r| match r {
                 Ok(Some(b)) => {
                     if unique {
-                        dup(self, i, Key::B(b), &|| b.to_string());
+                        dup(self, i, Key::B(b), &|| Shown::Bool(b));
                     }
                 }
                 Ok(None) if optional => {}
@@ -711,7 +719,7 @@ impl<'l> Validator<'l, '_> {
                 Ok(Some(s)) => {
                     self.character(c, &s, &P::Idx(path, i));
                     if unique {
-                        let shown = format!("\"{s}\"");
+                        let shown = Shown::string(&s);
                         dup(self, i, Key::S(s.into_owned()), &|| shown.clone());
                     }
                 }
@@ -726,7 +734,7 @@ impl<'l> Validator<'l, '_> {
                     }
                     if unique {
                         dup(self, i, Key::N(d as u64), &|| {
-                            crate::canonical::date_text(d)
+                            Shown::Date(crate::canonical::date_text(d))
                         });
                     }
                 }
@@ -741,7 +749,7 @@ impl<'l> Validator<'l, '_> {
                     }
                     if unique {
                         dup(self, i, Key::N(m as u64), &|| {
-                            crate::canonical::datetime_text(m)
+                            Shown::DateTime(crate::canonical::datetime_text(m))
                         });
                     }
                 }

@@ -127,6 +127,7 @@ r8_check <- function(x, against, limit = 1000L) {
 #'
 #' @export
 r8_validate <- function(x, against = NULL, complete = FALSE) {
+  check_flag(complete, "complete", "r8_argument_error")
   if (!is.null(against)) {
     name <- substitute(x)
     name <- if (is.symbol(name)) as.character(name) else "x"
@@ -145,7 +146,8 @@ r8_validate <- function(x, against = NULL, complete = FALSE) {
       }
       return(invisible(x))
     }
-    res <- r8_check_object(x, held[["type"]], name)
+    table <- if (is_table_type(held[["type"]])) table_given(x)
+    res <- r8_check_object(x, table[["columns"]], held[["type"]], name)
     if (!is.null(res)) {
       value_abort(
         "Invalid",
@@ -163,7 +165,7 @@ r8_validate <- function(x, against = NULL, complete = FALSE) {
   if (!is.null(res)) {
     value_abort("Invalid", value_type(x), res[["errors"]])
   }
-  if (isTRUE(complete)) {
+  if (complete) {
     pending <- pending_fields(x)
     if (length(pending) > 0L) {
       r8_abort(
@@ -230,7 +232,8 @@ checked_against <- function(against) {
 #' @keywords internal
 #' @noRd
 is_table_type <- function(type) {
-  inherits(type, "r8_table_type") || identical(type[["kind"]], "table")
+  inherits(type, "r8_table_type") ||
+    (inherits(type, "r8_field_type") && identical(type[["kind"]], "table"))
 } # /R8::is_table_type
 
 
@@ -291,6 +294,7 @@ table_report <- function(res, against) {
   requirement <- ifelse(of_rule, texts[at], column_requirement(type, lines))
   found <- res[["problems"]]
   k <- found[["line"]]
+  found[["found"]] <- with_operands(found, rules, at)
   message <- found[["message"]]
   # A violation is explained by the rule's message, or else by the rule.
   plain <- found[["code"]] == "rule_violation"
@@ -322,6 +326,42 @@ table_report <- function(res, against) {
     )
   )
 } # /R8::table_report
+
+
+# %% with_operands ----
+#' The values found by a report, with the computed operands of its rules
+#'
+#' @param found List: The problems of `r8_report()`.
+#' @param rules List: The rules.
+#' @param at Integer: The rule of each line.
+#'
+#' @return Character: `"x = 10, mean(x) = 4"`, one per problem.
+#'
+#' @keywords internal
+#' @noRd
+with_operands <- function(found, rules, at) {
+  out <- found[["found"]]
+  of <- found[["operand_of"]]
+  if (length(of) == 0L) {
+    return(out)
+  }
+  rule <- at[found[["line"]][of]]
+  place <- found[["operand_at"]]
+  key <- paste(rule, place)
+  first <- which(!duplicated(key))
+  text <- vapply(
+    first,
+    function(i) {
+      logic_text(logic_at(rules[[rule[[i]]]][["invariant"]], place[[i]]))
+    },
+    ""
+  )
+  values <- paste0(text[match(key, key[first])], " = ", found[["operand"]])
+  joined <- vapply(split(values, of), paste, "", collapse = ", ")
+  i <- as.integer(names(joined))
+  out[i] <- paste0(out[i], ifelse(nzchar(out[i]), ", ", ""), joined)
+  out
+} # /R8::with_operands
 
 
 # %% column_requirement ----
@@ -630,3 +670,84 @@ report_text <- function(x) {
     )
   )
 } # /R8::report_text
+
+
+# %% .report_types ----
+#' The types of a report
+#'
+#' For a package that reports what it found in data of another form, such as a file:
+#' its report is a struct that extends `R8::Report`.
+#'
+#' @return Named list of types: `report`, `R8::Report`, and its tables, `rules` and
+#'   `problems`.
+#'
+#' @examples
+#' names(.report_types())
+#'
+#' @keywords internal
+#' @export
+.report_types <- function() {
+  list(
+    report = type_report,
+    rules = report_rules_type,
+    problems = report_problems_type
+  )
+} # /R8::.report_types
+
+
+# %% .table_type ----
+#' The columns of a table type
+#'
+#' For a package that makes tables of data of another form, such as a file.
+#'
+#' @param type An R8 table type, or a `type_table()`.
+#'
+#' @return List: `columns`, a data frame with the variables `name`, `kind` (`"logical"`,
+#'   `"integer"`, `"double"`, `"character"`, `"date"`, `"posixct"`, or `"factor"`),
+#'   `optional`, whether cells may be missing, `required`, whether a table has the
+#'   column, and the list `levels`; `types`, the field types by name; and `open`,
+#'   whether a table has other columns.
+#'   `NULL` for an object that is no table type.
+#'
+#' @examples
+#' .table_type(type_table(list(age = type_double(), sex = type_factor(c("f", "m")))))
+#'
+#' @keywords internal
+#' @export
+.table_type <- function(type) {
+  if (!is_table_type(type)) {
+    return(NULL)
+  }
+  ir <- if (inherits(type, "r8_type")) {
+    ensure_registered(type)
+    r8_type_ir(attr(type, "r8_name"))
+  } else {
+    type
+  }
+  columns <- ir[["columns"]]
+  of <- lapply(columns, function(c) {
+    t <- c[["type"]]
+    optional <- identical(t[["kind"]], "option")
+    list(base = if (optional) t[["inner"]] else t, optional = optional)
+  })
+  names <- if (is.null(names(columns))) {
+    vapply(columns, `[[`, "", "name")
+  } else {
+    names(columns)
+  }
+  out <- data.frame(
+    name = as.character(names),
+    kind = vapply(of, function(c) c[["base"]][["kind"]], ""),
+    optional = vapply(of, `[[`, NA, "optional"),
+    required = vapply(columns, function(c) !isFALSE(c[["required"]]), NA),
+    row.names = NULL
+  )
+  out[["levels"]] <- lapply(of, function(c) {
+    as.character(unlist(c[["base"]][["levels"]]))
+  })
+  types <- lapply(columns, function(c) {
+    structure(unclass(c[["type"]]), class = "r8_field_type")
+  })
+  names(types) <- out[["name"]]
+  list(columns = out, types = types, open = isTRUE(ir[["open"]]))
+} # /R8::.table_type

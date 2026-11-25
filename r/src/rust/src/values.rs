@@ -2073,22 +2073,33 @@ fn r8_resolve_value(fields: Robj, type_name: crate::utf8::Utf8) -> Result<List> 
 /// Validates an R object against a field type, in place.
 ///
 /// @param x Object.
+/// @param columns List: The columns of a table by name, held against a type of
+///   tables, or `NULL`.
 /// @param type An R8 field type or type object.
 /// @param name Character: The object, as a problem names it.
 /// @return `NULL`, or `list(errors = <problems>)`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_check_object(x: Robj, r#type: Robj, name: crate::utf8::Utf8) -> Result<Robj> {
+fn r8_check_object(x: Robj, columns: Robj, r#type: Robj, name: crate::utf8::Utf8) -> Result<Robj> {
     let xs = unsafe { x.get() };
+    let columns = unsafe { columns.get() };
     let ty =
         crate::fieldtype::field_type(unsafe { r#type.get() }).map_err(|e| fail(e.to_string()))?;
     crate::interrupt::interruptible(xs, || {
         let docs = registry().snapshot();
         let lookup: &dyn TypeLookup = &*docs;
         let mut errors = crate::construct::with_cache(|cache| {
-            let v = crate::rview::RView::Whole(xs);
-            rtemis_r8::validate::validate_field_access(v, &ty, lookup, cache)
+            use rtemis_r8::validate::{validate_access, validate_field_access};
+            if crate::rview::is_null(columns) {
+                let v = crate::rview::RView::Whole(xs);
+                return validate_field_access(v, &ty, lookup, cache);
+            }
+            let v = crate::rview::RView::Draft(columns, "");
+            match &ty {
+                FieldType::Named { name } => validate_access(v, name, lookup, cache),
+                ty => validate_field_access(v, ty, lookup, cache),
+            }
         });
         for e in &mut errors {
             e.path = format!("/{}{}", esc(&name), e.path);

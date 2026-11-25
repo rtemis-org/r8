@@ -158,6 +158,29 @@ test_that("a rule is a value: it is saved, combined, and applied to other tables
   expect_error(adult == woman, "is not an operation on rules")
 })
 
+test_that("a number with a sign is a constant", {
+  r <- Raven(y = c(-1, 0, 1), k = c(-2L, 0L, 2L))
+  expect_identical(r8_filter(r, rule(y == -1))$y, -1)
+  expect_identical(r8_filter(r, rule(y == +1))$y, 1)
+  expect_identical(r8_filter(r, rule(y == (-1)))$y, -1)
+  expect_identical(r8_filter(r, rule(k == -2L))$k, -2L)
+  expect_identical(r8_filter(r, rule(y %in% c(-1, 1)))$y, c(-1, 1))
+  expect_identical(rule(y == -1), rule(y == val(-1)))
+  expect_output(print(rule(y %in% c(-1, 1))), "y %in% c(-1, 1)", fixed = TRUE)
+  declares <- function(expr, text) {
+    expect_error(expr, text, fixed = TRUE, class = "r8_declaration_error")
+  }
+  declares(rule(y == -Inf), "A number in a rule is finite.")
+  declares(rule(y < 1e400), "A number in a rule is finite.")
+  declares(rule(y %in% c(1, Inf)), "A number in a rule is finite.")
+  declares(rule(y == NA), "not NA")
+  declares(rule(y %in% c(1, NA)), "literal values")
+  # An error of a rule is that error, whatever the names in it.
+  declares(r8_filter(r, rule(y == NA)), "not NA")
+  declares(r[rule(y == NA), ], "not NA")
+})
+
+
 test_that("a rule is checked against the columns before a row is read", {
   x <- visits()
   refuses(

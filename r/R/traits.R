@@ -109,7 +109,7 @@ trait_method <- function(
       params = p,
       description = description,
       default_impl = default_impl,
-      stochastic = isTRUE(stochastic),
+      stochastic = check_flag(stochastic, "stochastic"),
       dispatch = dispatch,
       return_type = return_type_ir(return_type, self = TRUE)
     ),

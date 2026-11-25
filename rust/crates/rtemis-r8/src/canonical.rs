@@ -89,7 +89,9 @@ fn hex(d: impl AsRef<[u8]>) -> String {
     d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+/// The day count since 1970-01-01 of a proleptic Gregorian date (Hinnant's
+/// `days_from_civil`).
+pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;

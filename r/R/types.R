@@ -27,6 +27,25 @@ declared <- function(x) {
   x
 } # /R8::declared
 
+# %% check_flag ----
+#' Check that an argument is TRUE or FALSE
+#'
+#' @param x The argument.
+#' @param arg Character: Its name.
+#' @param class Character: The class of the error.
+#'
+#' @return `x`; signals an error of `class`.
+#'
+#' @keywords internal
+#' @noRd
+check_flag <- function(x, arg, class = "r8_declaration_error") {
+  if (!isTRUE(x) && !isFALSE(x)) {
+    r8_abort("`", arg, "` is TRUE or FALSE.", class = class)
+  }
+  x
+} # /R8::check_flag
+
+
 # %% type_logical ----
 #' Logical field type
 #'
@@ -616,5 +635,6 @@ type_table <- function(
       class = "r8_declaration_error"
     )
   }
+  check_flag(open, "open")
   declared(r8_ft_table(columns, open, as_rules(rules)))
 } # /R8::type_table

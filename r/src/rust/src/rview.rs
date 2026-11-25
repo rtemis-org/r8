@@ -327,14 +327,22 @@ fn data<'a, T>(x: SEXP) -> Option<&'a [T]> {
     (!p.is_null()).then(|| unsafe { std::slice::from_raw_parts(p.cast::<T>(), xlen(x)) })
 }
 
+/// The elements between two ticks of a walk.
+const WALK: usize = 4096;
+
 /// Calls `f` with elements `start..end` of a double vector: from its array
 /// where R holds one, else by region from its payload, which leaves an
 /// ALTREP vector unmaterialized, else by element (`payload()`). A short
 /// region read ends the calls early.
 pub(crate) fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, f64)) {
     if let Some(s) = data::<f64>(x) {
-        for (i, &v) in s[start..end].iter().enumerate() {
-            f(start + i, v);
+        let mut at = start;
+        for part in s[start..end].chunks(WALK) {
+            crate::interrupt::tick_block();
+            for (i, &v) in part.iter().enumerate() {
+                f(at + i, v);
+            }
+            at += part.len();
         }
         return;
     }
@@ -364,8 +372,13 @@ pub(crate) fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usi
 /// `for_reals()` reads a double vector.
 pub(crate) fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, i32)) {
     if let Some(s) = data::<i32>(x) {
-        for (i, &v) in s[start..end].iter().enumerate() {
-            f(start + i, v);
+        let mut at = start;
+        for part in s[start..end].chunks(WALK) {
+            crate::interrupt::tick_block();
+            for (i, &v) in part.iter().enumerate() {
+                f(at + i, v);
+            }
+            at += part.len();
         }
         return;
     }
@@ -1059,8 +1072,17 @@ impl<'a> Access<'a> for RView<'a> {
     ) {
         let Some(x) = self.sexp() else { return };
         if sexptype(x) == SEXPTYPE::STRSXP {
+            let na = unsafe { R_NaString };
             for i in start..end.min(xlen(x)) {
-                f(i, Ok(string_elt(x, i)));
+                if i % 1024 == 0 {
+                    crate::interrupt::tick_block();
+                }
+                let c = unsafe { STRING_ELT(x, i as R_xlen_t) };
+                if c == na {
+                    f(i, Ok(None));
+                } else {
+                    f(i, crate::utf8::text(c).map(Some).map_err(not_text));
+                }
             }
         }
     }
@@ -1295,14 +1317,19 @@ impl<'a> Access<'a> for RView<'a> {
         let rows = if named { list_rows(x) } else { table_rows(x)? };
         let names = attr(x, sym_names());
         names_text(names)?;
-        let columns = (0..xlen(x))
-            .map(|i| {
-                (
-                    string_elt(names, i).unwrap_or(Cow::Borrowed("NA")),
-                    RView::Whole(unsafe { VECTOR_ELT(x, i as R_xlen_t) }),
-                )
-            })
-            .collect();
+        if rows > MAX_ROWS {
+            return Err(too_many_rows(rows));
+        }
+        let mut columns = Vec::with_capacity(xlen(x));
+        for i in 0..xlen(x) {
+            let Some(name) = string_elt(names, i) else {
+                return Err(Form::new(
+                    "column_name",
+                    format!("the name of column {} is missing", i + 1),
+                ));
+            };
+            columns.push((name, RView::Whole(unsafe { VECTOR_ELT(x, i as R_xlen_t) })));
+        }
         Ok(Table {
             rows,
             columns,
@@ -1557,6 +1584,18 @@ pub(crate) fn list_member_at(x: SEXP, hint: usize, name: &str) -> Option<SEXP> {
 /// Whether `x` is a value of a named table.
 pub(crate) fn is_table_value(x: SEXP) -> bool {
     crate::value::is_value(x) && inherits(x, "r8_table")
+}
+
+/// The most rows of a table: the greatest integer of R, in which a data frame and
+/// `dim()` count rows.
+pub(crate) const MAX_ROWS: u64 = i32::MAX as u64;
+
+/// The problem of a table of more rows.
+pub(crate) fn too_many_rows(rows: u64) -> Form {
+    Form::new(
+        "row_limit",
+        format!("a table has at most 2,147,483,647 rows; the columns have {rows}"),
+    )
 }
 
 /// The number of rows of a list of columns: the length of the first.

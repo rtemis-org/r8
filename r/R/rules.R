@@ -47,7 +47,7 @@
 #' @section Missing values:
 #' A comparison with a missing cell or with `NaN` is missing, and so is an operation
 #' with one, except `is.na()`; `FALSE && NA` is false and `TRUE || NA` is true, as in
-#' R. A check fails where the rule is false, and a filter keeps the rows where it is
+#' R. `x %in% c(1, 2)` is missing where `x` is, where R gives `FALSE`. A check fails where the rule is false, and a filter keeps the rows where it is
 #' true.
 #'
 #' @section Vectors:

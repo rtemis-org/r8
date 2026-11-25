@@ -1,0 +1,21 @@
+[package]
+name = "rtemis-r8-io"
+description = "Readers of table files for the R8 type system: cells read as declared types, with every cell that does not read"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["r8", "r", "csv", "table", "validation"]
+categories = ["parser-implementations", "encoding"]
+
+[dependencies]
+memchr = "2"
+rtemis-r8 = { path = "../rtemis-r8", version = "0.4" }
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

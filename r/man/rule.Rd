@@ -69,7 +69,7 @@ read whole columns. \code{pmin()} and \code{pmax()} are of the cells of a row.
 
 A comparison with a missing cell or with \code{NaN} is missing, and so is an operation
 with one, except \code{is.na()}; \code{FALSE && NA} is false and \code{TRUE || NA} is true, as in
-R. A check fails where the rule is false, and a filter keeps the rows where it is
+R. \code{x \%in\% c(1, 2)} is missing where \code{x} is, where R gives \code{FALSE}. A check fails where the rule is false, and a filter keeps the rows where it is
 true.
 }
 

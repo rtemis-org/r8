@@ -66,7 +66,12 @@ columns. \code{x$a <- value}
 replaces a column, adds one to an open table, and, with \code{NULL}, removes one;
 the new column is checked, with the rules that read it. A result without a column
 that its type requires is a \link{Raven}. \code{rbind()} binds the rows of values of one
-type with the same columns.
+type with the same columns and units.
+
+\code{as.matrix()}, \code{t()}, \code{is.na()}, \code{summary()}, \code{duplicated()}, and other functions of
+R read a table as a data frame; \code{unique()}, \code{split()}, and \code{na.omit()} give tables.
+\code{cbind()}, \code{transform()}, \code{within()}, \code{subset()}, and \code{sort()} are errors that name
+the function of R8. \code{merge()} gives a data frame.
 }
 
 \examples{

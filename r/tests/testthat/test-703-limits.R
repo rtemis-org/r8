@@ -158,7 +158,8 @@ scenario(
           s = type_character(),
           j = type_json(),
           m = option(index_map(type_double())),
-          f = option(type_factor())
+          f = option(type_factor()),
+          v = option(vec(type_character()))
         )
       )
     })
@@ -201,6 +202,12 @@ scenario(
         text,
         class = "r8_value_error"
       )
+      expect_error(
+        T(s = "a", j = 1, v = c("a", bad)),
+        text,
+        class = "r8_value_error"
+      )
+      expect_error(Raven(a = c("a", bad)), text, class = "r8_value_error")
       expect_error(r8_is_variant(E@Warm, bad), text)
     }
     doc <- paste0(
@@ -224,7 +231,7 @@ scenario(
 scenario(
   "F10",
   "a long call ends when a time limit is reached",
-  situation = "A user sets a time limit, or interrupts, while R8 checks, hashes, or writes a value of hundreds of thousands of values, or filters a table of millions of rows.",
+  situation = "A user sets a time limit, or interrupts, while R8 checks, hashes, or writes a value of hundreds of thousands of values, or filters, orders, and binds a table of millions of rows.",
   risk = "The call goes on to its end, whatever the user does.",
   result = "The call ends with an error that says why, and R8 works afterwards.",
   code = {
@@ -234,7 +241,7 @@ scenario(
     })
     # R looks at the time every 0.05 s.
     h <- out$H(ps = rep(list(out$P(x = 1)), 8e5))
-    r <- Raven(x = runif(3e6))
+    r <- Raven(x = runif(3e6), s = as.character(seq_len(3e6)))
     for (f in list(
       r8_validate,
       r8_hash,
@@ -242,7 +249,11 @@ scenario(
       function(h) out$H(ps = h$ps),
       function(h) {
         r8_filter(r, rule(log(x + exp(x)) > 1 && nchar(paste0("", x)) > 2))
-      }
+      },
+      function(h) r8_sort(r, "s"),
+      function(h) rbind(r, r),
+      function(h) r[3e6:1, ],
+      function(h) r8_to_json(r)
     )) {
       message <- tryCatch(
         {

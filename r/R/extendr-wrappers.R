@@ -926,12 +926,14 @@ r8_value_check <- function(x) .Call(wrap__r8_value_check, x)
 #' Validates an R object against a field type, in place.
 #'
 #' @param x Object.
+#' @param columns List: The columns of a table by name, held against a type of
+#'   tables, or `NULL`.
 #' @param type An R8 field type or type object.
 #' @param name Character: The object, as a problem names it.
 #' @return `NULL`, or `list(errors = <problems>)`.
 #' @keywords internal
 #' @noRd
-r8_check_object <- function(x, type, name) .Call(wrap__r8_check_object, x, type, name)
+r8_check_object <- function(x, columns, type, name) .Call(wrap__r8_check_object, x, columns, type, name)
 
 #' Writes an R8 value as a document, from the R objects in place.
 #'

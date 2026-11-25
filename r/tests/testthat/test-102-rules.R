@@ -424,3 +424,24 @@ test_that("the name of a rule in a list is its ID", {
   })
   expect_true(r8_equal(x, T(lo = 1, hi = 2)))
 })
+
+
+test_that("an argument that is TRUE or FALSE takes nothing else", {
+  for (x in list(NA, "yes", 1, c(TRUE, TRUE), NULL)) {
+    for (f in list(
+      function() type_double(infinite = x),
+      function() type_double(nan = x),
+      function() type_factor("a", ordered = x),
+      function() vec(type_double(), unique = x),
+      function() field(type_double(), sensitive = x),
+      function() field(type_double(), context = x),
+      function() column(type_double(), unique = x),
+      function() column(type_double(), required = x),
+      function() type_table(open = x),
+      function() new_table("T", open = x),
+      function() trait_method(params(x), stochastic = x)
+    )) {
+      expect_error(f(), "is TRUE or FALSE", class = "r8_declaration_error")
+    }
+  }
+})

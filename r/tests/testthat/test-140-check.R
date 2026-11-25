@@ -159,6 +159,31 @@ test_that("a condition of a rule, and a rule without an answer, are told apart",
   )
 })
 
+test_that("a problem shows what its rule read", {
+  x <- data.frame(x = c(1, 2, 3, 10), id = c(1L, 2L, 2L, 3L))
+  r <- r8_check(x, list(s = rule(sum(x) < 10), m = rule(x <= mean(x))))
+  expect_identical(r$problems$found, c("sum(x) = 16", "x = 10, mean(x) = 4"))
+  expect_identical(r$problems$columns, c("x", "x"))
+  r <- r8_check(x, list(s = rule(x * 2 < 10, when = id > 0)))
+  expect_identical(r$problems$found, "x = 10, id = 3, x * 2 = 20")
+  T <- declare_in("chk_found", {
+    new_table(
+      "T",
+      list(
+        id = column(type_integer(), unique = TRUE),
+        x = column(type_double(max = 5))
+      )
+    )
+  })
+  p <- as.data.frame(r8_check(x, T)$problems)
+  expect_identical(p$found, c("id = 2", "x = 10"))
+  expect_identical(
+    p$message,
+    c("2 appears more than once", "must be at most 5")
+  )
+})
+
+
 test_that("the problems listed are limited, and the counts are not", {
   x <- data.frame(a = seq_len(5000))
   r <- r8_check(x, list(rule(a > 4000), rule(a > 0)), limit = 10)
@@ -304,6 +329,48 @@ test_that("r8_validate() requires what r8_check() reports", {
   expect_error(r8_validate(x, V), "Invalid `x`", class = "r8_value_error")
   expect_error(r8_validate(x, 1), "`against`", class = "r8_argument_error")
 })
+
+test_that("r8_validate() of a table gives the problems that the type finds", {
+  T <- declare_in("chk_require", {
+    new_table(
+      "T",
+      list(
+        id = column(type_integer(), unique = TRUE),
+        x = type_double(max = 5)
+      ),
+      rules = list(order = rule(id < x))
+    )
+  })
+  good <- data.frame(id = 1:2, x = c(2, 3))
+  bad <- data.frame(id = c(1L, 1L), x = c(2, 9))
+  for (f in list(identity, Raven)) {
+    expect_identical(r8_validate(f(good), T), f(good))
+    e <- expect_error(r8_validate(f(bad), T), class = "r8_value_error")
+    expect_match(
+      conditionMessage(e),
+      "$x[[2]]` must be at most 5; found 9",
+      fixed = TRUE
+    )
+    expect_match(conditionMessage(e), "1 appears more than once", fixed = TRUE)
+  }
+  expect_identical(r8_validate(T(good), T), T(good))
+  expect_error(
+    r8_validate(data.frame(id = 3L, x = 2), T),
+    "order",
+    class = "r8_value_error"
+  )
+  expect_error(
+    r8_validate(1, T),
+    "must be a value of",
+    class = "r8_value_error"
+  )
+  expect_error(
+    r8_validate(T(good), complete = "yes"),
+    "`complete` is TRUE or FALSE.",
+    class = "r8_argument_error"
+  )
+})
+
 
 test_that("r8_to_data_frame() gives the columns as a data frame", {
   r <- Raven(a = 1:3, b = c("x", "y", "z"))

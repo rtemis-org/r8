@@ -51,7 +51,12 @@
 #' replaces a column, adds one to an open table, and, with `NULL`, removes one;
 #' the new column is checked, with the rules that read it. A result without a column
 #' that its type requires is a [Raven]. `rbind()` binds the rows of values of one
-#' type with the same columns.
+#' type with the same columns and units.
+#'
+#' `as.matrix()`, `t()`, `is.na()`, `summary()`, `duplicated()`, and other functions of
+#' R read a table as a data frame; `unique()`, `split()`, and `na.omit()` give tables.
+#' `cbind()`, `transform()`, `within()`, `subset()`, and `sort()` are errors that name
+#' the function of R8. `merge()` gives a data frame.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -86,14 +91,7 @@ new_table <- function(
   if (length(columns) > 0L) {
     check_members(columns, "columns", paste0("`", name, "`"))
   }
-  if (!isTRUE(open) && !isFALSE(open)) {
-    r8_abort(
-      "`open` of `",
-      name,
-      "` is TRUE or FALSE.",
-      class = "r8_declaration_error"
-    )
-  }
+  check_flag(open, "open")
   declare(
     if (open) "open_table" else "table",
     name,
@@ -198,6 +196,7 @@ table_columns <- function(args, name) {
   if (length(args) == 1L && (is.null(keys) || !nzchar(keys))) {
     x <- args[[1L]]
     if (is_value(x) && inherits(x, "r8_table")) {
+      require_current(x)
       about <- r8_table_columns(x)
       facts <- lapply(seq_along(about[["name"]]), function(k) {
         f <- list(
@@ -274,6 +273,7 @@ table_columns <- function(args, name) {
 #' @noRd
 table_result <- function(res, x) {
   if (inherits(res, "r8_refused")) {
+    require_current(x)
     message <- res[["message"]]
     substr(message, 1L, 1L) <- toupper(substr(message, 1L, 1L))
     r8_abort(message, ".", class = "r8_value_error")
@@ -391,7 +391,8 @@ check_table <- function(x, arg = "x") {
 #' The value of an index
 #'
 #' An index is R's: a name in it is a variable. Where R has none of a name that is
-#' a column, the error gives the form that reads the column.
+#' a column, the error gives the form that reads the column. A name in a `rule()` is
+#' no variable.
 #'
 #' @param value The index, not yet evaluated.
 #' @param x The table.
@@ -408,7 +409,10 @@ index_value <- function(value, x, e, env, form) {
   tryCatch(
     value,
     error = function(cond) {
-      names <- all.vars(e)
+      if (inherits(cond, "r8_error")) {
+        stop(cond)
+      }
+      names <- index_names(e)
       names <- names[names %in% base::names(x)]
       lost <- names[!vapply(names, exists, NA, envir = env)]
       if (length(lost) == 0L) {
@@ -433,6 +437,26 @@ index_value <- function(value, x, e, env, form) {
     }
   )
 } # /R8::index_value
+
+
+# %% index_names ----
+#' The variables of an index, without the names in its rules
+#'
+#' @param e Language object.
+#'
+#' @return Character.
+#'
+#' @keywords internal
+#' @noRd
+index_names <- function(e) {
+  if (!is.call(e)) {
+    return(all.vars(e))
+  }
+  if (is_rule_fn(e[[1L]], "rule")) {
+    return(character())
+  }
+  unique(unlist(lapply(as.list(e), index_names)))
+} # /R8::index_names
 
 
 # %% row_index ----
@@ -647,6 +671,106 @@ rbind.r8_table <- function(..., deparse.level = 1) {
 } # /R8::rbind.r8_table
 
 
+# %% base functions ----
+# The functions of R that read a data frame read the columns of a table as one.
+
+#' @export
+as.matrix.r8_table <- function(x, ...) as.matrix(as.data.frame(x), ...)
+
+#' @export
+t.r8_table <- function(x) t(as.matrix(x))
+
+#' @export
+is.na.r8_table <- function(x) is.na(as.data.frame(x))
+
+#' @export
+summary.r8_table <- function(object, ...) summary(as.data.frame(object), ...)
+
+#' @export
+duplicated.r8_table <- function(x, incomparables = FALSE, ...) {
+  duplicated(as.data.frame(x), incomparables = incomparables, ...)
+}
+
+#' @export
+anyDuplicated.r8_table <- function(x, incomparables = FALSE, ...) {
+  anyDuplicated(as.data.frame(x), incomparables = incomparables, ...)
+}
+
+#' @exportS3Method stats::model.frame
+model.frame.r8_table <- function(formula, ...) {
+  stats::model.frame(as.data.frame(formula), ...)
+}
+
+# Those that give rows give rows of a table.
+
+#' @export
+unique.r8_table <- function(x, incomparables = FALSE, ...) {
+  x[!duplicated(x, incomparables = incomparables, ...), ]
+}
+
+#' @export
+split.r8_table <- function(x, f, drop = FALSE, ...) {
+  split.data.frame(x, f, drop = drop, ...)
+}
+
+#' @exportS3Method stats::na.omit
+na.omit.r8_table <- function(object, ...) {
+  x <- as.data.frame(object)
+  object[if (length(x) > 0L) stats::complete.cases(x) else logical(), ]
+}
+
+# Those that change columns have a function of R8.
+
+#' @export
+cbind.r8_table <- function(..., deparse.level = 1) {
+  r8_abort(
+    "r8_set(x, list(name = value)) adds columns to a table, and r8_set(x, y) those ",
+    "of another table.",
+    class = "r8_value_error"
+  )
+}
+
+#' @export
+transform.r8_table <- function(`_data`, ...) {
+  r8_abort(
+    "r8_set(x, list(name = value)) adds and replaces columns of a table.",
+    class = "r8_value_error"
+  )
+}
+
+#' @export
+within.r8_table <- function(data, expr, ...) {
+  r8_abort(
+    "r8_set(x, list(name = value)) adds and replaces columns of a table.",
+    class = "r8_value_error"
+  )
+}
+
+#' @export
+sort.r8_table <- function(x, decreasing = FALSE, ...) {
+  r8_abort(
+    "r8_sort(x, by) orders the rows of a table.",
+    class = "r8_value_error"
+  )
+}
+
+#' @export
+xtfrm.r8_table <- function(x) {
+  r8_abort(
+    "r8_sort(x, by) orders the rows of a table.",
+    class = "r8_value_error"
+  )
+}
+
+#' @export
+subset.r8_table <- function(x, ...) {
+  r8_abort(
+    "r8_filter(x, rule(...)) chooses rows of a table, and r8_select(x, names) columns.",
+    class = "r8_value_error"
+  )
+}
+
+
 # %% r8_set ----
 #' Change the columns of a table
 #'
@@ -699,6 +823,14 @@ r8_set <- function(x, columns) {
   own <- inherits(columns, "data.table")
   columns <- as.list(unclass(columns))
   attributes(columns) <- list(names = keys)
+  if (anyDuplicated(keys) > 0L) {
+    r8_abort(
+      "Two entries of `columns` are named `",
+      keys[[anyDuplicated(keys)]],
+      "`.",
+      class = "r8_argument_error"
+    )
+  }
   absent <- vapply(columns, is.null, NA)
   if (any(absent)) {
     r8_abort(

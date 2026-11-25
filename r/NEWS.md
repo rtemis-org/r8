@@ -92,7 +92,7 @@
 - `r8_to_json()` writes `$declarations`, the hash of what each declaration says about a value, and, with `declarations = TRUE`, the declarations themselves. `r8_from_json()` refuses a document of another declaration than the registered one, unless the declarations it holds give its fields the same meaning, or `declaration = "any"` is passed.
 - A value, a field type, and a rule's expression nest at most 100 levels (`too_deep`), and a default that holds itself is a declaration error (`default_recursive`).
 - A string in Latin-1 is translated to UTF-8 for documents, hashes, and equality; bytes that are no text are an error (`r_encoding`). `r8_from_json()` refuses an object that is not text.
-- A long validation, hash, comparison, or document ends at the user's interrupt and at R's time limits.
+- A long validation, hash, comparison, document, filter, order, or gathering of rows ends at the user's interrupt and at R's time limits.
 - `type_array()` without `dim` takes an array of any number of dimensions.
 - `r8_filter(x, rule)` and `r8_select(x, columns)` choose the rows and the columns of a table, and `x[rule, columns]` is the same: a `rule()` is an index of rows. A rule is a value, which filters every table that has the columns it names; `!`, `&`, and `|` make a rule of others. A name in `x[i, j]` is R's.
 - Rules over rows are evaluated by column in Rust, in filters and in the validation of a table's rules. A comparison of two columns of 10^7 doubles with numbers takes 12 ms with the choice of the rows, against 42 ms for R's condition.
@@ -116,9 +116,14 @@
 - A Rust-stored value is saved as its fields, which read without the package that declares the type, and after the type changed; R8 checks them before Rust code takes the value. `R8Codec.write_state`, `read_state`, and `encode`, and `R8Writer`, are removed, and the interface is ABI version 2: a package with compiled exports is reinstalled.
 - No operation copies a vector, a matrix, a factor, or a column of a data frame, unless the field's type asks for other elements; a `POSIXct` in another time zone is shared and read in UTC.
 - A field read gives a vector as a view that R copies before it changes it, and a table as a data frame of its own, so that `setDT()`, `:=`, and `setattr()` on what a read gave leave the value as it is. The columns of a data.table given to a constructor are copied; vectors and data frames are not.
-- `r8_check(x, against)` holds a table, or a data frame as it was read, against rules or a type, and gives a report: the rows that hold, fail, have no answer, and are errors, for each rule, and the problems with their rows, values, and explanations. `r8_validate(x, against)` holds any object against a type or rules, and raises an error.
+- `r8_check(x, against)` holds a table, or a data frame as it was read, against rules or a type, and gives a report: the rows that hold, fail, have no answer, and are errors, for each rule, and the problems with their rows, values, and explanations. `r8_validate(x, against)` holds any object against a type or rules, and raises an error; of a table against a table type, the error lists the problems of its columns and rows.
 - The name of a rule in a list is its ID, in a declaration and in a check: `rules = list(order = rule(lo <= hi))`.
-- `r8_to_data_frame()` is `as.data.frame()` of a table.
+- `.table_type()` and `.report_types()` give a package that reads files the columns of a table type and the types of a report.
+- `r8_to_data_frame()` is `as.data.frame()` of a table. `as.matrix()`, `t()`, `is.na()`, `summary()`, `duplicated()`, and `model.frame()` read a table as a data frame; `unique()`, `split()`, and `na.omit()` give tables; and `cbind()`, `transform()`, `within()`, `subset()`, and `sort()` are errors that name the function of R8.
+- A number with a sign is a constant in a rule: `rule(y == -1)`, `rule(y %in% c(-1, 1))`.
+- `TRUE` or `FALSE` is asked for where an argument of a declaration is a flag, such as `unique =` and `nan =`.
+- A string that is no text is refused in a character vector and in a column (`r_encoding`), as it is in a field of one string.
+- A table has at most 2,147,483,647 rows (`row_limit`), and a data frame with a missing column name is refused.
 - `r8_write_rds()` and `r8_read_rds()` write and read an RDS file with a checksum: a damaged file is an `r8_file_error`.
 - `print()`, `format()`, and `str()` of a value show `<sensitive>` for a field declared `sensitive = TRUE`.
 - A constructor builds a default that is a value of another package's type from the registered declaration of that type.

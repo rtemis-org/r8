@@ -1436,9 +1436,7 @@ r8_to_json <- function(x, declarations = FALSE) {
   if (!is_value(x)) {
     value_required(x)
   }
-  if (!isTRUE(declarations) && !isFALSE(declarations)) {
-    r8_abort("`declarations` is TRUE or FALSE.", class = "r8_type_error")
-  }
+  check_flag(declarations, "declarations", "r8_type_error")
   res <- r8_value_to_document(x, declarations)
   if (!is.null(res[["errors"]])) {
     value_abort("Cannot write", value_type(x), res[["errors"]])
@@ -1760,5 +1758,6 @@ r8_schema <- function(type, closed = FALSE) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
   ensure_registered(type)
-  r8_type_schema(attr(type, "r8_name"), isTRUE(closed))
+  check_flag(closed, "closed", "r8_type_error")
+  r8_type_schema(attr(type, "r8_name"), closed)
 } # /R8::r8_schema

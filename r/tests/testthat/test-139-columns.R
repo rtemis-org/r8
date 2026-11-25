@@ -48,7 +48,11 @@ test_that("r8_set() adds and replaces columns, and leaves its table as it is", {
   bad(r8_set(r, list(w = NULL)), "r8_drop()")
   bad(r8_set(iris, list(a = 1)), "a value of a table")
   refuses(r8_set(r, list(a = 1)), "must have 2 cells")
-  refuses(r8_set(r, list(a = 1:2, a = 3:4)), "a")
+  refuses(
+    r8_set(r, list(a = 1:2, a = 3:4)),
+    "Two entries of `columns` are named `a`.",
+    "r8_argument_error"
+  )
   # A declared column is checked, with its rules.
   P <- patients("col1")
   p <- P(weight = c(60, 82), height = c(1.6, 1.8))

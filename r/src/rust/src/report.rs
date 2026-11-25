@@ -21,14 +21,17 @@ fn fail(m: impl Into<String>) -> Error {
 }
 
 /// A report as R vectors: `rows`, the number of rows; of each line, `column`, `rule`,
-/// `checked`, `failed`, `missing`, and `errors`; and of each problem, `line`, `row`,
-/// `columns`, `found`, `code`, and `message`.
+/// `checked`, `failed`, `missing`, and `errors`; of each problem, `line`, `row`,
+/// `columns`, `found`, `code`, and `message`; and of each computed operand of a rule,
+/// `operand_of`, its problem, `operand_at`, its place in the rule's invariant, and
+/// `operand`, its value.
 fn written(rows: u64, lines: &[Line]) -> Result<Robj> {
     let (mut column, mut rule) = (Vec::new(), Vec::new());
     let mut counts: [Vec<f64>; 4] = Default::default();
     let (mut line, mut row) = (Vec::new(), Vec::new());
     let (mut columns, mut found, mut code, mut message) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut operand_of, mut operand_at, mut operand) = (Vec::new(), Vec::new(), Vec::new());
     for (k, l) in lines.iter().enumerate() {
         let (c, r) = match &l.of {
             Of::Column(c) => (Rstr::from(c.as_str()), Rint::na()),
@@ -59,6 +62,15 @@ fn written(rows: u64, lines: &[Line]) -> Result<Robj> {
             found.push(f);
             code.push(c);
             message.push(m);
+            if let Kind::Violation(d) = &p.kind {
+                for (at, s) in &d.operands {
+                    if let Some(v) = shown_value(s) {
+                        operand_of.push(found.len() as i32);
+                        operand_at.push(at.clone());
+                        operand.push(v);
+                    }
+                }
+            }
         }
     }
     let [checked, failed, missing, errors] = counts;
@@ -77,7 +89,10 @@ fn written(rows: u64, lines: &[Line]) -> Result<Robj> {
         columns = columns,
         found = found,
         code = code,
-        message = message
+        message = message,
+        operand_of = operand_of,
+        operand_at = operand_at,
+        operand = operand
     )
     .into();
     Ok(list!(rows = rows as f64, lines = lines, problems = problems).into())
@@ -114,7 +129,10 @@ fn value_message(e: &ValueError) -> String {
             format!("must {r}; found {}", RSyntax.shown(f))
         }
         (Some(r), _) => format!("must {r}"),
-        (None, _) => e.message.clone(),
+        (None, _) => match &e.problem {
+            Some(Requirement::Text(t)) => t.clone(),
+            _ => e.message.clone(),
+        },
     }
 }
 
