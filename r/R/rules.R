@@ -124,7 +124,8 @@
 #'   as `"lo is below hi."`; without it, a violation shows the invariant.
 #' @param id Optional character: The rule's ID, an R8 name such as
 #'   `"LO_HI"`, unique among its type's rules, which a violation and
-#'   `problems$rule` report.
+#'   `problems$rule` report. In a list of rules, the name of a rule is its ID:
+#'   `list(order = rule(lo <= hi))`.
 #'
 #' @return An `r8_rule`.
 #'
@@ -492,31 +493,65 @@ elementwise_error <- function(fn, arg) {
 # %% as_rules ----
 #' A rules argument as a list of rules
 #'
-#' @param rules One `rule()`, or a list of them.
+#' A name in the list is the ID of its rule, in a declaration and in a check alike.
 #'
-#' @return List: The rules.
+#' @param rules One `rule()`, or a list of them.
+#' @param arg Character: The argument's name, for messages.
+#' @param class Character: The class of an error.
+#'
+#' @return List: The rules, without names.
 #'
 #' @keywords internal
 #' @noRd
-as_rules <- function(rules) {
+as_rules <- function(
+  rules,
+  arg = "rules",
+  class = "r8_declaration_error"
+) {
   if (inherits(rules, "r8_rule")) {
     return(list(rules))
   }
   if (!is.list(rules) || is.object(rules)) {
     r8_abort(
-      "`rules` is a rule() or a list of rule() calls.",
-      class = "r8_declaration_error"
+      "`",
+      arg,
+      "` is a rule() or a list of rule() calls.",
+      class = class
     )
   }
+  given <- names(rules) %||% rep("", length(rules))
   for (i in seq_along(rules)) {
     if (!inherits(rules[[i]], "r8_rule")) {
+      r8_abort("`", arg, "[[", i, "]]` is not a rule().", class = class)
+    }
+    name <- given[[i]]
+    if (is.na(name) || !nzchar(name)) {
+      next
+    }
+    if (!is_name(name)) {
       r8_abort(
-        "`rules[[",
-        i,
-        "]]` is not a rule().",
-        class = "r8_declaration_error"
+        "The name of a rule in `",
+        arg,
+        "` is its ID, an R8 name",
+        name_reason(name),
+        "; `message` holds text.",
+        class = class
       )
     }
+    id <- rules[[i]][["id"]]
+    if (!is.null(id) && !identical(id, name)) {
+      r8_abort(
+        "The rule named `",
+        name,
+        "` in `",
+        arg,
+        "` has the ID `",
+        id,
+        "`; give one of the two.",
+        class = class
+      )
+    }
+    rules[[i]][["id"]] <- name
   }
-  rules
+  unname(rules)
 } # /R8::as_rules

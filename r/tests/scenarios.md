@@ -4,12 +4,12 @@
 
 ## Essentials
 
-What each feature does, in 40 files of 352 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 40 files of 354 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
 | `test-101-declare.R` | Declarations: structs, enums, traits, and impls written in R. | 27 |
-| `test-102-rules.R` | Rules: conditions that a value as a whole satisfies, such as lo <= hi. | 11 |
+| `test-102-rules.R` | Rules: conditions that a value as a whole satisfies, such as lo <= hi. | 12 |
 | `test-103-extends.R` | Structs that extend another struct. | 5 |
 | `test-104-dyn.R` | Fields that hold a value of any type that implements a trait, dyn(Trait), or of any struct that extends another, subtype(Struct). | 7 |
 | `test-111-construct.R` | Construction from R objects, checked against an independent path. | 13 |
@@ -40,7 +40,7 @@ What each feature does, in 40 files of 352 tests. The runtime has its own tests 
 | `test-137-table.R` | Tables: the declaration of a table, its values, the operations on their columns and rows, documents, and saved values. | 20 |
 | `test-138-filter.R` | Rules that choose the rows of tables: what is kept, what is refused, and rules as values. The conformance corpus has the semantics of each operator. | 11 |
 | `test-139-columns.R` | The functions on tables that change columns and order rows: r8_set(), r8_drop(), r8_rename(), and r8_sort(). | 6 |
-| `test-140-check.R` | Checks: r8_check() holds a table against rules or a type and reports what it finds, and r8_validate() requires. | 10 |
+| `test-140-check.R` | Checks: r8_check() holds a table against rules or a type and reports what it finds, and r8_validate() requires. | 11 |
 | `test-141-generate.R` | The R declarations that R8 writes for types declared in Rust. | 13 |
 | `test-142-public.R` | The examples of the help pages and the test packages use R8's functions, and none of its internals. | 2 |
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |

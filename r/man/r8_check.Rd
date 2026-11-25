@@ -39,8 +39,8 @@ have is not checked: its \code{checked} is 0, and \code{problems} says why.
 \section{Rules}{
 
 A rule (\code{\link[=rule]{rule()}}) reads the cells of a row by the names of the columns. A rule
-that reads whole columns only, such as \code{rule(mean(age) > 18)}, is checked once. The
-name of a rule is its name in the list, or else its \code{id}. A list of rules is saved
+that reads whole columns only, such as \code{rule(mean(age) > 18)}, is checked once. A
+name in the list is the rule's ID, as in a declaration. A list of rules is saved
 as any R object, and is checked against any table with the columns it names.
 }
 

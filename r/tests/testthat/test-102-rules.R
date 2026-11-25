@@ -335,3 +335,92 @@ test_that("the generator writes a rule's optional members by name", {
     "list(R8::rule(lo < hi))"
   )
 })
+
+test_that("the name of a rule in a list is its ID", {
+  ids <- function(type) {
+    vapply(
+      r8_type_ir(attr(type, "r8_name"))[["rules"]],
+      function(r) r[["id"]] %||% "",
+      ""
+    )
+  }
+  fields <- list(lo = type_double(), hi = type_double())
+  S <- declare_in("rn1", {
+    new_struct(
+      "S",
+      fields = fields,
+      rules = list(
+        order = rule(lo <= hi),
+        rule(lo > 0),
+        rule(hi < 9, id = "TOP")
+      )
+    )
+  })
+  expect_identical(ids(S), c("order", "", "TOP"))
+  expect_error(S(lo = 2, hi = 1), "Rule order: lo <= hi")
+  # One rule in two types, with a name of each.
+  shared <- rule(lo <= hi)
+  A <- declare_in("rn2", {
+    new_struct("A", fields = fields, rules = list(a = shared))
+  })
+  B <- declare_in("rn2", {
+    new_table(
+      "B",
+      columns = fields,
+      rules = list(b = shared, shared_too = rule(lo > 0))
+    )
+  })
+  expect_identical(ids(A), "a")
+  expect_identical(ids(B), c("b", "shared_too"))
+  expect_null(shared[["id"]])
+  # Every declaration of rules reads them so.
+  expect_identical(
+    type_table(fields, rules = list(t = shared))$rules[[1L]]$id,
+    "t"
+  )
+  E <- declare_in("rn3", {
+    new_enum(
+      "E",
+      variants = list(V = variant(fields = fields, rules = list(v = shared)))
+    )
+  })
+  expect_identical(
+    r8_type_ir("rn3::E")[["variants"]][[1L]][["rules"]][[1L]][["id"]],
+    "v"
+  )
+  bad <- function(rules, text) {
+    fields <- list(lo = type_double(), hi = type_double())
+    expect_error(
+      declare_in("rn4", new_struct("S", fields = fields, rules = rules)),
+      text,
+      fixed = TRUE,
+      class = "r8_declaration_error"
+    )
+  }
+  bad(
+    list(order = rule(lo <= hi, id = "LO_HI")),
+    "The rule named `order` in `rules` has the ID `LO_HI`; give one of the two."
+  )
+  bad(list(`lo hi` = rule(lo <= hi)), "is its ID, an R8 name")
+  bad(list(a = rule(lo <= hi), a = rule(lo > 0)), "duplicate_rule")
+  bad(list(a = rule(lo <= hi), rule(lo > 0, id = "a")), "duplicate_rule")
+  # A child's rule does not take the ID of its parent's.
+  P <- declare_in("rn5", {
+    new_struct("P", fields = fields, rules = list(order = rule(lo <= hi)))
+  })
+  expect_error(
+    declare_in("rn5", {
+      new_struct("C", extends = P, rules = list(order = rule(lo < hi)))
+    }),
+    class = "r8_declaration_error"
+  )
+  # A name is no part of a value: one made before is of the type after.
+  x <- declare_in("rn6", {
+    T <- new_struct("T", fields = fields, rules = rule(lo <= hi))
+    T(lo = 1, hi = 2)
+  })
+  T <- declare_in("rn6", {
+    new_struct("T", fields = fields, rules = list(order = rule(lo <= hi)))
+  })
+  expect_true(r8_equal(x, T(lo = 1, hi = 2)))
+})

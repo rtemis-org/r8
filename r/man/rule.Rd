@@ -17,7 +17,8 @@ as \code{"lo is below hi."}; without it, a violation shows the invariant.}
 
 \item{id}{Optional character: The rule's ID, an R8 name such as
 \code{"LO_HI"}, unique among its type's rules, which a violation and
-\code{problems$rule} report.}
+\code{problems$rule} report. In a list of rules, the name of a rule is its ID:
+\code{list(order = rule(lo <= hi))}.}
 }
 \value{
 An \code{r8_rule}.

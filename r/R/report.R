@@ -25,8 +25,8 @@
 #'
 #' @section Rules:
 #' A rule ([rule()]) reads the cells of a row by the names of the columns. A rule
-#' that reads whole columns only, such as `rule(mean(age) > 18)`, is checked once. The
-#' name of a rule is its name in the list, or else its `id`. A list of rules is saved
+#' that reads whole columns only, such as `rule(mean(age) > 18)`, is checked once. A
+#' name in the list is the rule's ID, as in a declaration. A list of rules is saved
 #' as any R object, and is checked against any table with the columns it names.
 #'
 #' @param x A value of a table, or a data frame. Any other object for a type of other
@@ -185,7 +185,7 @@ r8_validate <- function(x, against = NULL, complete = FALSE) {
 #'
 #' @param against A rule, a list of rules, or a type.
 #'
-#' @return List: `type`, or `rules` and their `names`; signals `r8_argument_error`.
+#' @return List: `type`, or `rules`; signals `r8_argument_error`.
 #'
 #' @keywords internal
 #' @noRd
@@ -200,18 +200,23 @@ checked_against <- function(against) {
   if (inherits(against, "r8_rule")) {
     against <- list(against)
   }
-  is_rules <- is.list(against) &&
-    !is.object(against) &&
-    length(against) > 0L &&
-    all(vapply(against, inherits, NA, "r8_rule"))
-  if (!is_rules) {
+  if (!is.list(against) || is.object(against) || length(against) == 0L) {
     r8_abort(
       "`against` is a rule(), a list of rules, or a type.",
       class = "r8_argument_error"
     )
   }
-  given <- names(against) %||% rep("", length(against))
-  list(rules = unname(against), names = given)
+  rules <- as_rules(against, "against", "r8_argument_error")
+  ids <- unlist(lapply(rules, `[[`, "id"))
+  if (anyDuplicated(ids) > 0L) {
+    r8_abort(
+      "Two rules of `against` have the ID `",
+      ids[[anyDuplicated(ids)]],
+      "`.",
+      class = "r8_argument_error"
+    )
+  }
+  list(rules = rules)
 } # /R8::checked_against
 
 
@@ -273,16 +278,9 @@ table_report <- function(res, against) {
       type[["rules"]]
     }
   }
-  given <- against[["names"]] %||% rep("", length(rules))
   labels <- vapply(
     seq_along(rules),
-    function(k) {
-      if (nzchar(given[[k]])) {
-        given[[k]]
-      } else {
-        rules[[k]][["id"]] %||% paste("rule", k)
-      }
-    },
+    function(k) rules[[k]][["id"]] %||% paste("rule", k),
     ""
   )
   texts <- vapply(rules, rule_text, "")

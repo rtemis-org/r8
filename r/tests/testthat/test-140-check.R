@@ -95,12 +95,59 @@ test_that("a rule is named by the list, its id, or its place", {
   expect_identical(named(rule(dbp >= 0, id = "LOW")), "LOW")
   expect_identical(
     named(list(
-      a = rule(dbp >= 0, id = "LOW"),
+      a = rule(dbp >= 0),
       rule(id > 0),
-      rule(id > 1, id = "B")
+      rule(id > 1, id = "B"),
+      C = rule(id > 2, id = "C")
     )),
-    c("a", "rule 2", "B")
+    c("a", "rule 2", "B", "C")
   )
+  bad <- function(against, text) {
+    expect_error(
+      r8_check(x, against),
+      text,
+      fixed = TRUE,
+      class = "r8_argument_error"
+    )
+    expect_error(
+      r8_validate(x, against),
+      text,
+      fixed = TRUE,
+      class = "r8_argument_error"
+    )
+  }
+  bad(
+    list(low = rule(dbp >= 0, id = "LOW")),
+    "The rule named `low` in `against` has the ID `LOW`; give one of the two."
+  )
+  bad(list(`age ok` = rule(age > 1)), "is its ID, an R8 name")
+  bad(list(a = rule(dbp >= 0), a = rule(id > 0)), "have the ID `a`")
+  bad(list(a = rule(dbp >= 0), rule(id > 0, id = "a")), "have the ID `a`")
+})
+
+test_that("one list of rules declares, checks, and reports under the same names", {
+  set <- list(pressures = rule(dbp < sbp), adult = rule(age >= 18))
+  V <- declare_in("chk4", {
+    new_table(
+      "V",
+      columns = list(
+        age = option(type_double()),
+        sbp = option(type_double()),
+        dbp = type_double()
+      ),
+      open = TRUE,
+      rules = set
+    )
+  })
+  x <- visits()
+  of_type <- r8_check(x, V)
+  of_rules <- r8_check(x, set)
+  expect_identical(tail(of_type$rules$rule, 2L), names(set))
+  expect_identical(
+    as.data.frame(r8_filter(of_type$problems, rule(rule %in% val(names(set))))),
+    as.data.frame(of_rules$problems)
+  )
+  expect_error(V(age = 17, sbp = 100, dbp = 80), "Rule adult: age >= 18")
 })
 
 test_that("a condition of a rule, and a rule without an answer, are told apart", {
@@ -218,7 +265,7 @@ test_that("an object that is no table is held against its type", {
   bad(r8_check(1, rule(a > 1)), "`x` is a table")
   bad(r8_check(visits(), "a"), "`against` is a rule()")
   bad(r8_check(visits(), list()), "`against` is a rule()")
-  bad(r8_check(visits(), list(1)), "`against` is a rule()")
+  bad(r8_check(visits(), list(1)), "`against[[1]]` is not a rule()")
 })
 
 test_that("a report prints what holds and what does not", {

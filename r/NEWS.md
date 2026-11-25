@@ -117,6 +117,7 @@
 - No operation copies a vector, a matrix, a factor, or a column of a data frame, unless the field's type asks for other elements; a `POSIXct` in another time zone is shared and read in UTC.
 - A field read gives a vector as a view that R copies before it changes it, and a table as a data frame of its own, so that `setDT()`, `:=`, and `setattr()` on what a read gave leave the value as it is. The columns of a data.table given to a constructor are copied; vectors and data frames are not.
 - `r8_check(x, against)` holds a table, or a data frame as it was read, against rules or a type, and gives a report: the rows that hold, fail, have no answer, and are errors, for each rule, and the problems with their rows, values, and explanations. `r8_validate(x, against)` holds any object against a type or rules, and raises an error.
+- The name of a rule in a list is its ID, in a declaration and in a check: `rules = list(order = rule(lo <= hi))`.
 - `r8_to_data_frame()` is `as.data.frame()` of a table.
 - `r8_write_rds()` and `r8_read_rds()` write and read an RDS file with a checksum: a damaged file is an `r8_file_error`.
 - `print()`, `format()`, and `str()` of a value show `<sensitive>` for a field declared `sensitive = TRUE`.
