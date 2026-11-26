@@ -231,7 +231,7 @@ scenario(
 scenario(
   "F10",
   "a long call ends when a time limit is reached",
-  situation = "A user sets a time limit, or interrupts, while R8 checks, hashes, or writes a value of hundreds of thousands of values, or filters, orders, and binds a table of millions of rows.",
+  situation = "A user sets a time limit, or interrupts, while R8 checks, hashes, or writes a value of hundreds of thousands of values, or filters, orders, binds, and writes a table of millions of rows.",
   risk = "The call goes on to its end, whatever the user does.",
   result = "The call ends with an error that says why, and R8 works afterwards.",
   code = {
@@ -239,7 +239,8 @@ scenario(
       P <- new_struct("P", fields = list(x = type_double()))
       list(P = P, H = new_struct("H", fields = list(ps = vec(P))))
     })
-    # R looks at the time every 0.05 s.
+    # R looks at the time every 0.05 s, so each call takes longer than that in
+    # a release build: a gather of 3 x 10^6 rows, 0.04 s, does not.
     h <- out$H(ps = rep(list(out$P(x = 1)), 8e5))
     r <- Raven(x = runif(3e6), s = as.character(seq_len(3e6)))
     for (f in list(
@@ -252,7 +253,6 @@ scenario(
       },
       function(h) r8_sort(r, "s"),
       function(h) rbind(r, r),
-      function(h) r[3e6:1, ],
       function(h) r8_to_json(r)
     )) {
       message <- tryCatch(
