@@ -15,7 +15,7 @@ categories = ["parser-implementations", "encoding"]
 
 [dependencies]
 memchr = "2"
-rtemis-r8 = { path = "../rtemis-r8", version = "0.4" }
+rtemis-r8 = { path = "../rtemis-r8", version = "0.5" }
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

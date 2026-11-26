@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Checks that the R package R8, its binding crate r8-r, and the workspace
-# crates rtemis-r8, rtemis-r8-macros, and rtemis-r8-api share one major and
-# minor version, and that the binding and the crates require that version of
+# Checks that the R packages R8 and R8.io, their binding crates r8-r and r8-io-r,
+# and the workspace crates rtemis-r8, rtemis-r8-macros, rtemis-r8-api, and
+# rtemis-r8-io share one major and minor version, and that the binding and the crates require that version of
 # their dependencies. Patch versions are independent. It reports whether the
 # tree is a release tree: the rtemis-r8 of the binding's Cargo.lock and of
 # r/src/rust/vendor.tar.xz is a crates.io release of that version. With
@@ -23,6 +23,12 @@ binding=$(sed -n "s/^version = '\(.*\)'$/\1/p" r/src/rust/Cargo.toml | head -n 1
 binding_req=$(sed -n "s/^rtemis-r8 = '\(.*\)'$/\1/p" r/src/rust/Cargo.toml)
 api_req=$(sed -n 's/^rtemis-r8 = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-api/Cargo.toml)
 api_macros_req=$(sed -n 's/^rtemis-r8-macros = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-api/Cargo.toml)
+io_req=$(sed -n 's/^rtemis-r8 = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-io/Cargo.toml)
+io_package=$(sed -n 's/^Version: *//p' r-io/DESCRIPTION)
+io_binding=$(sed -n "s/^version = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml | head -n 1)
+io_binding_req=$(sed -n "s/^rtemis-r8 = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml)
+io_binding_io_req=$(sed -n "s/^rtemis-r8-io = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml)
+io_r8=$(sed -n 's/^ *R8 (>= \([^)]*\)).*/\1/p' r-io/DESCRIPTION)
 
 expected=$(major_minor "$workspace")
 status=0
@@ -44,6 +50,12 @@ check "binding crate r8-r" "$binding"
 check "binding requirement of rtemis-r8" "$binding_req"
 check "rtemis-r8 requirement of rtemis-r8-api" "$api_req"
 check "rtemis-r8-macros requirement of rtemis-r8-api" "$api_macros_req"
+check "rtemis-r8 requirement of rtemis-r8-io" "$io_req"
+check "R package R8.io (r-io/DESCRIPTION)" "$io_package"
+check "R8 requirement of R8.io" "$io_r8"
+check "binding crate r8-io-r" "$io_binding"
+check "r8-io-r requirement of rtemis-r8" "$io_binding_req"
+check "r8-io-r requirement of rtemis-r8-io" "$io_binding_io_req"
 
 # The rtemis-r8 that a build without R8_CRATES_PATH compiles: the binding's
 # lock entry, which names crates.io as its source, and the vendored copy.

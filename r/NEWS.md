@@ -1,4 +1,4 @@
-# R8 0.4.0.9000
+# R8 0.5.0
 
 - The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "subtype", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.
 - The declaration record has format 8; a package installed with an earlier R8 is reinstalled.
