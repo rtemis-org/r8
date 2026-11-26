@@ -35,6 +35,11 @@ pub trait TypeLookup {
         None
     }
 
+    /// The declaration of the function `f`, if the lookup holds it.
+    fn function_of(&self, _f: &QualifiedName) -> Option<&crate::ir::FunctionDef> {
+        None
+    }
+
     /// The structs that descend from `ty` through `extends`, as far as the
     /// lookup holds them, every parent before its children.
     fn descendants_of(&self, _ty: &QualifiedName) -> Vec<QualifiedName> {
@@ -531,8 +536,20 @@ impl FromIterator<crate::ir::IrDocument> for DocumentSet {
     }
 }
 
-/// Where [`DocumentSet::put_type`] placed a declaration, and the one it
-/// Where `DocumentSet::put_trait()` put a trait, and the trait it replaced.
+/// Where `DocumentSet::put_function()` put a function, and the function it
+/// replaced; [`DocumentSet::undo_put_function`] takes it back.
+#[derive(Debug)]
+pub struct PlacedFunction {
+    /// The position of the namespace's document.
+    pub document: usize,
+    /// The position of the function in the document.
+    pub index: usize,
+    /// The function of the same name that the put replaced.
+    pub previous: Option<crate::ir::FunctionDef>,
+}
+
+/// Where `put_trait()` placed a trait, and the trait it replaced;
+/// [`DocumentSet::undo_put_trait`] takes it back.
 #[derive(Debug)]
 pub struct PlacedTrait {
     /// The position of the namespace's document.
@@ -543,6 +560,7 @@ pub struct PlacedTrait {
     pub previous: Option<crate::ir::TraitDef>,
 }
 
+/// Where [`DocumentSet::put_type`] placed a declaration, and the one it
 /// replaced; [`DocumentSet::undo_put`] takes it back.
 #[derive(Debug)]
 pub struct Placed {
@@ -718,6 +736,7 @@ impl DocumentSet {
                     types: Vec::new(),
                     traits: Vec::new(),
                     impls: Vec::new(),
+                    functions: Vec::new(),
                 });
                 (self.docs.len() - 1, true)
             }
@@ -818,6 +837,50 @@ impl DocumentSet {
         &mut self.docs[d].traits
     }
 
+    /// Puts a function into the namespace's document, replacing a function
+    /// of the same name; `undo_put_function()` with the result restores the
+    /// set.
+    pub fn put_function(
+        &mut self,
+        ns: &crate::name::Name,
+        def: crate::ir::FunctionDef,
+    ) -> PlacedFunction {
+        let d = self.document_position(ns);
+        let functions = &mut self.docs[d].functions;
+        match functions.iter().position(|f| f.name == def.name) {
+            Some(i) => PlacedFunction {
+                document: d,
+                index: i,
+                previous: Some(std::mem::replace(&mut functions[i], def)),
+            },
+            None => {
+                functions.push(def);
+                PlacedFunction {
+                    document: d,
+                    index: functions.len() - 1,
+                    previous: None,
+                }
+            }
+        }
+    }
+
+    /// Undoes a `put_function()`.
+    pub fn undo_put_function(&mut self, placed: PlacedFunction) {
+        let PlacedFunction {
+            document: d,
+            index,
+            previous,
+        } = placed;
+        let functions = &mut self.docs[d].functions;
+        match previous {
+            Some(p) => functions[index] = p,
+            None => {
+                functions.pop();
+            }
+        }
+        self.remove_document_if_empty(d);
+    }
+
     /// The impls of the document at `d`, to add or replace an impl.
     pub fn impls_mut(&mut self, d: usize) -> &mut Vec<crate::ir::ImplDef> {
         &mut self.docs[d].impls
@@ -874,7 +937,11 @@ impl DocumentSet {
     /// Removes the document at `d` when it declares nothing.
     pub fn remove_document_if_empty(&mut self, d: usize) {
         let doc = &self.docs[d];
-        if doc.types.is_empty() && doc.traits.is_empty() && doc.impls.is_empty() {
+        if doc.types.is_empty()
+            && doc.traits.is_empty()
+            && doc.impls.is_empty()
+            && doc.functions.is_empty()
+        {
             self.docs.remove(d);
             self.reindex();
         }
@@ -920,6 +987,11 @@ impl TypeLookup for DocumentSet {
     fn trait_of(&self, tr: &QualifiedName) -> Option<&crate::ir::TraitDef> {
         self.namespace(&tr.namespace)
             .and_then(|d| d.traits.iter().find(|t| t.name == tr.name))
+    }
+
+    fn function_of(&self, f: &QualifiedName) -> Option<&crate::ir::FunctionDef> {
+        self.namespace(&f.namespace)
+            .and_then(|d| d.functions.iter().find(|x| x.name == f.name))
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {

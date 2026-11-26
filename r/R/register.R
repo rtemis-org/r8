@@ -92,7 +92,7 @@ r8_register <- function(pkgname = NULL) {
   # another kind, so the declarations replay in their order.
   pending <- list()
   for (e in entries) {
-    if (identical(e[["kind"]], "type")) {
+    if (e[["kind"]] %in% c("type", "function")) {
       pending[[length(pending) + 1L]] <- e[["record"]]
       next
     }

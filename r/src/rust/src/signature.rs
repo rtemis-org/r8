@@ -1,9 +1,11 @@
-//! The check of a typed generic's arguments and result at each call.
+//! The check of a typed generic's or function's arguments and result at each
+//! call.
 //!
 //! A generic or trait method that declares the types of its parameters or
-//! its return type has a signature, built from the registry at its first
-//! call and again after the registry changes. The signature belongs to the
-//! method's key, the R symbol `Trait|method` that the generic's body holds;
+//! its return type, and a function of `new_function()`, have a signature,
+//! built from the registry at their first call and again after the registry
+//! changes. The signature belongs to the key, the R symbol `Trait|method` that
+//! the generic's body holds or the qualified name `ns::f` of the function;
 //! symbols live for the session, so their addresses identify methods.
 //!
 //! The C routines of `view.c` force the arguments, in C frames, and call the
@@ -30,7 +32,9 @@ use extendr_ffi::{
     INTEGER, LENGTH, LOGICAL, PRINTNAME, R_CHAR, R_NaString, REAL, Rf_install, SEXP, SEXPTYPE,
     STRING_ELT, VECTOR_ELT,
 };
-use rtemis_r8::ir::{DoubleType, FieldType, IntegerType, ReturnType, TypeRef};
+use rtemis_r8::ir::{
+    DoubleType, FieldDef, FieldType, IntegerType, ParamDef, ReturnType, RuleDef, TypeRef,
+};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::problem::Segment;
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
@@ -224,6 +228,10 @@ struct Signature {
     returned: Returned,
     /// The return types that methods declare, by the key of their tuple.
     narrowed: Vec<(Box<str>, FieldType, Test)>,
+    /// The rules of a function over its typed parameters, and those
+    /// parameters as fields.
+    rules: Vec<RuleDef>,
+    scope: Vec<FieldDef>,
 }
 
 /// A hash of an address: one multiplication.
@@ -288,16 +296,51 @@ fn narrowed<'a>(
         .collect()
 }
 
+/// The qualified name of a function's key, `ns::f`.
+fn function_key(key: SEXP) -> Option<QualifiedName> {
+    let text = unsafe { CStr::from_ptr(R_CHAR(PRINTNAME(key))) }
+        .to_str()
+        .ok()?;
+    if text.contains('|') {
+        return None;
+    }
+    QualifiedName::parse(text).ok()
+}
+
 fn build(key: SEXP, generation: u64) -> Option<Signature> {
-    let (q, method) = key_parts(key)?;
     let docs = crate::declare::registry().snapshot();
+    if let Some(q) = function_key(key) {
+        let f = docs.function_of(&q)?;
+        let mut sig = build_params(&f.params, &[], &f.return_type, generation)?;
+        if !f.rules.is_empty() {
+            sig.rules = f.rules.clone();
+            sig.scope = f.rule_scope();
+        }
+        return Some(sig);
+    }
+    let (q, method) = key_parts(key)?;
     let tr = docs.trait_of(&q)?;
     let m = tr.methods.iter().find(|m| m.name.as_str() == method)?;
-    let dispatched = m.dispatched();
+    let mut sig = build_params(&m.params, &m.dispatched(), &m.return_type, generation)?;
+    sig.narrowed = narrowed(&docs, &q, method)
+        .into_iter()
+        .map(|(k, t)| (k.into(), t.clone(), Test::of(t)))
+        .collect();
+    Some(sig)
+}
+
+/// The signature of parameters, of which those at `dispatched` dispatch, and of
+/// a return type.
+fn build_params(
+    params: &[ParamDef],
+    dispatched: &[usize],
+    return_type: &Option<ReturnType>,
+    generation: u64,
+) -> Option<Signature> {
     let mut forced = Vec::new();
     let mut at = Vec::new();
     let mut slots = Vec::new();
-    for (i, p) in m.params.iter().enumerate() {
+    for (i, p) in params.iter().enumerate() {
         let is_dispatched = dispatched.contains(&i);
         if !is_dispatched && p.ty().is_none() {
             continue;
@@ -317,22 +360,20 @@ fn build(key: SEXP, generation: u64) -> Option<Signature> {
         let name = CString::new(p.name()).ok()?;
         forced.push(unsafe { Rf_install(name.as_ptr()) });
     }
-    let returned = match &m.return_type {
+    let returned = match return_type {
         None => Returned::Any,
         Some(ReturnType::SelfType(_)) => Returned::SelfType,
         Some(ReturnType::Type(t)) => Returned::Type((**t).clone(), Test::of(t)),
     };
-    let narrowed = narrowed(&docs, &q, method)
-        .into_iter()
-        .map(|(k, t)| (k.into(), t.clone(), Test::of(t)))
-        .collect();
     Some(Signature {
         generation,
         forced,
         dispatched: at,
         slots,
         returned,
-        narrowed,
+        narrowed: Vec::new(),
+        rules: Vec::new(),
+        scope: Vec::new(),
     })
 }
 
@@ -424,7 +465,8 @@ pub unsafe extern "C" fn r8_signature_test(
         }
         *n_dispatched = sig.dispatched.len().min(3) as c_int;
     }
-    let mut check = false;
+    // The rules of a function are evaluated with the validator.
+    let mut check = !sig.rules.is_empty();
     let mut convert = PASS;
     for slot in &sig.slots {
         let o = slot.test.run(unsafe { *values.add(slot.at) });
@@ -530,12 +572,90 @@ fn r8_check_args(key: Robj, values: Robj) -> Result<Robj> {
                 changed = true;
             }
         }
+        if !sig.rules.is_empty() {
+            let values: Vec<SEXP> = sig
+                .slots
+                .iter()
+                .map(|s| match unsafe { out[s.at].get() } {
+                    x if is_null(x) => unsafe { VECTOR_ELT(list, s.at as isize) },
+                    x => x,
+                })
+                .collect();
+            let names: Vec<&str> = sig.slots.iter().map(|s| &*s.name).collect();
+            let errors = rule_errors(&sig, &values, &names, &docs);
+            if !errors.is_empty() {
+                return problems(&errors);
+            }
+        }
         Ok(if changed {
             List::from_values(out).into()
         } else {
             ().into()
         })
     })
+}
+
+/// The violations of a function's rules by the values of its typed
+/// parameters, `values` by the names `names`.
+fn rule_errors(
+    sig: &Signature,
+    values: &[SEXP],
+    names: &[&str],
+    docs: &DocumentSet,
+) -> Vec<ValueError> {
+    let held = named(values, names);
+    let view = RView::Draft(unsafe { held.get() }, "");
+    let mut errors = Vec::new();
+    with_cache(|cache| {
+        for (ri, r) in sig.rules.iter().enumerate() {
+            let Some(rule) = cache.compiled(r, &sig.scope, docs) else {
+                continue;
+            };
+            let found = rule.check_access(view, &sig.scope, docs);
+            match found {
+                Ok(rtemis_r8::rules::Outcome::Holds) => {}
+                Ok(rtemis_r8::rules::Outcome::Violated(paths)) => {
+                    for p in paths.into_iter().take(rtemis_r8::validate::DIAGNOSED) {
+                        let d = rule.diagnose_access(view, &sig.scope, docs, &p);
+                        errors.push(ValueError {
+                            code: "rule_violation",
+                            path: rtemis_r8::problem::pointer(&p),
+                            segments: p,
+                            rule: r.id.clone(),
+                            rule_index: Some(ri),
+                            message: r.message.clone().unwrap_or_default(),
+                            diagnosis: Some(rtemis_r8::validate::diagnosis(r, d)),
+                            ..Default::default()
+                        });
+                    }
+                }
+                Err(e) => {
+                    let mut d = rtemis_r8::validate::diagnosis(
+                        r,
+                        rule.diagnose_access(view, &sig.scope, docs, &[]),
+                    );
+                    d.operands.clear();
+                    errors.push(ValueError {
+                        code: "rule_error",
+                        rule: r.id.clone(),
+                        rule_index: Some(ri),
+                        message: e,
+                        diagnosis: Some(d),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    });
+    errors
+}
+
+/// A named list of `values`.
+fn named(values: &[SEXP], names: &[&str]) -> Robj {
+    let list = List::from_values(values.iter().map(|&v| unsafe { Robj::from_sexp(v) }));
+    let mut out: Robj = list.into();
+    let _ = out.set_names(names.iter().copied());
+    out
 }
 
 /// Validates a result that the test did not pass.

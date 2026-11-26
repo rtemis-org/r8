@@ -883,6 +883,97 @@ impl Checker<'_> {
         }
     }
 
+    /// A function: its name, which no type, trait, or generic of the namespace
+    /// holds; its parameters, of which none dispatches; its return type, which
+    /// is a field type; its rules, over its typed parameters; and, for
+    /// `typed: strict`, a type for every parameter.
+    fn function_def(&mut self, index: usize) {
+        let doc = self.doc;
+        let f = &doc.functions[index];
+        let path = format!("/functions/{index}");
+        let name = f.name.as_str();
+        let generic = doc
+            .traits
+            .iter()
+            .find(|t| t.methods.iter().any(|m| m.name.host_identifier() == name));
+        if doc.functions[..index].iter().any(|o| o.name == f.name)
+            || doc.types.iter().any(|t| t.name().as_str() == name)
+            || doc.traits.iter().any(|t| t.name.as_str() == name)
+            || generic.is_some()
+        {
+            self.report(
+                "duplicate_function",
+                &format!("{path}/name"),
+                format!(
+                    "`{name}` names another function, a type, a trait, or a generic of namespace `{}`",
+                    doc.namespace
+                ),
+            );
+        }
+        let mut seen = HashSet::new();
+        for (i, p) in f.params.iter().enumerate() {
+            let ppath = format!("{path}/params/{i}");
+            let pname = p.name();
+            if pname != "..." && !is_syntactic_r_name(pname) {
+                self.report(
+                    "param_name",
+                    &ppath,
+                    format!("`{pname}` is not a syntactic R name"),
+                );
+            }
+            if !seen.insert(pname) {
+                self.report(
+                    "duplicate_param",
+                    &ppath,
+                    format!("duplicate parameter `{pname}`"),
+                );
+            }
+            if p.is_dispatch() {
+                self.report(
+                    "function_dispatch",
+                    &format!("{ppath}/dispatch"),
+                    format!("function `{name}` dispatches on no parameter; a generic does"),
+                );
+            }
+            if let ParamDef::Full(q) = p {
+                self.param(q, &ppath);
+            }
+            if f.typed == super::decl::Typed::Strict && (pname == "..." || p.ty().is_none()) {
+                self.report(
+                    "untyped_param",
+                    &ppath,
+                    if pname == "..." {
+                        format!("function `{name}` is strictly typed, and takes no `...`")
+                    } else {
+                        format!("parameter `{pname}` of the strictly typed function `{name}` has no type")
+                    },
+                );
+            }
+        }
+        match &f.return_type {
+            Some(ReturnType::SelfType(_)) => self.report(
+                "return_type_self",
+                &format!("{path}/return_type"),
+                format!("function `{name}` dispatches on no argument, whose type `Self` would be"),
+            ),
+            Some(ReturnType::Type(t)) => self.value_type(t, &format!("{path}/return_type")),
+            None => {}
+        }
+        if let Some(on) = &f.on {
+            self.report(
+                "function_on",
+                &format!("{path}/on"),
+                format!(
+                    "function `{name}` on the type `{on}`: functions on a type are not declared yet"
+                ),
+            );
+        }
+        if !f.rules.is_empty() {
+            let scope = f.rule_scope();
+            self.rules(&f.rules, &scope, false, &format!("{path}/rules"));
+        }
+    }
+
     fn trait_def(&mut self, t: &TraitDef, path: &str) {
         self.class_name(&t.name, "trait", &format!("{path}/name"));
         self.unique(
@@ -1054,6 +1145,7 @@ impl Checker<'_> {
         let name = doc.types[index].name().as_str();
         if doc.types[..index].iter().any(|t| t.name().as_str() == name)
             || doc.traits.iter().any(|t| t.name.as_str() == name)
+            || doc.functions.iter().any(|f| f.name.as_str() == name)
         {
             self.report(
                 "duplicate_type",
@@ -1070,6 +1162,7 @@ impl Checker<'_> {
         let name = doc.traits[index].name.as_str();
         if doc.traits[..index].iter().any(|t| t.name.as_str() == name)
             || doc.types.iter().any(|t| t.name().as_str() == name)
+            || doc.functions.iter().any(|f| f.name.as_str() == name)
         {
             // The trait of a replacement generic is named by its method's
             // host identifier, which the message names.
@@ -1269,6 +1362,21 @@ pub fn check_type(doc: &IrDocument, index: usize) -> Vec<DeclError> {
     c.errors
 }
 
+/// The problems of the function at `index` of `doc`: those that
+/// [`check_document`] reports at `/functions/{index}` and below.
+pub fn check_function(doc: &IrDocument, index: usize) -> Vec<DeclError> {
+    if index >= doc.functions.len() {
+        return Vec::new();
+    }
+    let mut c = Checker {
+        doc,
+        errors: Vec::new(),
+        defaults: None,
+    };
+    c.function_def(index);
+    c.errors
+}
+
 /// Checks one IR document and returns every problem found, in document
 /// order; an empty vector means the document passes. `check_defaults()` runs
 /// for each struct, with the document as its lookup.
@@ -1308,6 +1416,9 @@ fn check_whole(doc: &IrDocument, defaults: bool) -> Vec<DeclError> {
         c.trait_def(t, &format!("/traits/{i}"));
     }
     c.method_names(&doc.traits);
+    for i in 0..doc.functions.len() {
+        c.function_def(i);
+    }
     // The tag values of the traits the document declares.
     for t in &doc.traits {
         let q = QualifiedName {

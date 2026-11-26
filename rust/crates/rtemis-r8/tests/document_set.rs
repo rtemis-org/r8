@@ -72,6 +72,7 @@ fn a_set_built_from_documents_is_indexed() {
             types: names.iter().map(|n| ty(n, 3)).collect(),
             traits: Vec::new(),
             impls: Vec::new(),
+            functions: Vec::new(),
         }
     };
     let set: DocumentSet = vec![doc("a", &["X", "Y"]), doc("b", &["X"])]

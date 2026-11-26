@@ -312,6 +312,12 @@ fn record_declarations(e: &Exports, ns: &str) -> Result<Declarations> {
                     i.r#trait
                 )));
             }
+            Declaration::Function(f) => {
+                return Err(fail(format!(
+                    "the exports table's record declares the function `{}::{}`; functions in Rust are not declared yet",
+                    entry.namespace, f.name
+                )));
+            }
         }
     }
     Ok(out)
@@ -499,6 +505,7 @@ fn r8_exports_document(ptr: Robj, ns: crate::utf8::Utf8) -> Result<Robj> {
         types,
         traits,
         impls: Vec::new(),
+        functions: Vec::new(),
     };
     crate::irser::to_r(&doc).map_err(|e| fail(e.to_string()))
 }

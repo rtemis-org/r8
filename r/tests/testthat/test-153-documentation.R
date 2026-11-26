@@ -147,6 +147,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "Resampler.Rd",
       "Summarize.Rd",
       "as_resampler.Rd",
+      "clip_resamples.Rd",
       "describe.Rd",
       "label_of.Rd",
       "n_resamples.Rd",
@@ -253,6 +254,15 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
   )) {
     expect_match(rd("label_of.Rd"), text, fixed = TRUE)
   }
+  # A typed function: its usage, the types of its parameters, and its return type.
+  for (text in c(
+    "clip_resamples(r, most = 10L)",
+    "\\item{r}{\\code{\\link{Resampler}}: The resampler.}",
+    "\\item{most}{Integer [1, Inf): The most resamples.}",
+    "\\value{\nInteger.\n}"
+  )) {
+    expect_match(rd("clip_resamples.Rd"), text, fixed = TRUE)
+  }
   # A second run writes nothing.
   again <- run_r(
     character(),
@@ -300,7 +310,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "cat(r$seed, n_resamples(as_resampler('abc')), '\\n')",
       "cat(pair_with(r, Method@Bootstrap), '|', pair_with(1, r), '|', pair_with(data.frame(), r), '\\n')",
       "cat(label_of(r), label_of(r, n = 3L, sep = '+'), '\\n')",
-      "cat(class(tryCatch(label_of(r, n = 0), error = identity))[[1L]], label_of(r, n = 1), '\\n')"
+      "cat(class(tryCatch(label_of(r, n = 0), error = identity))[[1L]], label_of(r, n = 1), '\\n')",
+      "cat(clip_resamples(r), clip_resamples(r, most = 1), class(tryCatch(clip_resamples(1), error = identity))[[1L]], '\\n')"
     )
   )
   expect_identical(
@@ -314,7 +325,8 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "9 3",
       "a resampler and a method | anything and a resampler | a data frame and a resampler",
       "r-r r+r+r",
-      "r8_argument_error r"
+      "r8_argument_error r",
+      "2 1 r8_argument_error"
     ),
     info = paste(used, collapse = "\n")
   )
@@ -350,6 +362,10 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
       "m <- mirai::mirai({ before <- 'r8pkgDoc' %in% loadedNamespaces(); c(before, f(r), g(r), class(tryCatch(f(r, sep = 1), error = identity))[[1L]]) }, f = label_of, g = describe, r = r)",
       "cat('sent', mirai::collect_mirai(m), sep = '|')",
       "cat('\\n')",
+      # A typed function sent to a worker that has not loaded its package.
+      "m <- mirai::mirai({ before <- 'r8pkgDoc' %in% loadedNamespaces(); c(before, f(r, most = 1), class(tryCatch(f(1), error = identity))[[1L]]) }, f = clip_resamples, r = r)",
+      "cat('function', mirai::collect_mirai(m), sep = '|')",
+      "cat('\\n')",
       "mirai::daemons(0)"
     )
   )
@@ -362,4 +378,5 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     "sent|TRUE|r-r|2 resamples|r8_argument_error" %in% workers,
     info = info
   )
+  expect_true("function|TRUE|1|r8_argument_error" %in% workers, info = info)
 })

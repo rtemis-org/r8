@@ -47,6 +47,7 @@
 # result, bound when the package loads.
 .r8_c_call <- NULL
 .r8_c_result <- NULL
+.r8_c_check <- NULL
 
 # Trait objects by qualified name, for the impls of compiled code.
 .r8_traits <- new.env(parent = emptyenv())

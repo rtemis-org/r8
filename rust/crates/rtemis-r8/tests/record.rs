@@ -80,6 +80,11 @@ fn entries_of(doc: &IrDocument) -> Vec<(&Name, DeclarationRef<'_>)> {
         .map(|t| (ns, DeclarationRef::Type(t)))
         .chain(doc.traits.iter().map(|t| (ns, DeclarationRef::Trait(t))))
         .chain(doc.impls.iter().map(|i| (ns, DeclarationRef::Impl(i))))
+        .chain(
+            doc.functions
+                .iter()
+                .map(|f| (ns, DeclarationRef::Function(f))),
+        )
         .collect()
 }
 
@@ -91,12 +96,14 @@ fn document_of(ns: &Name, entries: &[Entry]) -> IrDocument {
         types: Vec::new(),
         traits: Vec::new(),
         impls: Vec::new(),
+        functions: Vec::new(),
     };
     for e in entries {
         match &e.declaration {
             Declaration::Type(t) => doc.types.push(t.clone()),
             Declaration::Trait(t) => doc.traits.push(t.clone()),
             Declaration::Impl(i) => doc.impls.push(i.clone()),
+            Declaration::Function(f) => doc.functions.push(f.clone()),
         }
     }
     doc
@@ -594,6 +601,32 @@ fn sample_record() -> (Name, Vec<Entry>) {
         namespace: ns.clone(),
         declaration: Declaration::Impl(i),
     }));
+    for f in [
+        serde_json::json!({
+            "name": "clip",
+            "description": "Limits values.",
+            "params": [
+                {"name": "x", "type": {"kind": "vec", "element": {"kind": "double"}}},
+                {"name": "lo", "type": {"kind": "double"}, "default": 0},
+                {"name": "hi", "type": {"kind": "double"}, "host_default": {"host": "r", "text": "max(x)"}},
+                "..."
+            ],
+            "return_type": {"kind": "vec", "element": {"kind": "double"}},
+            "rules": [{"invariant": {"<=": [{"var": "lo"}, {"var": "hi"}]}, "id": "LO_HI"}],
+            "stochastic": true
+        }),
+        serde_json::json!({
+            "name": "plain",
+            "params": [{"name": "n", "type": {"kind": "integer"}}],
+            "typed": "strict",
+            "on": "ns::Lines"
+        }),
+    ] {
+        entries.push(Entry {
+            namespace: ns.clone(),
+            declaration: Declaration::Function(serde_json::from_value(f).unwrap()),
+        });
+    }
     (ns, entries)
 }
 
@@ -605,6 +638,7 @@ fn encode_entries(entries: &[Entry]) -> Vec<u8> {
                 Declaration::Type(t) => DeclarationRef::Type(t),
                 Declaration::Trait(t) => DeclarationRef::Trait(t),
                 Declaration::Impl(i) => DeclarationRef::Impl(i),
+                Declaration::Function(f) => DeclarationRef::Function(f),
             },
         )
     }))

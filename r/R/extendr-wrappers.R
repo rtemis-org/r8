@@ -260,6 +260,32 @@ r8_dispatch_ambiguities <- function(trait_name) .Call(wrap__r8_dispatch_ambiguit
 #' @noRd
 r8_declare_trait <- function(ir, namespace) .Call(wrap__r8_declare_trait, ir, namespace)
 
+#' Checks a function declaration in its namespace and registers it.
+#'
+#' @param ir List: The function's declaration, as `new_function()` builds it.
+#' @param namespace Character: The namespace of the declaring code.
+#' @return List: `code`, `path`, and `message` of each problem.
+#' @keywords internal
+#' @noRd
+r8_declare_function <- function(ir, namespace) .Call(wrap__r8_declare_function, ir, namespace)
+
+#' The declaration record of a registered function, with the types that it
+#' names.
+#'
+#' @param name Character: The qualified name, `namespace::f`.
+#' @return Raw: The record.
+#' @keywords internal
+#' @noRd
+r8_function_record <- function(name) .Call(wrap__r8_function_record, name)
+
+#' The declaration of a registered function as R lists (`irser`), or `NULL`.
+#'
+#' @param name Character: The qualified name, `namespace::f`.
+#' @return List: The declaration.
+#' @keywords internal
+#' @noRd
+r8_function_ir <- function(name) .Call(wrap__r8_function_ir, name)
+
 #' Registers an impl in its namespace; an impl of the same trait for the same
 #' type replaces it.
 #'

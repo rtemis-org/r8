@@ -20,13 +20,14 @@ mod types;
 
 pub use check::ambiguity_error;
 pub use check::{
-    DeclError, check_document, check_document_records, check_trait, check_type, is_column_type,
-    report,
+    DeclError, check_document, check_document_records, check_function, check_trait, check_type,
+    is_column_type, report,
 };
 pub use decl::{
-    ClassSystem, Column, ColumnDef, EnumDef, FieldDef, HostDefault, ImplDef, ImplMethod, MethodDef,
-    Migration, MigrationStep, Param, ParamDef, RequiredField, ReturnType, RuleDef, SelfMarker,
-    SplitTarget, StructDef, TableDef, TraitDef, TypeRef, TypedImplMethod, VariantDef, VariantKind,
+    ClassSystem, Column, ColumnDef, EnumDef, FieldDef, FunctionDef, HostDefault, ImplDef,
+    ImplMethod, MethodDef, Migration, MigrationStep, Param, ParamDef, RequiredField, ReturnType,
+    RuleDef, SelfMarker, SplitTarget, StructDef, TableDef, TraitDef, TypeRef, Typed,
+    TypedImplMethod, VariantDef, VariantKind,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
 pub use fit::fits;

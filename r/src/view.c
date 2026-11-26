@@ -877,12 +877,19 @@ static void r8_abort3(const char *name, SEXP a, SEXP b, SEXP c, SEXP ns) {
 // double for an integer, is bound in the frame in its stored form, which the
 // method receives.
 // spec: R8/class-system#checks-at-a-call
-static SEXP r8_call(SEXP env, SEXP key, SEXP dispatch) {
+//
+// A function of new_function() (`find` 0) has no dispatched parameter; its key
+// is its qualified name, and the routine returns NULL once the arguments are
+// checked. A function whose declaration is not registered, as in another
+// process, registers the record that it carries (R8's `function_unregistered()`)
+// and is checked once more.
+static SEXP checked_call(SEXP env, SEXP key, SEXP dispatch, int find) {
   if (TYPEOF(env) != ENVSXP || TYPEOF(key) != SYMSXP || TYPEOF(dispatch) != ENVSXP) {
     Rf_error("a typed generic calls R8 with its frame, its key, and the dispatch cache");
   }
   SEXP few[R8_FORCED], few_values[R8_FORCED];
   int few_outcomes[R8_FORCED];
+  int registered = 0;
   for (;;) {
     SEXP *symbols = few, *values = few_values;
     int *outcomes = few_outcomes;
@@ -892,6 +899,13 @@ static SEXP r8_call(SEXP env, SEXP key, SEXP dispatch) {
       values = (SEXP *) R_alloc((size_t) n, sizeof(SEXP));
       outcomes = (int *) R_alloc((size_t) n, sizeof(int));
       n = r8_signature_forced(key, symbols, n);
+    }
+    if (n < 0 && !find && !registered) {
+      r8_abort3("function_unregistered", PROTECT(Rf_ScalarString(PRINTNAME(key))), env,
+                R_NilValue, r8_namespace(dispatch));
+      UNPROTECT(1);
+      registered = 1;
+      continue;
     }
     if (n < 0) {
       r8_abort3("signature_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), R_NilValue,
@@ -937,6 +951,10 @@ static SEXP r8_call(SEXP env, SEXP key, SEXP dispatch) {
         }
       }
     }
+    if (!find) {
+      UNPROTECT(n);
+      return R_NilValue;
+    }
     SEXP args[3];
     for (int k = 0; k < n_at; k++) {
       args[k] = values[at[k]];
@@ -945,6 +963,17 @@ static SEXP r8_call(SEXP env, SEXP key, SEXP dispatch) {
     UNPROTECT(n);
     return impl;
   }
+}
+
+static SEXP r8_call(SEXP env, SEXP key, SEXP dispatch) {
+  return checked_call(env, key, dispatch, 1);
+}
+
+// Checks the arguments of a call of a function of new_function(), whose frame is
+// `env` and whose key is its qualified name; returns NULL.
+// spec: R8/class-system#typed-functions
+static SEXP r8_check_call(SEXP env, SEXP key, SEXP dispatch) {
+  return checked_call(env, key, dispatch, 0);
 }
 
 // Whether `out` is a value of the type of `x`: the same type for a value of
@@ -1114,7 +1143,7 @@ static SEXP r8_require(SEXP x) {
 // are the Rust code's, registered by extendr; these continue a jump, call R_GetCCallable(), evaluate R code, or
 // read the fields of Rust-stored values from C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 19));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 20));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
@@ -1134,7 +1163,8 @@ SEXP r8_native_symbols(void) {
   SET_VECTOR_ELT(out, 16, native_symbol((DL_FUNC) r8_require));
   SET_VECTOR_ELT(out, 17, native_symbol((DL_FUNC) r8_c_get));
   SET_VECTOR_ELT(out, 18, native_symbol((DL_FUNC) r8_c_fields));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 19));
+  SET_VECTOR_ELT(out, 19, native_symbol((DL_FUNC) r8_check_call));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 20));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
@@ -1154,6 +1184,7 @@ SEXP r8_native_symbols(void) {
   SET_STRING_ELT(names, 16, Rf_mkChar("require"));
   SET_STRING_ELT(names, 17, Rf_mkChar("get"));
   SET_STRING_ELT(names, 18, Rf_mkChar("fields"));
+  SET_STRING_ELT(names, 19, Rf_mkChar("check"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

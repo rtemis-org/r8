@@ -1082,7 +1082,7 @@ return_notation <- function(return_type, dispatch) {
 #' @noRd
 signature_lines <- function(m, g, indent) {
   out <- character()
-  fmls <- if (inherits(g, "r8_generic")) formals(g)
+  fmls <- if (inherits(g, c("r8_generic", "r8_function"))) formals(g)
   for (p in m[["params"]]) {
     if (!is.list(p)) {
       next

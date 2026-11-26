@@ -16,6 +16,10 @@
 #' @keywords internal
 #' @noRd
 key_method <- function(key) {
+  if (!grepl("|", key, fixed = TRUE)) {
+    # A function's key is its qualified name.
+    return(sub("^.*::", "", key))
+  }
   substr(key, regexpr("|", key, fixed = TRUE) + 1L, nchar(key))
 } # /R8::key_method
 
@@ -46,9 +50,9 @@ signature_abort <- function(key, ...) {
 #' Names an argument that the call omitted by its default: "`n`, its default
 #' `length(x)`, must be at least 1; found 0."
 #'
-#' @param key Character: `"Trait|method"`.
+#' @param key Character: `"Trait|method"`, or a function's qualified name.
 #' @param res The problems, of class `r8_problems`.
-#' @param env Environment: The generic's frame.
+#' @param env Environment: The frame of the generic or the function.
 #'
 #' @return Does not return; signals `r8_argument_error`.
 #'
@@ -65,8 +69,11 @@ argument_abort <- function(key, res, env) {
   fmls <- if (!is.na(frame)) formals(sys.function(frame))
   for (i in seq_along(params)) {
     p <- params[[i]]
+    # A rule over several parameters has no parameter of its own.
     if (
-      is.null(fmls) ||
+      !nzchar(p) ||
+        !p %in% names(fmls) ||
+        is.null(fmls) ||
         !eval(as.call(list(quote(missing), as.name(p))), env) ||
         identical(fmls[[p]], quote(expr = ))
     ) {
@@ -88,7 +95,11 @@ argument_abort <- function(key, res, env) {
       )
     }
   }
-  inputs <- mget(unique(params), envir = env, ifnotfound = list(NULL))
+  inputs <- mget(
+    unique(params[nzchar(params)]),
+    envir = env,
+    ifnotfound = list(NULL)
+  )
   value_abort(
     "Invalid arguments of",
     paste0(key_method(key), "()"),
@@ -138,7 +149,7 @@ result_abort <- function(key, tuple, res) {
     "Invalid result of",
     paste0(key_method(key), "()"),
     res[["errors"]],
-    source = provider_text(tuple),
+    source = if (grepl("|", key, fixed = TRUE)) provider_text(tuple),
     class = c("r8_result_error", "r8_type_error")
   )
 } # /R8::result_abort

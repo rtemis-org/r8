@@ -47,6 +47,7 @@ Collate:
     'extendr-wrappers.R'
     'extends.R'
     'format.R'
+    'function.R'
     'generate.R'
     'generic.R'
     'identity.R'

@@ -615,6 +615,7 @@ fn ir_documents(
                 types: vec![def.clone()],
                 traits: Vec::new(),
                 impls: Vec::new(),
+                functions: Vec::new(),
             }),
         }
     }

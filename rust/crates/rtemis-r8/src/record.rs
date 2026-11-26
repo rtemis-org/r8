@@ -4,7 +4,8 @@
 //! A record is a header and a payload. The header holds the magic bytes
 //! `R8D\0`, the format version, the version of `rtemis-r8` that wrote it,
 //! and the CRC-32C of the payload, four bytes little-endian. The payload is a
-//! sequence of entries, each a declaration (a type, a trait, or an impl) with
+//! sequence of entries, each a declaration (a type, a trait, an impl, or a
+//! function) with
 //! the namespace it belongs to.
 //!
 //! The writer and the reader are written by hand over the IR types, so the code
@@ -25,10 +26,10 @@ use serde_json::{Map, Number, Value};
 
 use crate::ir::{
     Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, EnumDef, FieldDef, FieldType,
-    HostDefault, ImplDef, ImplMethod, IntegerType, Logic, MethodDef, Migration, MigrationStep,
-    Operator, Param, ParamDef, RequiredField, Resolve, ReturnType, RuleDef, SelfMarker,
-    SplitTarget, StructDef, TableDef, TraitDef, TypeDef, TypeRef, TypedImplMethod, VariantDef,
-    VariantKind,
+    FunctionDef, HostDefault, ImplDef, ImplMethod, IntegerType, Logic, MethodDef, Migration,
+    MigrationStep, Operator, Param, ParamDef, RequiredField, Resolve, ReturnType, RuleDef,
+    SelfMarker, SplitTarget, StructDef, TableDef, TraitDef, TypeDef, TypeRef, Typed,
+    TypedImplMethod, VariantDef, VariantKind,
 };
 use crate::name::{MethodName, Name, QualifiedName};
 
@@ -36,7 +37,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 8;
+pub const FORMAT: u32 = 9;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -51,6 +52,8 @@ pub enum Declaration {
     Trait(TraitDef),
     /// An impl.
     Impl(ImplDef),
+    /// A function.
+    Function(FunctionDef),
 }
 
 /// One entry of a record: a declaration and its namespace.
@@ -71,6 +74,8 @@ pub enum DeclarationRef<'a> {
     Trait(&'a TraitDef),
     /// An impl.
     Impl(&'a ImplDef),
+    /// A function.
+    Function(&'a FunctionDef),
 }
 
 /// Why a record could not be read.
@@ -967,6 +972,42 @@ fn w_trait(w: &mut W, t: &TraitDef) {
     w.seq(supertraits, |w, q| w.qn(q));
 }
 
+fn w_return(w: &mut W, return_type: &Option<ReturnType>) {
+    match return_type {
+        Some(ReturnType::SelfType(_)) => w.u8(0),
+        Some(ReturnType::Type(t)) => {
+            w.u8(1);
+            w_type(w, t);
+        }
+        None => {}
+    }
+}
+
+fn w_function(w: &mut W, f: &FunctionDef) {
+    let FunctionDef {
+        name,
+        description,
+        params,
+        return_type,
+        rules,
+        typed,
+        stochastic,
+        on,
+    } = f;
+    w.name(name);
+    w.str(description);
+    w.seq(params, w_param);
+    w.u8(u8::from(*stochastic)
+        | u8::from(return_type.is_some()) << 1
+        | u8::from(*typed == Typed::Strict) << 2
+        | u8::from(on.is_some()) << 3);
+    w_return(w, return_type);
+    if let Some(q) = on {
+        w.qn(q);
+    }
+    w.seq(rules, w_rule);
+}
+
 fn w_impl(w: &mut W, i: &ImplDef) {
     let ImplDef {
         r#trait,
@@ -1014,6 +1055,10 @@ pub fn encode<'a>(entries: impl IntoIterator<Item = (&'a Name, DeclarationRef<'a
             DeclarationRef::Impl(i) => {
                 payload.u8(2);
                 w_impl(&mut payload, i);
+            }
+            DeclarationRef::Function(f) => {
+                payload.u8(3);
+                w_function(&mut payload, f);
             }
         }
     }
@@ -1777,6 +1822,37 @@ fn r_trait(r: &mut R) -> Res<TraitDef> {
     })
 }
 
+fn r_return(r: &mut R) -> Res<ReturnType> {
+    Ok(match r.u8()? {
+        0 => ReturnType::SelfType(SelfMarker::SelfType),
+        1 => ReturnType::Type(Box::new(r_type(r)?)),
+        t => return Err(RecordError::Tag("return type", t)),
+    })
+}
+
+fn r_function(r: &mut R) -> Res<FunctionDef> {
+    let name = r.name()?;
+    let description = r.str()?.to_owned();
+    let params = r.seq(2, r_param)?;
+    let f = r.flags(0b1111, "function")?;
+    let return_type = if f & 2 != 0 { Some(r_return(r)?) } else { None };
+    let on = if f & 8 != 0 { Some(r.qn()?) } else { None };
+    Ok(FunctionDef {
+        name,
+        description,
+        params,
+        return_type,
+        rules: r.seq(5, r_rule)?,
+        typed: if f & 4 != 0 {
+            Typed::Strict
+        } else {
+            Typed::Mixed
+        },
+        stochastic: f & 1 != 0,
+        on,
+    })
+}
+
 fn r_impl(r: &mut R) -> Res<ImplDef> {
     let r#trait = r.qn()?;
     let type_args = r.seq(1, r_target)?;
@@ -1813,6 +1889,7 @@ fn r_payload(r: &mut R) -> Res<Vec<Entry>> {
             0 => Declaration::Type(r_type_def(r)?),
             1 => Declaration::Trait(r_trait(r)?),
             2 => Declaration::Impl(r_impl(r)?),
+            3 => Declaration::Function(r_function(r)?),
             t => return Err(RecordError::Tag("declaration", t)),
         };
         Ok(Entry {

@@ -450,6 +450,7 @@ declare_conversion <- function(converter, source, fn, env) {
   assign(".r8_c_require", .r8_native[["require"]], envir = ns)
   assign(".r8_c_get", .r8_native[["get"]], envir = ns)
   assign(".r8_c_fields", .r8_native[["fields"]], envir = ns)
+  assign(".r8_c_check", .r8_native[["check"]], envir = ns)
   claim_namespace("R8", "R8")
   for (t in list(Display, Debug, Shape, PartialOrd, Print)) {
     register_trait(t, "R8")

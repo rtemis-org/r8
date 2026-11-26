@@ -608,9 +608,9 @@ rd_notation <- function(notation, blocks, env) {
 
 
 # %% generic_block ----
-#' Add the types of a typed generic to its block
+#' Add the types of a typed generic or function to its block
 #'
-#' @param block A roxygen2 block of a generic.
+#' @param block A roxygen2 block of a generic or a function.
 #' @param blocks List: Every block of the package.
 #' @param env Environment: The package environment.
 #'
@@ -620,14 +620,20 @@ rd_notation <- function(notation, blocks, env) {
 #' @noRd
 generic_block <- function(block, blocks, env) {
   g <- roxygen_value(block$object$value)
-  trait <- .r8_traits[[attr(g, "r8_trait")]]
-  if (is.null(trait)) {
+  m <- if (inherits(g, "r8_function")) {
+    r8_function_ir(attr(g, "r8_function"))
+  } else {
+    trait <- .r8_traits[[attr(g, "r8_trait")]]
+    if (!is.null(trait)) {
+      Filter(
+        function(m) identical(m[["name"]], attr(g, "r8_method")),
+        trait_ir(trait)[["methods"]]
+      )[[1L]]
+    }
+  }
+  if (is.null(m)) {
     return(block)
   }
-  m <- Filter(
-    function(m) identical(m[["name"]], attr(g, "r8_method")),
-    trait_ir(trait)[["methods"]]
-  )[[1L]]
   types <- list()
   for (p in m[["params"]]) {
     if (is.list(p) && !is.null(p[["type"]])) {
@@ -688,7 +694,10 @@ roclet_process.roclet_r8_rd <- function(x, blocks, env, base_path) {
       }
       block <- method_block(block, blocks, env)
     } else if (
-      inherits(roxygen_value(block$object$value), "r8_generic") &&
+      inherits(
+        roxygen_value(block$object$value),
+        c("r8_generic", "r8_function")
+      ) &&
         !roxygen2::block_has_tags(block, "noRd")
     ) {
       block <- generic_block(block, blocks, env)

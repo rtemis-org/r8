@@ -489,14 +489,16 @@ params <- function(...) {
 #'
 #' @param exprs List: The unevaluated arguments.
 #' @param env Environment: Where `params()` is called.
+#' @param generic Logical: The parameters are a generic's, whose first is
+#'   dispatched on; a function's may be none, and begin with `...`.
 #'
 #' @return An `r8_params`.
 #'
 #' @keywords internal
 #' @noRd
-read_params <- function(exprs, env) {
+read_params <- function(exprs, env, generic = TRUE) {
   n <- length(exprs)
-  if (n == 0L) {
+  if (n == 0L && generic) {
     r8_abort(
       "params() declares at least one parameter, the value dispatched on: ",
       "params(x).",
@@ -508,7 +510,7 @@ read_params <- function(exprs, env) {
   for (i in seq_len(n)) {
     nms[[i]] <- param_name(given[[i]], exprs, i, env)
   }
-  if (identical(nms[[1L]], "...")) {
+  if (generic && identical(nms[[1L]], "...")) {
     r8_abort(
       "The first parameter is the value dispatched on, a name; `...` ",
       "follows it.",

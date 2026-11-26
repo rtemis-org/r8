@@ -732,6 +732,80 @@ impl TraitDef {
     }
 }
 
+/// What a function requires of its parameters' types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Typed {
+    /// Parameters without a type, and `...`, are admitted.
+    #[default]
+    Mixed,
+    /// Every parameter has a type, and there is no `...`.
+    Strict,
+}
+
+impl Typed {
+    fn is_mixed(&self) -> bool {
+        *self == Typed::Mixed
+    }
+}
+
+/// `new_function()`: a function with typed parameters, called by its name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct FunctionDef {
+    /// The function's name.
+    pub name: Name,
+    #[serde(default)]
+    /// The function's description.
+    pub description: String,
+    /// The parameters, in order; none dispatches.
+    pub params: Vec<ParamDef>,
+    /// The type of the value the function returns, which every call
+    /// satisfies; a field type, never `Self`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_type: Option<ReturnType>,
+    /// The rules over the typed parameters, which every call satisfies after
+    /// each argument satisfies its type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<RuleDef>,
+    /// What the function requires of its parameters' types.
+    #[serde(default, skip_serializing_if = "Typed::is_mixed")]
+    pub typed: Typed,
+    /// The function draws random numbers.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stochastic: bool,
+    /// The type that the function belongs to, for a function on a type;
+    /// reserved, and refused by the check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<QualifiedName>,
+}
+
+impl FunctionDef {
+    /// The typed parameters as the fields that the rules read.
+    pub fn rule_scope(&self) -> Vec<FieldDef> {
+        self.params
+            .iter()
+            .filter_map(|p| {
+                let ty = p.ty()?.clone();
+                let name = Name::new(p.name()).ok()?;
+                Some(FieldDef {
+                    name,
+                    ty,
+                    default: None,
+                    description: Box::from(""),
+                    sensitive: false,
+                    unit: None,
+                    resolve: None,
+                    inherited_from: None,
+                    extensions: None,
+                })
+            })
+            .collect()
+    }
+}
+
 /// The class system of a host class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

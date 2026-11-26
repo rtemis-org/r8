@@ -33,6 +33,13 @@
         "$ref": "#/$defs/ImplDef"
       },
       "description": "The impls."
+    },
+    "functions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FunctionDef"
+      },
+      "description": "The functions."
     }
   },
   "required": [
@@ -1980,6 +1987,85 @@
         "return_type"
       ],
       "description": "The object form of an [`ImplMethod`]."
+    },
+    "FunctionDef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/Name",
+          "description": "The function's name."
+        },
+        "description": {
+          "type": "string",
+          "description": "The function's description.",
+          "default": ""
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ParamDef"
+          },
+          "description": "The parameters, in order; none dispatches."
+        },
+        "return_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReturnType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The type of the value the function returns, which every call\nsatisfies; a field type, never `Self`."
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuleDef"
+          },
+          "description": "The rules over the typed parameters, which every call satisfies after\neach argument satisfies its type."
+        },
+        "typed": {
+          "$ref": "#/$defs/Typed",
+          "description": "What the function requires of its parameters' types."
+        },
+        "stochastic": {
+          "type": "boolean",
+          "description": "The function draws random numbers."
+        },
+        "on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QualifiedName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The type that the function belongs to, for a function on a type;\nreserved, and refused by the check."
+        }
+      },
+      "required": [
+        "name",
+        "params"
+      ],
+      "description": "`new_function()`: a function with typed parameters, called by its name."
+    },
+    "Typed": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "mixed",
+          "description": "Parameters without a type, and `...`, are admitted."
+        },
+        {
+          "type": "string",
+          "const": "strict",
+          "description": "Every parameter has a type, and there is no `...`."
+        }
+      ],
+      "description": "What a function requires of its parameters' types."
     }
   }
 }

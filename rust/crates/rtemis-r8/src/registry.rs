@@ -14,8 +14,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::ir::{
-    DeclError, ImplDef, TraitDef, TypeDef, check_default_cycles, check_defaults,
-    check_document_records, check_extends, check_tags, check_trait, check_type,
+    DeclError, FieldType, FunctionDef, ImplDef, TraitDef, TypeDef, check_default_cycles,
+    check_defaults, check_document_records, check_extends, check_function, check_tags, check_trait,
+    check_type,
 };
 use crate::name::{Name, QualifiedName};
 use crate::record::{self, Declaration, DeclarationRef, Entry};
@@ -211,6 +212,41 @@ impl State {
         }
     }
 
+    fn put_function(&mut self, ns: &Name, def: FunctionDef) -> Result<Outcome, RegistryError> {
+        if self
+            .documents
+            .namespace(ns)
+            .is_some_and(|doc| doc.functions.contains(&def))
+        {
+            return Ok(Outcome::default());
+        }
+        let docs = Arc::make_mut(&mut self.documents);
+        let placed = docs.put_function(ns, def);
+        let (d, index) = (placed.document, placed.index);
+        match guarded(|| check_function(docs.document(d), index)) {
+            Ok(p) if p.is_empty() => {
+                self.changed();
+                Ok(Outcome {
+                    changed: true,
+                    problems: p,
+                    stale: Vec::new(),
+                })
+            }
+            Ok(p) => {
+                docs.undo_put_function(placed);
+                Ok(Outcome {
+                    changed: false,
+                    problems: relative(p, &format!("/functions/{index}")),
+                    stale: Vec::new(),
+                })
+            }
+            Err(e) => {
+                docs.undo_put_function(placed);
+                Err(e)
+            }
+        }
+    }
+
     /// Puts an impl; an impl of the same trait for the same target, with the
     /// same type arguments, is replaced.
     /// Puts an impl and checks the tag values of its trait's implementors
@@ -322,7 +358,39 @@ impl State {
                 true
             }
             Declaration::Impl(i) => self.put_impl(ns, i),
+            Declaration::Function(f) => {
+                if self
+                    .documents
+                    .namespace(ns)
+                    .is_some_and(|doc| doc.functions.contains(&f))
+                {
+                    return false;
+                }
+                let _ = Arc::make_mut(&mut self.documents).put_function(ns, f);
+                self.changed();
+                true
+            }
         }
+    }
+}
+
+/// The types that a field type names, in order.
+fn named_in<'t>(t: &'t FieldType, out: &mut Vec<&'t QualifiedName>) {
+    match t {
+        FieldType::Named { name }
+        | FieldType::MatrixOf { of: name }
+        | FieldType::TableOf { of: name }
+        | FieldType::Subtype { of: name } => out.push(name),
+        FieldType::Matrix { element, .. }
+        | FieldType::Array { element, .. }
+        | FieldType::SparseMatrix { element, .. }
+        | FieldType::Vec { element, .. } => named_in(element, out),
+        FieldType::Option { inner } => named_in(inner, out),
+        FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
+            named_in(value, out)
+        }
+        FieldType::Table { columns, .. } => columns.iter().for_each(|c| named_in(&c.ty, out)),
+        _ => {}
     }
 }
 
@@ -449,6 +517,46 @@ impl Registry {
         self.state().put_trait(ns, def)
     }
 
+    /// Checks the function declaration `def` and registers it, replacing a
+    /// function of the same name.
+    pub fn declare_function(&self, ns: &Name, def: FunctionDef) -> Result<Outcome, RegistryError> {
+        self.state().put_function(ns, def)
+    }
+
+    /// The record of the function `q`, with the types that its parameters and
+    /// its return type name.
+    pub fn function_record(&self, q: &QualifiedName) -> Option<Vec<u8>> {
+        let docs = self.snapshot();
+        let f = TypeLookup::function_of(&*docs, q)?;
+        let mut names: Vec<QualifiedName> = Vec::new();
+        let types = f
+            .params
+            .iter()
+            .filter_map(|p| p.ty())
+            .chain(match &f.return_type {
+                Some(crate::ir::ReturnType::Type(t)) => Some(&**t),
+                _ => None,
+            });
+        for t in types {
+            let mut named = Vec::new();
+            named_in(t, &mut named);
+            for n in named {
+                for r in docs.reached(n) {
+                    if !names.contains(&r) {
+                        names.push(r);
+                    }
+                }
+            }
+        }
+        let entries = names
+            .iter()
+            .filter_map(|n| {
+                TypeLookup::find(&*docs, n).map(|d| (&n.namespace, DeclarationRef::Type(d)))
+            })
+            .chain(std::iter::once((&q.namespace, DeclarationRef::Function(f))));
+        Some(record::encode(entries))
+    }
+
     /// Registers an impl, replacing one of the same trait for the same
     /// target; whether the documents changed.
     pub fn declare_impl(&self, ns: &Name, def: ImplDef) -> Result<Outcome, RegistryError> {
@@ -486,6 +594,10 @@ impl Registry {
                 Declaration::Impl(i) => {
                     let name = format!("impl {} for {}", i.r#trait, i.target);
                     (name, state.put_impl_checked(&ns, i)?)
+                }
+                Declaration::Function(f) => {
+                    let name = format!("{ns}::{}", f.name);
+                    (name, state.put_function(&ns, f)?)
                 }
             };
             changed |= outcome.changed;

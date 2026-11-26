@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::decl::{EnumDef, ImplDef, StructDef, TableDef, TraitDef};
+use super::decl::{EnumDef, FunctionDef, ImplDef, StructDef, TableDef, TraitDef};
 use crate::name::Name;
 
 /// The version of the IR document format that this crate reads and writes.
@@ -62,6 +62,9 @@ pub struct IrDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// The impls.
     pub impls: Vec<ImplDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The functions.
+    pub functions: Vec<FunctionDef>,
 }
 
 /// Why a document could not be read.

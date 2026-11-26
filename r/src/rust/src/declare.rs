@@ -297,6 +297,7 @@ fn r8_type_document(name: crate::utf8::Utf8) -> Result<String> {
         types: vec![def],
         traits: Vec::new(),
         impls: Vec::new(),
+        functions: Vec::new(),
     };
     Ok(doc.to_json())
 }
@@ -334,6 +335,60 @@ pub(crate) fn declare_trait(def: rtemis_r8::ir::TraitDef, namespace: &str) -> Re
         .map_err(|e| fail(e.to_string()))?;
     changed(out.changed);
     Ok(problems_list(&out.problems))
+}
+
+/// Checks a function declaration in its namespace and registers it.
+///
+/// @param ir List: The function's declaration, as `new_function()` builds it.
+/// @param namespace Character: The namespace of the declaring code.
+/// @return List: `code`, `path`, and `message` of each problem.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_declare_function(ir: Robj, namespace: crate::utf8::Utf8) -> Result<List> {
+    let namespace: &str = &namespace;
+    let def: rtemis_r8::ir::FunctionDef = crate::irde::from_r(unsafe { ir.get() })
+        .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
+    let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
+    let out = registry()
+        .declare_function(&ns, def)
+        .map_err(|e| fail(e.to_string()))?;
+    changed(out.changed);
+    Ok(problems_list(&out.problems))
+}
+
+/// The declaration record of a registered function, with the types that it
+/// names.
+///
+/// @param name Character: The qualified name, `namespace::f`.
+/// @return Raw: The record.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_function_record(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
+    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
+    let bytes = registry()
+        .function_record(&q)
+        .ok_or_else(|| fail(format!("`{name}` is not a registered function")))?;
+    Ok(Robj::from(bytes.as_slice()))
+}
+
+/// The declaration of a registered function as R lists (`irser`), or `NULL`.
+///
+/// @param name Character: The qualified name, `namespace::f`.
+/// @return List: The declaration.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_function_ir(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
+    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
+    let reg = registry().snapshot();
+    match rtemis_r8::rules::TypeLookup::function_of(&*reg, &q) {
+        Some(f) => crate::irser::to_r(f).map_err(|e| fail(e.to_string())),
+        None => Ok(().into()),
+    }
 }
 
 /// Registers an impl in its namespace; an impl of the same trait for the same
@@ -945,6 +1000,9 @@ extendr_module! {
     fn r8_dispatch_select;
     fn r8_dispatch_ambiguities;
     fn r8_declare_trait;
+    fn r8_declare_function;
+    fn r8_function_record;
+    fn r8_function_ir;
     fn r8_declare_impl;
     fn r8_ir_json;
     fn r8_canonical_json;

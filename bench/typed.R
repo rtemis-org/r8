@@ -2,9 +2,10 @@
 # ::r8 bench::
 # 2026- EDG rtemis.org
 
-# The cost of the checks of a typed generic's call against the same checks in
-# a function: hand-written, and with checkmate's assert_*() and qassert(); and
-# against a struct constructor with the same fields. Each row reports the time
+# The cost of the checks of a typed generic's call, and of a typed function's
+# (new_function()), against the same checks in a function: hand-written, and with
+# checkmate's assert_*() and qassert(); and against a struct constructor with the
+# same fields. Each row reports the time
 # of a call and the time beyond the same call without checks, the minimum of
 # `rounds` rounds of a byte-compiled loop, all in one process. Usage:
 # Rscript bench/typed.R [rounds], with the release build of R8 installed.
@@ -42,6 +43,21 @@ g_dyn <- typed_generic("g_dyn", params(x, n = R8::arg(dyn(Tunable)), tol), one)
 g_sub <- typed_generic("g_sub", params(x, n = R8::arg(subtype(Cfg)), tol), one)
 g_vec <- typed_generic("g_vec", params(x, n = R8::arg_vec(type_double(min = 0)), tol), one)
 g_out <- typed_generic("g_out", params(x, n, tol), one, type_double())
+t_scalar <- compiler::cmpfun(new_function(
+  "t_scalar",
+  function(x, n = arg_integer(min = 0L), tol = arg_double(min = 0)) 1
+))
+t_struct <- compiler::cmpfun(new_function("t_struct", function(x, n = arg(Cfg), tol) 1))
+t_out <- compiler::cmpfun(new_function(
+  "t_out",
+  function(x, n, tol) 1,
+  return_type = type_double()
+))
+t_rule <- compiler::cmpfun(new_function(
+  "t_rule",
+  function(x, n = arg_integer(min = 0L), tol = arg_double(min = 0)) 1,
+  rules = list(rule(n >= tol))
+))
 
 # The same checks in a function: `f_none` is their base.
 f_none <- compiler::cmpfun(one)
@@ -137,7 +153,11 @@ rows <- list(
   row("10^6 doubles", "checkmate assert_numeric()", f_assert_vec, f_none, v, 20),
   row("a result", "R8", g_out, g_none, 1L, 1e5),
   row("a result", "hand-written", f_hand_out, f_out, 1L, 1e5),
-  row("a result", "checkmate assert_number()", f_assert_out, f_out, 1L, 2e4)
+  row("a result", "checkmate assert_number()", f_assert_out, f_out, 1L, 2e4),
+  row("integer and double", "R8 function", t_scalar, f_none, 1L, 1e5),
+  row("a struct", "R8 function", t_struct, f_none, cfg, 1e5),
+  row("a result", "R8 function", t_out, f_out, 1L, 1e5),
+  row("integer, double, and a rule", "R8 function", t_rule, f_none, 1L, 2e4)
 )
 measure <- function(r) {
   c(time(loop(r$f, a, r$n, 1, r$k), r$k), time(loop(r$base, a, r$n, 1, r$k), r$k))
