@@ -1,10 +1,10 @@
-//! R-native values: the conversion between an R value and its JSON form, by
+//! R-stored values: the conversion between an R value and its JSON form, by
 //! field type, and the construction, encoding, and decoding of values.
 //!
 //! A value is constructed by encoding the R input to its JSON form, validating
 //! it with `rtemis-r8`, and decoding the JSON form back to R, so the stored R
 //! value is the normalized one and reading its document returns it exactly.
-//! A runtime-only field has no JSON form; construction carries its R value
+//! A host-only field has no JSON form; construction carries its R value
 //! over from the input.
 //!
 //! R forms: a scalar is a length-one atomic vector without attributes (an
@@ -14,15 +14,15 @@
 //! date is a `Date`, a date-time a `POSIXct`; a factor a `factor`; a matrix or
 //! array an atomic vector with `dim`; a sparse matrix a `dgCMatrix`; a table
 //! a `data.frame` with automatic row names (a tibble or a data.table is
-//! accepted); a `hashmap()` a named atomic vector or a named list; an
-//! `ordered_map()` a named list; `type_json()` nested lists; and a struct or
+//! accepted); a `btree_map()` a named atomic vector or a named list; an
+//! `index_map()` a named list; `type_json()` nested lists; and a struct or
 //! enum value an R8 value of its type.
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result, SEXP};
 use rtemis_r8::access::Node;
-use rtemis_r8::codec::{date_days, date_text, datetime_micros, datetime_text};
-use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use rtemis_r8::canonical::{date_days, date_text, datetime_micros, datetime_text};
+use rtemis_r8::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
 use rtemis_r8::validate::ValueError;
@@ -47,10 +47,7 @@ fn attribute_names(x: &Robj) -> Vec<String> {
         return Vec::new();
     };
     match f.call(pairlist!(x.clone())) {
-        Ok(a) => a
-            .names()
-            .map(|n| n.map(str::to_string).collect())
-            .unwrap_or_default(),
+        Ok(a) => crate::utf8::names(&a).unwrap_or_default(),
         Err(_) => Vec::new(),
     }
 }
@@ -64,9 +61,9 @@ fn number(x: f64) -> Value {
 pub(crate) struct Encoder<'a> {
     pub(crate) lookup: &'a dyn TypeLookup,
     pub(crate) errors: Vec<ValueError>,
-    /// The paths of runtime-only fields that hold a value.
+    /// The paths of host-only fields that hold a value.
     #[cfg_attr(not(feature = "oracle"), allow(dead_code))]
-    pub(crate) runtime: Vec<String>,
+    pub(crate) host_only: Vec<String>,
 }
 
 impl Encoder<'_> {
@@ -75,7 +72,10 @@ impl Encoder<'_> {
             code,
             path: path.to_string(),
             rule: None,
+            rule_index: None,
             message,
+            diagnosis: None,
+            ..Default::default()
         });
         Value::Null
     }
@@ -198,16 +198,11 @@ impl Encoder<'_> {
                         .collect(),
                 )
             }
-            FieldType::Character(_) => match x.as_str_iter() {
+            FieldType::Character(_) => match crate::utf8::all(x) {
                 Some(it) => Some(
-                    it.map(|s| {
-                        if s.is_na() {
-                            Value::Null
-                        } else {
-                            Value::from(s)
-                        }
-                    })
-                    .collect(),
+                    it.into_iter()
+                        .map(|s| s.map_or(Value::Null, Value::from))
+                        .collect(),
                 ),
                 None => {
                     self.err("r_type", path, "expected a character vector".to_string());
@@ -379,19 +374,24 @@ impl Encoder<'_> {
                     }
                 }
             }
-            FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
-                let ordered = matches!(ft, FieldType::OrderedMap { .. });
-                let names: Vec<String> = x
-                    .names()
-                    .map(|n| n.map(str::to_string).collect())
-                    .unwrap_or_default();
-                if names.len() != x.len() {
-                    return self.err(
-                        "r_type",
-                        path,
-                        "a map is a named list or a named vector".to_string(),
-                    );
-                }
+            FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
+                let ordered = matches!(ft, FieldType::IndexMap { .. });
+                // `list()`, a zero-length list without names, is the empty
+                // map; another value without names is not a map.
+                let empty_list = x.is_list() && x.is_empty();
+                let names = crate::utf8::names(x);
+                let names = match names {
+                    Some(n) if n.len() == x.len() => n,
+                    None if empty_list => Vec::new(),
+                    _ => {
+                        return self.err(
+                            "r_type",
+                            path,
+                            "a map is a named list or a named vector; `list()` is the empty map"
+                                .to_string(),
+                        );
+                    }
+                };
                 let items: Vec<Value> = match x.as_list() {
                     Some(list) => list
                         .values()
@@ -423,8 +423,8 @@ impl Encoder<'_> {
                 }
             }
             FieldType::Json => self.json(x, path),
-            FieldType::R { .. } => {
-                self.runtime.push(path.to_string());
+            FieldType::HostClass { .. } => {
+                self.host_only.push(path.to_string());
                 Value::Null
             }
             FieldType::Matrix { element, .. } | FieldType::Array { element, .. } => {
@@ -445,7 +445,7 @@ impl Encoder<'_> {
                 self.table(x, &fields, false, path)
             }
             FieldType::Named { name } => self.named(x, name, path),
-            FieldType::Dyn { .. } => self.dynamic(x, path),
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => self.dynamic(x, ft, path),
         }
     }
 
@@ -482,12 +482,7 @@ impl Encoder<'_> {
         }
         let lv: Vec<Option<String>> = x
             .get_attrib("levels")
-            .and_then(|l| {
-                l.as_str_iter().map(|it| {
-                    it.map(|s| if s.is_na() { None } else { Some(s.to_string()) })
-                        .collect()
-                })
-            })
+            .and_then(|l| crate::utf8::all(&l))
             .unwrap_or_default();
         if lv.iter().any(Option::is_none) {
             return self.err("r_factor", path, "a factor has no NA level".to_string());
@@ -496,7 +491,7 @@ impl Encoder<'_> {
         let codes = x.as_integer_slice().unwrap_or_default();
         let k = lv.len();
         // A code outside 1..=k has no JSON form; the encoder reports it at
-        // the path where the validator of the native form reports it.
+        // the path where the validator of the R form reports it.
         let cell_base = match levels {
             Some(_) => path.to_string(),
             None => format!("{path}/codes"),
@@ -544,8 +539,12 @@ impl Encoder<'_> {
         if let Some(dn) = x.get_attrib("dimnames").and_then(|d| d.as_list()) {
             let names: Vec<Value> = dn
                 .values()
-                .map(|n| match n.as_str_iter() {
-                    Some(it) => Value::Array(it.map(Value::from).collect()),
+                .map(|n| match crate::utf8::all(&n) {
+                    Some(it) => Value::Array(
+                        it.into_iter()
+                            .map(|s| Value::from(s.unwrap_or_else(|| "NA".to_string())))
+                            .collect(),
+                    ),
                     None => Value::Null,
                 })
                 .collect();
@@ -580,12 +579,34 @@ impl Encoder<'_> {
         serde_json::json!({"shape": ints("Dim"), "indptr": ints("p"), "indices": ints("i"), "data": data})
     }
 
-    fn table(&mut self, x: &Robj, columns: &[FieldDef], open: bool, path: &str) -> Value {
+    fn table<C: rtemis_r8::ir::Column>(
+        &mut self,
+        x: &Robj,
+        columns: &[C],
+        open: bool,
+        path: &str,
+    ) -> Value {
         if !x.inherits("data.frame") {
             return self.err("r_type", path, "expected a data.frame".to_string());
         }
+        self.table_of(x, columns, open, path)
+    }
+
+    /// The JSON form of a data frame, of a table's value, or of the list of the
+    /// columns of one.
+    fn table_of<C: rtemis_r8::ir::Column>(
+        &mut self,
+        x: &Robj,
+        columns: &[C],
+        open: bool,
+        path: &str,
+    ) -> Value {
         // Automatic row names are the compact form c(NA, -n) or c(NA, n).
-        let n = match x.get_attrib("row.names") {
+        let n = match x
+            .get_attrib("row.names")
+            .filter(|_| x.inherits("data.frame"))
+        {
+            None if !x.inherits("data.frame") => crate::rview::list_rows(unsafe { x.get() }) as i64,
             Some(rn) => match rn.as_integer_slice() {
                 Some([na, k]) if *na == i32::MIN => i64::from(k.abs()),
                 Some(s) if s.iter().enumerate().all(|(i, &v)| v == i as i32 + 1) => s.len() as i64,
@@ -600,14 +621,15 @@ impl Encoder<'_> {
             None => 0,
         };
         let list = x.as_list().unwrap();
+        let names = crate::utf8::names(x).unwrap_or_default();
         let mut m = Map::new();
         m.insert("$length".into(), Value::from(n));
         let mut extra_types = Map::new();
-        for (name, col) in list.iter() {
+        for (name, col) in names.iter().map(String::as_str).zip(list.values()) {
             let p = format!("{path}/{}", esc(name));
-            let declared = columns.iter().find(|c| c.name.as_str() == name);
+            let declared = columns.iter().find(|c| c.field().name.as_str() == name);
             let ft = match declared {
-                Some(c) => c.ty.clone(),
+                Some(c) => c.field().ty.clone(),
                 None if open => match infer_column(&col) {
                     Some(t) => {
                         extra_types.insert(name.to_string(), serde_json::to_value(&t).unwrap());
@@ -646,7 +668,7 @@ impl Encoder<'_> {
             Rtype::Null => Value::Null,
             Rtype::List => {
                 let list = x.as_list().unwrap();
-                let names: Option<Vec<String>> = x.names().map(|n| n.map(str::to_string).collect());
+                let names = crate::utf8::names(x);
                 match names {
                     Some(n) => Value::Object(
                         list.values()
@@ -687,11 +709,7 @@ impl Encoder<'_> {
                         .as_real_slice()
                         .filter(|s| s[0].is_finite())
                         .map(|s| number(s[0])),
-                    _ => x
-                        .as_str_iter()
-                        .and_then(|mut it| it.next())
-                        .filter(|s| !s.is_na())
-                        .map(Value::from),
+                    _ => crate::utf8::one(x).map(Value::from),
                 };
                 v.unwrap_or_else(|| {
                     self.err(
@@ -710,16 +728,31 @@ impl Encoder<'_> {
     }
 
     fn named(&mut self, x: &Robj, name: &QualifiedName, path: &str) -> Value {
-        let qname = name.to_string();
-        if !x.inherits("r8_value") || !x.inherits(&qname) {
-            return self.err("r_type", path, format!("expected a value of `{qname}`"));
-        }
-        let Some(def) = self.lookup.find(name).cloned() else {
+        let xs = unsafe { x.get() };
+        // A field of a named type admits exactly that type: a descendant's
+        // class vector also names its ancestors.
+        if !crate::rview::is_type(xs, name) {
             return self.err(
-                "unresolved_type",
+                "r_type",
                 path,
-                format!("`{qname}` is not registered"),
+                crate::rview::not_named_message(Some(xs), name),
             );
+        }
+        let variant = crate::value::variant(xs).unwrap_or_default();
+        self.members(x, name, &variant, path)
+    }
+
+    /// The JSON form of the fields of `x`, a named list, as those of a value of
+    /// the type `name`, of the variant `variant` for an enum.
+    pub(crate) fn members(
+        &mut self,
+        x: &Robj,
+        name: &QualifiedName,
+        variant: &str,
+        path: &str,
+    ) -> Value {
+        let Some(def) = self.lookup.find(name).cloned() else {
+            return self.err("unknown_type", path, format!("`{name}` is not registered"));
         };
         let list = x.as_list();
         let get = |n: &str| -> Robj {
@@ -729,6 +762,34 @@ impl Encoder<'_> {
         };
         let mut m = Map::new();
         match def {
+            TypeDef::Table(t) => {
+                let Value::Object(mut m) = self.table_of(x, &t.columns, t.open, path) else {
+                    return Value::Null;
+                };
+                let v = crate::rview::RView::Whole(unsafe { x.get() });
+                let extras = rtemis_r8::access::extra_columns(&t.columns, t.open, v);
+                if extras.len() > 1 {
+                    let order: Vec<&str> = extras.iter().map(|(k, _, _)| k.as_ref()).collect();
+                    m.insert("$order".into(), Value::from(order));
+                }
+                let facts: Map<String, Value> = extras
+                    .iter()
+                    .filter_map(|(k, _, f)| {
+                        let mut o = Map::new();
+                        if let Some(u) = &f.unit {
+                            o.insert("unit".into(), Value::from(u.as_str()));
+                        }
+                        if let Some(d) = &f.description {
+                            o.insert("description".into(), Value::from(d.as_str()));
+                        }
+                        (!o.is_empty()).then(|| (k.to_string(), Value::Object(o)))
+                    })
+                    .collect();
+                if !facts.is_empty() {
+                    m.insert("$facts".into(), Value::Object(facts));
+                }
+                Value::Object(m)
+            }
             TypeDef::Struct(s) => {
                 for f in &s.fields {
                     m.insert(
@@ -743,14 +804,10 @@ impl Encoder<'_> {
                 Value::Object(m)
             }
             TypeDef::Enum(e) => {
-                let variant: String = x
-                    .get_attrib("r8_variant")
-                    .and_then(|v| v.as_str().map(str::to_string))
-                    .unwrap_or_default();
                 let unit_only = e
                     .variants
                     .iter()
-                    .all(|v| matches!(v.shape, VariantShape::Unit));
+                    .all(|v| matches!(v.kind, VariantKind::Unit));
                 if unit_only {
                     return Value::from(variant);
                 }
@@ -758,10 +815,10 @@ impl Encoder<'_> {
                     .variants
                     .iter()
                     .find(|v| v.name.as_str() == variant)
-                    .map(|v| &v.shape)
+                    .map(|v| &v.kind)
                 {
-                    Some(VariantShape::Struct { fields, .. }) => fields.clone(),
-                    Some(VariantShape::Newtype { of }) => self.struct_fields(of),
+                    Some(VariantKind::Struct { fields, .. }) => fields.clone(),
+                    Some(VariantKind::Newtype { of }) => self.struct_fields(of),
                     _ => Vec::new(),
                 };
                 for f in &fields {
@@ -780,23 +837,43 @@ impl Encoder<'_> {
         }
     }
 
-    fn dynamic(&mut self, x: &Robj, path: &str) -> Value {
-        let ty = x
-            .get_attrib("r8_type")
-            .and_then(|t| t.as_str().map(str::to_string));
-        match ty.and_then(|t| QualifiedName::parse(&t).ok()) {
-            Some(q) => {
-                let mut v = self.named(x, &q, path);
-                if let Value::Object(o) = &mut v {
-                    o.insert("$type".into(), Value::from(q.to_string()));
-                }
-                v
-            }
-            None => self.err(
+    /// The JSON form of a value of a `dyn()` field, as the emitter writes
+    /// it: the type member, the trait's tag member with the type's tag value
+    /// or `"$type"` with the qualified name, beside the value's members; a
+    /// unit-only enum is an object of the type member and its own tag.
+    fn dynamic(&mut self, x: &Robj, ft: &FieldType, path: &str) -> Value {
+        let ty = crate::value::type_name(unsafe { x.get() });
+        let Some(q) = ty.and_then(|t| QualifiedName::parse(&t).ok()) else {
+            return self.err(
                 "r_type",
                 path,
                 "a dyn() field holds an R8 value".to_string(),
-            ),
+            );
+        };
+        let (member, written) = match ft {
+            FieldType::Dyn { r#trait } => match self.lookup.tag_value(r#trait, &q) {
+                Some(t) => (self.lookup.type_member(r#trait), t),
+                None => ("$type".to_string(), q.to_string()),
+            },
+            _ => ("$type".to_string(), q.to_string()),
+        };
+        let v = self.named(x, &q, path);
+        match v {
+            Value::Object(mut o) => {
+                o.insert(member, Value::from(written));
+                Value::Object(o)
+            }
+            Value::String(variant) => {
+                let tag = match self.lookup.find(&q) {
+                    Some(TypeDef::Enum(e)) => e.tag.to_string(),
+                    _ => "type".to_string(),
+                };
+                let mut o = serde_json::Map::new();
+                o.insert(member, Value::from(written));
+                o.insert(tag, Value::from(variant));
+                Value::Object(o)
+            }
+            other => other,
         }
     }
 }
@@ -820,31 +897,9 @@ fn is_scalar(ft: &FieldType) -> bool {
     )
 }
 
-/// The column type of an extra column of an open table, from its R class;
-/// cells may be missing, so the type is `option()` of the class's type.
+/// The column type of an extra column of an open table.
 fn infer_column(col: &Robj) -> Option<FieldType> {
-    let base = if col.inherits("factor") {
-        FieldType::Factor {
-            levels: None,
-            ordered: col.inherits("ordered"),
-        }
-    } else if col.inherits("Date") {
-        FieldType::Date
-    } else if col.inherits("POSIXct") {
-        FieldType::Posixct
-    } else {
-        match col.rtype() {
-            Rtype::Logicals => FieldType::Logical,
-            Rtype::Integers => FieldType::Integer(Default::default()),
-            Rtype::Doubles => FieldType::Double(Default::default()),
-            Rtype::Strings => FieldType::Character(Default::default()),
-            _ => return None,
-        }
-    };
-    Some(FieldType::Option {
-        inner: Box::new(base),
-        resolve: Default::default(),
-    })
+    crate::rview::infer_column(unsafe { col.get() })
 }
 
 // ------------------------------------------------------------------ decode
@@ -984,7 +1039,7 @@ impl Decoder<'_> {
                     Ok(List::from_values(values).into())
                 }
             }
-            FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
+            FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
                 let (keys, values): (Vec<String>, Vec<N>) = match v.entries() {
                     Some(mut pairs) => {
                         pairs.sort_by(|a, b| a.0.cmp(b.0));
@@ -997,7 +1052,7 @@ impl Decoder<'_> {
                         .unzip(),
                 };
                 let (inner, _) = unwrap_option(value);
-                let mut r = if is_scalar(inner) && matches!(ft, FieldType::Hashmap { .. }) {
+                let mut r = if is_scalar(inner) && matches!(ft, FieldType::BtreeMap { .. }) {
                     self.atomic(values.iter().copied(), value)?
                 } else {
                     let out = values
@@ -1010,7 +1065,7 @@ impl Decoder<'_> {
                 Ok(r)
             }
             FieldType::Json => self.json(v),
-            FieldType::R { .. } => Ok(().into()),
+            FieldType::HostClass { .. } => Ok(().into()),
             FieldType::Matrix { element, .. } | FieldType::Array { element, .. } => {
                 self.dense(v, element)
             }
@@ -1042,6 +1097,14 @@ impl Decoder<'_> {
                 let (ty, _) = v
                     .with_value(|x| self.lookup.implementor(r#trait, x))
                     .map_err(fail)?;
+                self.named(v, &ty, None)
+            }
+            FieldType::Subtype { .. } => {
+                let ty = v
+                    .get("$type")
+                    .and_then(|t| t.as_str())
+                    .and_then(|t| QualifiedName::parse(t).ok())
+                    .ok_or_else(|| fail("a `dyn()` value names its type in `$type`"))?;
                 self.named(v, &ty, None)
             }
         }
@@ -1149,7 +1212,11 @@ impl Decoder<'_> {
             .call(pairlist!(ints("indices"), ints("indptr"), x, ints("shape")))
     }
 
-    fn table<'a, N: Node<'a>>(&self, v: N, columns: &[FieldDef]) -> Result<Robj> {
+    fn table<'a, N: Node<'a>, C: rtemis_r8::ir::Column>(
+        &self,
+        v: N,
+        columns: &[C],
+    ) -> Result<Robj> {
         let n = v.get("$length").and_then(Node::number).unwrap_or(0.0) as i32;
         let extra = v.get("$columns");
         let mut names = Vec::new();
@@ -1160,8 +1227,8 @@ impl Decoder<'_> {
             .into_iter()
             .filter(|(k, _)| !k.starts_with('$'))
         {
-            let ft: FieldType = match columns.iter().find(|c| c.name.as_str() == k) {
-                Some(c) => c.ty.clone(),
+            let ft: FieldType = match columns.iter().find(|c| c.field().name.as_str() == k) {
+                Some(c) => c.field().ty.clone(),
                 None => extra
                     .and_then(|t| t.get(k))
                     .map(|t| t.with_value(|x| <FieldType as serde::Deserialize>::deserialize(x)))
@@ -1184,6 +1251,55 @@ impl Decoder<'_> {
         r.set_attrib("row.names", vec![Rint::na(), Rint::from(-n)])?;
         r.set_class(["data.frame"])?;
         Ok(r)
+    }
+
+    /// A value of the table `name`.
+    fn named_table<'a, N: Node<'a>>(
+        &self,
+        v: N,
+        name: &QualifiedName,
+        def: &rtemis_r8::ir::TableDef,
+    ) -> Result<Robj> {
+        let mut df = self.table(v, &def.columns)?;
+        let listed: Vec<String> = df
+            .names()
+            .map(|n| n.map(str::to_string).collect())
+            .unwrap_or_default();
+        // The declared columns in declaration order, then the others in theirs.
+        let order: Vec<&str> = v
+            .get("$order")
+            .map(|o| items(o).filter_map(Node::as_str).collect())
+            .unwrap_or_default();
+        let place = |k: &str| -> usize {
+            let d = def.columns.len();
+            match def.columns.iter().position(|c| c.name.as_str() == k) {
+                Some(i) => i,
+                None => d + order.iter().position(|o| *o == k).unwrap_or(0),
+            }
+        };
+        let mut at: Vec<usize> = (0..listed.len()).collect();
+        at.sort_by_key(|&i| place(&listed[i]));
+        let cols: Vec<Robj> = df
+            .as_list()
+            .map(|l| l.values().collect())
+            .unwrap_or_default();
+        let facts = match v.get("$facts").and_then(Node::entries) {
+            None => ().into(),
+            Some(listed) => {
+                let mut names = Vec::new();
+                let mut of = Vec::new();
+                for (k, f) in listed {
+                    names.push(k.to_string());
+                    of.push(self.json(f)?);
+                }
+                let mut r: Robj = List::from_values(of).into();
+                r.set_names(names)?;
+                r
+            }
+        };
+        df = List::from_values(at.iter().map(|&i| cols[i].clone())).into();
+        let names: Vec<&str> = at.iter().map(|&i| listed[i].as_str()).collect();
+        unsafe { crate::table::value(name, df.get(), &names, facts.get(), self.lookup) }
     }
 
     fn json<'a, N: Node<'a>>(&self, v: N) -> Result<Robj> {
@@ -1218,7 +1334,7 @@ impl Decoder<'_> {
         Ok(List::from_values(items(v).map(|x| self.json(x)).collect::<Result<Vec<_>>>()?).into())
     }
 
-    /// An R8 value of a named type; `original` supplies runtime-only fields.
+    /// An R8 value of a named type; `original` supplies host-only fields.
     /// A member the value does not hold reads as `null`.
     pub(crate) fn named<'a, N: Node<'a>>(
         &self,
@@ -1232,7 +1348,7 @@ impl Decoder<'_> {
             .cloned()
             .ok_or_else(|| fail(format!("`{name}` is not registered")))?;
         let carry = |f: &FieldDef| -> Option<Robj> {
-            if !matches!(unwrap_option(&f.ty).0, FieldType::R { .. }) {
+            if !matches!(unwrap_option(&f.ty).0, FieldType::HostClass { .. }) {
                 return None;
             }
             original.and_then(|o| o.as_list()).and_then(|l| {
@@ -1241,32 +1357,27 @@ impl Decoder<'_> {
                     .map(|(_, x)| x)
             })
         };
-        let fields_of = |fields: &[FieldDef]| -> Result<(Vec<String>, Vec<Robj>)> {
-            let mut names = Vec::new();
-            let mut values = Vec::new();
-            for f in fields {
-                names.push(f.name.to_string());
-                values.push(match carry(f) {
-                    Some(x) => x,
-                    None => match v.get(f.name.as_str()) {
-                        Some(x) => self.value(x, &f.ty)?,
-                        None => ().into(),
-                    },
-                });
-            }
-            Ok((names, values))
+        let fields_of = |fields: &[FieldDef]| -> Result<Vec<Robj>> {
+            fields
+                .iter()
+                .map(|f| match (carry(f), v.get(f.name.as_str())) {
+                    (Some(x), _) => Ok(x),
+                    (None, Some(x)) => self.value(x, &f.ty),
+                    (None, None) => Ok(().into()),
+                })
+                .collect()
         };
-        let (names, values, variant, version) = match &def {
-            TypeDef::Struct(s) => {
-                let (n, vals) = fields_of(&s.fields)?;
-                (n, vals, None, s.version)
-            }
+        let (values, variant) = match &def {
+            TypeDef::Table(t) => return self.named_table(v, name, t),
+            TypeDef::Struct(s) => (fields_of(&s.fields)?, None),
             TypeDef::Enum(e) => {
                 let unit_only = e
                     .variants
                     .iter()
-                    .all(|x| matches!(x.shape, VariantShape::Unit));
-                let variant = if unit_only {
+                    .all(|x| matches!(x.kind, VariantKind::Unit));
+                // Inside `dyn()`, a unit-only enum is an object of the type
+                // member and its tag.
+                let variant = if unit_only && v.object_len().is_none() {
                     v.as_str().unwrap_or_default().to_string()
                 } else {
                     v.get(e.tag.as_str())
@@ -1278,29 +1389,63 @@ impl Decoder<'_> {
                     .variants
                     .iter()
                     .find(|x| x.name.as_str() == variant)
-                    .map(|x| &x.shape)
+                    .map(|x| &x.kind)
                 {
-                    Some(VariantShape::Struct { fields, .. }) => fields.clone(),
-                    Some(VariantShape::Newtype { of }) => match self.lookup.find(of) {
+                    Some(VariantKind::Struct { fields, .. }) => fields.clone(),
+                    Some(VariantKind::Newtype { of }) => match self.lookup.find(of) {
                         Some(TypeDef::Struct(s)) => s.fields.clone(),
                         _ => Vec::new(),
                     },
                     _ => Vec::new(),
                 };
-                let (n, vals) = fields_of(&fields)?;
-                (n, vals, Some(variant), e.version)
+                (fields_of(&fields)?, Some(variant))
             }
         };
-        let mut r: Robj = List::from_values(values).into();
-        r.set_names(names)?;
-        let qname = name.to_string();
-        r.set_class([qname.as_str(), "r8_value"])?;
-        r.set_attrib("r8_type", qname.as_str())?;
-        r.set_attrib("r8_version", version as i32)?;
-        if let Some(var) = variant {
-            r.set_attrib("r8_variant", var)?;
+        let r: Robj = List::from_values(values).into();
+        let fields = unsafe { r.get() };
+        let id = crate::value::identity(name, variant.as_deref(), self.lookup)
+            .map_err(|(_, m)| fail(m))?;
+        // The codec of a Rust-stored type builds the state from the fields.
+        let Some(vt) = crate::exports::codec(&name.to_string())
+            .map_err(|m| fail(format!("{m} [declaration_changed]")))?
+        else {
+            return Ok(unsafe { Robj::from_sexp(crate::value::new(fields, id)) });
+        };
+        let state = match &variant {
+            None => crate::rust_stored::from_fields(vt, fields),
+            Some(v) => crate::rust_stored::from_variant(vt, v, fields),
         }
-        Ok(r)
+        .map_err(fail)?;
+        Ok(unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, id)) })
+    }
+}
+
+/// The R values of the nodes that a codec's reader reads as values.
+struct Values<'a> {
+    lookup: &'a dyn TypeLookup,
+}
+
+impl rtemis_r8::reader::HostValues for Values<'_> {
+    fn value(
+        &self,
+        node: &rtemis_r8::tree::Tree,
+        ty: &FieldType,
+    ) -> std::result::Result<rtemis_r8::abi::Sexp, (&'static str, String)> {
+        let decoder = Decoder {
+            lookup: self.lookup,
+        };
+        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::rust_stored::guarded(|| decoder.value(rtemis_r8::tree::TreeRef::new(node), ty))
+        }));
+        match read {
+            Ok(Some(Ok(x))) => Ok(unsafe { x.get() }.cast()),
+            Ok(Some(Err(e))) => Err(("value", e.to_string())),
+            Ok(None) => Err((
+                "r_error",
+                "R raised an error while reading the value".into(),
+            )),
+            Err(_) => Err(("panic", "R8 panicked while reading the value".into())),
+        }
     }
 }
 
@@ -1313,7 +1458,7 @@ pub(crate) fn encode_field(x: SEXP, ft: &FieldType, lookup: &dyn TypeLookup) -> 
     let mut enc = Encoder {
         lookup,
         errors: Vec::new(),
-        runtime: Vec::new(),
+        host_only: Vec::new(),
     };
     enc.value(&robj, ft, "")
 }
@@ -1331,38 +1476,256 @@ pub(crate) fn decode_field<'a, N: Node<'a>>(
 pub(crate) fn errors_list(errors: &[ValueError]) -> List {
     let code: Vec<String> = errors.iter().map(|e| e.code.to_string()).collect();
     let path: Vec<String> = errors.iter().map(|e| e.path.clone()).collect();
-    let rule: Vec<String> = errors
+    let rule: Vec<Option<String>> = errors
         .iter()
-        .map(|e| e.rule.as_ref().map(|r| r.to_string()).unwrap_or_default())
+        .map(|e| e.rule.as_ref().map(|r| r.to_string()))
         .collect();
-    let message: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
-    list!(code = code, path = path, rule = rule, message = message)
+    let rule_index: Vec<Option<i32>> = errors
+        .iter()
+        .map(|e| e.rule_index.and_then(|i| i32::try_from(i).ok()))
+        .collect();
+    let message: Vec<String> = errors
+        .iter()
+        .map(|e| match &e.problem {
+            Some(p) => p.sentence(
+                &e.segments,
+                e.found.as_ref(),
+                e.suggestion.as_deref(),
+                &RSyntax,
+            ),
+            None => e.message.clone(),
+        })
+        .collect();
+    let where_: Vec<String> = errors.iter().map(|e| r_path(&e.segments)).collect();
+    let suggestion: Vec<Option<String>> = errors.iter().map(|e| e.suggestion.clone()).collect();
+    let diagnosis = List::from_values(
+        errors
+            .iter()
+            .map(|e| e.diagnosis.as_deref().map_or(Robj::from(()), diagnosis_r)),
+    );
+    List::from_names_and_values(
+        [
+            "code",
+            "path",
+            "rule",
+            "rule_index",
+            "message",
+            "where",
+            "suggestion",
+            "diagnosis",
+        ],
+        [
+            Robj::from(code),
+            Robj::from(path),
+            Robj::from(rule),
+            Robj::from(rule_index),
+            Robj::from(message),
+            Robj::from(where_),
+            Robj::from(suggestion),
+            Robj::from(diagnosis),
+        ],
+    )
+    .unwrap_or_default()
+}
+
+/// A name as R writes it in code: bare when syntactic, in backticks
+/// otherwise.
+fn r_name(n: &str) -> String {
+    let syntactic = n
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '.')
+        && n.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_');
+    if syntactic {
+        n.to_string()
+    } else {
+        format!("`{}`", n.replace('`', "\\`"))
+    }
+}
+
+/// A problem's path as an R expression: `kernel$gamma`, `w[[3]]` (1-based),
+/// `params[["key"]]`, `levels(g)[[2]]`, `dim(m)[[1]]`, `names(m)[[4]]`; `""`
+/// for the value itself. The parts of a value's JSON form that R does not
+/// spell, such as an enum's tag, are skipped.
+pub(crate) fn r_path(segments: &[rtemis_r8::problem::Segment]) -> String {
+    use rtemis_r8::problem::Segment as S;
+    let mut out = String::new();
+    let mut i = 0;
+    while i < segments.len() {
+        match &segments[i] {
+            S::Field(k) | S::Column(k) => {
+                if out.is_empty() {
+                    out = r_name(k);
+                } else {
+                    out = format!("{out}${}", r_name(k));
+                }
+            }
+            S::Key(k) => out = format!("{out}[[{k:?}]]"),
+            S::Element(n) => {
+                // An ordered map's item: its name or its value.
+                match segments.get(i + 1) {
+                    Some(S::Form(f)) if f == "/name" => {
+                        out = format!("names({out})[[{}]]", n + 1);
+                        i += 1;
+                    }
+                    Some(S::Form(f)) if f == "/value" => {
+                        out = format!("{out}[[{}]]", n + 1);
+                        i += 1;
+                    }
+                    _ => out = format!("{out}[[{}]]", n + 1),
+                }
+            }
+            S::Form(f) => match f.as_str() {
+                "/levels" => out = format!("levels({out})"),
+                "/shape" => out = format!("dim({out})"),
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    out
+}
+
+/// How R writes the parts of a validation message.
+pub(crate) struct RSyntax;
+
+impl rtemis_r8::problem::Syntax for RSyntax {
+    fn path(&self, segments: &[rtemis_r8::problem::Segment]) -> String {
+        format!("`{}`", r_path(segments))
+    }
+    fn lit(&self, x: &rtemis_r8::problem::Lit) -> String {
+        match x {
+            rtemis_r8::problem::Lit::Num(n) => rtemis_r8::problem::number_text(*n),
+            rtemis_r8::problem::Lit::Str(t) => format!("{t:?}"),
+        }
+    }
+    fn shown(&self, x: &rtemis_r8::rules::Shown) -> String {
+        use rtemis_r8::rules::Shown;
+        match x {
+            Shown::Length(n) => format!("length {n}"),
+            Shown::Dim(d) => d.iter().map(u64::to_string).collect::<Vec<_>>().join(" x "),
+            Shown::Other => "a value of another kind".to_string(),
+            _ => shown_value(x).unwrap_or_default(),
+        }
+    }
+    fn name(&self, n: &str) -> String {
+        format!("`{}`", r_name(n))
+    }
+}
+
+/// A scalar value of a diagnosis as R writes it: a number in its shortest
+/// exact form, `TRUE` or `FALSE`, a quoted string, a date, `NULL` for an
+/// absent value, and `<sensitive>`; `None` for a value shown by its size or
+/// not shown.
+pub(crate) fn shown_value(s: &rtemis_r8::rules::Shown) -> Option<String> {
+    use rtemis_r8::rules::Shown;
+    Some(match s {
+        Shown::Number(t) | Shown::Date(t) | Shown::DateTime(t) => t.clone(),
+        Shown::Bool(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+        Shown::String { text, cut } => {
+            let q = format!("{text:?}");
+            if *cut {
+                format!("{}...\"", &q[..q.len() - 1])
+            } else {
+                q
+            }
+        }
+        Shown::Sensitive => "<sensitive>".to_string(),
+        Shown::Absent => "NULL".to_string(),
+        Shown::Missing => "NA".to_string(),
+        Shown::Kind(k) => k.clone(),
+        Shown::Length(_) | Shown::Dim(_) | Shown::Other => return None,
+    })
+}
+
+/// The line of a value of a diagnosis at `path`, as R writes it: `lo = 2`,
+/// `length(values) = 14`, `dim(m) = 3 x 4`; `None` for a value not shown.
+pub(crate) fn shown_text(s: &rtemis_r8::rules::Shown, path: &str) -> Option<String> {
+    use rtemis_r8::rules::Shown;
+    match s {
+        Shown::Length(n) => Some(format!("length({path}) = {n}")),
+        Shown::Dim(d) => Some(format!(
+            "dim({path}) = {}",
+            d.iter().map(u64::to_string).collect::<Vec<_>>().join(" x ")
+        )),
+        _ => shown_value(s).map(|v| format!("{path} = {v}")),
+    }
+}
+
+/// A diagnosis as an R list: `invariant` and `when`, the rule's expressions
+/// as the lists `rule()` builds; `fields`, one line per field read
+/// (`lo = 2`, `length(values) = 14`); `operands`, the computed operands'
+/// values, named by their JSON Pointers into the invariant; and `element`,
+/// the line of `.x`, or `NULL`.
+fn diagnosis_r(d: &rtemis_r8::rules::Diagnosis) -> Robj {
+    let logic = |l: &Option<rtemis_r8::ir::Logic>| {
+        l.as_ref()
+            .and_then(|l| crate::irser::to_r(l).ok())
+            .unwrap_or_else(|| Robj::from(()))
+    };
+    let fields: Vec<String> = d
+        .fields
+        .iter()
+        .filter_map(|(p, s)| shown_text(s, &r_path(p)))
+        .collect();
+    let mut operands = Robj::from(
+        d.operands
+            .iter()
+            .map(|(_, s)| shown_value(s).unwrap_or_default())
+            .collect::<Vec<_>>(),
+    );
+    let _ = operands.set_names(
+        d.operands
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .collect::<Vec<_>>(),
+    );
+    let element = d
+        .element
+        .as_ref()
+        .and_then(|s| shown_text(s, ".x"))
+        .map_or(Robj::from(()), Robj::from);
+    list!(
+        invariant = logic(&d.invariant),
+        when = logic(&d.when),
+        fields = fields,
+        operands = operands,
+        element = element
+    )
+    .into()
 }
 
 /// The identity of an R8 value: the canonical text of its normalized form,
-/// its content hash, and the paths of its runtime-only fields that hold a
+/// its content hash, and the paths of its host-only fields that hold a
 /// value, written from the R objects in place.
 ///
 /// @param x An R8 value.
-/// @return List: `canonical`, `hash`, and `runtime`, or `errors`.
+/// @return List: `canonical`, `hash`, and `host_only`, or `errors`.
 /// @keywords internal
 /// @noRd
 #[extendr]
 fn r8_value_identity(x: Robj) -> Result<List> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
-    let v = crate::rview::RView::Whole(xs);
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
-    });
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)));
-    }
-    let canonical = rtemis_r8::codec::canonical_access(v, &q, lookup);
-    let hash = rtemis_r8::codec::content_hash_access(v, &q, lookup);
-    let runtime = rtemis_r8::codec::runtime_paths(&q, v, lookup);
-    Ok(list!(canonical = canonical, hash = hash, runtime = runtime))
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let v = crate::rview::RView::Whole(xs);
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(v, &q, lookup, cache)
+        });
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)));
+        }
+        let canonical = rtemis_r8::canonical::canonical_access(v, &q, lookup);
+        let hash = rtemis_r8::canonical::content_hash_access(v, &q, lookup);
+        let host_only = rtemis_r8::canonical::host_only_paths(&q, v, lookup);
+        Ok(list!(
+            canonical = canonical,
+            hash = hash,
+            host_only = host_only
+        ))
+    })
 }
 
 /// The content hash of an R8 value, streamed from the R objects in place.
@@ -1373,116 +1736,149 @@ fn r8_value_identity(x: Robj) -> Result<List> {
 /// @noRd
 #[extendr]
 fn r8_value_hash(x: Robj) -> Result<Robj> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
-    let v = crate::rview::RView::Whole(xs);
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
-    });
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)).into());
-    }
-    Ok(rtemis_r8::codec::content_hash_access(v, &q, lookup).into())
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let v = crate::rview::RView::Whole(xs);
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(v, &q, lookup, cache)
+        });
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)).into());
+        }
+        Ok(rtemis_r8::canonical::content_hash_access(v, &q, lookup).into())
+    })
 }
 
 /// Whether two R8 values of one type are equal: the same normalized form,
-/// and identical runtime-only fields, compared in place.
+/// and identical host-only fields, compared in place.
 ///
 /// @param x,y R8 values.
-/// @return Logical: One value.
+/// @return Logical: One value; `list(message = )` when a value, or one that it
+///   holds, is of another declaration than the registered one, and
+///   `list(stale = )`, the parent, for a stale type.
 /// @keywords internal
 /// @noRd
 #[extendr]
 fn r8_values_equal(x: Robj, y: Robj) -> Result<Robj> {
-    let (xs, ys) = unsafe { (x.get(), y.get()) };
-    let (q, docs) = value_type(xs)?;
-    if crate::rview::attr_string(ys, crate::rview::sym_r8_type()).as_deref() != Some(&q.to_string())
-    {
-        return Ok(false.into());
-    }
-    let lookup: &dyn TypeLookup = &**docs;
-    let eq = rtemis_r8::equal::equal_access(
-        &q,
-        crate::rview::RView::Whole(xs),
-        crate::rview::RView::Whole(ys),
-        lookup,
-    );
-    Ok(eq.into())
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let (xs, ys) = unsafe { (x.get(), y.get()) };
+        let (q, docs) = value_type(xs)?;
+        if crate::value::type_name(ys).as_deref() != Some(&q.to_string()) {
+            return Ok(false.into());
+        }
+        if let Some(o) = crate::value::other(xs).or_else(|| crate::value::other(ys)) {
+            return Ok(list!(message = o.message()).into());
+        }
+        let lookup: &dyn TypeLookup = &*docs;
+        if lookup.is_stale(&q) {
+            let parent = lookup.ancestors(&q).first().map(|p| p.to_string());
+            return Ok(list!(stale = parent.unwrap_or_default()).into());
+        }
+        let (eq, met) = crate::value::meeting(|| {
+            rtemis_r8::equal::equal_access(
+                &q,
+                crate::rview::RView::Whole(xs),
+                crate::rview::RView::Whole(ys),
+                lookup,
+            )
+        });
+        if let Some(o) = met.and_then(crate::value::other) {
+            return Ok(list!(message = o.message()).into());
+        }
+        Ok(eq.into())
+    })
 }
 
-/// The qualified type of an R8 value, with the registry locked.
-fn value_type(
-    x: SEXP,
-) -> Result<(
-    QualifiedName,
-    std::sync::MutexGuard<'static, std::sync::Arc<DocumentSet>>,
-)> {
-    let type_name = crate::rview::attr_string(x, crate::rview::sym_r8_type())
-        .ok_or_else(|| fail("not an R8 value"))?;
+/// The qualified type of an R8 value, with a snapshot of the registry.
+fn value_type(x: SEXP) -> Result<(QualifiedName, std::sync::Arc<DocumentSet>)> {
+    let type_name = crate::value::type_name(x).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+    let docs = registry().snapshot();
     Ok((q, docs))
 }
 
 /// Writes an R8 value as a document, from the R objects in place.
 ///
 /// @param x An R8 value.
+/// @param declarations Logical: The document holds the declarations.
 /// @return List: `list(json = <text>)` or `list(errors = <problems>)`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_value_to_document(x: Robj) -> Result<List> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
-    let v = crate::rview::RView::Whole(xs);
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(v, &q, lookup, cache)
-    });
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)));
-    }
-    Ok(list!(
-        json = rtemis_r8::codec::document_access(v, &q, lookup)
-    ))
+fn r8_value_to_document(x: Robj, declarations: bool) -> Result<List> {
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let v = crate::rview::RView::Whole(xs);
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(v, &q, lookup, cache)
+        });
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)));
+        }
+        let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, lookup);
+        let json = rtemis_r8::canonical::document_with(v, &q, lookup, declarations, &hash);
+        if json.len() > i32::MAX as usize {
+            return Err(fail(format!(
+                "the document takes {}, and R holds at most 2 GiB in one string; write the value with r8_write_rds()",
+                rtemis_r8::text::format_size(json.len() as u64)
+            )));
+        }
+        Ok(list!(json = json))
+    })
 }
 
 /// Reads a document of a type into an R8 value.
 ///
 /// @param text Character: The document.
 /// @param type_name Character: The qualified type name.
+/// @param any Logical: A document of other declarations than the registered ones
+///   is read as one of these.
 /// @return List: `list(value = <R8 value>)` or `list(errors = <problems>)`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
-    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = crate::declare::snapshot()?;
-    // The value as a compact tree, which holds a run of numbers in 8 B an
-    // item; the conversion to R and a codec's reader read it in place.
-    let tree = match crate::construct::with_cache(|cache| {
-        rtemis_r8::codec::read_tree_cached(text, &q, &*docs, cache)
-    }) {
-        Ok(t) => t,
-        Err(errors) => return Ok(list!(errors = errors_list(&errors))),
-    };
-    let v = rtemis_r8::tree::TreeRef::new(&tree);
-    let lookup: &dyn TypeLookup = &*docs;
-    // A Rust-native struct or enum: the codec builds the state from the
-    // read value through `from_reader` when its table has it, and otherwise
-    // from the validated fields as R values, through `from_fields` (a struct)
-    // or `from_variant` (an enum); the state's variant is checked against the
-    // document's, and the codec receives no JSON text.
-    if let (Some(def), Some(vt)) = (lookup.find(&q), crate::exports::codec(type_name)) {
-        if crate::native::has_from_reader(vt) {
-            let lent = rtemis_r8::reader::TreeReader::new();
+fn r8_value_from_document(
+    text: crate::utf8::Utf8,
+    type_name: crate::utf8::Utf8,
+    any: bool,
+) -> Result<List> {
+    crate::interrupt::interruptible_if(text.len() > 1 << 20, || {
+        let text: &str = &text;
+        let type_name: &str = &type_name;
+        let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+        let docs = crate::declare::snapshot()?;
+        // The value as a compact tree, which holds a run of numbers in 8 B an
+        // item; the conversion to R and a codec's reader read it in place.
+        let hash = |q: &QualifiedName| crate::construct::registry_value_hash(q, &*docs);
+        let options = rtemis_r8::canonical::ReadOptions {
+            any_declaration: any,
+            hash: &hash,
+        };
+        let tree = match crate::construct::with_cache(|cache| {
+            rtemis_r8::canonical::read_tree_with(text, &q, &*docs, cache, options)
+        }) {
+            Ok(t) => t,
+            Err(errors) => return Ok(list!(errors = errors_list(&errors))),
+        };
+        let v = rtemis_r8::tree::TreeRef::new(&tree);
+        let lookup: &dyn TypeLookup = &*docs;
+        // A Rust-stored struct or enum: the codec builds the state from the
+        // read value through `from_reader`; the state's variant is checked against
+        // the document's, and the codec receives no JSON text.
+        let codec = crate::exports::codec(type_name)
+            .map_err(|m| fail(format!("{m} [declaration_changed]")))?;
+        if let (Some(def), Some(vt)) = (lookup.find(&q), codec) {
+            let values = Values { lookup };
+            let lent = rtemis_r8::reader::TreeReader::new(&values);
             let reader = lent.table();
-            let state = crate::native::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
-                .map_err(fail)?;
-            let variant = crate::native::state_variant(vt, state);
+            let state =
+                crate::rust_stored::from_reader(vt, &reader, rtemis_r8::reader::node(&tree))
+                    .map_err(fail)?;
+            let variant = crate::rust_stored::state_variant(vt, state);
             let drop_state = || {
                 if let Some(d) = unsafe { (*vt).drop } {
                     unsafe { d(state) };
@@ -1505,57 +1901,25 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
                     )));
                 }
             }
-            let Some((names, version)) =
-                crate::native::value_fields(def, variant.as_deref(), lookup)
-            else {
+            let Ok(id) = crate::value::identity(&q, variant.as_deref(), lookup) else {
                 drop_state();
                 return Err(fail(format!(
                     "the codec of `{q}` built a state of the undeclared variant `{}` [codec_variant]",
                     variant.unwrap_or_default()
                 )));
             };
-            let value = unsafe {
-                let like =
-                    crate::native::template(&q.to_string(), &names, version, variant.as_deref());
-                let r = Robj::from_sexp(crate::native::wrap(vt, state, like));
-                extendr_ffi::Rf_unprotect(1);
-                r
-            };
+            let value = unsafe { Robj::from_sexp(crate::rust_stored::wrap(vt, state, id)) };
             return Ok(list!(value = value));
         }
-        let builds = match def {
-            TypeDef::Struct(_) => unsafe { (*vt).from_fields.is_some() },
-            TypeDef::Enum(_) => crate::native::is_enum_codec(vt),
-        };
-        if !builds {
-            return Err(fail(format!(
-                "the codec of `{q}` builds no value from a document: it sets neither `from_reader` nor `from_fields` (a struct) or `from_variant` (an enum) [codec_read]"
-            )));
-        }
-        let fields = Decoder { lookup: &*docs }.named(v, &q, None)?;
-        let fs = unsafe { fields.get() };
-        let state = match def {
-            TypeDef::Struct(_) => crate::native::from_fields(vt, fs),
-            TypeDef::Enum(_) => {
-                let variant = fields
-                    .get_attrib("r8_variant")
-                    .and_then(|a| a.as_str().map(str::to_string))
-                    .unwrap_or_default();
-                crate::native::from_variant(vt, &variant, fs)
-            }
-        }
-        .map_err(fail)?;
-        let value = unsafe { Robj::from_sexp(crate::native::wrap(vt, state, fs)) };
-        return Ok(list!(value = value));
-    }
-    Ok(list!(
-        value = Decoder { lookup: &*docs }.named(v, &q, None)?
-    ))
+        Ok(list!(
+            value = Decoder { lookup: &*docs }.named(v, &q, None)?
+        ))
+    })
 }
 
-/// Resolves a struct value: given its fields, with runtime fields filled by
+/// Resolves a struct value: given its fields, with context fields filled by
 /// the caller, evaluates each absent computed field in dependency order over
-/// the R objects in place, then constructs the value natively.
+/// the R objects in place, then constructs the value in place.
 ///
 /// @param fields List: The fields, by name.
 /// @param type_name Character: The qualified struct name.
@@ -1563,76 +1927,74 @@ fn r8_value_from_document(text: &str, type_name: &str) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
-    use extendr_ffi::{
-        R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_VECTOR_ELT, SEXPTYPE, VECTOR_ELT,
-    };
-    use rtemis_r8::ir::Resolve;
-    let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let lookup: &dyn TypeLookup = &**docs;
-    let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
-        return Err(fail(format!("`{type_name}` is not a registered struct")));
-    };
-    // A working copy of the fields list, which the computed values fill.
-    let fs = unsafe { fields.get() };
-    let n = crate::rview::xlen(fs);
-    let work = unsafe {
-        let w = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
-        for i in 0..n {
-            SET_VECTOR_ELT(w, i as R_xlen_t, VECTOR_ELT(fs, i as R_xlen_t));
+fn r8_resolve_value(fields: Robj, type_name: crate::utf8::Utf8) -> Result<List> {
+    crate::interrupt::interruptible(unsafe { fields.get() }, || {
+        let type_name: &str = &type_name;
+        use extendr_ffi::{
+            R_xlen_t, Rf_allocVector, Rf_protect, Rf_unprotect, SET_VECTOR_ELT, SEXPTYPE,
+            VECTOR_ELT,
+        };
+        use rtemis_r8::ir::Resolve;
+        let q = QualifiedName::parse(type_name).map_err(|e| fail(e.to_string()))?;
+        let docs = registry().snapshot();
+        let lookup: &dyn TypeLookup = &*docs;
+        let Some(TypeDef::Struct(def)) = lookup.find(&q) else {
+            return Err(fail(format!("`{type_name}` is not a registered struct")));
+        };
+        // A working copy of the fields list, which the computed values fill.
+        let fs = unsafe { fields.get() };
+        let n = crate::rview::xlen(fs);
+        let work = unsafe {
+            let w = Rf_protect(Rf_allocVector(SEXPTYPE::VECSXP, n as R_xlen_t));
+            for i in 0..n {
+                SET_VECTOR_ELT(w, i as R_xlen_t, VECTOR_ELT(fs, i as R_xlen_t));
+            }
+            let r = Robj::from_sexp(w);
+            Rf_unprotect(1);
+            r
+        };
+        let ws = unsafe { work.get() };
+        unsafe {
+            extendr_ffi::Rf_setAttrib(
+                ws,
+                crate::rview::sym_names(),
+                crate::rview::attr(fs, crate::rview::sym_names()),
+            );
         }
-        let r = Robj::from_sexp(w);
-        Rf_unprotect(1);
-        r
-    };
-    let ws = unsafe { work.get() };
-    unsafe {
-        extendr_ffi::Rf_setAttrib(
-            ws,
-            crate::rview::sym_names(),
-            crate::rview::attr(fs, crate::rview::sym_names()),
-        );
-    }
-    let names: Vec<String> =
-        crate::rview::strings(crate::rview::attr(fs, crate::rview::sym_names()))
-            .into_iter()
-            .map(|k| k.map(|s| s.into_owned()).unwrap_or_default())
-            .collect();
-    let computed = |f: &FieldDef| match &f.ty {
-        FieldType::Option {
-            resolve: Resolve::Computed { expr },
-            ..
-        } => Some(expr.clone()),
-        _ => None,
-    };
-    let mut pending: Vec<&FieldDef> = def
-        .fields
-        .iter()
-        .filter(|f| computed(f).is_some())
-        .filter(|f| {
-            crate::rview::list_member(ws, f.name.as_str()).is_none_or(crate::rview::is_null)
-        })
-        .collect();
-    let mut errors = Vec::new();
-    let mut kept: Vec<Robj> = Vec::new();
-    while !pending.is_empty() {
-        let pending_names: Vec<String> = pending.iter().map(|f| f.name.to_string()).collect();
-        // A field is ready when no field it reads is still pending.
-        let ready = pending.iter().position(|f| {
-            computed(f).is_some_and(|expr| {
-                rtemis_r8::rules::reads(&expr)
-                    .iter()
-                    .all(|r| !pending_names.contains(r) || r == f.name.as_str())
+        let names: Vec<String> =
+            crate::rview::strings(crate::rview::attr(fs, crate::rview::sym_names()))
+                .into_iter()
+                .map(|k| k.map(|s| s.into_owned()).unwrap_or_default())
+                .collect();
+        let computed = |f: &FieldDef| match &f.resolve {
+            Some(Resolve::Computed { expr }) => Some(expr.clone()),
+            _ => None,
+        };
+        let mut pending: Vec<&FieldDef> = def
+            .fields
+            .iter()
+            .filter(|f| computed(f).is_some())
+            .filter(|f| {
+                crate::rview::list_member(ws, f.name.as_str()).is_none_or(crate::rview::is_null)
             })
-        });
-        let Some(k) = ready else { break };
-        let f = pending.remove(k);
-        let Some(expr) = computed(f) else { continue };
-        let at = format!("/{}", esc(f.name.as_str()));
-        match rtemis_r8::rules::evaluate_computed_access(
+            .collect();
+        let mut errors = Vec::new();
+        let mut kept: Vec<Robj> = Vec::new();
+        while !pending.is_empty() {
+            let pending_names: Vec<String> = pending.iter().map(|f| f.name.to_string()).collect();
+            // A field is ready when no field it reads is still pending.
+            let ready = pending.iter().position(|f| {
+                computed(f).is_some_and(|expr| {
+                    rtemis_r8::rules::reads(&expr)
+                        .iter()
+                        .all(|r| !pending_names.contains(r) || r == f.name.as_str())
+                })
+            });
+            let Some(k) = ready else { break };
+            let f = pending.remove(k);
+            let Some(expr) = computed(f) else { continue };
+            let at = format!("/{}", esc(f.name.as_str()));
+            match rtemis_r8::rules::evaluate_computed_access(
             &expr,
             &def.fields,
             lookup,
@@ -1655,7 +2017,10 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
                             code: "computed_error",
                             path: at,
                             rule: None,
+                            rule_index: None,
                             message: format!("the fields list has no member `{}`", f.name),
+                            diagnosis: None,
+                            ..Default::default()
                         });
                         continue;
                     }
@@ -1666,31 +2031,95 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
                 code: "computed_absent",
                 path: at,
                 rule: None,
+                rule_index: None,
                 message: format!(
                     "computed field `{}` reads a field that is absent; resolve that field first",
                     f.name
                 ),
+                diagnosis: None,
+                ..Default::default()
             }),
             Err(e) => errors.push(ValueError {
                 code: "computed_error",
                 path: at,
                 rule: None,
+                rule_index: None,
                 message: e,
+                diagnosis: None,
+                ..Default::default()
             }),
         }
-    }
-    if !errors.is_empty() {
-        return Ok(list!(errors = errors_list(&errors)));
-    }
-    let problems = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(crate::rview::RView::Draft(ws, ""), &q, lookup, cache)
-    });
-    if !problems.is_empty() {
-        return Ok(list!(errors = errors_list(&problems)));
-    }
-    let value = crate::construct::assemble(ws, &q, "", lookup)?;
-    drop(kept);
-    Ok(list!(value = value))
+        }
+        if !errors.is_empty() {
+            return Ok(list!(errors = errors_list(&errors)));
+        }
+        let problems = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(
+                crate::rview::RView::Draft(ws, ""),
+                &q,
+                lookup,
+                cache,
+            )
+        });
+        if !problems.is_empty() {
+            return Ok(list!(errors = errors_list(&problems)));
+        }
+        let value = crate::construct::assemble(ws, &q, "", lookup)?;
+        drop(kept);
+        Ok(list!(value = value))
+    })
+}
+
+/// Validates an R object against a field type, in place.
+///
+/// @param x Object.
+/// @param columns List: The columns of a table by name, held against a type of
+///   tables, or `NULL`.
+/// @param type An R8 field type or type object.
+/// @param name Character: The object, as a problem names it.
+/// @return `NULL`, or `list(errors = <problems>)`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_check_object(x: Robj, columns: Robj, r#type: Robj, name: crate::utf8::Utf8) -> Result<Robj> {
+    let xs = unsafe { x.get() };
+    let columns = unsafe { columns.get() };
+    let ty =
+        crate::fieldtype::field_type(unsafe { r#type.get() }).map_err(|e| fail(e.to_string()))?;
+    crate::interrupt::interruptible(xs, || {
+        let docs = registry().snapshot();
+        let lookup: &dyn TypeLookup = &*docs;
+        let mut errors = crate::construct::with_cache(|cache| {
+            use rtemis_r8::validate::{validate_access, validate_field_access};
+            if crate::rview::is_null(columns) {
+                let v = crate::rview::RView::Whole(xs);
+                return validate_field_access(v, &ty, lookup, cache);
+            }
+            let v = crate::rview::RView::Draft(columns, "");
+            match &ty {
+                FieldType::Named { name } => validate_access(v, name, lookup, cache),
+                ty => validate_field_access(v, ty, lookup, cache),
+            }
+        });
+        for e in &mut errors {
+            e.path = format!("/{}{}", esc(&name), e.path);
+            e.segments
+                .insert(0, rtemis_r8::problem::Segment::Field(name.to_string()));
+            if let Some(p) = &e.problem {
+                e.message = p.sentence(
+                    &e.segments,
+                    e.found.as_ref(),
+                    e.suggestion.as_deref(),
+                    &rtemis_r8::problem::Neutral,
+                );
+            }
+        }
+        if errors.is_empty() {
+            Ok(().into())
+        } else {
+            Ok(list!(errors = errors_list(&errors)).into())
+        }
+    })
 }
 
 /// Validates an R8 value in place.
@@ -1701,17 +2130,19 @@ fn r8_resolve_value(fields: Robj, type_name: &str) -> Result<List> {
 /// @noRd
 #[extendr]
 fn r8_value_check(x: Robj) -> Result<Robj> {
-    let xs = unsafe { x.get() };
-    let (q, docs) = value_type(xs)?;
-    let lookup: &dyn TypeLookup = &**docs;
-    let errors = crate::construct::with_cache(|cache| {
-        rtemis_r8::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
-    });
-    if errors.is_empty() {
-        Ok(().into())
-    } else {
-        Ok(list!(errors = errors_list(&errors)).into())
-    }
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let xs = unsafe { x.get() };
+        let (q, docs) = value_type(xs)?;
+        let lookup: &dyn TypeLookup = &*docs;
+        let errors = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(crate::rview::RView::Whole(xs), &q, lookup, cache)
+        });
+        if errors.is_empty() {
+            Ok(().into())
+        } else {
+            Ok(list!(errors = errors_list(&errors)).into())
+        }
+    })
 }
 
 extendr_module! {
@@ -1721,6 +2152,7 @@ extendr_module! {
     fn r8_values_equal;
     fn r8_value_hash;
     fn r8_value_check;
+    fn r8_check_object;
     fn r8_value_to_document;
     fn r8_value_from_document;
 }

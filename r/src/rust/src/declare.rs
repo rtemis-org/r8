@@ -6,31 +6,34 @@
 //! and, when it passes, adds it or replaces the type of the same name, so
 //! re-evaluating a declaration, as `devtools::load_all()` does, replaces it.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
-use rtemis_r8::codec::canonical_text;
-use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef, check_document, check_trait, check_type};
+use rtemis_r8::canonical::canonical_text;
+use rtemis_r8::ir::{IR_VERSION, IrDocument, TypeDef};
 use rtemis_r8::name::{Name, QualifiedName};
+use rtemis_r8::registry::{Registry, SaveToken};
 use rtemis_r8::rules::DocumentSet;
 use serde_json::{Map, Value};
 
-/// The registry. Readers that call back into R take a [`snapshot`], which
-/// holds the registry as it stands without its lock; a writer changes the
-/// registry through `Arc::make_mut`, which copies it only while a snapshot is
-/// alive.
-pub(crate) fn registry() -> &'static Mutex<Arc<DocumentSet>> {
-    static REGISTRY: OnceLock<Mutex<Arc<DocumentSet>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(Arc::new(DocumentSet::default())))
+/// The session's registry (`rtemis_r8::registry`). Readers take a
+/// [`snapshot`]; no lock is held outside the registry's own calls.
+pub(crate) fn registry() -> &'static Registry {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    REGISTRY.get_or_init(Registry::new)
 }
 
-/// The registry as it stands, without its lock.
+/// The registry's documents as they stand.
 pub(crate) fn snapshot() -> Result<Arc<DocumentSet>> {
-    registry()
-        .lock()
-        .map(|g| Arc::clone(&g))
-        .map_err(|_| fail("the registry is unavailable"))
+    Ok(registry().snapshot())
+}
+
+/// Invalidates the caches that read the registry, after a change.
+fn changed(c: bool) {
+    if c {
+        crate::construct::registry_changed();
+    }
 }
 
 fn fail(message: impl Into<String>) -> Error {
@@ -51,9 +54,8 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
     // `json_ir()`: JSON text spliced into the IR as written.
     // `int64()`: an integer beyond 2^53, as its decimal digits.
     if x.inherits("r8_int64") {
-        let text = x
-            .as_str()
-            .ok_or_else(|| fail(format!("{path}: int64() holds one string")))?;
+        let text =
+            crate::utf8::one(x).ok_or_else(|| fail(format!("{path}: int64() holds one string")))?;
         return text
             .parse::<i64>()
             .map(Value::from)
@@ -61,10 +63,9 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
             .map_err(|_| fail(format!("{path}: int64() holds the digits of one integer")));
     }
     if x.inherits("r8_json_ir") {
-        let text = x
-            .as_str()
+        let text = crate::utf8::one(x)
             .ok_or_else(|| fail(format!("{path}: json_ir() holds one string")))?;
-        return serde_json::from_str(text)
+        return serde_json::from_str(&text)
             .map_err(|e| fail(format!("{path}: the text of json_ir() is not JSON: {e}")));
     }
     match x.rtype() {
@@ -101,23 +102,20 @@ fn to_json(x: &Robj, path: &str) -> Result<Value> {
         }
         Rtype::Strings => {
             let mut out = Vec::new();
-            for s in x.as_str_iter().into_iter().flatten() {
-                if s.is_na() {
+            for s in crate::utf8::all(x).unwrap_or_default() {
+                let Some(s) = s else {
                     return Err(fail(format!("{path}: a declaration holds no NA")));
-                }
+                };
                 out.push(Value::from(s));
             }
             Ok(scalar_or_array(out))
         }
         Rtype::List => {
             let list = x.as_list().unwrap();
-            let named = x
-                .names()
-                .map(|n| n.into_iter().any(|s| !s.is_empty()))
-                .unwrap_or(false);
-            if named {
+            let names = crate::utf8::names(x).filter(|n| n.iter().any(|s| !s.is_empty()));
+            if let Some(names) = names {
                 let mut m = Map::new();
-                for (k, v) in list.iter() {
+                for (k, v) in names.iter().zip(list.values()) {
                     m.insert(k.to_string(), to_json(&v, &format!("{path}/{k}"))?);
                 }
                 Ok(Value::Object(m))
@@ -158,7 +156,8 @@ fn r8_ir_json(x: Robj) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_json_parse(json: &str) -> Result<Robj> {
+fn r8_json_parse(json: crate::utf8::Utf8) -> Result<Robj> {
+    let json: &str = &json;
     let v: Value = serde_json::from_str(json).map_err(|e| fail(format!("not JSON: {e}")))?;
     Ok(from_json(&v))
 }
@@ -196,7 +195,8 @@ fn from_json(v: &Value) -> Robj {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_canonical_json(json: &str) -> Result<String> {
+fn r8_canonical_json(json: crate::utf8::Utf8) -> Result<String> {
+    let json: &str = &json;
     let v: Value = serde_json::from_str(json).map_err(|e| fail(format!("not JSON: {e}")))?;
     Ok(canonical_text(&v))
 }
@@ -213,46 +213,67 @@ fn r8_canonical_json(json: &str) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_type(ir: Robj, namespace: &str) -> Result<List> {
+fn r8_declare_type(ir: Robj, namespace: crate::utf8::Utf8) -> Result<List> {
+    let namespace: &str = &namespace;
     let def: TypeDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
-    declare_type(def, namespace)
+    declare_type(def, namespace).map(|(p, _)| p)
 }
 
 /// Checks the type declaration `def` in its namespace and registers it, as
-/// `r8_declare_type()` does.
-pub(crate) fn declare_type(def: TypeDef, namespace: &str) -> Result<List> {
+/// `r8_declare_type()` does; the problems, and the qualified names of the
+/// structs the declaration leaves stale.
+pub(crate) fn declare_type(def: TypeDef, namespace: &str) -> Result<(List, Vec<String>)> {
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
-    let mut guard = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let q = QualifiedName {
-        namespace: ns.clone(),
-        name: def.name().clone(),
-    };
-    if rtemis_r8::rules::TypeLookup::find(&**guard, &q) == Some(&def) {
-        return Ok(problems_list(&[], ""));
-    }
-    let reg = Arc::make_mut(&mut guard);
-    let placed = reg.put_type(&ns, def);
-    let (d, index) = (placed.document, placed.index);
-    let prefix = format!("/types/{index}");
-    let problems = checked(|| check_type(reg.document(d), index));
-    match &problems {
-        Ok(p) if p.is_empty() => crate::construct::registry_changed(),
-        _ => reg.undo_put(placed),
-    }
-    let problems = problems?;
-    Ok(problems_list(&problems, &prefix))
+    let out = registry()
+        .declare_type(&ns, def)
+        .map_err(|e| fail(e.to_string()))?;
+    changed(out.changed);
+    let stale = out.stale.iter().map(|q| q.to_string()).collect();
+    Ok((problems_list(&out.problems), stale))
 }
 
-/// Runs a declaration's check, a panic of which reports an error and leaves
-/// the registry's lock usable.
-fn checked(
-    check: impl FnOnce() -> Vec<rtemis_r8::ir::DeclError>,
-) -> Result<Vec<rtemis_r8::ir::DeclError>> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(check))
-        .map_err(|_| fail("the declaration's check failed; the registry is unchanged"))
+/// The JSON Schema (draft 2020-12) of the values of the registered type
+/// `name` (`value_schema::json_schema_with()`).
+///
+/// @param name Character: The qualified type name.
+/// @param closed Logical: Write each `dyn()` field as the closed list of the
+///   registered implementors, and each `subtype()` field as the struct and
+///   its registered descendants.
+/// @return Character: The schema as indented JSON text.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_type_schema(name: crate::utf8::Utf8, closed: bool) -> Result<String> {
+    let name: &str = &name;
+    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
+    let docs = registry().snapshot();
+    if rtemis_r8::rules::TypeLookup::find(&*docs, &q).is_none() {
+        return Err(fail(format!("`{name}` is not registered")));
+    }
+    let schema = rtemis_r8::value_schema::json_schema_with(&q, &*docs, closed);
+    serde_json::to_string_pretty(&schema).map_err(|e| fail(e.to_string()))
+}
+
+/// The qualified names of the stale structs: those whose inherited fields or
+/// rules disagree with their parent's, or whose parent is stale.
+///
+/// @param namespaces Character: When not empty, only the stale structs
+///   outside these namespaces that descend from a type in them.
+/// @return Character: The names, sorted.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_stale_types(namespaces: crate::utf8::Utf8s) -> Vec<String> {
+    let namespaces: Vec<String> = namespaces.to_vec();
+    use rtemis_r8::rules::TypeLookup;
+    let docs = registry().snapshot();
+    let within = |q: &QualifiedName| namespaces.iter().any(|n| n == q.namespace.as_str());
+    docs.stale_types()
+        .into_iter()
+        .filter(|q| namespaces.is_empty() || (!within(q) && docs.ancestors(q).iter().any(within)))
+        .map(|q| q.to_string())
+        .collect()
 }
 
 /// The IR document of one registered type: its namespace and its
@@ -263,12 +284,11 @@ fn checked(
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_type_document(name: &str) -> Result<String> {
+fn r8_type_document(name: crate::utf8::Utf8) -> Result<String> {
+    let name: &str = &name;
     let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
-    let reg = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let def = rtemis_r8::rules::TypeLookup::find(&**reg, &q)
+    let reg = registry().snapshot();
+    let def = rtemis_r8::rules::TypeLookup::find(&*reg, &q)
         .cloned()
         .ok_or_else(|| fail(format!("`{name}` is not registered")))?;
     let doc = IrDocument {
@@ -277,16 +297,16 @@ fn r8_type_document(name: &str) -> Result<String> {
         types: vec![def],
         traits: Vec::new(),
         impls: Vec::new(),
+        functions: Vec::new(),
     };
     Ok(doc.to_json())
 }
 
-pub(crate) fn problems_list(problems: &[rtemis_r8::ir::DeclError], prefix: &str) -> List {
+/// A declaration's problems as R lists, with paths relative to the
+/// declaration.
+pub(crate) fn problems_list(problems: &[rtemis_r8::ir::DeclError]) -> List {
     let code: Vec<String> = problems.iter().map(|e| e.code.to_string()).collect();
-    let path: Vec<String> = problems
-        .iter()
-        .map(|e| e.path[prefix.len()..].to_string())
-        .collect();
+    let path: Vec<String> = problems.iter().map(|e| e.path.clone()).collect();
     let message: Vec<String> = problems.iter().map(|e| e.message.clone()).collect();
     list!(code = code, path = path, message = message)
 }
@@ -299,7 +319,8 @@ pub(crate) fn problems_list(problems: &[rtemis_r8::ir::DeclError], prefix: &str)
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_trait(ir: Robj, namespace: &str) -> Result<List> {
+fn r8_declare_trait(ir: Robj, namespace: crate::utf8::Utf8) -> Result<List> {
+    let namespace: &str = &namespace;
     let def: rtemis_r8::ir::TraitDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
     declare_trait(def, namespace)
@@ -309,43 +330,65 @@ fn r8_declare_trait(ir: Robj, namespace: &str) -> Result<List> {
 /// `r8_declare_trait()` does.
 pub(crate) fn declare_trait(def: rtemis_r8::ir::TraitDef, namespace: &str) -> Result<List> {
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
-    let mut guard = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    if guard
-        .namespace(&ns)
-        .is_some_and(|doc| doc.traits.contains(&def))
-    {
-        return Ok(problems_list(&[], ""));
+    let out = registry()
+        .declare_trait(&ns, def)
+        .map_err(|e| fail(e.to_string()))?;
+    changed(out.changed);
+    Ok(problems_list(&out.problems))
+}
+
+/// Checks a function declaration in its namespace and registers it.
+///
+/// @param ir List: The function's declaration, as `new_function()` builds it.
+/// @param namespace Character: The namespace of the declaring code.
+/// @return List: `code`, `path`, and `message` of each problem.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_declare_function(ir: Robj, namespace: crate::utf8::Utf8) -> Result<List> {
+    let namespace: &str = &namespace;
+    let def: rtemis_r8::ir::FunctionDef = crate::irde::from_r(unsafe { ir.get() })
+        .map_err(|e| fail(format!("the declaration does not read: {e}")))?;
+    let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
+    let out = registry()
+        .declare_function(&ns, def)
+        .map_err(|e| fail(e.to_string()))?;
+    changed(out.changed);
+    Ok(problems_list(&out.problems))
+}
+
+/// The declaration record of a registered function, with the types that it
+/// names.
+///
+/// @param name Character: The qualified name, `namespace::f`.
+/// @return Raw: The record.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_function_record(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
+    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
+    let bytes = registry()
+        .function_record(&q)
+        .ok_or_else(|| fail(format!("`{name}` is not a registered function")))?;
+    Ok(Robj::from(bytes.as_slice()))
+}
+
+/// The declaration of a registered function as R lists (`irser`), or `NULL`.
+///
+/// @param name Character: The qualified name, `namespace::f`.
+/// @return List: The declaration.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_function_ir(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
+    let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
+    let reg = registry().snapshot();
+    match rtemis_r8::rules::TypeLookup::function_of(&*reg, &q) {
+        Some(f) => crate::irser::to_r(f).map_err(|e| fail(e.to_string())),
+        None => Ok(().into()),
     }
-    let reg = Arc::make_mut(&mut guard);
-    let d = reg.document_position(&ns);
-    let traits = reg.traits_mut(d);
-    let existing = traits.iter().position(|t| t.name == def.name);
-    let (index, previous) = match existing {
-        Some(i) => (i, Some(std::mem::replace(&mut traits[i], def))),
-        None => {
-            traits.push(def);
-            (traits.len() - 1, None)
-        }
-    };
-    let prefix = format!("/traits/{index}");
-    let problems = checked(|| check_trait(reg.document(d), index));
-    match &problems {
-        Ok(p) if p.is_empty() => crate::construct::registry_changed(),
-        _ => {
-            let traits = reg.traits_mut(d);
-            match previous {
-                Some(p) => traits[index] = p,
-                None => {
-                    traits.pop();
-                }
-            }
-            reg.remove_document_if_empty(d);
-        }
-    }
-    let problems = problems?;
-    Ok(problems_list(&problems, &prefix))
 }
 
 /// Registers an impl in its namespace; an impl of the same trait for the same
@@ -357,38 +400,26 @@ pub(crate) fn declare_trait(def: rtemis_r8::ir::TraitDef, namespace: &str) -> Re
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_impl(ir: Robj, namespace: &str) -> Result<()> {
+fn r8_declare_impl(ir: Robj, namespace: crate::utf8::Utf8) -> Result<()> {
+    let namespace: &str = &namespace;
     let def: rtemis_r8::ir::ImplDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the impl does not read: {e}")))?;
     declare_impl(def, namespace)
 }
 
-/// Registers the impl `def` in its namespace, as `r8_declare_impl()` does.
+/// Registers the impl `def` in its namespace, as `r8_declare_impl()` does;
+/// an impl whose trait's tag values it makes ambiguous is an error.
 pub(crate) fn declare_impl(def: rtemis_r8::ir::ImplDef, namespace: &str) -> Result<()> {
     let ns = Name::new(namespace).map_err(|e| fail(e.to_string()))?;
-    let mut guard = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    if guard
-        .namespace(&ns)
-        .is_some_and(|doc| doc.impls.contains(&def))
-    {
-        return Ok(());
+    let out = registry()
+        .declare_impl(&ns, def)
+        .map_err(|e| fail(e.to_string()))?;
+    changed(out.changed);
+    if !out.problems.is_empty() {
+        let lines: Vec<String> = out.problems.iter().map(|p| p.to_string()).collect();
+        return Err(fail(lines.join("\n")));
     }
-    let reg = Arc::make_mut(&mut guard);
-    let d = reg.document_position(&ns);
-    let impls = reg.impls_mut(d);
-    impls.retain(|i| {
-        !(i.r#trait == def.r#trait && i.type_args == def.type_args && i.target == def.target)
-    });
-    impls.push(def);
-    crate::construct::registry_changed();
     Ok(())
-}
-
-fn owners() -> &'static Mutex<std::collections::HashMap<String, String>> {
-    static OWNERS: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
-    OWNERS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
 /// Claims a namespace for the package that declares into it.
@@ -404,26 +435,16 @@ fn owners() -> &'static Mutex<std::collections::HashMap<String, String>> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_claim_namespace(namespace: &str, package: &str) -> Result<String> {
+fn r8_claim_namespace(namespace: crate::utf8::Utf8, package: crate::utf8::Utf8) -> Result<String> {
+    let namespace: &str = &namespace;
+    let package: &str = &package;
     claim_namespace(namespace, package)
 }
 
 /// Claims `namespace` for `package`, as `r8_claim_namespace()` does: the
 /// owner that holds it already, or `""`.
 pub(crate) fn claim_namespace(namespace: &str, package: &str) -> Result<String> {
-    let mut map = owners()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    match map.get(namespace) {
-        Some(owner) if !owner.is_empty() && owner != package => Ok(owner.clone()),
-        Some(owner) if owner.is_empty() && package.is_empty() => Ok(String::new()),
-        _ => {
-            if !package.is_empty() || !map.contains_key(namespace) {
-                map.insert(namespace.to_string(), package.to_string());
-            }
-            Ok(String::new())
-        }
-    }
+    Ok(registry().claim(namespace, package).unwrap_or_default())
 }
 
 /// The namespaces a package owns.
@@ -433,45 +454,40 @@ pub(crate) fn claim_namespace(namespace: &str, package: &str) -> Result<String> 
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_package_namespaces(package: &str) -> Result<Vec<String>> {
-    let map = owners()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let mut out: Vec<String> = map
-        .iter()
-        .filter(|(_, owner)| owner.as_str() == package)
-        .map(|(ns, _)| ns.clone())
-        .collect();
-    out.sort();
-    Ok(out)
+fn r8_package_namespaces(package: crate::utf8::Utf8) -> Result<Vec<String>> {
+    let package: &str = &package;
+    Ok(registry().namespaces_of(package))
 }
 
 /// The problems of whole namespaces, each document checked once: what a
 /// declaration's own check cannot see, such as a rule that reads a field of
 /// a type declared again without that field.
 ///
+/// The impls of these namespaces are also checked against the registry,
+/// and two impls of one trait that make a call ambiguous are reported when
+/// one belongs to these namespaces and the other to them or to `imports`.
+///
 /// @param namespaces Character: The namespaces.
+/// @param imports Character: The namespaces of the packages the package
+///   imports.
 /// @return List: The problems, as character vectors `namespace`, `code`,
 ///   `path`, and `message`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_check_namespaces(namespaces: Robj) -> Result<List> {
+fn r8_check_namespaces(
+    namespaces: Robj,
+    #[extendr(default = "character()")] imports: Robj,
+) -> Result<List> {
     let namespaces =
         crate::text::str_vec(&namespaces).ok_or_else(|| fail("`namespaces` is character"))?;
-    let reg = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+    let imports = crate::text::str_vec(&imports).unwrap_or_default();
     let (mut ns, mut code, mut path, mut message) = (vec![], vec![], vec![], vec![]);
-    for n in &namespaces {
-        if let Some(doc) = reg.documents().iter().find(|d| d.namespace.as_str() == n) {
-            for e in check_document(doc) {
-                ns.push(n.clone());
-                code.push(e.code.to_string());
-                path.push(e.path);
-                message.push(e.message);
-            }
-        }
+    for (n, e) in registry().check_namespaces_with(&namespaces, &imports) {
+        ns.push(n);
+        code.push(e.code.to_string());
+        path.push(e.path);
+        message.push(e.message);
     }
     Ok(list!(
         namespace = ns,
@@ -481,6 +497,194 @@ fn r8_check_namespaces(namespaces: Robj) -> Result<List> {
     ))
 }
 
+/// The impls of a trait and the dispatched-position count of the trait, from
+/// the registry's snapshot.
+fn trait_impls(
+    docs: &DocumentSet,
+    tr: &QualifiedName,
+) -> Result<(usize, Vec<(Name, rtemis_r8::ir::ImplDef)>)> {
+    use rtemis_r8::rules::TypeLookup;
+    let arity = docs
+        .trait_of(tr)
+        .map(|t| t.dispatch_arity())
+        .ok_or_else(|| fail(format!("`{tr}` is not a registered trait")))?;
+    let impls = rtemis_r8::ir::dispatch::impls_by_namespace(docs, tr)
+        .into_iter()
+        .map(|(n, i)| (n.clone(), i.clone()))
+        .collect();
+    Ok((arity, impls))
+}
+
+/// A position as R8's R code keys it: a qualified type name, `any`, or a
+/// host class's name in double quotes, `"data.frame"`, which no type name
+/// and no `any` can equal.
+fn position_string(p: &rtemis_r8::ir::TypeRef) -> String {
+    match p {
+        rtemis_r8::ir::TypeRef::HostClass { class, .. } => format!("\"{class}\""),
+        other => other.to_string(),
+    }
+}
+
+/// The positions of an impl as text (`position_string()`).
+fn tuple_strings(imp: &rtemis_r8::ir::ImplDef, arity: usize) -> Vec<String> {
+    rtemis_r8::ir::dispatch::positions(imp, arity)
+        .into_iter()
+        .map(position_string)
+        .collect()
+}
+
+/// Selects the impl for a call of a trait among its registered impls, with the core's
+/// rule of multiple dispatch.
+///
+/// @param trait_name Character: The trait's qualified name.
+/// @param types Character: The R8 type of each dispatched argument, `NA`
+///   for a value of no R8 type.
+/// @param chains List: For each argument of no R8 type, its class vector
+///   as `.class2()` gives it; `NULL` for a value of an R8 type.
+/// @param above Optional Character: The positions of the running impl, for
+///   the next impl.
+/// @return Character: the providing impl's positions; `NULL` when no impl
+///   applies and the trait's default implementation serves the call; otherwise
+///   a list: `kind` (`"ambiguous"` or `"stale"`), `tuple` and `other` (the two
+///   impls of an ambiguous pair), `meet` (their positionwise more specific
+///   tuple), and `stale` (a stale type).
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_dispatch_select(
+    trait_name: crate::utf8::Utf8,
+    types: Robj,
+    chains: List,
+    above: Robj,
+) -> Result<Robj> {
+    let trait_name: &str = &trait_name;
+    use rtemis_r8::ir::dispatch::{Arg, Selection, select};
+    use rtemis_r8::rules::TypeLookup;
+    let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
+    let docs = snapshot()?;
+    let arity = docs
+        .trait_of(&tr)
+        .map(|t| t.dispatch_arity())
+        .ok_or_else(|| fail(format!("`{tr}` is not a registered trait")))?;
+    let impls: Vec<&rtemis_r8::ir::ImplDef> =
+        rtemis_r8::ir::dispatch::impls_by_namespace(&docs, &tr)
+            .into_iter()
+            .map(|(_, i)| i)
+            .collect();
+    let strings = crate::utf8::all(&types).ok_or_else(|| fail("`types` is character"))?;
+    let args: Vec<Arg> = strings
+        .into_iter()
+        .zip(chains.values())
+        .map(|(s, chain)| match s {
+            None => crate::utf8::all(&chain).map_or(Arg::Other, |c| {
+                Arg::Classes(c.into_iter().flatten().collect())
+            }),
+            Some(s) => QualifiedName::parse(&s).map_or(Arg::Other, Arg::Type),
+        })
+        .collect();
+    let above = match crate::utf8::all(&above) {
+        Some(v) => Some(
+            impls
+                .iter()
+                .position(|i| {
+                    tuple_strings(i, arity)
+                        .iter()
+                        .map(Some)
+                        .eq(v.iter().map(Option::as_ref))
+                })
+                .ok_or_else(|| fail("the running impl is not registered"))?,
+        ),
+        None => None,
+    };
+    let none: Vec<String> = Vec::new();
+    let (kind, tuple, other, meet, stale) = match select(&*docs, &impls, arity, &args, above) {
+        Selection::Impl(k) => return Ok(Robj::from(tuple_strings(impls[k], arity))),
+        Selection::Default => return Ok(Robj::from(())),
+        Selection::Ambiguous(a, b) => {
+            let (ta, tb) = (
+                tuple_strings(impls[a], arity),
+                tuple_strings(impls[b], arity),
+            );
+            let meet = ta
+                .iter()
+                .zip(&tb)
+                .zip(rtemis_r8::ir::dispatch::positions(impls[a], arity))
+                .zip(rtemis_r8::ir::dispatch::positions(impls[b], arity))
+                .map(|(((x, y), px), py)| {
+                    let below =
+                        |p: &rtemis_r8::ir::TypeRef, q: &rtemis_r8::ir::TypeRef| match (p, q) {
+                            (rtemis_r8::ir::TypeRef::Any, _) => false,
+                            (_, rtemis_r8::ir::TypeRef::Any) => true,
+                            (
+                                rtemis_r8::ir::TypeRef::Named { name: n },
+                                rtemis_r8::ir::TypeRef::Named { name: m },
+                            ) => rtemis_r8::rules::TypeLookup::is_subtype(&*docs, n, m),
+                            _ => false,
+                        };
+                    if below(py, px) { y.clone() } else { x.clone() }
+                })
+                .collect();
+            ("ambiguous", ta, tb, meet, None)
+        }
+        Selection::Stale(q) => (
+            "stale",
+            none.clone(),
+            none.clone(),
+            none,
+            Some(q.to_string()),
+        ),
+    };
+    Ok(list!(
+        kind = kind,
+        tuple = tuple,
+        other = other,
+        meet = meet,
+        stale = stale
+    )
+    .into())
+}
+
+/// The ambiguous pairs among a trait's registered impls.
+///
+/// @param trait_name Character: The trait's qualified name.
+/// @return data.frame: `first`, `second`, and `meet`, each a tuple as
+///   `"(ns::A, ns::B)"`, and `namespaces`, the namespaces that declare the
+///   pair.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_dispatch_ambiguities(trait_name: crate::utf8::Utf8) -> Result<Robj> {
+    let trait_name: &str = &trait_name;
+    let tr = QualifiedName::parse(trait_name).map_err(|e| fail(e.to_string()))?;
+    let docs = snapshot()?;
+    let (arity, found) = trait_impls(&docs, &tr)?;
+    let impls: Vec<&rtemis_r8::ir::ImplDef> = found.iter().map(|(_, i)| i).collect();
+    let text = |ps: Vec<String>| format!("({})", ps.join(", "));
+    let (mut first, mut second, mut meet, mut namespaces) = (vec![], vec![], vec![], vec![]);
+    for a in rtemis_r8::ir::dispatch::ambiguities(&*docs, &impls, arity, &|_, _| true) {
+        first.push(text(tuple_strings(impls[a.first], arity)));
+        second.push(text(tuple_strings(impls[a.second], arity)));
+        meet.push(text(a.meet.iter().map(position_string).collect()));
+        let (na, nb) = (&found[a.first].0, &found[a.second].0);
+        namespaces.push(if na == nb {
+            na.to_string()
+        } else {
+            format!("{na}, {nb}")
+        });
+    }
+    let n = first.len() as i32;
+    let df = list!(
+        first = first,
+        second = second,
+        meet = meet,
+        namespaces = namespaces
+    );
+    let mut df: Robj = df.into();
+    df.set_attrib("class", "data.frame")?;
+    df.set_attrib("row.names", (1..=n).collect::<Vec<i32>>())?;
+    Ok(df)
+}
+
 /// The package that owns a namespace, without claiming it.
 ///
 /// @param namespace Character: The namespace.
@@ -488,11 +692,9 @@ fn r8_check_namespaces(namespaces: Robj) -> Result<List> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_namespace_owner(namespace: &str) -> Result<String> {
-    let map = owners()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    Ok(map.get(namespace).cloned().unwrap_or_default())
+fn r8_namespace_owner(namespace: crate::utf8::Utf8) -> Result<String> {
+    let namespace: &str = &namespace;
+    Ok(registry().owner(namespace).unwrap_or_default())
 }
 
 /// The declaration of a registered type as R lists, in the form the
@@ -503,18 +705,17 @@ fn r8_namespace_owner(namespace: &str) -> Result<String> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_type_ir(name: &str) -> Result<Robj> {
+fn r8_type_ir(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
     let q = QualifiedName::parse(name).map_err(|e| fail(e.to_string()))?;
-    let reg = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let def = rtemis_r8::rules::TypeLookup::find(&**reg, &q)
+    let reg = registry().snapshot();
+    let def = rtemis_r8::rules::TypeLookup::find(&*reg, &q)
         .ok_or_else(|| fail(format!("`{name}` is not registered")))?;
     crate::irser::to_r(def).map_err(|e| fail(e.to_string()))
 }
 
 /// The absent fields of a struct value that resolution fills, each named by
-/// its field and holding its policy, `"runtime"` or `"computed"`.
+/// its field and holding its policy, `"context"` or `"computed"`.
 ///
 /// @param x An R8 value.
 /// @return Character: The policies, named by field.
@@ -522,27 +723,18 @@ fn r8_type_ir(name: &str) -> Result<Robj> {
 /// @noRd
 #[extendr]
 fn r8_pending_fields(x: Robj) -> Result<Robj> {
-    use rtemis_r8::ir::{FieldType, Resolve};
+    use rtemis_r8::ir::Resolve;
     let xs = unsafe { x.get() };
-    let type_name = crate::rview::attr_string(xs, crate::rview::sym_r8_type())
-        .ok_or_else(|| fail("not an R8 value"))?;
+    let type_name = crate::value::type_name(xs).ok_or_else(|| fail("not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let reg = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+    let reg = registry().snapshot();
     let (mut names, mut policies) = (Vec::new(), Vec::new());
-    if let Some(TypeDef::Struct(s)) = rtemis_r8::rules::TypeLookup::find(&**reg, &q) {
+    if let Some(TypeDef::Struct(s)) = rtemis_r8::rules::TypeLookup::find(&*reg, &q) {
         for (i, f) in s.fields.iter().enumerate() {
-            let policy = match &f.ty {
-                FieldType::Option {
-                    resolve: Resolve::Computed { .. },
-                    ..
-                } => "computed",
-                FieldType::Option {
-                    resolve: Resolve::Runtime,
-                    ..
-                } => "runtime",
-                _ => continue,
+            let policy = match &f.resolve {
+                Some(Resolve::Computed { .. }) => "computed",
+                Some(Resolve::Context) => "context",
+                None => continue,
             };
             let absent = i >= crate::rview::xlen(xs)
                 || crate::rview::is_null(unsafe { extendr_ffi::VECTOR_ELT(xs, i as isize) });
@@ -559,76 +751,12 @@ fn r8_pending_fields(x: Robj) -> Result<Robj> {
     Ok(out)
 }
 
-/// The qualified names of `q` and of every named type it reaches through
-/// field types and newtype variants, each once, the reached types before the
-/// types that reach them.
-fn reached(reg: &DocumentSet, q: &QualifiedName, out: &mut Vec<QualifiedName>) {
-    use rtemis_r8::ir::{FieldDef, FieldType, VariantShape};
-    fn of_type(reg: &DocumentSet, t: &FieldType, out: &mut Vec<QualifiedName>) {
-        match t {
-            FieldType::Named { name }
-            | FieldType::MatrixOf { of: name }
-            | FieldType::TableOf { of: name } => reached(reg, name, out),
-            FieldType::Matrix { element, .. }
-            | FieldType::Array { element, .. }
-            | FieldType::SparseMatrix { element, .. }
-            | FieldType::Vec { element, .. } => of_type(reg, element, out),
-            FieldType::Option { inner, .. } => of_type(reg, inner, out),
-            FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. } => {
-                of_type(reg, value, out)
-            }
-            FieldType::Table { columns, .. } => of_fields(reg, columns, out),
-            _ => {}
-        }
-    }
-    fn of_fields(reg: &DocumentSet, fields: &[FieldDef], out: &mut Vec<QualifiedName>) {
-        for f in fields {
-            of_type(reg, &f.ty, out);
-        }
-    }
-    if out.contains(q) {
-        return;
-    }
-    let Some(def) = rtemis_r8::rules::TypeLookup::find(reg, q) else {
-        return;
-    };
-    // Marked before its fields are walked, so a recursive type terminates.
-    out.push(q.clone());
-    let mark = out.len() - 1;
-    match def {
-        TypeDef::Struct(s) => of_fields(reg, &s.fields, out),
-        TypeDef::Enum(e) => {
-            for v in &e.variants {
-                match &v.shape {
-                    VariantShape::Struct { fields, .. } => of_fields(reg, fields, out),
-                    VariantShape::Newtype { of } => reached(reg, of, out),
-                    VariantShape::Unit => {}
-                }
-            }
-        }
-    }
-    // The type follows the types it reaches.
-    let me = out.remove(mark);
-    out.push(me);
-}
-
 /// The declaration record of the registered type `q` and of every named
 /// type it reaches, the reached types first (`rtemis_r8::record`).
 pub(crate) fn type_record(q: &QualifiedName) -> Result<Vec<u8>> {
-    use rtemis_r8::record::{self, DeclarationRef};
-    let reg = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    let mut names = Vec::new();
-    reached(&reg, q, &mut names);
-    if names.is_empty() {
-        return Err(fail(format!("`{q}` is not registered")));
-    }
-    let bytes = record::encode(names.iter().filter_map(|n| {
-        rtemis_r8::rules::TypeLookup::find(&**reg, n)
-            .map(|d| (&n.namespace, DeclarationRef::Type(d)))
-    }));
-    Ok(bytes)
+    registry()
+        .type_record(q)
+        .ok_or_else(|| fail(format!("`{q}` is not registered")))
 }
 
 /// Whether a type is registered.
@@ -638,17 +766,17 @@ pub(crate) fn type_record(q: &QualifiedName) -> Result<Vec<u8>> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_is_registered(name: &str) -> bool {
-    QualifiedName::parse(name).is_ok_and(|q| {
-        registry()
-            .lock()
-            .is_ok_and(|reg| rtemis_r8::rules::TypeLookup::find(&**reg, &q).is_some())
-    })
+fn r8_is_registered(name: crate::utf8::Utf8) -> bool {
+    let name: &str = &name;
+    QualifiedName::parse(name)
+        .is_ok_and(|q| rtemis_r8::rules::TypeLookup::find(&*registry().snapshot(), &q).is_some())
 }
 
 /// Declares the entries of declaration records, in order, through the
 /// declaration checks: one call for a package's records at load, or for the
-/// record a type object carries.
+/// record a type object carries. The records of a package declare into the
+/// namespaces it owns and into namespaces no package owns; an entry of a
+/// namespace another package owns is skipped.
 ///
 /// @param records List: Raw vectors, each a record.
 /// @param source Character: The package the records come from, or `""`.
@@ -659,14 +787,15 @@ fn r8_is_registered(name: &str) -> bool {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_declare_records(records: List, source: &str, check: bool) -> Result<List> {
-    use rtemis_r8::record::{self, Declaration};
+fn r8_declare_records(records: List, source: crate::utf8::Utf8, check: bool) -> Result<List> {
+    let source: &str = &source;
+    use rtemis_r8::record;
     let from = if source.is_empty() {
         "a type object".to_string()
     } else {
         format!("package '{source}'")
     };
-    let (mut name, mut code, mut path, mut message) = (vec![], vec![], vec![], vec![]);
+    let mut all = Vec::new();
     for r in records.values() {
         let bytes = r.as_raw_slice().ok_or_else(|| {
             fail(format!(
@@ -683,42 +812,28 @@ fn r8_declare_records(records: List, source: &str, check: bool) -> Result<List> 
                 "the declarations of {from} do not read: {e}{reinstall}"
             ))
         })?;
-        for entry in entries {
-            let ns = entry.namespace.to_string();
-            if !check {
-                register_unchecked(entry.declaration, &entry.namespace)?;
-                continue;
-            }
-            let (label, problems) = match entry.declaration {
-                Declaration::Type(t) => (format!("{ns}::{}", t.name()), declare_type(t, &ns)?),
-                Declaration::Trait(t) => (format!("{ns}::{}", t.name), declare_trait(t, &ns)?),
-                Declaration::Impl(i) => {
-                    declare_impl(i, &ns)?;
-                    continue;
-                }
-            };
-            let codes: Vec<String> = problems
-                .dollar("code")
-                .ok()
-                .and_then(|x| x.as_string_vector())
-                .unwrap_or_default();
-            let paths: Vec<String> = problems
-                .dollar("path")
-                .ok()
-                .and_then(|x| x.as_string_vector())
-                .unwrap_or_default();
-            let messages: Vec<String> = problems
-                .dollar("message")
-                .ok()
-                .and_then(|x| x.as_string_vector())
-                .unwrap_or_default();
-            for ((c, p), m) in codes.into_iter().zip(paths).zip(messages) {
-                name.push(label.clone());
-                code.push(c);
-                path.push(p);
-                message.push(m);
-            }
-        }
+        all.extend(entries);
+    }
+    // A package's records carry the declarations their types reach, among
+    // them types of other packages' namespaces: the owner's own records
+    // declare those, so an earlier copy never replaces the owner's.
+    if !source.is_empty() {
+        let reg = registry();
+        all.retain(|e| match reg.owner(e.namespace.as_str()) {
+            Some(owner) => owner == source,
+            None => true,
+        });
+    }
+    let (c, problems) = registry()
+        .declare_records(all, check)
+        .map_err(|e| fail(e.to_string()))?;
+    changed(c);
+    let (mut name, mut code, mut path, mut message) = (vec![], vec![], vec![], vec![]);
+    for p in problems {
+        name.push(p.name);
+        code.push(p.problem.code.to_string());
+        path.push(p.problem.path);
+        message.push(p.problem.message);
     }
     Ok(list!(
         name = name,
@@ -743,11 +858,10 @@ fn find_trait<'a>(reg: &'a DocumentSet, name: &str) -> Result<&'a rtemis_r8::ir:
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_trait_record(name: &str) -> Result<Robj> {
+fn r8_trait_record(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
     use rtemis_r8::record::{self, DeclarationRef};
-    let reg = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+    let reg = registry().snapshot();
     let t = find_trait(&reg, name)?;
     let ns = QualifiedName::parse(name)
         .map_err(|e| fail(e.to_string()))?
@@ -765,7 +879,8 @@ fn r8_trait_record(name: &str) -> Result<Robj> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_impl_record(ir: Robj, namespace: &str) -> Result<Robj> {
+fn r8_impl_record(ir: Robj, namespace: crate::utf8::Utf8) -> Result<Robj> {
+    let namespace: &str = &namespace;
     use rtemis_r8::record::{self, DeclarationRef};
     let def: rtemis_r8::ir::ImplDef = crate::irde::from_r(unsafe { ir.get() })
         .map_err(|e| fail(format!("the impl does not read: {e}")))?;
@@ -782,108 +897,86 @@ fn r8_impl_record(ir: Robj, namespace: &str) -> Result<Robj> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_trait_ir(name: &str) -> Result<Robj> {
-    let reg = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
+fn r8_trait_ir(name: crate::utf8::Utf8) -> Result<Robj> {
+    let name: &str = &name;
+    let reg = registry().snapshot();
     let t = find_trait(&reg, name)?;
     crate::irser::to_r(t).map_err(|e| fail(e.to_string()))
 }
 
-/// Registers a declaration without its check, for a package's records at
-/// load, which `check_namespaces()` checks whole afterward.
-fn register_unchecked(d: rtemis_r8::record::Declaration, ns: &Name) -> Result<()> {
-    use rtemis_r8::record::Declaration;
-    let mut guard = registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?;
-    match d {
-        Declaration::Type(t) => {
-            let q = QualifiedName {
-                namespace: ns.clone(),
-                name: t.name().clone(),
-            };
-            if rtemis_r8::rules::TypeLookup::find(&**guard, &q) != Some(&t) {
-                Arc::make_mut(&mut guard).put_type(ns, t);
-                crate::construct::registry_changed();
-            }
-        }
-        Declaration::Trait(t) => {
-            if !guard
-                .namespace(ns)
-                .is_some_and(|doc| doc.traits.contains(&t))
-            {
-                let reg = Arc::make_mut(&mut guard);
-                let d = reg.document_position(ns);
-                let traits = reg.traits_mut(d);
-                match traits.iter().position(|x| x.name == t.name) {
-                    Some(i) => traits[i] = t,
-                    None => traits.push(t),
-                }
-                crate::construct::registry_changed();
-            }
-        }
-        Declaration::Impl(i) => {
-            drop(guard);
-            declare_impl(i, ns.as_str())?;
-        }
+/// Saves the registry's documents and namespace owners, which
+/// `r8_registry_restore()` brings back and `r8_registry_release()`
+/// discards; saves nest.
+///
+/// @return Double: The saved state's token.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_registry_save() -> f64 {
+    registry().save().0 as f64
+}
+
+/// Restores the registry to the saved state `token`, the most recent.
+///
+/// @param token Double: The token of `r8_registry_save()`.
+/// @return `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_registry_restore(token: f64) -> Result<()> {
+    let before = registry().generation();
+    registry()
+        .restore(SaveToken(token as u64))
+        .map_err(|e| fail(e.to_string()))?;
+    changed(registry().generation() != before);
+    Ok(())
+}
+
+/// Discards the saved state `token`, the most recent.
+///
+/// @param token Double: The token of `r8_registry_save()`.
+/// @return `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_registry_release(token: f64) -> Result<()> {
+    registry()
+        .release(SaveToken(token as u64))
+        .map_err(|e| fail(e.to_string()))
+}
+
+/// The problem of a variant's parts, or `""`: a newtype variant takes
+/// neither fields nor rules, and rules need fields to read
+/// (`rtemis_r8::ir::build::variant_parts()`).
+///
+/// @param has_of,has_fields,has_rules Logical: What the variant holds.
+/// @return Character: The message, or `""`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_variant_problem(has_of: bool, has_fields: bool, has_rules: bool) -> String {
+    match rtemis_r8::ir::build::variant_parts(has_of, has_fields, has_rules) {
+        Ok(()) => String::new(),
+        Err(e) => e.to_string(),
     }
-    Ok(())
 }
 
-/// Saved states of the registry, the most recent last.
-fn saved() -> &'static Mutex<Vec<Arc<DocumentSet>>> {
-    static SAVED: OnceLock<Mutex<Vec<Arc<DocumentSet>>>> = OnceLock::new();
-    SAVED.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// Saves the registry's state, which `r8_registry_restore()` brings back
-/// and `r8_registry_release()` discards; saves nest.
+/// Why `x` is not an R8 name, or `""` for a name: one string that
+/// `rtemis_r8::name::Name::new()` accepts, the grammar every host shares.
 ///
-/// @return `NULL`.
+/// @param x Object.
+/// @return Character: The reason, or `""`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_registry_save() -> Result<()> {
-    let snap = snapshot()?;
-    saved()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .push(snap);
-    Ok(())
-}
-
-/// Restores the registry to its most recently saved state.
-///
-/// @return `NULL`.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_registry_restore() -> Result<()> {
-    let snap = saved()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .pop()
-        .ok_or_else(|| fail("no saved state of the registry"))?;
-    *registry()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))? = snap;
-    crate::construct::registry_changed();
-    Ok(())
-}
-
-/// Discards the most recently saved state of the registry.
-///
-/// @return `NULL`.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_registry_release() -> Result<()> {
-    saved()
-        .lock()
-        .map_err(|_| fail("the registry is unavailable"))?
-        .pop();
-    Ok(())
+fn r8_name_problem(x: Robj) -> String {
+    match crate::utf8::one(&x) {
+        Some(s) => match Name::new(s) {
+            Ok(_) => String::new(),
+            Err(e) => e.to_string(),
+        },
+        _ => "a name is one string".to_string(),
+    }
 }
 
 extendr_module! {
@@ -899,14 +992,23 @@ extendr_module! {
     fn r8_type_ir;
     fn r8_pending_fields;
     fn r8_claim_namespace;
+    fn r8_name_problem;
+    fn r8_variant_problem;
     fn r8_namespace_owner;
     fn r8_package_namespaces;
     fn r8_check_namespaces;
+    fn r8_dispatch_select;
+    fn r8_dispatch_ambiguities;
     fn r8_declare_trait;
+    fn r8_declare_function;
+    fn r8_function_record;
+    fn r8_function_ir;
     fn r8_declare_impl;
     fn r8_ir_json;
     fn r8_canonical_json;
     fn r8_json_parse;
     fn r8_declare_type;
+    fn r8_stale_types;
+    fn r8_type_schema;
     fn r8_type_document;
 }

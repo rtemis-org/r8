@@ -11,7 +11,7 @@ new_enum(
   description = "",
   tag = "type",
   version = 1L,
-  native = FALSE
+  storage = c("r", "rust")
 )
 
 \method{@}{r8_enum_type}(object, name)
@@ -23,14 +23,17 @@ new_enum(
 
 \item{description}{Character: What the type is.}
 
-\item{tag}{Character: The member that names the variant in JSON.}
+\item{tag}{Character: The member of an object variant's JSON form that
+holds the variant's name. A trait's \code{tag} is another member, which holds
+an implementor's type.}
 
 \item{version}{Integer: The type's version, from 1.}
 
-\item{native}{Logical: A Rust-native type, whose values, unit variants
-included, the codec in the package's compiled exports builds and holds
-(\code{R8.h}). Its variant constructors and unit variants signal
-\code{r8_codec_missing} until the codec is registered.}
+\item{storage}{Character \{"r", "rust"\}: Where values hold their fields.
+\code{"rust"}: a Rust-stored type, whose values, unit variants included, the
+codec in the package's compiled exports builds and holds. Its
+variant constructors and unit variants signal \code{r8_codec_missing_error}
+until the codec is registered.}
 
 \item{object}{An enum type object.}
 }
@@ -42,7 +45,8 @@ included, the codec in the package's compiled exports builds and holds
 A sum type of unit, struct, and newtype variants. An enum of unit variants
 is written as the variant name; an enum with another variant as an object
 whose \code{tag} member names the variant. \code{Kernel@Linear} is a unit variant's
-value.
+value. An exported enum changes as an exported struct does: see the section
+"Changing a type that other packages use" of \code{\link[=new_struct]{new_struct()}}.
 }
 \examples{
 op <- options(r8.namespace = "demo")

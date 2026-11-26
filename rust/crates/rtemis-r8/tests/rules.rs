@@ -1,7 +1,7 @@
 //! Evaluation of compiled rules over JSON values.
 
 use rtemis_r8::ir::{FieldType, IrDocument, RuleDef, TypeDef};
-use rtemis_r8::rules::{CompiledRule, Outcome};
+use rtemis_r8::rules::{CompiledRule, Outcome, RowRule};
 use serde_json::{Value, json};
 
 const SVM: &str = include_str!("fixtures/svm.ir.json");
@@ -24,12 +24,31 @@ fn fixture_rule(doc: &IrDocument, id: &str) -> CompiledRule {
     let TypeDef::Struct(s) = &doc.types[1] else {
         panic!()
     };
-    let r = s.rules.iter().find(|r| r.id.as_str() == id).unwrap();
+    let r = s
+        .rules
+        .iter()
+        .find(|r| r.id.as_ref().is_some_and(|i| i.as_str() == id))
+        .unwrap();
     CompiledRule::compile(r, &s.fields, doc).unwrap()
 }
 
+/// A violation at JSON Pointers whose parts are fields and positions.
 fn violated(paths: &[&str]) -> Outcome {
-    Outcome::Violated(paths.iter().map(|p| p.to_string()).collect())
+    use rtemis_r8::problem::Segment;
+    Outcome::Violated(
+        paths
+            .iter()
+            .map(|p| {
+                p.split('/')
+                    .skip(1)
+                    .map(|k| match k.parse::<u64>() {
+                        Ok(i) => Segment::Element(i),
+                        Err(_) => Segment::Field(k.to_string()),
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
 }
 
 #[test]
@@ -135,12 +154,16 @@ fn rule_of(doc: &IrDocument, ty: &str, id: &str) -> CompiledRule {
             _ => None,
         })
         .unwrap();
-    let r = s.rules.iter().find(|r| r.id.as_str() == id).unwrap();
+    let r = s
+        .rules
+        .iter()
+        .find(|r| r.id.as_ref().is_some_and(|i| i.as_str() == id))
+        .unwrap();
     CompiledRule::compile(r, &s.fields, doc).unwrap()
 }
 
 #[test]
-fn all_reports_each_failing_element_of_an_ordered_map() {
+fn all_reports_each_failing_element_of_an_index_map() {
     let doc = bioc_doc("summarized-experiment");
     let rows = rule_of(&doc, "SummarizedExperiment", "ASSAY_ROWS");
     let matrix = |r: u64| json!({"type": "Double", "values": {"shape": [r, 2], "data": vec![0.0; (r * 2) as usize]}});
@@ -150,10 +173,23 @@ fn all_reports_each_failing_element_of_an_ordered_map() {
         "col_data": {"$length": 2},
         "metadata": {}
     });
+    // An ordered map's item: its position, then the value's part of the
+    // item's JSON form.
+    use rtemis_r8::problem::Segment;
+    let item = |i| {
+        vec![
+            Segment::Field("assays".into()),
+            Segment::Element(i),
+            Segment::Form("/value".into()),
+        ]
+    };
     assert_eq!(
         rows.check(&se).unwrap(),
-        violated(&["/assays/1/value", "/assays/2/value"])
+        Outcome::Violated(vec![item(1), item(2)])
     );
+    if let Outcome::Violated(p) = rows.check(&se).unwrap() {
+        assert_eq!(rtemis_r8::problem::pointer(&p[0]), "/assays/1/value");
+    }
 }
 
 #[test]
@@ -165,7 +201,8 @@ fn row_rules_report_the_cell_and_decode_factors() {
     let FieldType::Table { columns, rules, .. } = &gr.fields[0].ty else {
         panic!()
     };
-    let end_fits = CompiledRule::compile(&rules[0], columns, &doc).unwrap();
+    let fields: Vec<_> = columns.iter().map(|c| c.field.clone()).collect();
+    let end_fits = RowRule::compile(&rules[0], &fields.as_slice(), &doc).unwrap();
     let ranges = json!({
         "$length": 3,
         "seqnames": {"levels": ["chr1", "chr2"], "codes": [1, 1, 2]},
@@ -173,10 +210,13 @@ fn row_rules_report_the_cell_and_decode_factors() {
         "width": [10, 100, 0],
         "strand": ["+", "-", "*"]
     });
-    assert_eq!(
-        end_fits.check_rows(&ranges).unwrap(),
-        vec!["/start/1".to_string()]
-    );
+    let paths: Vec<String> = end_fits
+        .check_rows(&ranges)
+        .unwrap()
+        .iter()
+        .map(|p| rtemis_r8::problem::pointer(p))
+        .collect();
+    assert_eq!(paths, vec!["/start/1".to_string()]);
 }
 
 #[test]
@@ -227,4 +267,29 @@ fn round_halves_to_even_as_r_does() {
             "round({x})"
         );
     }
+}
+
+#[test]
+fn the_order_of_the_operands_does_not_decide_a_rule() {
+    let doc = svm_doc();
+    let of =
+        |invariant: Value, v: Value| compile(&doc, 1, json!({"invariant": invariant})).check(&v);
+    let (a, b) = (
+        json!({">": [{"var": "kernel.gamma"}, 0]}),
+        json!({">": [{"var": "cost"}, 10]}),
+    );
+    // `kernel.gamma` is absent and `cost` fails.
+    let v = json!({"cost": 1.0, "kernel": {"type": "Linear"}});
+    for both in [json!({"and": [a, b]}), json!({"and": [b, a]})] {
+        assert_eq!(of(both, v.clone()).unwrap(), violated(&[""]));
+    }
+    for either in [json!({"or": [a, b]}), json!({"or": [b, a]})] {
+        assert_eq!(of(either, v.clone()).unwrap(), Outcome::Holds);
+    }
+    // An operand that decides absorbs an error.
+    let error = json!({">": [{"/": [1, {"-": [{"var": "cost"}, 1]}]}, 0]});
+    for both in [json!({"and": [error, b]}), json!({"and": [b, error]})] {
+        assert_eq!(of(both, v.clone()).unwrap(), violated(&[""]));
+    }
+    assert!(of(json!({"or": [b, error]}), v).is_err());
 }

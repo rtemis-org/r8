@@ -1,0 +1,6310 @@
+{
+  "$corpus": 1,
+  "description": "The rows of a table where a condition is true: missing cells, NaN, errors, whole columns, and the checks of a condition against the columns.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "table",
+        "name": "Visits",
+        "description": "",
+        "version": 1,
+        "columns": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "double"
+            },
+            "description": "",
+            "unit": "mg"
+          },
+          {
+            "name": "day",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "date"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "at",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "posixct"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "flag",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "logical"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "stage",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "factor",
+                "levels": [
+                  "I",
+                  "II",
+                  "III"
+                ]
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "absent",
+            "type": {
+              "kind": "double"
+            },
+            "description": "",
+            "required": false
+          }
+        ],
+        "open": true
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "comparison",
+      "description": "A missing cell and NaN are left out.",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "x"
+            },
+            0
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "negated-comparison",
+      "description": "A missing cell and NaN are left out of the negation too.",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "!": [
+            {
+              ">": [
+                {
+                  "var": "x"
+                },
+                0
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          1,
+          4
+        ]
+      }
+    },
+    {
+      "id": "is-na",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "is_na": [
+            {
+              "var": "x"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "id": "is-na-of-a-result",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "is_na": [
+            {
+              "+": [
+                {
+                  "var": "x"
+                },
+                {
+                  "var": "y"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "id": "is-na-of-a-label",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "is_na": [
+            {
+              "var": "stage"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2
+        ]
+      }
+    },
+    {
+      "id": "is-na-of-a-date",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "is_na": [
+            {
+              "var": "day"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2
+        ]
+      }
+    },
+    {
+      "id": "is-na-of-a-string",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "is_na": [
+            {
+              "path": [
+                "site"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2
+        ]
+      }
+    },
+    {
+      "id": "is-na-of-a-logical",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "is_na": [
+            {
+              "var": "flag"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2
+        ]
+      }
+    },
+    {
+      "id": "and-missing-false",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "and": [
+            {
+              ">": [
+                {
+                  "var": "x"
+                },
+                0
+              ]
+            },
+            {
+              "===": [
+                {
+                  "var": "stage"
+                },
+                "I"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "not-of-missing-and-false",
+      "description": "Row 3: a missing operand and a false one are false.",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "!": [
+            {
+              "and": [
+                {
+                  ">": [
+                    {
+                      "var": "x"
+                    },
+                    0
+                  ]
+                },
+                {
+                  "===": [
+                    {
+                      "var": "stage"
+                    },
+                    "I"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          1,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "id": "not-of-false-and-missing",
+      "description": "The order of the operands does not decide.",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "!": [
+            {
+              "and": [
+                {
+                  "===": [
+                    {
+                      "var": "stage"
+                    },
+                    "I"
+                  ]
+                },
+                {
+                  ">": [
+                    {
+                      "var": "x"
+                    },
+                    0
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          1,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "id": "missing-or-true",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "or": [
+            {
+              ">": [
+                {
+                  "var": "x"
+                },
+                0
+              ]
+            },
+            {
+              "===": [
+                {
+                  "var": "stage"
+                },
+                "III"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "id": "true-or-missing",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "or": [
+            {
+              "===": [
+                {
+                  "var": "stage"
+                },
+                "III"
+              ]
+            },
+            {
+              ">": [
+                {
+                  "var": "x"
+                },
+                0
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "id": "column-with-a-dot",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "path": [
+                "Petal.Width"
+              ]
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "id": "label-is-a-string",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "in": [
+            {
+              "var": "stage"
+            },
+            [
+              "I",
+              "III"
+            ]
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "id": "label-differs",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "!==": [
+            {
+              "var": "stage"
+            },
+            "II"
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "id": "label-is-no-level",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "===": [
+            {
+              "var": "stage"
+            },
+            "IV"
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_level",
+            "path": "/===/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "string-in",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "in": [
+            {
+              "path": [
+                "site"
+              ]
+            },
+            [
+              "a",
+              "c"
+            ]
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "id": "string-joined",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "===": [
+            {
+              "cat": [
+                {
+                  "path": [
+                    "site"
+                  ]
+                },
+                {
+                  "path": [
+                    "n"
+                  ]
+                }
+              ]
+            },
+            "a4"
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          3
+        ]
+      }
+    },
+    {
+      "id": "string-length",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "===": [
+            {
+              "nchar": [
+                {
+                  "path": [
+                    "site"
+                  ]
+                }
+              ]
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          1,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "id": "logical-cell",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "var": "flag"
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "id": "logical-equal",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "===": [
+            {
+              "var": "flag"
+            },
+            false
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          1,
+          4
+        ]
+      }
+    },
+    {
+      "id": "date-literal",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">=": [
+            {
+              "var": "day"
+            },
+            "2020-01-02"
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          1,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "id": "date-in",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "in": [
+            {
+              "var": "day"
+            },
+            [
+              "2020-01-01",
+              "2020-01-05"
+            ]
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          4
+        ]
+      }
+    },
+    {
+      "id": "date-literal-refused",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">=": [
+            {
+              "var": "day"
+            },
+            "2020-13-01"
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_date",
+            "path": "/>=/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "date-time-literal",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "at"
+            },
+            "2020-01-01T00:00:01Z"
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          2,
+          4
+        ]
+      }
+    },
+    {
+      "id": "date-time-literal-refused",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "at"
+            },
+            "2020-01-01"
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_date",
+            "path": "/>/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "latest-date",
+      "description": "A missing cell makes the aggregate missing.",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "===": [
+            {
+              "var": "day"
+            },
+            {
+              "max": [
+                {
+                  "var": "day"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": []
+      }
+    },
+    {
+      "id": "mean",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "y"
+            },
+            {
+              "mean": [
+                {
+                  "var": "y"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "mean-of-a-result",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "y"
+            },
+            {
+              "mean": [
+                {
+                  "*": [
+                    {
+                      "var": "y"
+                    },
+                    2
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "aggregate-in-an-aggregate",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "mean": [
+                {
+                  "-": [
+                    {
+                      "var": "y"
+                    },
+                    {
+                      "mean": [
+                        {
+                          "var": "y"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            -1
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "id": "aggregate-of-a-missing-cell",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "y"
+            },
+            {
+              "mean": [
+                {
+                  "var": "x"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": []
+      }
+    },
+    {
+      "id": "least-of-the-columns",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "<=": [
+            {
+              "var": "y"
+            },
+            {
+              "min": [
+                {
+                  "var": "y"
+                },
+                3
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          4
+        ]
+      }
+    },
+    {
+      "id": "least-of-the-cells",
+      "description": "The columns differ in their units.",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "<": [
+            {
+              "pmin": [
+                {
+                  "var": "y"
+                },
+                {
+                  "path": [
+                    "n"
+                  ]
+                }
+              ]
+            },
+            2
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_unit",
+            "path": "/</0/pmin"
+          }
+        ]
+      }
+    },
+    {
+      "id": "greatest-of-the-cells",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "pmax": [
+                {
+                  "var": "x"
+                },
+                0
+              ]
+            },
+            0
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "sum-of-integers",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "===": [
+            {
+              "path": [
+                "n"
+              ]
+            },
+            {
+              "sum": [
+                {
+                  "path": [
+                    "n"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": []
+      }
+    },
+    {
+      "id": "division-by-zero",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "/": [
+                1,
+                {
+                  "var": "x"
+                }
+              ]
+            },
+            0
+          ]
+        }
+      },
+      "expect": {
+        "row_error": {
+          "row": 1,
+          "count": 1
+        }
+      }
+    },
+    {
+      "id": "guarded-division",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "and": [
+            {
+              "!==": [
+                {
+                  "var": "x"
+                },
+                0
+              ]
+            },
+            {
+              ">": [
+                {
+                  "/": [
+                    1,
+                    {
+                      "var": "x"
+                    }
+                  ]
+                },
+                0
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "guard-after",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "and": [
+            {
+              ">": [
+                {
+                  "/": [
+                    1,
+                    {
+                      "var": "x"
+                    }
+                  ]
+                },
+                0
+              ]
+            },
+            {
+              "!==": [
+                {
+                  "var": "x"
+                },
+                0
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "logarithm",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "log": [
+                {
+                  "var": "x"
+                }
+              ]
+            },
+            -1
+          ]
+        }
+      },
+      "expect": {
+        "row_error": {
+          "row": 1,
+          "count": 2
+        }
+      }
+    },
+    {
+      "id": "root",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">=": [
+            {
+              "sqrt": [
+                {
+                  "var": "x"
+                }
+              ]
+            },
+            0
+          ]
+        }
+      },
+      "expect": {
+        "row_error": {
+          "row": 4,
+          "count": 1
+        }
+      }
+    },
+    {
+      "id": "if",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "if": [
+            {
+              "var": "flag"
+            },
+            {
+              ">": [
+                {
+                  "var": "y"
+                },
+                1
+              ]
+            },
+            {
+              "<": [
+                {
+                  "var": "y"
+                },
+                1
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "rows": [
+          0,
+          4
+        ]
+      }
+    },
+    {
+      "id": "absent-column",
+      "description": "A column of the type that the value does not have.",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "absent"
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/>/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "no-such-column",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "z"
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/>/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "path-into-a-cell",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "y.z"
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/>/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "not-logical",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "+": [
+            {
+              "var": "y"
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_not_logical",
+            "path": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "string-with-number",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "path": [
+                "site"
+              ]
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "is-null-of-a-cell",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          "is_null": [
+            {
+              "var": "x"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/is_null"
+          }
+        ]
+      }
+    },
+    {
+      "id": "length-of-a-cell",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "length": [
+                {
+                  "var": "x"
+                }
+              ]
+            },
+            1
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_type",
+            "path": "/>/0/length"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aggregate-of-constants",
+      "op": "filter",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 5,
+        "x": [
+          1.0,
+          0.0,
+          null,
+          "NaN",
+          -1.0
+        ],
+        "y": [
+          2.0,
+          5.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "day": [
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-04",
+          "2020-01-05"
+        ],
+        "at": [
+          "2020-01-01T00:00:00.000000Z",
+          "2020-01-01T00:00:01.000000Z",
+          "2020-01-01T00:00:02.000000Z",
+          null,
+          "2020-01-01T00:00:04.000000Z"
+        ],
+        "flag": [
+          true,
+          false,
+          null,
+          true,
+          false
+        ],
+        "stage": [
+          "I",
+          "II",
+          null,
+          "III",
+          "II"
+        ],
+        "Petal.Width": [
+          0.2,
+          0.4,
+          1.3,
+          1.5,
+          null
+        ],
+        "site": [
+          "a",
+          "b",
+          null,
+          "a",
+          "c"
+        ],
+        "n": [
+          1,
+          null,
+          3,
+          4,
+          5
+        ],
+        "$columns": {
+          "Petal.Width": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "site": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          },
+          "n": {
+            "kind": "option",
+            "inner": {
+              "kind": "integer"
+            }
+          }
+        },
+        "$order": [
+          "Petal.Width",
+          "site",
+          "n"
+        ],
+        "$facts": {
+          "n": {
+            "unit": "a"
+          }
+        }
+      },
+      "options": {
+        "rule": {
+          ">": [
+            {
+              "var": "y"
+            },
+            {
+              "min": [
+                1,
+                2
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_aggregate",
+            "path": "/>/1/min"
+          }
+        ]
+      }
+    }
+  ]
+}

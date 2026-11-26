@@ -2,23 +2,23 @@
 
 use extendr_api::prelude::*;
 
-/// Version of the rtemis-r8 crate
+/// Version of the R8 runtime
 ///
-/// Returns the version of the `rtemis-r8` Rust crate compiled into R8, which
-/// provenance records alongside the versions of R8 and R.
+/// Returns the version of the runtime compiled into R8, the Rust crate
+/// `rtemis-r8`.
 ///
 /// @return Character: The version, for example `"0.1.0"`.
 ///
 /// @examples
-/// r8_core_version()
+/// r8_runtime_version()
 ///
 /// @export
 #[extendr]
-fn r8_core_version() -> &'static str {
+fn r8_runtime_version() -> &'static str {
     rtemis_r8::VERSION
 }
 
 extendr_module! {
     mod version;
-    fn r8_core_version;
+    fn r8_runtime_version;
 }

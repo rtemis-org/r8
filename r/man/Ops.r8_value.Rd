@@ -15,5 +15,6 @@ Logical: One value.
 \description{
 \code{x == y} and \code{x != y} compare two R8 values with \code{r8_equal()}, the
 \code{PartialEq} standard trait. \code{<}, \code{<=}, \code{>}, and \code{>=} use the type's
-\code{PartialOrd} impl. Other operators raise an error.
+\code{PartialOrd} impl, and return \code{FALSE} for values it does not order. Other
+operators raise an error.
 }

@@ -1,0 +1,480 @@
+{
+  "$corpus": 1,
+  "description": "Doubles: finite numbers, the infinities within the bounds, and NaN, which lies outside the bounds and the listed values.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "struct",
+        "name": "D",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "plain",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "inf",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "nan",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "nan": true
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "auc",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "min": 0.0,
+                "max": 1.0,
+                "nan": true
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "limit",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "min": 1.0,
+                "infinite": true
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "low",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "max": 0.0,
+                "infinite": true
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "above",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "exclusive_min": 0.0,
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "listed",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "nan": true,
+                "values": [
+                  1.0,
+                  2.0
+                ]
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "cells",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "vec",
+                "element": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double",
+                    "nan": true
+                  }
+                }
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "strict",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "vec",
+                "element": {
+                  "kind": "double"
+                }
+              }
+            },
+            "description": ""
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "plain-is-finite",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "plain": 1.5
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "plain-refuses-nan",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "plain": "NaN"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "nan_value",
+            "path": "/plain"
+          }
+        ]
+      }
+    },
+    {
+      "id": "plain-refuses-infinity",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "plain": "Infinity"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_finite",
+            "path": "/plain"
+          }
+        ]
+      }
+    },
+    {
+      "id": "infinite-admits-both",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "inf": "Infinity"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "infinite-admits-the-least",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "inf": "-Infinity"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "infinite-refuses-nan",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "inf": "NaN"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "nan_value",
+            "path": "/inf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nan-admits-nan",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "nan": "NaN"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "nan-refuses-infinity",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "nan": "Infinity"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_finite",
+            "path": "/nan"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nan-is-outside-the-bounds",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "auc": "NaN"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "the-bounds-hold-beside-nan",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "auc": 1.5
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "above_max",
+            "path": "/auc"
+          }
+        ]
+      }
+    },
+    {
+      "id": "a-bounded-range-refuses-infinity",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "auc": "Infinity"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_finite",
+            "path": "/auc"
+          }
+        ]
+      }
+    },
+    {
+      "id": "the-infinity-of-the-open-end",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "limit": "Infinity"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "a-bound-excludes-its-infinity",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "limit": "-Infinity"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "below_min",
+            "path": "/limit"
+          }
+        ]
+      }
+    },
+    {
+      "id": "the-least-of-the-open-end",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "low": "-Infinity"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "a-bound-excludes-the-greatest",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "low": "Infinity"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "above_max",
+            "path": "/low"
+          }
+        ]
+      }
+    },
+    {
+      "id": "an-exclusive-bound-infinity-and-nan",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "above": "Infinity"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "an-exclusive-bound-and-nan",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "above": "NaN"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "an-exclusive-bound-holds",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "above": 0
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "below_min",
+            "path": "/above"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nan-is-outside-the-values",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "listed": "NaN"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "the-values-hold-beside-nan",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "listed": 3
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_in_values",
+            "path": "/listed"
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing-and-nan-are-apart",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "cells": [
+          1,
+          null,
+          "NaN"
+        ]
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "a-cell-is-not-infinite",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "cells": [
+          1,
+          "Infinity"
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_finite",
+            "path": "/cells/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "a-strict-vector",
+      "op": "decode",
+      "type": "ns::D",
+      "input": {
+        "strict": [
+          1,
+          "NaN",
+          null,
+          "-Infinity"
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "nan_value",
+            "path": "/strict/1"
+          },
+          {
+            "code": "missing_value",
+            "path": "/strict/2"
+          },
+          {
+            "code": "not_finite",
+            "path": "/strict/3"
+          }
+        ]
+      }
+    }
+  ]
+}

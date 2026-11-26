@@ -2,13 +2,13 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# The provider of the conformance tests: the type `Conform`, the impls of
+# The provider of the conformance tests: the type `Probe`, the impls of
 # R8's standard traits for it, and the kinds of test the run supports, chosen
-# by `getOption("r8.conformance")`. "native" takes `pkgr::Conform`, declared
+# by `getOption("r8.conformance")`. "rust" takes `pkgr::Probe`, declared
 # and implemented in Rust in the test package r8pkgR; any other value
 # declares the same type, with impls of the same results, in R in the
 # namespace `conf`. test-conformance.R runs this directory with the R
-# provider, and test-packages.R with the Rust-native one.
+# provider, and test-packages.R with the Rust-stored one.
 # spec: R8/class-system#conformance-tests
 
 # Evaluates `expr` with the option `r8.namespace` set to `ns`, outside any
@@ -23,14 +23,14 @@ declare_in <- function(ns, expr) {
   eval(substitute(expr), envir = env)
 }
 
-# `pkgr::Conform` declared in R, in the namespace `conf`: the declaration
-# that r8_document_native() writes for r8pkgR, without `native = TRUE`; and
+# `pkgr::Probe` declared in R, in the namespace `conf`: the declaration
+# that r8_document_rust() writes for r8pkgR, without `storage = "rust"`; and
 # `conf::Every`, a field of each type that has no Rust field type. Its
 # impls give the results of r8pkgR's Rust impls.
 conformance_r_types <- function() {
   declare_in("conf", {
-    Conform <- new_struct(
-      "Conform",
+    Probe <- new_struct(
+      "Probe",
       fields = list(
         ratio = field(
           type_double(min = 0, max = 1),
@@ -56,38 +56,42 @@ conformance_r_types <- function() {
       version = 1L,
       rules = list(
         rule(
-          "seed_below_count",
           seed < count,
-          "The seed is below the count.",
-          when = json_ir('{"!==":[{"var":"seed"},null]}')
+          when = json_ir('{"!==":[{"var":"seed"},null]}'),
+          message = "The seed is below the count.",
+          id = "seed_below_count"
         ),
         rule(
-          "weights_match_index",
           json_ir(
             '{"===":[{"length":{"var":"weights"}},{"length":{"var":"index"}}]}'
           ),
-          "There is one weight per index."
+          message = "There is one weight per index.",
+          id = "weights_match_index"
         )
       )
     )
     impl(
       Display,
-      Conform,
+      Probe,
       methods = list(format = function(x, ...) {
-        sprintf("Conform %s (%d)", x$label, x$count)
+        sprintf("Probe %s (%d)", x$label, x$count)
       })
     )
     impl(
       PartialOrd,
-      Conform,
-      methods = list(cmp = function(x, y) {
-        if (!inherits(y, "conf::Conform")) {
-          return(NULL)
+      Probe,
+      methods = list(partial_cmp = function(x, y) {
+        if (!inherits(y, "conf::Probe")) {
+          return(NA_integer_)
         }
         as.integer(sign(x$ratio - y$ratio))
       })
     )
-    impl(Dim, Conform, methods = list(dim = function(x) c(length(x$index), 2L)))
+    impl(
+      Shape,
+      Probe,
+      methods = list(dim = function(x) c(length(x$index), 2L))
+    )
     Every <- new_struct(
       "Every",
       fields = list(
@@ -96,20 +100,20 @@ conformance_r_types <- function() {
         at = type_posixct(),
         m = type_matrix(type_double()),
         tb = type_table(list(id = type_character())),
-        map = hashmap(type_double()),
+        map = btree_map(type_double()),
         doc = type_json()
       )
     )
-    list(Conform = Conform, Every = Every)
+    list(Probe = Probe, Every = Every)
   })
 }
 
 # The type, its namespace, the kinds of test the run supports, and the code
 # a worker runs before it reads a value.
 conformance_provider <- function() {
-  if (identical(getOption("r8.conformance"), "native")) {
+  if (identical(getOption("r8.conformance"), "rust")) {
     return(list(
-      Conform = getExportedValue("r8pkgR", "Conform"),
+      Probe = getExportedValue("r8pkgR", "Probe"),
       namespace = "pkgr",
       supports = "workers",
       worker_setup = "library(r8pkgR)"
@@ -117,7 +121,7 @@ conformance_provider <- function() {
   }
   types <- conformance_r_types()
   list(
-    Conform = types[["Conform"]],
+    Probe = types[["Probe"]],
     Every = types[["Every"]],
     namespace = "conf",
     supports = "every_field_type"
@@ -131,8 +135,8 @@ skip_unless <- function(p, kind) {
   }
 }
 
-# The arguments of a valid `Conform`; an argument given as NULL is omitted.
-conform_args <- function(...) {
+# The arguments of a valid `Probe`; an argument given as NULL is omitted.
+probe_args <- function(...) {
   utils::modifyList(
     list(
       ratio = 0.5,
@@ -149,7 +153,7 @@ conform_args <- function(...) {
   )
 }
 
-# A `Conform` value of the provider.
+# A `Probe` value of the provider.
 conform_value <- function(p, ...) {
-  do.call(p[["Conform"]], conform_args(...))
+  do.call(p[["Probe"]], probe_args(...))
 }

@@ -4,24 +4,39 @@
 \alias{r8_from_json}
 \title{Read an R8 value from JSON}
 \usage{
-r8_from_json(type, json)
+r8_from_json(type, json, load = NULL, declaration = "registered")
 }
 \arguments{
 \item{type}{An R8 type object.}
 
 \item{json}{Character: The JSON document.}
+
+\item{load}{Optional Character: Packages to load, with \code{loadNamespace()},
+before the read, such as the package that declares an implementor of a
+\code{dyn()} field.}
+
+\item{declaration}{Character \{"registered", "any"\}: \code{"registered"} refuses a
+document that was written under another declaration of a type than the
+registered one, unless it holds the declarations
+(\code{r8_to_json(declarations = TRUE)}) and its fields mean the same under both, as
+\code{\link[=r8_update]{r8_update()}} states. \code{"any"} reads it as one of the registered declaration.
+A document without \code{"$declarations"}, as one written by hand, claims none.}
 }
 \value{
-An R8 value.
+An R8 value. A document that names types no loaded package declares
+raises \code{r8_unknown_type_error}, which names each namespace and the
+installed packages that declare it.
 }
 \description{
-Reads a document of \code{type}: checks \code{"$type"} and the versions in
-\code{"$types"}, validates the value, and returns it.
+Reads a document of \code{type}: checks \code{"$type"}, the versions in \code{"$types"}, and
+the declarations in \code{"$declarations"}, validates the value, and returns it. A type the document names
+is looked up among the registered types only; the document never selects code
+to load.
 }
 \examples{
 op <- options(r8.namespace = "demo")
 Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-r8_from_json(Point, to_json(Point(x = 1, y = 2)))
+r8_from_json(Point, r8_to_json(Point(x = 1, y = 2)))
 options(op)
 
 }

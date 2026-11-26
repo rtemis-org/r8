@@ -62,6 +62,10 @@
         },
         "rule": {
           "type": "string"
+        },
+        "rule_index": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -104,7 +108,12 @@
             "declare",
             "decode",
             "canonical",
-            "hash"
+            "hash",
+            "dispatch",
+            "refine",
+            "update",
+            "filter",
+            "check"
           ]
         },
         "type": {
@@ -232,6 +241,387 @@
                 "hash": {
                   "type": "string",
                   "pattern": "^(sha256|sha256-partial):[0-9a-f]{64}$|^hmac-sha256:[0-9a-f]{8}:[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "dispatch"
+            },
+            "input": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/qualified"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "classes"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "classes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "impl"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "impl": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "default"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "default": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "ambiguous"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "ambiguous": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "stale"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "stale": {
+                      "$ref": "#/$defs/qualified"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "refine"
+            },
+            "input": {
+              "type": "object"
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "refines"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "refines": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "differences"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "differences": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "code",
+                          "type"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "code": {
+                            "$ref": "#/$defs/error/properties/code"
+                          },
+                          "type": {
+                            "$ref": "#/$defs/qualified"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "update"
+            },
+            "input": {
+              "type": "object"
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "same"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "same": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "changes"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "changes": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "code",
+                          "type",
+                          "effect"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "code": {
+                            "$ref": "#/$defs/error/properties/code"
+                          },
+                          "type": {
+                            "$ref": "#/$defs/qualified"
+                          },
+                          "effect": {
+                            "enum": [
+                              "none",
+                              "form",
+                              "meaning"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type",
+            "options"
+          ],
+          "properties": {
+            "op": {
+              "const": "filter"
+            },
+            "options": {
+              "type": "object",
+              "required": [
+                "rule"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "rule": true
+              }
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "rows"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "row_error"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "row_error": {
+                      "type": "object",
+                      "required": [
+                        "row",
+                        "count"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "row": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/$defs/errors"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "check"
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "rules": {
+                  "type": "array"
+                }
+              }
+            },
+            "expect": {
+              "type": "object",
+              "required": [
+                "rows",
+                "lines"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "rows": {
+                  "type": "integer"
+                },
+                "lines": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "checked",
+                      "failed",
+                      "missing",
+                      "errors"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "rule": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "checked": {
+                        "type": "integer"
+                      },
+                      "failed": {
+                        "type": "integer"
+                      },
+                      "missing": {
+                        "type": "integer"
+                      },
+                      "errors": {
+                        "type": "integer"
+                      },
+                      "problems": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "code"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "row": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "code": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }

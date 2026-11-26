@@ -14,9 +14,8 @@ Logical: One value.
 }
 \description{
 \code{TRUE} when both values have the same type and equal fields: their
-normalized forms are the same canonical JSON, and their runtime-only
-fields are \code{identical()}. A provenance record does not enter the
-comparison.
+normalized forms are the same canonical JSON, and their host-only
+fields are \code{identical()}.
 }
 \examples{
 op <- options(r8.namespace = "demo")

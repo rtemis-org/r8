@@ -5,8 +5,8 @@ Language-neutral test cases that every R8 host runs: the R package, `rtemis-r8`'
 ## Files
 
 - `corpus.schema.json`: the JSON Schema (draft 2020-12) of a suite file. A runner validates each file against it before running the cases.
-- `<area>/<suite>.json`: one suite per file, grouped by area (`declare/`, `decode/`, `canonical/`, and `hash/`).
-- `tools/reference-codec.mjs`: an independent JavaScript implementation of the canonical form and the content hash, written from the specification in `rust/crates/rtemis-r8/src/codec.rs`, which writes the expected results of the `canonical` and `hash` cases (`node conformance/tools/reference-codec.mjs <suite>...`).
+- `<area>/<suite>.json`: one suite per file, grouped by area (`declare/`, `decode/`, `canonical/`, `hash/`, `dispatch/`, `refine/`, `update/`, `filter/`, and `check/`).
+- `tools/reference-canonical.mjs`: an independent JavaScript implementation of the canonical form and the content hash, written from the specification in `rust/crates/rtemis-r8/src/canonical.rs`, which writes the expected results of the `canonical` and `hash` cases (`node conformance/tools/reference-canonical.mjs <suite>...`).
 
 A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compared as RFC 8785 text: the declaration hash reads that form. `R8_UPDATE_CORPUS=1 cargo test -p rtemis-r8 --all-features --test conformance`, run in `rust/`, rewrites it.
 
@@ -22,7 +22,7 @@ A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compa
 ```
 
 - `$corpus`: the format version, 1.
-- `ir`: an IR document, or an array of IR documents, one per namespace, that the value operations resolve types in; a suite of `declare` cases omits it.
+- `ir`: an IR document, or an array of IR documents, one per namespace, in which the value operations look up types; a suite of `declare` cases omits it.
 - `cases`: each with a unique kebab-case `id`, an optional `description`, an `op`, an `input`, and an `expect`.
 
 ## Operations
@@ -33,7 +33,12 @@ A suite's `ir` is in canonical form, as `IrDocument::to_json()` writes it, compa
 | `decode` | a value's JSON document | the qualified type | `{"valid": true}`, or `{"errors": [...]}` |
 | `canonical` | a value's JSON document | the qualified type | `{"json": "<exact text>"}`: the RFC 8785 canonical form, compared byte for byte |
 | `hash` | a value's JSON document | the qualified type | `{"hash": "sha256:<hex>"}`; `options.hash_key` selects HMAC |
+| `dispatch` | the types of a call's dispatched arguments, in order: a qualified type name, `{"classes": [...]}` for an object of a host class, or `null` for a value no type names | the qualified trait | `{"impl": [...]}`, the dispatched positions of the providing impl (a qualified type, a class, or `any`); `{"default": true}` when no impl applies; `{"ambiguous": [[...], [...]]}`, the two most specific applicable impls; `{"stale": "ns::T"}` for a stale argument type |
+| `refine` | the IR document of the registered declarations; the suite's `ir` holds the compiled ones | the qualified type | `{"refines": true}`, or `{"differences": [{"code": "...", "type": "ns::T"}]}`, compared as a multiset |
+| `update` | the IR document of the registered declarations; the suite's `ir` holds those that a value was made under, which the runner reads back from their hashed text | the qualified type | `{"same": true}`, or `{"changes": [{"code": "...", "type": "ns::T", "effect": "..."}]}`, compared as a multiset; the effect on the value is `none`, `form`, or `meaning` |
+| `filter` | a table value's JSON document; `options.rule` holds the condition | the qualified type of a table | `{"rows": [...]}`, the rows where the condition is true, from 0 and in order; `{"errors": [...]}` for a condition that does not fit the columns, with paths into the condition; or `{"row_error": {"row": ..., "count": ...}}`, the first row in which the condition has no value and the number of such rows |
+| `check` | a table's JSON document; `options.rules` holds rules, and without them the table is held against the type | the qualified type of a table | `{"rows": n, "lines": [...]}`: for each column of the type, each column that it does not admit, and each rule, the number of rows `checked`, `failed`, `missing`, and `errors`, and its `problems`, each with its `code` and, for one of a row, its `row` from 0 |
 
-An error is `{"code": "...", "path": "...", "rule": "..."}`: the stable code, a JSON Pointer into `input`, and, for a rule violation, the rule ID. Messages are not compared. A host reports every error, and a runner compares the reported and expected lists as multisets, after sorting both by path, then code, then rule; an empty list means the input passes.
+An error is `{"code": "...", "path": "...", "rule": "..."}`: the stable code, a JSON Pointer into `input`, and, for a rule violation, the rule ID, or `"rule_index"`, the rule's 0-based position among its scope's rules, for a rule without an ID. Messages are not compared. A host reports every error, and a runner compares the reported and expected lists as multisets, after sorting both by path, then code, then rule; an empty list means the input passes.
 
 A host that does not implement an operation yet skips its cases and reports the number skipped. Operations are added to the table only; a new `op` does not change the meaning of an existing case.

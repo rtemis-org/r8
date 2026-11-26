@@ -33,8 +33,12 @@ msrv:
 #   just publish-crates    publishes the workspace crates
 #   just update-crates     in r/: locks and vendors them, then commit
 #   just release           fast-forwards main to devel and tags it
-# `just open-version X.Y.0` opens the next version on devel, with the first
-# change of the binding that needs an unpublished item of rtemis-r8.
+# `just open-version X.Y.0` opens the next version on devel, in the step of the
+# first change after a release that touches a crate, the IR, the declaration
+# record, or the C ABI; a change of R code alone stays under X.Y.Z.9000. Before
+# 1.0, a new record format, a new ABI version, and a changed or removed IR member
+# open a new minor version. The workspace crates, the binding crates, R8, and
+# R8.io share the major and minor version (`just check-versions`).
 
 # Check that the R package, its binding crate, and the workspace crates share a major and minor version, and report whether the tree is a release tree
 check-versions:

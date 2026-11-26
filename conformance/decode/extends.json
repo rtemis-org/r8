@@ -1,0 +1,283 @@
+{
+  "$corpus": 1,
+  "description": "`subtype(Parent)`: the struct and every struct that extends it, with the rules a child inherits.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "struct",
+        "name": "A",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "a",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          }
+        ],
+        "rules": [
+          {
+            "id": "A_POS",
+            "invariant": {
+              ">": [
+                {
+                  "var": "a"
+                },
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "struct",
+        "name": "B",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "a",
+            "type": {
+              "kind": "double"
+            },
+            "description": "",
+            "inherited_from": "ns::A"
+          },
+          {
+            "name": "b",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          }
+        ],
+        "extends": "ns::A",
+        "rules": [
+          {
+            "id": "A_POS",
+            "invariant": {
+              ">": [
+                {
+                  "var": "a"
+                },
+                0
+              ]
+            },
+            "inherited_from": "ns::A"
+          },
+          {
+            "id": "B_POS",
+            "invariant": {
+              ">": [
+                {
+                  "var": "b"
+                },
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "struct",
+        "name": "C",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "a",
+            "type": {
+              "kind": "double"
+            },
+            "description": "",
+            "inherited_from": "ns::A"
+          },
+          {
+            "name": "b",
+            "type": {
+              "kind": "double"
+            },
+            "description": "",
+            "inherited_from": "ns::B"
+          },
+          {
+            "name": "c",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          }
+        ],
+        "extends": "ns::B",
+        "rules": [
+          {
+            "id": "A_POS",
+            "invariant": {
+              ">": [
+                {
+                  "var": "a"
+                },
+                0
+              ]
+            },
+            "inherited_from": "ns::A"
+          },
+          {
+            "id": "B_POS",
+            "invariant": {
+              ">": [
+                {
+                  "var": "b"
+                },
+                0
+              ]
+            },
+            "inherited_from": "ns::B"
+          },
+          {
+            "id": "C_POS",
+            "invariant": {
+              ">": [
+                {
+                  "var": "c"
+                },
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "struct",
+        "name": "H",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "subtype",
+              "of": "ns::A"
+            },
+            "description": ""
+          }
+        ]
+      },
+      {
+        "kind": "struct",
+        "name": "O",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "a",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "subtype-grandchild",
+      "description": "A field `subtype(A)` holds a C, two levels below A.",
+      "op": "decode",
+      "type": "ns::H",
+      "input": {
+        "x": {
+          "$type": "ns::C",
+          "a": 1,
+          "b": 2,
+          "c": 3
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "the-struct-itself",
+      "description": "A field `subtype(A)` holds an A.",
+      "op": "decode",
+      "type": "ns::H",
+      "input": {
+        "x": {
+          "$type": "ns::A",
+          "a": 1
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "not-subtype",
+      "description": "A struct with A's fields that does not extend A.",
+      "op": "decode",
+      "type": "ns::H",
+      "input": {
+        "x": {
+          "$type": "ns::O",
+          "a": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "not_subtype",
+            "path": "/x"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unnamed",
+      "description": "A value without `$type`.",
+      "op": "decode",
+      "type": "ns::H",
+      "input": {
+        "x": {
+          "a": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_type",
+            "path": "/x"
+          }
+        ]
+      }
+    },
+    {
+      "id": "inherited-rule",
+      "description": "A C that violates A's rule.",
+      "op": "decode",
+      "type": "ns::H",
+      "input": {
+        "x": {
+          "$type": "ns::C",
+          "a": -1,
+          "b": 2,
+          "c": 3
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/x",
+            "rule": "A_POS"
+          }
+        ]
+      }
+    }
+  ]
+}

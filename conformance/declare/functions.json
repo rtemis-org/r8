@@ -1,0 +1,416 @@
+{
+  "$corpus": 1,
+  "description": "Functions that new_function() declares: their parameters, return types, rules, names, and the requirements of `typed`.",
+  "cases": [
+    {
+      "id": "function",
+      "description": "A function with typed parameters, a default, a return type, and a rule over two parameters.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "clip",
+            "description": "",
+            "params": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "double"
+                  }
+                }
+              },
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double"
+                },
+                "default": 0
+              },
+              {
+                "name": "hi",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ],
+            "return_type": {
+              "kind": "vec",
+              "element": {
+                "kind": "double"
+              }
+            },
+            "rules": [
+              {
+                "invariant": {
+                  "<=": [
+                    {
+                      "var": "lo"
+                    },
+                    {
+                      "var": "hi"
+                    }
+                  ]
+                },
+                "id": "LO_HI"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "function-mixed",
+      "description": "Untyped parameters and `...` in a function of mixed types.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              "x",
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              "..."
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "function-strict",
+      "description": "A strictly typed function with an untyped parameter and `...`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              "x",
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer"
+                }
+              },
+              "..."
+            ],
+            "typed": "strict"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "untyped_param",
+            "path": "/functions/0/params/0"
+          },
+          {
+            "code": "untyped_param",
+            "path": "/functions/0/params/2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "function-dispatch",
+      "description": "A parameter of a function that dispatches.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "dispatch": true
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "function_dispatch",
+            "path": "/functions/0/params/0/dispatch"
+          }
+        ]
+      }
+    },
+    {
+      "id": "function-self",
+      "description": "A function that returns `Self`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              "x"
+            ],
+            "return_type": "Self"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "return_type_self",
+            "path": "/functions/0/return_type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "function-on",
+      "description": "A function on a type, which is reserved.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              "x"
+            ],
+            "on": "ns::T"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "function_on",
+            "path": "/functions/0/on"
+          }
+        ]
+      }
+    },
+    {
+      "id": "function-rule-untyped",
+      "description": "A rule that reads an untyped parameter.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              "x",
+              {
+                "name": "n",
+                "type": {
+                  "kind": "double"
+                }
+              }
+            ],
+            "rules": [
+              {
+                "invariant": {
+                  ">": [
+                    {
+                      "var": "x"
+                    },
+                    {
+                      "var": "n"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/functions/0/rules/0/invariant/>/0/var"
+          }
+        ]
+      }
+    },
+    {
+      "id": "function-default",
+      "description": "A constant default that its type refuses.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              {
+                "name": "n",
+                "type": {
+                  "kind": "integer",
+                  "min": 1
+                },
+                "default": 0
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_invalid",
+            "path": "/functions/0/params/0/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "function-duplicate",
+      "description": "A function named as another, as a type, and as a generic.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "T",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "g",
+            "description": "",
+            "generic": true,
+            "methods": [
+              {
+                "name": "g",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ],
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              "x"
+            ]
+          },
+          {
+            "name": "f",
+            "params": [
+              "y"
+            ]
+          },
+          {
+            "name": "T",
+            "params": [
+              "x"
+            ]
+          },
+          {
+            "name": "g",
+            "params": [
+              "x"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_function",
+            "path": "/functions/1/name"
+          },
+          {
+            "code": "duplicate_type",
+            "path": "/types/0/name"
+          },
+          {
+            "code": "duplicate_function",
+            "path": "/functions/2/name"
+          },
+          {
+            "code": "duplicate_function",
+            "path": "/functions/3/name"
+          },
+          {
+            "code": "duplicate_type",
+            "path": "/traits/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "function-params",
+      "description": "Parameters with the same name, and one that is no R name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "functions": [
+          {
+            "name": "f",
+            "params": [
+              "x",
+              "x",
+              "2a"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_param",
+            "path": "/functions/0/params/1"
+          },
+          {
+            "code": "param_name",
+            "path": "/functions/0/params/2"
+          }
+        ]
+      }
+    }
+  ]
+}

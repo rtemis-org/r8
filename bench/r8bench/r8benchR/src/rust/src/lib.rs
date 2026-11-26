@@ -1,4 +1,4 @@
-//! The Rust-native types of the R8 benchmark (`bench/` of the r8
+//! The Rust-stored types of the R8 benchmark (`bench/` of the r8
 //! repository): `bench::Wide20` and `bench::GBM`, declared as `bench/types.R`
 //! declares them in R, and the impl of `bench::Complexity`, a trait declared
 //! in R, for `GBM`. The structs carry plain comments, not doc comments, so
@@ -10,7 +10,7 @@ use rtemis_r8_api::Buffer;
 
 // Twenty doubles in [0, 1], each 0.1 by default.
 #[derive(R8, Clone)]
-#[r8(namespace = "bench", version = 1, native)]
+#[r8(namespace = "bench", version = 1, storage = "rust")]
 pub struct Wide20 {
     #[r8(min = 0, max = 1, default = "0.1")]
     pub f1: f64,
@@ -57,7 +57,7 @@ pub struct Wide20 {
 // The settings of a gradient-boosted tree model, with case weights and the
 // indices of the features used.
 #[derive(R8, Clone)]
-#[r8(namespace = "bench", version = 1, native)]
+#[r8(namespace = "bench", version = 1, storage = "rust")]
 #[r8(rule(
     id = "early_stop_below_trees",
     invariant = r#"{"<": [{"var": "early_stopping_rounds"}, {"var": "n_trees"}]}"#,
@@ -96,12 +96,12 @@ pub struct GBM {
 
 /// The Rust side of `bench::Complexity`, declared in R with
 /// `complexity(x)`.
+#[r8::methods(trait = "bench::Complexity")]
 pub trait Complexity {
     /// A constant, so that the dispatch row times dispatch alone.
     fn complexity(&self) -> i32;
 }
 
-#[r8::methods(trait = "bench::Complexity")]
 impl Complexity for GBM {
     fn complexity(&self) -> i32 {
         1

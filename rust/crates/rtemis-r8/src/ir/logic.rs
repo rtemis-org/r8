@@ -119,6 +119,30 @@ operators! {
     And = "and",
     /// `or`.
     Or = "or",
+    /// `abs`: the absolute value of a number.
+    Abs = "abs",
+    /// `sum`: the double nearest the exact sum of numbers, ties to even; the
+    /// empty sum is 0.
+    Sum = "sum",
+    /// `nchar`: the number of Unicode code points of a string.
+    Nchar = "nchar",
+    /// `path`: a field, or a path into one, as its names in order, for a path
+    /// with a name that is not an R8 name, such as a column `Petal.Width`.
+    Path = "path",
+    /// `mean`: the exact sum of numbers, rounded, over their count.
+    Mean = "mean",
+    /// `pmin`: the least of the operands.
+    Pmin = "pmin",
+    /// `pmax`: the greatest of the operands.
+    Pmax = "pmax",
+    /// `sqrt`.
+    Sqrt = "sqrt",
+    /// `log`: the natural logarithm.
+    Log = "log",
+    /// `exp`.
+    Exp = "exp",
+    /// `is_na`: the value is missing, or is `NaN`.
+    IsNa = "is_na",
 }
 
 /// A JSONLogic expression of the rule dialect, as declared.

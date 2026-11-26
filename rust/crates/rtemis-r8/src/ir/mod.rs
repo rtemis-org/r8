@@ -8,19 +8,33 @@
 pub mod build;
 mod check;
 mod decl;
+pub mod dispatch;
 mod document;
+pub mod fit;
 mod logic;
+mod lower;
+pub mod notation;
 mod number;
+mod tags;
 mod types;
 
-pub use check::{DeclError, check_document, check_trait, check_type, is_column_type};
+pub use check::ambiguity_error;
+pub use check::{
+    DeclError, check_document, check_document_records, check_function, check_trait, check_type,
+    is_column_type, report,
+};
 pub use decl::{
-    ClassSystem, EnumDef, FieldDef, ImplDef, ImplTarget, MethodDef, Migration, MigrationStep,
-    RuleDef, SplitTarget, StructDef, TraitDef, VariantDef, VariantShape,
+    ClassSystem, Column, ColumnDef, EnumDef, FieldDef, FunctionDef, HostDefault, ImplDef,
+    ImplMethod, MethodDef, Migration, MigrationStep, Param, ParamDef, RequiredField, ReturnType,
+    RuleDef, SelfMarker, SplitTarget, StructDef, TableDef, TraitDef, TypeRef, Typed,
+    TypedImplMethod, VariantDef, VariantKind,
 };
 pub use document::{IR_VERSION, IrDocument, ReadError, TypeDef};
+pub use fit::fits;
 pub use logic::{Logic, Operator};
+pub use lower::{InheritedChange, check_default_cycles, check_defaults, check_extends, extend};
 pub use number::{EXACT_DOUBLE, Number};
+pub use tags::check_tags;
 pub use types::{Bound, CharacterType, DoubleType, FieldType, IntegerType, Resolve};
 
 /// The JSON Schema (draft 2020-12) of the IR document, generated from the IR

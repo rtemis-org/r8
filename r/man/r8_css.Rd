@@ -4,13 +4,13 @@
 \alias{r8_css}
 \title{The stylesheet of R8's html classes mode}
 \usage{
-r8_css(theme = NULL, tag = FALSE)
+r8_css(theme = NULL, style_element = FALSE)
 }
 \arguments{
 \item{theme}{An \code{r8_theme} object, or \code{NULL} for \code{getOption("r8.theme")}
 or R8's theme.}
 
-\item{tag}{Logical: Wrap the stylesheet in a \verb{<style>} element.}
+\item{style_element}{Logical: Wrap the stylesheet in a \verb{<style>} element.}
 }
 \value{
 Character: The stylesheet, one string.
@@ -27,7 +27,10 @@ Each color is a CSS variable, \verb{--r8-<role>}, which a page can set.
 }
 \examples{
 cat(r8_css())
-cat(r8_css(r8_theme(type_name = list(color = "#0F6A66")), tag = TRUE))
+cat(r8_css(
+  r8_theme(type_name = list(color = "#0F6A66")),
+  style_element = TRUE
+))
 }
 \author{
 EDG

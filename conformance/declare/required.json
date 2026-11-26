@@ -1,0 +1,461 @@
+{
+  "$corpus": 1,
+  "description": "Required fields of traits: an implementor is a struct with each required field, of a type that fits the required type.",
+  "cases": [
+    {
+      "id": "required-fields-fit",
+      "description": "A struct holds each required field, of a type that fits: a double for option(double).",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Range",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              },
+              {
+                "name": "hi",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Measured",
+            "description": "",
+            "methods": [
+              {
+                "name": "span",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "required_fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              },
+              {
+                "name": "hi",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "double"
+                  }
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Measured",
+            "target": {
+              "kind": "named",
+              "name": "ns::Range"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "required-field-missing",
+      "description": "An implementor without a required field.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Point",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Measured",
+            "description": "",
+            "methods": [
+              {
+                "name": "span",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "required_fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Measured",
+            "target": {
+              "kind": "named",
+              "name": "ns::Point"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "required_field_missing",
+            "path": "/impls/0/target"
+          }
+        ]
+      }
+    },
+    {
+      "id": "required-field-type",
+      "description": "An implementor's field of a type that does not fit: an integer for a double.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Range",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "integer"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Measured",
+            "description": "",
+            "methods": [
+              {
+                "name": "span",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "required_fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Measured",
+            "target": {
+              "kind": "named",
+              "name": "ns::Range"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "required_field_type",
+            "path": "/impls/0/target"
+          }
+        ]
+      }
+    },
+    {
+      "id": "required-field-constraint",
+      "description": "A constraint narrows nothing: a field of type_double(min = 0) does not fit type_double().",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Range",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double",
+                  "min": 0
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Measured",
+            "description": "",
+            "methods": [
+              {
+                "name": "span",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "required_fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Measured",
+            "target": {
+              "kind": "named",
+              "name": "ns::Range"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "required_field_type",
+            "path": "/impls/0/target"
+          }
+        ]
+      }
+    },
+    {
+      "id": "required-field-enum",
+      "description": "A trait with required fields is implemented by structs only.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Mode",
+            "description": "",
+            "version": 1,
+            "variants": [
+              {
+                "name": "A",
+                "description": "",
+                "kind": "unit"
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Measured",
+            "description": "",
+            "methods": [
+              {
+                "name": "span",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "required_fields": [
+              {
+                "name": "lo",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Measured",
+            "target": {
+              "kind": "named",
+              "name": "ns::Mode"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "required_field_target",
+            "path": "/impls/0/target"
+          }
+        ]
+      }
+    },
+    {
+      "id": "required-field-subtype",
+      "description": "A field of a struct type fits a required subtype() of its parent.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Holder",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "part",
+                "type": {
+                  "kind": "named",
+                  "name": "ns::Child"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Measured",
+            "description": "",
+            "methods": [
+              {
+                "name": "span",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "required_fields": [
+              {
+                "name": "part",
+                "type": {
+                  "kind": "subtype",
+                  "of": "ns::Base"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Measured",
+            "target": {
+              "kind": "named",
+              "name": "ns::Holder"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    }
+  ]
+}

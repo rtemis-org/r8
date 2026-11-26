@@ -1,10 +1,11 @@
 //! M1's exit test: the JSON Schema that `json_schema()` exports for a type
-//! accepts every valid value of the corpus and the normalized form the codec
-//! writes, and rejects every invalid value whose error JSON Schema expresses.
+//! accepts every valid value of the corpus and the normalized form that
+//! `canonical::normalize` writes, and rejects every invalid value whose error
+//! JSON Schema expresses.
 
 use std::path::{Path, PathBuf};
 
-use rtemis_r8::codec::{normalize, to_document};
+use rtemis_r8::canonical::{normalize, to_document};
 use rtemis_r8::ir::{FieldType, IrDocument, TypeDef};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
@@ -25,7 +26,7 @@ const STRUCTURAL: &[&str] = &[
     "above_max",
     "not_integer",
     "out_of_range",
-    "not_in_enum",
+    "not_in_values",
     "pattern_mismatch",
     "not_a_level",
     "factor_form",
@@ -36,7 +37,7 @@ const STRUCTURAL: &[&str] = &[
     "unknown_variant",
     "missing_tag",
     "not_finite",
-    "runtime_only",
+    "host_only",
     "dimension_mismatch",
 ];
 
@@ -93,7 +94,15 @@ fn exported_schemas_agree_with_validation() {
             one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
+        // Value cases; a `dispatch` case names a trait, the input of a `refine`
+        // and an `update` case are declarations, and that of a `check` case is
+        // a table that its type may refuse.
         for case in suite["cases"].as_array().unwrap() {
+            if ["dispatch", "refine", "update", "check"]
+                .contains(&case["op"].as_str().unwrap_or_default())
+            {
+                continue;
+            }
             let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
             let schema = json_schema(&ty, &docs);
             let validator = jsonschema::validator_for(&schema)
@@ -155,4 +164,74 @@ fn print_svm_schema() {
         "{}",
         serde_json::to_string_pretty(&json_schema(&ty, &doc)).unwrap()
     );
+}
+
+/// The closed form (`closed = true`): every valid value of the corpus
+/// is accepted, and a value inside a `dyn()` field that names no registered
+/// implementor, or that fails a check JSON Schema expresses, is rejected.
+#[test]
+fn closed_schemas_list_the_registered_implementors() {
+    use rtemis_r8::value_schema::json_schema_with;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../conformance");
+    let (mut accepted, mut rejected, mut failures) = (0, 0, Vec::new());
+    for path in suites(&dir) {
+        let suite: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let Some(ir) = suite.get("ir") else { continue };
+        let docs = DocumentSet::from(match ir {
+            Value::Array(a) => a
+                .iter()
+                .map(|d| IrDocument::from_json(&d.to_string()).unwrap())
+                .collect(),
+            one => vec![IrDocument::from_json(&one.to_string()).unwrap()],
+        });
+        let name = path.strip_prefix(&dir).unwrap().display().to_string();
+        // Value cases; a `dispatch` case names a trait, the input of a `refine`
+        // and an `update` case are declarations, and that of a `check` case is
+        // a table that its type may refuse.
+        for case in suite["cases"].as_array().unwrap() {
+            if ["dispatch", "refine", "update", "check"]
+                .contains(&case["op"].as_str().unwrap_or_default())
+            {
+                continue;
+            }
+            let ty = QualifiedName::parse(case["type"].as_str().unwrap()).unwrap();
+            let validator = jsonschema::validator_for(&json_schema_with(&ty, &docs, true))
+                .unwrap_or_else(|e| {
+                    panic!("{name}: the closed schema of {ty} does not compile: {e}")
+                });
+            let id = case["id"].as_str().unwrap();
+            let input = &case["input"];
+            let codes: Vec<&str> = case["expect"]["errors"]
+                .as_array()
+                .map(|a| a.iter().map(|e| e["code"].as_str().unwrap()).collect())
+                .unwrap_or_default();
+            let dyn_codes = ["not_implementor", "unknown_type"];
+            if codes.is_empty() {
+                let document: Value =
+                    serde_json::from_str(&to_document(input, &ty, &docs).unwrap()).unwrap();
+                for (what, doc) in [("input", input.clone()), ("document", document)] {
+                    if validator.is_valid(&doc) {
+                        accepted += 1;
+                    } else {
+                        failures.push(format!(
+                            "{name} {id}: the closed schema rejects the valid {what}"
+                        ));
+                    }
+                }
+            } else if under_dyn(&docs, &ty, &case["expect"])
+                && codes
+                    .iter()
+                    .all(|c| STRUCTURAL.contains(c) || dyn_codes.contains(c))
+            {
+                if validator.is_valid(input) {
+                    failures.push(format!("{name} {id}: the closed schema accepts {codes:?}"));
+                } else {
+                    rejected += 1;
+                }
+            }
+        }
+    }
+    println!("closed schemas: {accepted} accepted, {rejected} rejected");
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert!(rejected >= 5, "{rejected} rejected");
 }

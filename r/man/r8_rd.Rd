@@ -23,10 +23,19 @@ file of the generic when the package declares and documents the generic,
 an R8 generic or an S3 generic, and otherwise to the Rd file of the type. A roxygen block above the call
 adds its \verb{@param} entries to that file; a call without a block is found by
 scanning \verb{R/}, and is left out when neither the generic nor the type has an
-Rd file in the package. A method the package implements in compiled code
-(\code{R8.h}), registered when roxygen2 loads the package, takes an entry by the
-same rules, with the formals of the trait's method. The usage of an enum lists its variants, such as
-\code{Method@KFold(k)} and \code{Method@Bootstrap}.
+Rd file in the package. A method the package implements in Rust, registered when roxygen2 loads the package, takes an entry by the
+same rules, with the formals of the trait's method. A replacement method
+is written as its call, \code{labels(x) <- value}. A method of a converter
+from \code{r8_converter()}, \code{implement(as_target, "character") <- function(x) ...}, takes the entry \verb{## R8 method for class 'character'} in the Rd
+file of the converter, or else of its target type. The usage of an enum
+lists its variants, such as \code{Method@KFold(k)} and \code{Method@Bootstrap}.
+
+In the block of a typed generic, each \verb{@param} of a typed parameter begins
+with the parameter's type, such as \verb{Integer [0, Inf):}, which a package
+leaves out of the tag, and a block without \verb{@return} takes the return type
+as its value. The block of a method with a return type of its own adds it
+to the value of the generic's Rd file. A type that the package documents is
+a link.
 }
 \examples{
 \dontrun{

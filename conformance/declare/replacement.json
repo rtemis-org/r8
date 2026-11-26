@@ -1,0 +1,285 @@
+{
+  "$corpus": 1,
+  "description": "Replacement methods, their generics and identifiers, and the reserved variant name.",
+  "cases": [
+    {
+      "id": "replacement-generic",
+      "description": "The trait of the replacement generic `labels<-` is `with_labels`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "with_labels",
+            "description": "",
+            "methods": [
+              {
+                "name": "labels<-",
+                "description": "",
+                "params": [
+                  "x",
+                  "value"
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "replacement-generic-named-as-method",
+      "description": "A replacement generic's trait named as its method's base is refused.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "labels",
+            "description": "",
+            "methods": [
+              {
+                "name": "labels<-",
+                "description": "",
+                "params": [
+                  "x",
+                  "value"
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "generic_methods",
+            "path": "/traits/0/methods"
+          }
+        ]
+      }
+    },
+    {
+      "id": "replacement-generic-and-generic",
+      "description": "The generic `with_labels` and the replacement generic `labels<-` share one trait name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "with_labels",
+            "description": "",
+            "methods": [
+              {
+                "name": "labels<-",
+                "description": "",
+                "params": [
+                  "x",
+                  "value"
+                ]
+              }
+            ],
+            "generic": true
+          },
+          {
+            "name": "with_labels",
+            "description": "",
+            "methods": [
+              {
+                "name": "with_labels",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "generic": true
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_type",
+            "path": "/traits/1/name"
+          },
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/0/methods/0/name"
+          },
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/1/methods/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "replacement-method-and-identifier",
+      "description": "The methods `tag<-` and `with_tag` of one trait share the identifier `with_tag`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Tagged",
+            "description": "",
+            "methods": [
+              {
+                "name": "tag<-",
+                "description": "",
+                "params": [
+                  "x",
+                  "value"
+                ]
+              },
+              {
+                "name": "with_tag",
+                "description": "",
+                "params": [
+                  "x",
+                  "value"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_method",
+            "path": "/traits/0/methods/1/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "methods-share-identifier-across-traits",
+      "description": "The methods `as.list2` and `as_list2` of two traits share the identifier `as_list2`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "A",
+            "description": "",
+            "methods": [
+              {
+                "name": "as.list2",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "B",
+            "description": "",
+            "methods": [
+              {
+                "name": "as_list2",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/0/methods/0/name"
+          },
+          {
+            "code": "duplicate_generic",
+            "path": "/traits/1/methods/0/name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "replacement-method-without-value",
+      "description": "A replacement method's last parameter is `value`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Tagged",
+            "description": "",
+            "methods": [
+              {
+                "name": "tag<-",
+                "description": "",
+                "params": [
+                  "x",
+                  "v"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "replacement_value",
+            "path": "/traits/0/methods/0/params"
+          }
+        ]
+      }
+    },
+    {
+      "id": "variant-named-from",
+      "description": "`from` is a reserved variant name: `Enum@from` converts to the enum.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "enum",
+            "name": "Kind",
+            "description": "",
+            "version": 1,
+            "variants": [
+              {
+                "name": "A",
+                "description": "",
+                "kind": "unit"
+              },
+              {
+                "name": "from",
+                "description": "",
+                "kind": "unit"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "name_reserved",
+            "path": "/types/0/variants/1/name"
+          }
+        ]
+      }
+    }
+  ]
+}

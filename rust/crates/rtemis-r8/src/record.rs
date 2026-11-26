@@ -4,19 +4,20 @@
 //! A record is a header and a payload. The header holds the magic bytes
 //! `R8D\0`, the format version, the version of `rtemis-r8` that wrote it,
 //! and the CRC-32C of the payload, four bytes little-endian. The payload is a
-//! sequence of entries, each a declaration (a type, a trait, or an impl) with
+//! sequence of entries, each a declaration (a type, a trait, an impl, or a
+//! function) with
 //! the namespace it belongs to.
 //!
-//! The codec is written by hand over the IR types, so the code is the
-//! format. Every struct is destructured without `..`, every enum tag is an
-//! explicit literal, and the writer's methods are typed, so a change to an
-//! IR type fails to compile here until the format accounts for it. The
-//! encoder writes [`FORMAT`]; a decoder per format version reads into the
-//! current IR types. Optional members and booleans pack into one flag byte
-//! per node, whose unused bits are rejected; varints are canonical; every
-//! length is checked against the bytes that remain; trees have a depth
-//! limit; trailing bytes are rejected. One declaration has one encoding.
-//! spec: R8/class-system#declaration-record
+//! The writer and the reader are written by hand over the IR types, so the code
+//! is the format. Every struct is destructured without `..`, every enum tag is
+//! an explicit literal, and the writer's methods are typed, so a change to an
+//! IR type fails to compile here until the format accounts for it. The encoder
+//! writes [`FORMAT`], the one format the decoder reads, into the current IR
+//! types. Optional members and booleans pack into one flag byte per node, whose
+//! unused bits are rejected; varints are canonical; every length is checked
+//! against the bytes that remain; trees have a depth limit; trailing bytes are
+//! rejected. One declaration has one encoding. spec:
+//! R8/class-system#declaration-record
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,9 +25,11 @@ use std::fmt;
 use serde_json::{Map, Number, Value};
 
 use crate::ir::{
-    Bound, CharacterType, ClassSystem, DoubleType, EnumDef, FieldDef, FieldType, ImplDef,
-    ImplTarget, IntegerType, Logic, MethodDef, Migration, MigrationStep, Operator, Resolve,
-    RuleDef, SplitTarget, StructDef, TraitDef, TypeDef, VariantDef, VariantShape,
+    Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, EnumDef, FieldDef, FieldType,
+    FunctionDef, HostDefault, ImplDef, ImplMethod, IntegerType, Logic, MethodDef, Migration,
+    MigrationStep, Operator, Param, ParamDef, RequiredField, Resolve, ReturnType, RuleDef,
+    SelfMarker, SplitTarget, StructDef, TableDef, TraitDef, TypeDef, TypeRef, Typed,
+    TypedImplMethod, VariantDef, VariantKind,
 };
 use crate::name::{MethodName, Name, QualifiedName};
 
@@ -34,7 +37,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 9;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -49,6 +52,8 @@ pub enum Declaration {
     Trait(TraitDef),
     /// An impl.
     Impl(ImplDef),
+    /// A function.
+    Function(FunctionDef),
 }
 
 /// One entry of a record: a declaration and its namespace.
@@ -69,6 +74,8 @@ pub enum DeclarationRef<'a> {
     Trait(&'a TraitDef),
     /// An impl.
     Impl(&'a ImplDef),
+    /// A function.
+    Function(&'a FunctionDef),
 }
 
 /// Why a record could not be read.
@@ -76,8 +83,8 @@ pub enum DeclarationRef<'a> {
 pub enum RecordError {
     /// The bytes do not start with [`MAGIC`].
     Magic,
-    /// The record's format version is newer than this crate reads; `writer`
-    /// is the version of `rtemis-r8` that wrote it.
+    /// The record's format version is another than [`FORMAT`]; `writer` is
+    /// the version of `rtemis-r8` that wrote it.
     Newer {
         /// The record's format version.
         format: u32,
@@ -110,7 +117,7 @@ impl fmt::Display for RecordError {
             RecordError::Magic => f.write_str("the bytes are not an R8 declaration record"),
             RecordError::Newer { format, writer } => write!(
                 f,
-                "the record has format {format}, written by rtemis-r8 {writer}; this rtemis-r8 {} reads format {FORMAT} and earlier",
+                "the record has format {format}, written by rtemis-r8 {writer}; this rtemis-r8 {} reads format {FORMAT}; reinstall the package that holds the record",
                 env!("CARGO_PKG_VERSION")
             ),
             RecordError::Checksum => {
@@ -240,7 +247,8 @@ operator_tags! {
     10 Add, 11 Sub, 12 Mul, 13 Div, 14 Mod, 15 Min, 16 Max, 17 In, 18 Cat, 19 Length,
     20 Subset, 21 NonIncreasing, 22 NonDecreasing, 23 Floor, 24 Ceiling, 25 Round,
     26 Nrow, 27 Ncol, 28 Dim, 29 IsNull, 30 IsVariant, 31 Levels, 32 All, 33 Any,
-    34 If, 35 And, 36 Or,
+    34 If, 35 And, 36 Or, 37 Abs, 38 Sum, 39 Nchar, 40 Path, 41 Mean, 42 Pmin,
+    43 Pmax, 44 Sqrt, 45 Log, 46 Exp, 47 IsNa,
 }
 
 /// A number at the tags `base` (a `u64`), `base + 1` (a negative `i64`), and
@@ -449,13 +457,15 @@ fn w_type(w: &mut W, t: &FieldType) {
         FieldType::Double(DoubleType {
             lower,
             upper,
-            finite,
+            infinite,
+            nan,
             values,
         }) => {
             w.u8(2);
             w.u8(bound_bits(lower, upper)
                 | u8::from(values.is_some()) << 4
-                | u8::from(*finite) << 5);
+                | u8::from(*infinite) << 5
+                | u8::from(*nan) << 6);
             if let Some(b) = lower {
                 w.f64(b.value);
             }
@@ -517,7 +527,7 @@ fn w_type(w: &mut W, t: &FieldType) {
         } => {
             w.u8(12);
             w.u8(u8::from(*open));
-            w.seq(columns, w_field);
+            w.seq(columns, w_column);
             w.seq(rules, w_rule);
         }
         FieldType::TableOf { of } => {
@@ -525,9 +535,17 @@ fn w_type(w: &mut W, t: &FieldType) {
             w.qn(of);
         }
         FieldType::Json => w.u8(14),
-        FieldType::R { class } => {
+        FieldType::HostClass {
+            host,
+            package,
+            class,
+            system,
+        } => {
             w.u8(15);
+            w.str(host);
+            w.str(package);
             w.str(class);
+            w_class_system(w, *system);
         }
         FieldType::Vec {
             element,
@@ -547,24 +565,16 @@ fn w_type(w: &mut W, t: &FieldType) {
                 w.u64(*n);
             }
         }
-        FieldType::Option { inner, resolve } => {
+        FieldType::Option { inner } => {
             w.u8(17);
             w_type(w, inner);
-            match resolve {
-                Resolve::None => w.u8(0),
-                Resolve::Computed { expr } => {
-                    w.u8(1);
-                    w_logic(w, expr);
-                }
-                Resolve::Runtime => w.u8(2),
-            }
         }
-        FieldType::Hashmap { value, keys } => {
+        FieldType::BtreeMap { value, keys } => {
             w.u8(18);
             w_type(w, value);
             w_character(w, keys);
         }
-        FieldType::OrderedMap { value, keys } => {
+        FieldType::IndexMap { value, keys } => {
             w.u8(19);
             w_type(w, value);
             w_character(w, keys);
@@ -577,6 +587,10 @@ fn w_type(w: &mut W, t: &FieldType) {
             w.u8(21);
             w.qn(r#trait);
         }
+        FieldType::Subtype { of } => {
+            w.u8(22);
+            w.qn(of);
+        }
     }
 }
 
@@ -588,17 +602,13 @@ fn w_field(w: &mut W, f: &FieldDef) {
         description,
         sensitive,
         unit,
-        external,
-        unique,
-        optional,
+        resolve,
         inherited_from,
         extensions,
     } = f;
     w.name(name);
     w.u8(u8::from(*sensitive)
-        | u8::from(*external) << 1
-        | u8::from(*unique) << 2
-        | u8::from(*optional) << 3
+        | u8::from(resolve.is_some()) << 1
         | u8::from(default.is_some()) << 4
         | u8::from(unit.is_some()) << 5
         | u8::from(inherited_from.is_some()) << 6
@@ -611,6 +621,14 @@ fn w_field(w: &mut W, f: &FieldDef) {
     if let Some(u) = unit {
         w.str(u);
     }
+    match resolve {
+        None => {}
+        Some(Resolve::Computed { expr }) => {
+            w.u8(0);
+            w_logic(w, expr);
+        }
+        Some(Resolve::Context) => w.u8(1),
+    }
     if let Some(q) = inherited_from {
         w.qn(q);
     }
@@ -619,20 +637,36 @@ fn w_field(w: &mut W, f: &FieldDef) {
     }
 }
 
+fn w_column(w: &mut W, c: &ColumnDef) {
+    w_field(w, &c.field);
+    w.u8(u8::from(c.unique) | u8::from(!c.required) << 1);
+}
+
 fn w_rule(w: &mut W, r: &RuleDef) {
     let RuleDef {
-        id,
         invariant,
         when,
         message,
+        id,
+        inherited_from,
     } = r;
-    w.name(id);
-    w.u8(u8::from(when.is_some()));
+    w.u8(u8::from(when.is_some())
+        | u8::from(message.is_some()) << 1
+        | u8::from(id.is_some()) << 2
+        | u8::from(inherited_from.is_some()) << 3);
     w_logic(w, invariant);
     if let Some(x) = when {
         w_logic(w, x);
     }
-    w.str(message);
+    if let Some(m) = message {
+        w.str(m);
+    }
+    if let Some(i) = id {
+        w.name(i);
+    }
+    if let Some(q) = inherited_from {
+        w.qn(q);
+    }
 }
 
 fn w_step(w: &mut W, s: &MigrationStep) {
@@ -734,14 +768,12 @@ fn w_struct(w: &mut W, s: &StructDef) {
         rules,
         migrations,
         aliases,
-        provenance,
-        s4,
         extensions,
     } = s;
     w.name(name);
     w.str(description);
     w.u32(*version);
-    w.u8(u8::from(*provenance) | u8::from(*s4) << 1 | u8::from(extends.is_some()) << 2);
+    w.u8(u8::from(extends.is_some()));
     if let Some(q) = extends {
         w.qn(q);
     }
@@ -771,18 +803,18 @@ fn w_enum(w: &mut W, e: &EnumDef) {
         let VariantDef {
             name,
             description,
-            shape,
+            kind,
         } = v;
         w.name(name);
         w.str(description);
-        match shape {
-            VariantShape::Unit => w.u8(0),
-            VariantShape::Struct { fields, rules } => {
+        match kind {
+            VariantKind::Unit => w.u8(0),
+            VariantKind::Struct { fields, rules } => {
                 w.u8(1);
                 w.seq(fields, w_field);
                 w.seq(rules, w_rule);
             }
-            VariantShape::Newtype { of } => {
+            VariantKind::Newtype { of } => {
                 w.u8(2);
                 w.qn(of);
             }
@@ -803,6 +835,90 @@ fn w_type_def(w: &mut W, t: &TypeDef) {
             w.u8(1);
             w_enum(w, e);
         }
+        TypeDef::Table(t) => {
+            w.u8(2);
+            w_table(w, t);
+        }
+    }
+}
+
+fn w_table(w: &mut W, t: &TableDef) {
+    let TableDef {
+        name,
+        description,
+        version,
+        columns,
+        open,
+        rules,
+        migrations,
+        aliases,
+        extensions,
+    } = t;
+    w.name(name);
+    w.str(description);
+    w.u32(*version);
+    w.u8(u8::from(*open));
+    w.seq(columns, w_column);
+    w.seq(rules, w_rule);
+    w.seq(migrations, w_migration);
+    w.seq(aliases, |w, q| w.qn(q));
+    w_map(w, extensions);
+}
+
+fn w_target(w: &mut W, t: &TypeRef) {
+    match t {
+        TypeRef::Named { name } => {
+            w.u8(0);
+            w.qn(name);
+        }
+        TypeRef::HostClass {
+            host,
+            package,
+            class,
+            system,
+        } => {
+            w.u8(1);
+            w.str(host);
+            w.str(package);
+            w.str(class);
+            w_class_system(w, *system);
+        }
+        TypeRef::Any => w.u8(2),
+    }
+}
+
+fn w_param(w: &mut W, p: &ParamDef) {
+    match p {
+        ParamDef::Name(n) => {
+            w.u8(0);
+            w.str(n);
+        }
+        ParamDef::Full(Param {
+            name,
+            dispatch,
+            ty,
+            default,
+            host_default,
+            description,
+        }) => {
+            w.u8(1);
+            w.str(name);
+            w.u8(u8::from(*dispatch)
+                | u8::from(ty.is_some()) << 1
+                | u8::from(default.is_some()) << 2
+                | u8::from(host_default.is_some()) << 3);
+            if let Some(t) = ty {
+                w_type(w, t);
+            }
+            if let Some(d) = default {
+                w_tree(w, d);
+            }
+            if let Some(HostDefault { host, text }) = host_default {
+                w.str(host);
+                w.str(text);
+            }
+            w.str(description);
+        }
     }
 }
 
@@ -815,6 +931,7 @@ fn w_trait(w: &mut W, t: &TraitDef) {
         supertraits,
         tag,
         generic,
+        extra_type_params,
     } = t;
     w.name(name);
     w.str(description);
@@ -822,21 +939,75 @@ fn w_trait(w: &mut W, t: &TraitDef) {
     if let Some(t) = tag {
         w.name(t);
     }
+    w.u8(*extra_type_params);
     w.seq(methods, |w, m| {
         let MethodDef {
             name,
             description,
             params,
+            return_type,
             stochastic,
-            has_default,
+            has_default_impl,
+            rules,
         } = m;
         w.str(name.as_str());
         w.str(description);
-        w_strs(w, params);
-        w.u8(u8::from(*stochastic) | u8::from(*has_default) << 1);
+        w.seq(params, w_param);
+        w.seq(rules, w_rule);
+        w.u8(u8::from(*stochastic)
+            | u8::from(*has_default_impl) << 1
+            | u8::from(return_type.is_some()) << 2);
+        match return_type {
+            Some(ReturnType::SelfType(_)) => w.u8(0),
+            Some(ReturnType::Type(t)) => {
+                w.u8(1);
+                w_type(w, t);
+            }
+            None => {}
+        }
     });
-    w.seq(required_fields, w_field);
+    w.seq(required_fields, |w, f| {
+        w.name(&f.name);
+        w_type(w, &f.ty);
+        w.str(&f.description);
+    });
     w.seq(supertraits, |w, q| w.qn(q));
+}
+
+fn w_return(w: &mut W, return_type: &Option<ReturnType>) {
+    match return_type {
+        Some(ReturnType::SelfType(_)) => w.u8(0),
+        Some(ReturnType::Type(t)) => {
+            w.u8(1);
+            w_type(w, t);
+        }
+        None => {}
+    }
+}
+
+fn w_function(w: &mut W, f: &FunctionDef) {
+    let FunctionDef {
+        name,
+        description,
+        params,
+        return_type,
+        rules,
+        typed,
+        stochastic,
+        on,
+    } = f;
+    w.name(name);
+    w.str(description);
+    w.seq(params, w_param);
+    w.u8(u8::from(*stochastic)
+        | u8::from(return_type.is_some()) << 1
+        | u8::from(*typed == Typed::Strict) << 2
+        | u8::from(on.is_some()) << 3);
+    w_return(w, return_type);
+    if let Some(q) = on {
+        w.qn(q);
+    }
+    w.seq(rules, w_rule);
 }
 
 fn w_impl(w: &mut W, i: &ImplDef) {
@@ -846,36 +1017,25 @@ fn w_impl(w: &mut W, i: &ImplDef) {
         target,
         tag_value,
         methods,
-        codec,
     } = i;
     w.qn(r#trait);
-    w_strs(w, type_args);
-    match target {
-        ImplTarget::Type { name } => {
-            w.u8(0);
-            w.qn(name);
-        }
-        ImplTarget::HostClass {
-            host,
-            package,
-            class,
-            system,
-        } => {
-            w.u8(1);
-            w.str(host);
-            w.str(package);
-            w.str(class);
-            w.u8(match system {
-                ClassSystem::S3 => 0,
-                ClassSystem::S4 => 1,
-            });
-        }
-    }
-    w.u8(u8::from(tag_value.is_some()) | u8::from(*codec) << 1);
+    w.seq(type_args, w_target);
+    w_target(w, target);
+    w.u8(u8::from(tag_value.is_some()));
     if let Some(t) = tag_value {
         w.str(t);
     }
-    w.seq(methods, |w, m| w.str(m.as_str()));
+    w.seq(methods, |w, m| match m {
+        ImplMethod::Name(n) => {
+            w.u8(0);
+            w.str(n.as_str());
+        }
+        ImplMethod::Typed(TypedImplMethod { name, return_type }) => {
+            w.u8(1);
+            w.str(name.as_str());
+            w_type(w, return_type);
+        }
+    });
 }
 
 /// Encodes declarations as a record of the current format.
@@ -897,6 +1057,10 @@ pub fn encode<'a>(entries: impl IntoIterator<Item = (&'a Name, DeclarationRef<'a
             DeclarationRef::Impl(i) => {
                 payload.u8(2);
                 w_impl(&mut payload, i);
+            }
+            DeclarationRef::Function(f) => {
+                payload.u8(3);
+                w_function(&mut payload, f);
             }
         }
     }
@@ -1153,10 +1317,6 @@ fn r_map<'a, K: Ord>(
     Ok(m)
 }
 
-fn r_strings(r: &mut R) -> Res<Vec<String>> {
-    r.seq(1, |r| Ok(r.str()?.to_owned()))
-}
-
 fn r_boxed_strs(r: &mut R) -> Res<Box<[Box<str>]>> {
     Ok(r.seq(1, |r| Ok(r.str()?.into()))?.into_boxed_slice())
 }
@@ -1221,7 +1381,7 @@ fn r_type(r: &mut R) -> Res<FieldType> {
                 })
             }
             2 => {
-                let f = r.flags(0x3f, "double type")?;
+                let f = r.flags(0x7f, "double type")?;
                 FieldType::Double(DoubleType {
                     lower: r_bound(f, r, R::f64)?,
                     upper: r_bound(f >> 2, r, R::f64)?,
@@ -1230,7 +1390,8 @@ fn r_type(r: &mut R) -> Res<FieldType> {
                     } else {
                         None
                     },
-                    finite: f & 32 != 0,
+                    infinite: f & 32 != 0,
+                    nan: f & 64 != 0,
                 })
             }
             3 => FieldType::Character(r_character(r)?),
@@ -1282,15 +1443,18 @@ fn r_type(r: &mut R) -> Res<FieldType> {
             12 => {
                 let open = r.flags(1, "table type")? != 0;
                 FieldType::Table {
-                    columns: r.seq(4, r_field)?.into_boxed_slice(),
+                    columns: r.seq(5, r_column)?.into_boxed_slice(),
                     open,
                     rules: r.seq(5, r_rule)?.into_boxed_slice(),
                 }
             }
             13 => FieldType::TableOf { of: r.qn()? },
             14 => FieldType::Json,
-            15 => FieldType::R {
+            15 => FieldType::HostClass {
+                host: r.str()?.into(),
+                package: r.str()?.into(),
                 class: r.str()?.into(),
+                system: r_class_system(r)?,
             },
             16 => {
                 let element = Box::new(r_type(r)?);
@@ -1302,26 +1466,20 @@ fn r_type(r: &mut R) -> Res<FieldType> {
                     unique: f & 4 != 0,
                 }
             }
-            17 => {
-                let inner = Box::new(r_type(r)?);
-                let resolve = match r.u8()? {
-                    0 => Resolve::None,
-                    1 => Resolve::Computed { expr: r_logic(r)? },
-                    2 => Resolve::Runtime,
-                    t => return Err(RecordError::Tag("resolve", t)),
-                };
-                FieldType::Option { inner, resolve }
-            }
-            18 => FieldType::Hashmap {
+            17 => FieldType::Option {
+                inner: Box::new(r_type(r)?),
+            },
+            18 => FieldType::BtreeMap {
                 value: Box::new(r_type(r)?),
                 keys: r_character(r)?,
             },
-            19 => FieldType::OrderedMap {
+            19 => FieldType::IndexMap {
                 value: Box::new(r_type(r)?),
                 keys: r_character(r)?,
             },
             20 => FieldType::Named { name: r.qn()? },
             21 => FieldType::Dyn { r#trait: r.qn()? },
+            22 => FieldType::Subtype { of: r.qn()? },
             t => return Err(RecordError::Tag("field type", t)),
         })
     })
@@ -1329,7 +1487,7 @@ fn r_type(r: &mut R) -> Res<FieldType> {
 
 fn r_field(r: &mut R) -> Res<FieldDef> {
     let name = r.name()?;
-    let f = r.u8()?;
+    let f = r.flags(0xf3, "field")?;
     let ty = r_type(r)?;
     let description = r.str()?.into();
     Ok(FieldDef {
@@ -1347,9 +1505,15 @@ fn r_field(r: &mut R) -> Res<FieldDef> {
         } else {
             None
         },
-        external: f & 2 != 0,
-        unique: f & 4 != 0,
-        optional: f & 8 != 0,
+        resolve: if f & 2 != 0 {
+            Some(match r.u8()? {
+                0 => Resolve::Computed { expr: r_logic(r)? },
+                1 => Resolve::Context,
+                t => return Err(RecordError::Tag("resolve", t)),
+            })
+        } else {
+            None
+        },
         inherited_from: if f & 64 != 0 {
             Some(Box::new(r.qn()?))
         } else {
@@ -1367,16 +1531,37 @@ fn r_field(r: &mut R) -> Res<FieldDef> {
     })
 }
 
+fn r_column(r: &mut R) -> Res<ColumnDef> {
+    let field = r_field(r)?;
+    let f = r.flags(3, "column")?;
+    Ok(ColumnDef {
+        field,
+        unique: f & 1 != 0,
+        required: f & 2 == 0,
+    })
+}
+
 fn r_rule(r: &mut R) -> Res<RuleDef> {
-    let id = r.name()?;
-    let f = r.flags(1, "rule")?;
+    let f = r.flags(15, "rule")?;
     let invariant = r_logic(r)?;
-    let when = if f != 0 { Some(r_logic(r)?) } else { None };
+    let when = if f & 1 != 0 { Some(r_logic(r)?) } else { None };
+    let message = if f & 2 != 0 {
+        Some(r.str()?.to_owned())
+    } else {
+        None
+    };
+    let id = if f & 4 != 0 { Some(r.name()?) } else { None };
+    let inherited_from = if f & 8 != 0 {
+        Some(Box::new(r.qn()?))
+    } else {
+        None
+    };
     Ok(RuleDef {
-        id,
         invariant,
         when,
-        message: r.str()?.to_owned(),
+        message,
+        id,
+        inherited_from,
     })
 }
 
@@ -1447,8 +1632,8 @@ fn r_struct(r: &mut R) -> Res<StructDef> {
     let name = r.name()?;
     let description = r.str()?.to_owned();
     let version = r.u32()?;
-    let f = r.flags(0b111, "struct")?;
-    let extends = if f & 4 != 0 { Some(r.qn()?) } else { None };
+    let f = r.flags(1, "struct")?;
+    let extends = if f & 1 != 0 { Some(r.qn()?) } else { None };
     Ok(StructDef {
         name,
         description,
@@ -1458,8 +1643,24 @@ fn r_struct(r: &mut R) -> Res<StructDef> {
         rules: r.seq(5, r_rule)?,
         migrations: r.seq(2, r_migration)?,
         aliases: r.seq(2, R::qn)?,
-        provenance: f & 1 != 0,
-        s4: f & 2 != 0,
+        extensions: r_map(r, |r| Ok(r.str()?.to_owned()), String::clone)?,
+    })
+}
+
+fn r_table(r: &mut R) -> Res<TableDef> {
+    let name = r.name()?;
+    let description = r.str()?.to_owned();
+    let version = r.u32()?;
+    let f = r.flags(1, "table")?;
+    Ok(TableDef {
+        name,
+        description,
+        version,
+        open: f & 1 != 0,
+        columns: r.seq(4, r_column)?,
+        rules: r.seq(5, r_rule)?,
+        migrations: r.seq(2, r_migration)?,
+        aliases: r.seq(2, R::qn)?,
         extensions: r_map(r, |r| Ok(r.str()?.to_owned()), String::clone)?,
     })
 }
@@ -1472,19 +1673,19 @@ fn r_enum(r: &mut R) -> Res<EnumDef> {
     let variants = r.seq(3, |r| {
         let name = r.name()?;
         let description = r.str()?.to_owned();
-        let shape = match r.u8()? {
-            0 => VariantShape::Unit,
-            1 => VariantShape::Struct {
+        let kind = match r.u8()? {
+            0 => VariantKind::Unit,
+            1 => VariantKind::Struct {
                 fields: r.seq(4, r_field)?,
                 rules: r.seq(5, r_rule)?,
             },
-            2 => VariantShape::Newtype { of: r.qn()? },
-            t => return Err(RecordError::Tag("variant shape", t)),
+            2 => VariantKind::Newtype { of: r.qn()? },
+            t => return Err(RecordError::Tag("variant kind", t)),
         };
         Ok(VariantDef {
             name,
             description,
-            shape,
+            kind,
         })
     })?;
     Ok(EnumDef {
@@ -1503,6 +1704,7 @@ fn r_type_def(r: &mut R) -> Res<TypeDef> {
     Ok(match r.u8()? {
         0 => TypeDef::Struct(r_struct(r)?),
         1 => TypeDef::Enum(r_enum(r)?),
+        2 => TypeDef::Table(r_table(r)?),
         t => return Err(RecordError::Tag("type", t)),
     })
 }
@@ -1512,52 +1714,154 @@ fn r_method_name(r: &mut R) -> Res<MethodName> {
     MethodName::new(s).map_err(|_| RecordError::Name(s.to_string()))
 }
 
+fn w_class_system(w: &mut W, system: ClassSystem) {
+    w.u8(match system {
+        ClassSystem::S3 => 0,
+        ClassSystem::S4 => 1,
+        ClassSystem::Implicit => 2,
+    });
+}
+
+fn r_class_system(r: &mut R) -> Res<ClassSystem> {
+    Ok(match r.u8()? {
+        0 => ClassSystem::S3,
+        1 => ClassSystem::S4,
+        2 => ClassSystem::Implicit,
+        t => return Err(RecordError::Tag("class system", t)),
+    })
+}
+
+fn r_target(r: &mut R) -> Res<TypeRef> {
+    Ok(match r.u8()? {
+        0 => TypeRef::Named { name: r.qn()? },
+        1 => TypeRef::HostClass {
+            host: r.str()?.to_owned(),
+            package: r.str()?.to_owned(),
+            class: r.str()?.to_owned(),
+            system: r_class_system(r)?,
+        },
+        2 => TypeRef::Any,
+        t => return Err(RecordError::Tag("impl target", t)),
+    })
+}
+
+fn r_param(r: &mut R) -> Res<ParamDef> {
+    Ok(match r.u8()? {
+        0 => ParamDef::Name(r.str()?.to_owned()),
+        1 => {
+            let name = r.str()?.to_owned();
+            let f = r.flags(0b1111, "parameter")?;
+            let ty = if f & 2 != 0 { Some(r_type(r)?) } else { None };
+            let default = if f & 4 != 0 {
+                Some(Box::new(r_tree(r)?))
+            } else {
+                None
+            };
+            let host_default = if f & 8 != 0 {
+                Some(HostDefault {
+                    host: r.str()?.into(),
+                    text: r.str()?.into(),
+                })
+            } else {
+                None
+            };
+            ParamDef::Full(Param {
+                name,
+                dispatch: f & 1 != 0,
+                ty,
+                default,
+                host_default,
+                description: r.str()?.into(),
+            })
+        }
+        t => return Err(RecordError::Tag("parameter", t)),
+    })
+}
+
 fn r_trait(r: &mut R) -> Res<TraitDef> {
     let name = r.name()?;
     let description = r.str()?.to_owned();
     let f = r.flags(0b11, "trait")?;
     let tag = if f & 1 != 0 { Some(r.name()?) } else { None };
+    let extra_type_params = r.u8()?;
     Ok(TraitDef {
         name,
         description,
-        methods: r.seq(3, |r| {
+        methods: r.seq(4, |r| {
             let name = r_method_name(r)?;
             let description = r.str()?.to_owned();
-            let params = r_strings(r)?;
-            let f = r.flags(0b11, "method")?;
+            let params = r.seq(2, r_param)?;
+            let rules = r.seq(5, r_rule)?;
+            let f = r.flags(0b111, "method")?;
+            let return_type = if f & 4 != 0 {
+                Some(match r.u8()? {
+                    0 => ReturnType::SelfType(SelfMarker::SelfType),
+                    1 => ReturnType::Type(Box::new(r_type(r)?)),
+                    t => return Err(RecordError::Tag("return type", t)),
+                })
+            } else {
+                None
+            };
             Ok(MethodDef {
                 name,
                 description,
                 params,
+                return_type,
                 stochastic: f & 1 != 0,
-                has_default: f & 2 != 0,
+                has_default_impl: f & 2 != 0,
+                rules,
             })
         })?,
-        required_fields: r.seq(4, r_field)?,
+        required_fields: r.seq(3, |r| {
+            Ok(RequiredField {
+                name: r.name()?,
+                ty: r_type(r)?,
+                description: r.str()?.into(),
+            })
+        })?,
         supertraits: r.seq(2, R::qn)?,
         tag,
         generic: f & 2 != 0,
+        extra_type_params,
+    })
+}
+
+fn r_return(r: &mut R) -> Res<ReturnType> {
+    Ok(match r.u8()? {
+        0 => ReturnType::SelfType(SelfMarker::SelfType),
+        1 => ReturnType::Type(Box::new(r_type(r)?)),
+        t => return Err(RecordError::Tag("return type", t)),
+    })
+}
+
+fn r_function(r: &mut R) -> Res<FunctionDef> {
+    let name = r.name()?;
+    let description = r.str()?.to_owned();
+    let params = r.seq(2, r_param)?;
+    let f = r.flags(0b1111, "function")?;
+    let return_type = if f & 2 != 0 { Some(r_return(r)?) } else { None };
+    let on = if f & 8 != 0 { Some(r.qn()?) } else { None };
+    Ok(FunctionDef {
+        name,
+        description,
+        params,
+        return_type,
+        rules: r.seq(5, r_rule)?,
+        typed: if f & 4 != 0 {
+            Typed::Strict
+        } else {
+            Typed::Mixed
+        },
+        stochastic: f & 1 != 0,
+        on,
     })
 }
 
 fn r_impl(r: &mut R) -> Res<ImplDef> {
     let r#trait = r.qn()?;
-    let type_args = r_strings(r)?;
-    let target = match r.u8()? {
-        0 => ImplTarget::Type { name: r.qn()? },
-        1 => ImplTarget::HostClass {
-            host: r.str()?.to_owned(),
-            package: r.str()?.to_owned(),
-            class: r.str()?.to_owned(),
-            system: match r.u8()? {
-                0 => ClassSystem::S3,
-                1 => ClassSystem::S4,
-                t => return Err(RecordError::Tag("class system", t)),
-            },
-        },
-        t => return Err(RecordError::Tag("impl target", t)),
-    };
-    let f = r.flags(0b11, "impl")?;
+    let type_args = r.seq(1, r_target)?;
+    let target = r_target(r)?;
+    let f = r.flags(1, "impl")?;
     let tag_value = if f & 1 != 0 {
         Some(r.str()?.to_owned())
     } else {
@@ -1568,19 +1872,28 @@ fn r_impl(r: &mut R) -> Res<ImplDef> {
         type_args,
         target,
         tag_value,
-        methods: r.seq(1, r_method_name)?,
-        codec: f & 2 != 0,
+        methods: r.seq(2, |r| {
+            Ok(match r.u8()? {
+                0 => ImplMethod::Name(r_method_name(r)?),
+                1 => ImplMethod::Typed(TypedImplMethod {
+                    name: r_method_name(r)?,
+                    return_type: r_type(r)?,
+                }),
+                t => return Err(RecordError::Tag("impl method", t)),
+            })
+        })?,
     })
 }
 
-/// Reads the payload of format 1.
-fn r_payload_v1(r: &mut R) -> Res<Vec<Entry>> {
+/// Reads the payload of the current format.
+fn r_payload(r: &mut R) -> Res<Vec<Entry>> {
     r.seq(2, |r| {
         let namespace = r.name()?;
         let declaration = match r.u8()? {
             0 => Declaration::Type(r_type_def(r)?),
             1 => Declaration::Trait(r_trait(r)?),
             2 => Declaration::Impl(r_impl(r)?),
+            3 => Declaration::Function(r_function(r)?),
             t => return Err(RecordError::Tag("declaration", t)),
         };
         Ok(Entry {
@@ -1607,7 +1920,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Entry>, RecordError> {
     let mut r = R { b: rest, depth: 0 };
     let format = r.u32()?;
     let writer = r.str()?;
-    if format > FORMAT || format == 0 {
+    if format != FORMAT {
         return Err(RecordError::Newer {
             format,
             writer: writer.to_string(),
@@ -1622,7 +1935,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Entry>, RecordError> {
         depth: 0,
     };
     let entries = match format {
-        1 => r_payload_v1(&mut r)?,
+        FORMAT => r_payload(&mut r)?,
         _ => unreachable!("format checked above"),
     };
     if !r.b.is_empty() {

@@ -23,9 +23,9 @@ use extendr_ffi::{
     TYPEOF, VECTOR_ELT, XLENGTH,
 };
 use rtemis_r8::access::{
-    Access, Codes, Dense, Dimnames, Factor, Form, Indices, Names, Read, Sparse, Table,
+    Access, Codes, Dense, Dimnames, Factor, Form, Indices, Names, Read, Sparse, Table, Unnamed,
 };
-use rtemis_r8::ir::{EnumDef, FieldDef, FieldType};
+use rtemis_r8::ir::{EnumDef, FieldType};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 use serde_json::Value;
@@ -115,15 +115,6 @@ pub(crate) fn sym_tzone() -> SEXP {
 pub(crate) fn sym_row_names() -> SEXP {
     symbol!(c"row.names")
 }
-pub(crate) fn sym_r8_type() -> SEXP {
-    symbol!(c"r8_type")
-}
-pub(crate) fn sym_r8_version() -> SEXP {
-    symbol!(c"r8_version")
-}
-pub(crate) fn sym_r8_variant() -> SEXP {
-    symbol!(c"r8_variant")
-}
 fn sym_dim_cap() -> SEXP {
     symbol!(c"Dim")
 }
@@ -153,27 +144,56 @@ pub(crate) fn sexptype(x: SEXP) -> SEXPTYPE {
     unsafe { TYPEOF(x) }
 }
 
+/// The length of a vector, 0 for `NULL`, and 1 for an object that is not a
+/// vector, such as a symbol, a function, or an environment, for which
+/// `XLENGTH()` raises an R error, a jump through the Rust frames that called
+/// it.
 pub(crate) fn xlen(x: SEXP) -> usize {
-    if is_null(x) {
-        0
-    } else {
-        unsafe { XLENGTH(x) as usize }
+    match sexptype(x) {
+        SEXPTYPE::NILSXP => 0,
+        SEXPTYPE::LGLSXP
+        | SEXPTYPE::INTSXP
+        | SEXPTYPE::REALSXP
+        | SEXPTYPE::CPLXSXP
+        | SEXPTYPE::STRSXP
+        | SEXPTYPE::VECSXP
+        | SEXPTYPE::EXPRSXP
+        | SEXPTYPE::RAWSXP => unsafe { XLENGTH(x) as usize },
+        _ => 1,
     }
 }
 
-/// A string element of a character vector, `None` for `NA`. A string that
-/// is not valid UTF-8 is converted with replacement characters.
+/// A string element of a character vector, `None` for `NA`. A string that is no
+/// text is converted with replacement characters; the validator reports it.
 pub(crate) fn string_elt<'a>(x: SEXP, i: usize) -> Option<Cow<'a, str>> {
     unsafe {
         let c = STRING_ELT(x, i as R_xlen_t);
         if c == R_NaString {
             return None;
         }
-        let bytes = std::slice::from_raw_parts(R_CHAR(c) as *const u8, LENGTH(c) as usize);
-        Some(match std::str::from_utf8(bytes) {
-            Ok(s) => Cow::Borrowed(s),
-            Err(_) => Cow::Owned(String::from_utf8_lossy(bytes).into_owned()),
-        })
+        Some(crate::utf8::text(c).unwrap_or_else(|_| {
+            let bytes = std::slice::from_raw_parts(R_CHAR(c) as *const u8, LENGTH(c) as usize);
+            Cow::Owned(String::from_utf8_lossy(bytes).into_owned())
+        }))
+    }
+}
+
+/// The problem of a string that is no text.
+pub(crate) fn not_text(at: usize) -> Form {
+    Form::new(
+        "r_encoding",
+        format!(
+            "the string is not valid UTF-8 at byte {at}; {}",
+            crate::utf8::ADVICE
+        ),
+    )
+}
+
+/// The problem of the names, the levels, or the keys `x`, when one is no text.
+fn names_text(x: SEXP) -> Read<()> {
+    match crate::utf8::invalid(x) {
+        None => Ok(()),
+        Some((_, at)) => Err(not_text(at)),
     }
 }
 
@@ -189,6 +209,65 @@ pub(crate) fn inherits(x: SEXP, class: &str) -> bool {
     let c = attr(x, sym_class());
     sexptype(c) == SEXPTYPE::STRSXP
         && (0..xlen(c)).any(|i| string_elt(c, i).as_deref() == Some(class))
+}
+
+/// The class attribute of `x` as a message writes it, or `""` without one.
+fn classes(x: SEXP) -> String {
+    strings(attr(x, sym_class()))
+        .into_iter()
+        .flatten()
+        .map(|c| format!("{c:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Whether the class vector of `x`, as R's `.class2()` gives it, holds
+/// `class`, which is what a dispatched position of that class matches. The
+/// implicit classes of an object without a class attribute are read from its
+/// type and `dim` attribute; R gives those of an S4 object and of a language
+/// object.
+pub(crate) fn is_host_class(x: SEXP, class: &str) -> bool {
+    if inherits(x, class) {
+        return true;
+    }
+    let object = !is_null(attr(x, sym_class()));
+    let s4 = unsafe { extendr_ffi::Rf_isS4(x) } == extendr_ffi::Rboolean::TRUE;
+    if s4 || sexptype(x) == SEXPTYPE::LANGSXP {
+        use extendr_api::prelude::*;
+        let x = unsafe { Robj::from_sexp(x) };
+        // The call evaluates its argument, which quotes a language object.
+        let x = lang!("quote", x);
+        return R!("base::.class2")
+            .ok()
+            .and_then(|f| f.as_function())
+            .and_then(|f| f.call(pairlist!(x)).ok())
+            .is_some_and(|c| {
+                c.as_str_iter()
+                    .is_some_and(|mut names| names.any(|n| n == class))
+            });
+    }
+    if object {
+        return false;
+    }
+    match (class, xlen(attr(x, sym_dim()))) {
+        ("matrix", n) => return n == 2,
+        ("array", n) => return n > 0,
+        _ => {}
+    }
+    match sexptype(x) {
+        SEXPTYPE::NILSXP => class == "NULL",
+        SEXPTYPE::LGLSXP => class == "logical",
+        SEXPTYPE::INTSXP => matches!(class, "integer" | "numeric"),
+        SEXPTYPE::REALSXP => matches!(class, "double" | "numeric"),
+        SEXPTYPE::CPLXSXP => class == "complex",
+        SEXPTYPE::STRSXP => class == "character",
+        SEXPTYPE::RAWSXP => class == "raw",
+        SEXPTYPE::VECSXP => class == "list",
+        SEXPTYPE::SYMSXP => class == "name",
+        SEXPTYPE::ENVSXP => class == "environment",
+        SEXPTYPE::CLOSXP | SEXPTYPE::SPECIALSXP | SEXPTYPE::BUILTINSXP => class == "function",
+        _ => false,
+    }
 }
 
 /// The class vector of `x` is exactly `want`.
@@ -248,14 +327,22 @@ fn data<'a, T>(x: SEXP) -> Option<&'a [T]> {
     (!p.is_null()).then(|| unsafe { std::slice::from_raw_parts(p.cast::<T>(), xlen(x)) })
 }
 
+/// The elements between two ticks of a walk.
+const WALK: usize = 4096;
+
 /// Calls `f` with elements `start..end` of a double vector: from its array
 /// where R holds one, else by region from its payload, which leaves an
 /// ALTREP vector unmaterialized, else by element (`payload()`). A short
 /// region read ends the calls early.
 pub(crate) fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, f64)) {
     if let Some(s) = data::<f64>(x) {
-        for (i, &v) in s[start..end].iter().enumerate() {
-            f(start + i, v);
+        let mut at = start;
+        for part in s[start..end].chunks(WALK) {
+            crate::interrupt::tick_block();
+            for (i, &v) in part.iter().enumerate() {
+                f(at + i, v);
+            }
+            at += part.len();
         }
         return;
     }
@@ -269,6 +356,7 @@ pub(crate) fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usi
     let mut i = start;
     while i < end {
         let want = buf.len().min(end - i) as R_xlen_t;
+        crate::interrupt::tick_block();
         let got = unsafe { REAL_GET_REGION(p, i as R_xlen_t, want, buf.as_mut_ptr()) } as usize;
         if got == 0 {
             break;
@@ -284,8 +372,13 @@ pub(crate) fn for_reals(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usi
 /// `for_reals()` reads a double vector.
 pub(crate) fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usize, i32)) {
     if let Some(s) = data::<i32>(x) {
-        for (i, &v) in s[start..end].iter().enumerate() {
-            f(start + i, v);
+        let mut at = start;
+        for part in s[start..end].chunks(WALK) {
+            crate::interrupt::tick_block();
+            for (i, &v) in part.iter().enumerate() {
+                f(at + i, v);
+            }
+            at += part.len();
         }
         return;
     }
@@ -300,6 +393,7 @@ pub(crate) fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usiz
     let mut i = start;
     while i < end {
         let want = buf.len().min(end - i) as R_xlen_t;
+        crate::interrupt::tick_block();
         let got = unsafe {
             if logical {
                 LOGICAL_GET_REGION(p, i as R_xlen_t, want, buf.as_mut_ptr())
@@ -317,8 +411,43 @@ pub(crate) fn for_ints(x: SEXP, start: usize, end: usize, mut f: impl FnMut(usiz
     }
 }
 
+/// `r_type`: the R object is not of the kind the field holds. A message
+/// "expected <kind>" states the kind as a requirement.
 fn r_type(message: impl Into<String>) -> Form {
-    Form::new("r_type", message)
+    let message = message.into();
+    match message.strip_prefix("expected ") {
+        Some(kind) => Form::problem(
+            "r_type",
+            rtemis_r8::problem::Problem::Kind(kind.to_string()),
+            None,
+        ),
+        None => Form::new("r_type", message),
+    }
+}
+
+/// The kind of an R object, as a message names it: "a character vector",
+/// "a factor", "a list".
+fn r_kind(x: SEXP) -> String {
+    if inherits(x, "factor") {
+        return "a factor".to_string();
+    }
+    if inherits(x, "Date") {
+        return "a Date".to_string();
+    }
+    if inherits(x, "POSIXct") {
+        return "a POSIXct".to_string();
+    }
+    match sexptype(x) {
+        SEXPTYPE::LGLSXP => "a logical vector",
+        SEXPTYPE::INTSXP => "an integer vector",
+        SEXPTYPE::REALSXP => "a numeric vector",
+        SEXPTYPE::STRSXP => "a character vector",
+        SEXPTYPE::VECSXP => "a list",
+        SEXPTYPE::NILSXP => "NULL",
+        SEXPTYPE::CLOSXP | SEXPTYPE::BUILTINSXP | SEXPTYPE::SPECIALSXP => "a function",
+        _ => "another kind of R object",
+    }
+    .to_string()
 }
 
 fn unwrap_option(ft: &FieldType) -> &FieldType {
@@ -405,11 +534,10 @@ fn plain(x: SEXP, allowed: &[fn() -> SEXP]) -> Read<()> {
         .into_iter()
         .filter(|a| !allowed_names.contains(a))
         .collect();
-    Err(Form::new(
+    Err(Form::problem(
         "r_attributes",
-        format!(
-            "the value carries the attributes {extra:?}, which this field's type does not hold; r8_conform() removes them"
-        ),
+        rtemis_r8::problem::Problem::Attributes(extra.iter().map(|a| a.to_string()).collect()),
+        None,
     ))
 }
 
@@ -445,15 +573,20 @@ fn atomic_kind(x: SEXP, ft: &FieldType) -> Read<()> {
     if ok {
         return Ok(());
     }
-    Err(r_type(match ft {
-        FieldType::Logical => "expected a logical vector",
-        FieldType::Integer(_) => "expected an integer vector",
-        FieldType::Double(_) => "expected a numeric vector",
-        FieldType::Character(_) => "expected a character vector",
-        FieldType::Date => "expected a Date",
-        FieldType::Posixct => "expected a POSIXct",
-        _ => "expected an atomic vector",
-    }))
+    let want = match ft {
+        FieldType::Logical => "a logical vector",
+        FieldType::Integer(_) => "an integer vector",
+        FieldType::Double(_) => "a numeric vector",
+        FieldType::Character(_) => "a character vector",
+        FieldType::Date => "a Date",
+        FieldType::Posixct => "a POSIXct",
+        _ => "an atomic vector",
+    };
+    Err(Form::problem(
+        "r_type",
+        rtemis_r8::problem::Problem::Kind(want.to_string()),
+        Some(rtemis_r8::rules::Shown::Kind(r_kind(x))),
+    ))
 }
 
 fn date_days(d: f64) -> Read<i64> {
@@ -470,9 +603,13 @@ fn whole(d: f64) -> Read<i64> {
     if d.fract() == 0.0 && d.abs() <= 2_147_483_647.0 {
         Ok(d as i64)
     } else {
-        Err(r_type(format!(
-            "{d} is not a whole number in the integer range"
-        )))
+        Err(Form::problem(
+            "r_type",
+            rtemis_r8::problem::Problem::Kind(
+                "a whole number from -2147483647 to 2147483647".to_string(),
+            ),
+            Some(rtemis_r8::rules::Shown::number(d)),
+        ))
     }
 }
 
@@ -524,7 +661,7 @@ impl<'a> RView<'a> {
         }
     }
 
-    fn sexp(self) -> Option<SEXP> {
+    pub(crate) fn sexp(self) -> Option<SEXP> {
         match self {
             RView::Whole(x) | RView::Draft(x, _) => Some(x),
             _ => None,
@@ -550,6 +687,15 @@ impl<'a> RView<'a> {
         }
     }
 
+    /// What the view reads, for a message: an object's class when it has a
+    /// class attribute.
+    fn described(self) -> String {
+        match self.sexp().map(classes) {
+            Some(c) if !c.is_empty() => format!("an object of class {c}"),
+            _ => self.found().to_string(),
+        }
+    }
+
     /// A scalar: a length-one atomic vector of `ft` without other attributes
     /// than `ft` allows, not `NA`; or an element of a vector.
     fn scalar(self, ft: &FieldType) -> Read<(SEXP, usize)> {
@@ -557,16 +703,18 @@ impl<'a> RView<'a> {
             RView::Whole(x) => {
                 plain(x, allowed_attributes(ft))?;
                 if xlen(x) != 1 {
-                    return Err(Form::new(
+                    return Err(Form::problem(
                         "r_length",
-                        format!("expected one value, found {}", xlen(x)),
+                        rtemis_r8::problem::Problem::OneValue,
+                        Some(rtemis_r8::rules::Shown::Length(xlen(x) as u64)),
                     ));
                 }
                 atomic_kind(x, ft)?;
                 if RView::Elem(x, 0).is_absent() {
-                    return Err(Form::new(
+                    return Err(Form::problem(
                         "na_value",
-                        "NA is not a value of this field; an absent value is declared option()",
+                        rtemis_r8::problem::Problem::Present,
+                        Some(rtemis_r8::rules::Shown::Missing),
                     ));
                 }
                 Ok((x, 0))
@@ -578,6 +726,49 @@ impl<'a> RView<'a> {
             _ => Err(Form::mismatch("a value", self.found())),
         }
     }
+}
+
+/// Whether `x` is a value of the type `name` itself, of the registered
+/// declaration; a descendant's class
+/// vector also names its ancestors, so `inherits()` does not decide it.
+pub(crate) fn is_type(x: SEXP, name: &QualifiedName) -> bool {
+    crate::value::type_name(x).is_some_and(|t| *t == *name.to_string().as_str())
+        && crate::value::usable(x)
+}
+
+/// The message of an object that is not a value of the named type `name`; a
+/// value of a descendant is named with the upcast that gives its value of
+/// `name`, and an object that has the class of a value without being one, with
+/// what makes such an object.
+pub(crate) fn not_named_message(x: Option<SEXP>, name: &QualifiedName) -> String {
+    if let Some(x) = x
+        && crate::value::type_name(x).is_some_and(|t| *t == *name.to_string().as_str())
+        && let Some(o) = crate::value::other(x)
+    {
+        return format!("expected a value of `{name}`, found one {}", o.message());
+    }
+    let classed = x.filter(|&x| inherits(x, "r8_value"));
+    match classed.map(|x| (x, crate::value::type_name(x))) {
+        Some((x, Some(child))) if inherits(x, &name.to_string()) => format!(
+            "expected a value of `{name}`, found one of its descendant `{child}`; r8_upcast() gives its value of `{name}`"
+        ),
+        Some((_, None)) => format!(
+            "expected a value of `{name}`, found a list with the class of one, as dput() and a write of its elements in C code give it; construct the value with its type"
+        ),
+        _ => format!("expected a value of `{name}`"),
+    }
+}
+
+/// The error of a value that is not of the named type `name`.
+fn not_named(x: Option<SEXP>, name: &QualifiedName) -> Form {
+    let message = not_named_message(x, name);
+    if x.and_then(crate::value::other).is_some()
+        && let Some(kind) = message.strip_prefix("expected ")
+    {
+        let problem = rtemis_r8::problem::Problem::Kind(kind.to_string());
+        return Form::problem("declaration_changed", problem, None);
+    }
+    r_type(message)
 }
 
 impl<'a> Access<'a> for RView<'a> {
@@ -618,7 +809,10 @@ impl<'a> Access<'a> for RView<'a> {
 
     fn character(self) -> Read<Cow<'a, str>> {
         let (x, i) = self.scalar(&FieldType::Character(Default::default()))?;
-        Ok(string_elt(x, i).unwrap_or(Cow::Borrowed("NA")))
+        match crate::utf8::text(unsafe { STRING_ELT(x, i as R_xlen_t) }) {
+            Ok(s) => Ok(s),
+            Err(at) => Err(not_text(at)),
+        }
     }
 
     fn date(self) -> Read<i64> {
@@ -670,9 +864,9 @@ impl<'a> Access<'a> for RView<'a> {
         Ok(Cow::Owned(out))
     }
 
-    fn json(self) -> Read<()> {
+    fn json(self, levels: u32) -> Read<()> {
         match self.sexp() {
-            Some(x) => json_form(x, ""),
+            Some(x) => json_form(x, "", levels),
             None => Err(Form::new(
                 "r_json",
                 "a JSON value in R is a list, a length-one atomic vector, or NULL",
@@ -680,8 +874,15 @@ impl<'a> Access<'a> for RView<'a> {
         }
     }
 
-    fn runtime(self) -> Read<()> {
-        Ok(())
+    fn host_class(self, host: &str, class: &str) -> Read<()> {
+        match self.sexp() {
+            Some(x) if host == "r" && is_host_class(x, class) => Ok(()),
+            _ => Err(Form::problem(
+                "r_type",
+                rtemis_r8::problem::Problem::Kind(format!("an object of class {class:?}")),
+                Some(rtemis_r8::rules::Shown::Kind(self.described())),
+            )),
+        }
     }
 
     fn vec(self, element: &FieldType) -> Read<usize> {
@@ -733,6 +934,7 @@ impl<'a> Access<'a> for RView<'a> {
         if buf.is_empty() || start >= xlen(x) {
             return Some(0);
         }
+        crate::interrupt::tick_block();
         Some(unsafe {
             REAL_GET_REGION(
                 x,
@@ -751,6 +953,7 @@ impl<'a> Access<'a> for RView<'a> {
         if buf.is_empty() || start >= xlen(x) {
             return Some(0);
         }
+        crate::interrupt::tick_block();
         Some(unsafe {
             INTEGER_GET_REGION(
                 x,
@@ -759,6 +962,29 @@ impl<'a> Access<'a> for RView<'a> {
                 buf.as_mut_ptr(),
             )
         } as usize)
+    }
+
+    fn text_keys(self, start: usize, out: &mut [usize]) -> bool {
+        // R holds one object for the strings of one encoding and one text.
+        let Some(x) = self.sexp() else { return false };
+        if sexptype(x) != SEXPTYPE::STRSXP || xlen(x) < start + out.len() {
+            return false;
+        }
+        let na = unsafe { R_NaString };
+        let key = |c: SEXP| if c == na { 0 } else { c as usize };
+        match data::<SEXP>(x) {
+            Some(s) => {
+                for (o, &c) in out.iter_mut().zip(&s[start..]) {
+                    *o = key(c);
+                }
+            }
+            None => {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = key(unsafe { STRING_ELT(x, (start + k) as R_xlen_t) });
+                }
+            }
+        }
+        true
     }
 
     fn sorted_without_na(self) -> Option<bool> {
@@ -846,8 +1072,17 @@ impl<'a> Access<'a> for RView<'a> {
     ) {
         let Some(x) = self.sexp() else { return };
         if sexptype(x) == SEXPTYPE::STRSXP {
+            let na = unsafe { R_NaString };
             for i in start..end.min(xlen(x)) {
-                f(i, Ok(string_elt(x, i)));
+                if i % 1024 == 0 {
+                    crate::interrupt::tick_block();
+                }
+                let c = unsafe { STRING_ELT(x, i as R_xlen_t) };
+                if c == na {
+                    f(i, Ok(None));
+                } else {
+                    f(i, crate::utf8::text(c).map(Some).map_err(not_text));
+                }
             }
         }
     }
@@ -895,8 +1130,14 @@ impl<'a> Access<'a> for RView<'a> {
             return Err(Form::mismatch("a map", self.found()));
         };
         let names = attr(x, sym_names());
+        // `list()`, a zero-length list without names, is the empty map.
+        if sexptype(x) == SEXPTYPE::VECSXP && xlen(x) == 0 && is_null(names) {
+            return Ok(0);
+        }
         if sexptype(names) != SEXPTYPE::STRSXP || xlen(names) != xlen(x) {
-            return Err(r_type("a map is a named list or a named vector"));
+            return Err(r_type(
+                "a map is a named list or a named vector; `list()` is the empty map",
+            ));
         }
         if sexptype(x) != SEXPTYPE::VECSXP {
             let inner = unwrap_option(value);
@@ -916,6 +1157,10 @@ impl<'a> Access<'a> for RView<'a> {
         }
         let list = sexptype(x) == SEXPTYPE::VECSXP;
         for i in 0..xlen(x).min(xlen(names)) {
+            if let Err(at) = crate::utf8::text(unsafe { STRING_ELT(names, i as R_xlen_t) }) {
+                f(i, Err(not_text(at)));
+                continue;
+            }
             let k = string_elt(names, i).unwrap_or(Cow::Borrowed("NA"));
             let v = if list {
                 RView::Whole(unsafe { VECTOR_ELT(x, i as R_xlen_t) })
@@ -941,6 +1186,7 @@ impl<'a> Access<'a> for RView<'a> {
                 "expected an unordered factor"
             }));
         }
+        names_text(attr(x, sym_levels()))?;
         let lv = strings(attr(x, sym_levels()));
         if lv.iter().any(Option::is_none) {
             return Err(Form::new("r_factor", "a factor has no NA level"));
@@ -967,6 +1213,11 @@ impl<'a> Access<'a> for RView<'a> {
         let shape: Vec<u64> = ints(dim).iter().map(|&d| d.max(0) as u64).collect();
         let mut problems = Vec::new();
         let dn = attr(x, sym_dimnames());
+        if sexptype(dn) == SEXPTYPE::VECSXP {
+            for i in 0..xlen(dn) {
+                names_text(unsafe { VECTOR_ELT(dn, i as R_xlen_t) })?;
+            }
+        }
         if !is_null(dn) {
             let ok = sexptype(dn) == SEXPTYPE::VECSXP
                 && xlen(dn) == shape.len()
@@ -1053,23 +1304,32 @@ impl<'a> Access<'a> for RView<'a> {
         })
     }
 
-    fn table(self, _columns: &[FieldDef], _open: bool) -> Read<Table<'a, Self>> {
+    fn table<C: rtemis_r8::ir::Column>(self, _columns: &[C], _open: bool) -> Read<Table<'a, Self>> {
         let Some(x) = self.sexp() else {
             return Err(r_type("expected a data.frame"));
         };
-        if sexptype(x) != SEXPTYPE::VECSXP || !inherits(x, "data.frame") {
+        // A value of a named table, and the columns that one is made from, are
+        // lists of columns; a table field is a data frame.
+        let named = matches!(self, RView::Draft(..)) || is_table_value(x);
+        if sexptype(x) != SEXPTYPE::VECSXP || !(named || inherits(x, "data.frame")) {
             return Err(r_type("expected a data.frame"));
         }
-        let rows = table_rows(x)?;
+        let rows = if named { list_rows(x) } else { table_rows(x)? };
         let names = attr(x, sym_names());
-        let columns = (0..xlen(x))
-            .map(|i| {
-                (
-                    string_elt(names, i).unwrap_or(Cow::Borrowed("NA")),
-                    RView::Whole(unsafe { VECTOR_ELT(x, i as R_xlen_t) }),
-                )
-            })
-            .collect();
+        names_text(names)?;
+        if rows > MAX_ROWS {
+            return Err(too_many_rows(rows));
+        }
+        let mut columns = Vec::with_capacity(xlen(x));
+        for i in 0..xlen(x) {
+            let Some(name) = string_elt(names, i) else {
+                return Err(Form::new(
+                    "column_name",
+                    format!("the name of column {} is missing", i + 1),
+                ));
+            };
+            columns.push((name, RView::Whole(unsafe { VECTOR_ELT(x, i as R_xlen_t) })));
+        }
         Ok(Table {
             rows,
             columns,
@@ -1077,15 +1337,62 @@ impl<'a> Access<'a> for RView<'a> {
         })
     }
 
-    fn extra_column_type(self, name: &str) -> Read<FieldType> {
-        let col = match self.member(name) {
+    fn extra_column_type(self, name: &str, cells: Self) -> Read<FieldType> {
+        let col = match cells {
             RView::Whole(c) => c,
             _ => return Err(r_type(format!("column `{name}` is absent"))),
         };
         infer_column(col).ok_or_else(|| {
-            r_type(format!("column `{name}` holds no column type: logical, integer, double, character, factor, Date, or POSIXct"))
-                .at(format!("/{}", name.replace('~', "~0").replace('/', "~1")))
+            let class = attr(col, sym_class());
+            let class = (!is_null(class)).then(|| string_elt(class, 0)).flatten();
+            let is = match &class {
+                Some(c) => format!("is a `{c}`"),
+                None if sexptype(col) == SEXPTYPE::VECSXP => "is a list".to_string(),
+                None => "is of another type".to_string(),
+            };
+            let as_one = match class.as_deref() {
+                Some("difftime") => "; as.numeric(x, units = \"hours\") gives numbers, whose unit r8_annotate() records",
+                Some("integer64") => "; as.character() gives its digits, and as.numeric() its numbers up to 2^53",
+                Some("units") => "; as.numeric() gives its numbers, whose unit r8_annotate() records",
+                Some("POSIXlt") => "; as.POSIXct() gives a column",
+                Some("haven_labelled") => "; haven::as_factor() gives a factor",
+                _ => "",
+            };
+            Form::new(
+                "column_type",
+                format!("column `{name}` {is}; a column is a logical, an integer, a double, a character vector, a factor, a Date, or a POSIXct{as_one}"),
+            )
         })
+    }
+
+    fn column_facts(self, name: &str) -> Read<rtemis_r8::access::ColumnFacts> {
+        let mut out = rtemis_r8::access::ColumnFacts::default();
+        let RView::Whole(x) = self else {
+            return Ok(out);
+        };
+        let of = list_member(crate::value::table_facts(x), name);
+        if let Some(of) = of.filter(|f| sexptype(*f) == SEXPTYPE::VECSXP) {
+            let text = |k: &str| {
+                list_member(of, k)
+                    .and_then(|s| string_elt(s, 0))
+                    .map(Cow::into_owned)
+            };
+            out.unit = text("unit");
+            out.description = text("description");
+        }
+        Ok(out)
+    }
+
+    fn holds_only(self, ty: &FieldType) -> bool {
+        let RView::Whole(x) = self else {
+            return false;
+        };
+        matches!(
+            (ty, sexptype(x)),
+            (FieldType::Logical, SEXPTYPE::LGLSXP)
+                | (FieldType::Integer(_), SEXPTYPE::INTSXP)
+                | (FieldType::Double(_), SEXPTYPE::REALSXP)
+        )
     }
 
     fn row(self, i: usize) -> Self {
@@ -1098,14 +1405,8 @@ impl<'a> Access<'a> for RView<'a> {
     fn record(self, name: &QualifiedName) -> Read<()> {
         match self {
             RView::Draft(..) => Ok(()),
-            RView::Whole(x)
-                if sexptype(x) == SEXPTYPE::VECSXP
-                    && inherits(x, "r8_value")
-                    && inherits(x, &name.to_string()) =>
-            {
-                Ok(())
-            }
-            _ => Err(r_type(format!("expected a value of `{name}`"))),
+            RView::Whole(x) if is_type(x, name) => Ok(()),
+            other => Err(not_named(other.sexp(), name)),
         }
     }
 
@@ -1146,15 +1447,10 @@ impl<'a> Access<'a> for RView<'a> {
     fn variant(self, name: &QualifiedName, _def: &EnumDef) -> Read<Cow<'a, str>> {
         match self {
             RView::Draft(_, v) => Ok(Cow::Borrowed(v)),
-            RView::Whole(x) if inherits(x, "r8_value") && inherits(x, &name.to_string()) => {
-                attr_string(x, sym_r8_variant()).ok_or_else(|| {
-                    Form::new(
-                        "missing_tag",
-                        format!("a `{name}` value names its variant in `r8_variant`"),
-                    )
-                })
-            }
-            _ => Err(r_type(format!("expected a value of `{name}`"))),
+            RView::Whole(x) if is_type(x, name) => crate::value::variant(x).ok_or_else(|| {
+                Form::new("missing_tag", format!("the `{name}` value has no variant"))
+            }),
+            other => Err(not_named(other.sexp(), name)),
         }
     }
 
@@ -1162,11 +1458,16 @@ impl<'a> Access<'a> for RView<'a> {
         self,
         _trait: &QualifiedName,
         _lookup: &dyn TypeLookup,
-    ) -> Result<(QualifiedName, Option<String>), String> {
-        let ty = self.sexp().and_then(|x| attr_string(x, sym_r8_type()));
+    ) -> Result<(QualifiedName, Option<String>), Unnamed> {
+        self.named_type()
+    }
+
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), Unnamed> {
+        let ty = self.sexp().and_then(crate::value::type_name);
+        self.sexp().into_iter().for_each(crate::value::meet);
         ty.and_then(|t| QualifiedName::parse(&t).ok())
             .map(|q| (q, None))
-            .ok_or_else(|| "a dyn() field holds an R8 value".to_string())
+            .ok_or_else(|| Unnamed::NotValue(self.described()))
     }
 
     fn same(self, other: Self) -> bool {
@@ -1212,10 +1513,10 @@ fn elem_value(x: SEXP, i: usize, ft: &FieldType) -> Value {
             }
         }
         (FieldType::Date, _) => number_elt(x, i).map_or(Value::Null, |d| {
-            Value::from(rtemis_r8::codec::date_text(d as i64))
+            Value::from(rtemis_r8::canonical::date_text(d as i64))
         }),
         (FieldType::Posixct, _) => number_elt(x, i).map_or(Value::Null, |s| {
-            Value::from(rtemis_r8::codec::datetime_text((s * 1e6).round() as i64))
+            Value::from(rtemis_r8::canonical::datetime_text((s * 1e6).round() as i64))
         }),
         (_, SEXPTYPE::LGLSXP) => Value::Bool(int_elt(x, i) != 0),
         (_, SEXPTYPE::STRSXP) => {
@@ -1280,6 +1581,31 @@ pub(crate) fn list_member_at(x: SEXP, hint: usize, name: &str) -> Option<SEXP> {
 
 /// The number of rows of a data.frame with automatic row names: the compact
 /// form `c(NA, -n)` or `c(NA, n)`, or `1:n`.
+/// Whether `x` is a value of a named table.
+pub(crate) fn is_table_value(x: SEXP) -> bool {
+    crate::value::is_value(x) && inherits(x, "r8_table")
+}
+
+/// The most rows of a table: the greatest integer of R, in which a data frame and
+/// `dim()` count rows.
+pub(crate) const MAX_ROWS: u64 = i32::MAX as u64;
+
+/// The problem of a table of more rows.
+pub(crate) fn too_many_rows(rows: u64) -> Form {
+    Form::new(
+        "row_limit",
+        format!("a table has at most 2,147,483,647 rows; the columns have {rows}"),
+    )
+}
+
+/// The number of rows of a list of columns: the length of the first.
+pub(crate) fn list_rows(x: SEXP) -> u64 {
+    if sexptype(x) != SEXPTYPE::VECSXP || xlen(x) == 0 {
+        return 0;
+    }
+    xlen(unsafe { VECTOR_ELT(x, 0) }) as u64
+}
+
 pub(crate) fn table_rows(x: SEXP) -> Read<u64> {
     let rn = attrib_raw(x, sym_row_names());
     if is_null(rn) {
@@ -1312,6 +1638,13 @@ pub(crate) fn table_rows(x: SEXP) -> Read<u64> {
 /// The column type of an extra column of an open table, from its R class;
 /// cells may be missing, so the type is `option()` of the class's type.
 pub(crate) fn infer_column(col: SEXP) -> Option<FieldType> {
+    // A vector of another class, such as a `difftime` or an `integer64`, has a
+    // meaning that its numbers alone do not have.
+    let class = attr(col, sym_class());
+    let known = ["factor", "Date", "POSIXct"];
+    if !is_null(class) && !known.iter().any(|c| inherits(col, c)) {
+        return None;
+    }
     let base = if inherits(col, "factor") {
         FieldType::Factor {
             levels: None,
@@ -1325,31 +1658,53 @@ pub(crate) fn infer_column(col: SEXP) -> Option<FieldType> {
         match sexptype(col) {
             SEXPTYPE::LGLSXP => FieldType::Logical,
             SEXPTYPE::INTSXP => FieldType::Integer(Default::default()),
-            SEXPTYPE::REALSXP => FieldType::Double(Default::default()),
+            SEXPTYPE::REALSXP => FieldType::Double(rtemis_r8::ir::DoubleType {
+                infinite: true,
+                nan: true,
+                ..Default::default()
+            }),
             SEXPTYPE::STRSXP => FieldType::Character(Default::default()),
             _ => return None,
         }
     };
     Some(FieldType::Option {
         inner: Box::new(base),
-        resolve: Default::default(),
     })
 }
 
 /// The JSON form of a `type_json()` value in R: `NULL`, a length-one atomic
 /// vector that is not `NA` and is finite, or a list of such values.
-fn json_form(x: SEXP, suffix: &str) -> Read<()> {
+fn json_form(x: SEXP, suffix: &str, levels: u32) -> Read<()> {
     let fail = |m: &str| Err(Form::new("r_json", m).at(suffix.to_string()));
     match sexptype(x) {
         SEXPTYPE::NILSXP => Ok(()),
+        SEXPTYPE::VECSXP if levels == 0 => {
+            Err(rtemis_r8::access::too_deep().at(suffix.to_string()))
+        }
         SEXPTYPE::VECSXP => {
             let names = attr(x, sym_names());
+            if let Err(f) = names_text(names) {
+                return Err(f.at(suffix.to_string()));
+            }
+            if sexptype(names) == SEXPTYPE::STRSXP
+                && let Some(k) = rtemis_r8::tree::repeated(
+                    (0..xlen(names)).map(|i| string_elt(names, i).unwrap_or_default()),
+                )
+            {
+                return Err(Form::new(
+                    "duplicate_key",
+                    format!(
+                        "two elements are named `{k}`; the members of a JSON object have distinct names"
+                    ),
+                )
+                .at(suffix.to_string()));
+            }
             for i in 0..xlen(x) {
                 let s = match string_elt_opt(names, i) {
                     Some(k) => format!("{suffix}/{}", k.replace('~', "~0").replace('/', "~1")),
                     None => format!("{suffix}/{i}"),
                 };
-                json_form(unsafe { VECTOR_ELT(x, i as R_xlen_t) }, &s)?;
+                json_form(unsafe { VECTOR_ELT(x, i as R_xlen_t) }, &s, levels - 1)?;
             }
             Ok(())
         }
@@ -1363,6 +1718,9 @@ fn json_form(x: SEXP, suffix: &str) -> Read<()> {
                 SEXPTYPE::REALSXP => !real_elt(x, 0).is_finite(),
                 _ => RView::Elem(x, 0).is_absent(),
             };
+            if let Some((_, at)) = crate::utf8::invalid(x) {
+                return Err(not_text(at).at(suffix.to_string()));
+            }
             if bad {
                 return fail("NA and non-finite numbers have no JSON form");
             }

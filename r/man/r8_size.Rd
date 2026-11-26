@@ -13,10 +13,10 @@ r8_size(x)
 Double: The size in bytes.
 }
 \description{
-The memory an R8 value holds, in bytes. For a value of a Rust-native type,
+The memory an R8 value holds, in bytes. For a value of a Rust-stored type,
 the bytes its codec reports for the state, plus the size of each field read
 so far that is not a view of the state; a view's memory is the state's. For
-an R-native value, \code{utils::object.size()}.
+an R-stored value, \code{utils::object.size()}.
 }
 \examples{
 op <- options(r8.namespace = "demo")

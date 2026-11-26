@@ -1,6 +1,6 @@
 //! The entry points of R's C API that the crate calls, all in the API index
 //! of Writing R Extensions. The package that links the crate links R: the
-//! symbols resolve when R loads the package's shared object, and against
+//! symbols are bound when R loads the package's shared object, and against
 //! `R.dll` on Windows.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
@@ -46,6 +46,7 @@ unsafe extern "C" {
     pub fn INTEGER_ELT(x: SEXP, i: R_xlen_t) -> c_int;
     pub fn LOGICAL_ELT(x: SEXP, i: R_xlen_t) -> c_int;
     pub fn STRING_ELT(x: SEXP, i: R_xlen_t) -> SEXP;
+    pub fn R_CHAR(x: SEXP) -> *const c_char;
     pub fn SET_STRING_ELT(x: SEXP, i: R_xlen_t, v: SEXP);
     pub fn VECTOR_ELT(x: SEXP, i: R_xlen_t) -> SEXP;
     pub fn SET_VECTOR_ELT(x: SEXP, i: R_xlen_t, v: SEXP) -> SEXP;
@@ -54,6 +55,7 @@ unsafe extern "C" {
     pub fn Rf_ScalarReal(x: c_double) -> SEXP;
     pub fn Rf_ScalarInteger(x: c_int) -> SEXP;
     pub fn Rf_ScalarLogical(x: c_int) -> SEXP;
+    pub fn Rf_install(name: *const c_char) -> SEXP;
     pub fn Rf_getAttrib(x: SEXP, name: SEXP) -> SEXP;
     pub fn Rf_setAttrib(x: SEXP, name: SEXP, v: SEXP) -> SEXP;
     pub fn Rf_cons(car: SEXP, cdr: SEXP) -> SEXP;

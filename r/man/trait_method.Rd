@@ -4,18 +4,40 @@
 \alias{trait_method}
 \title{Declare a trait method}
 \usage{
-trait_method(fn, description = "", default = NULL, stochastic = FALSE)
+trait_method(
+  params,
+  description = "",
+  default_impl = NULL,
+  stochastic = FALSE,
+  dispatch = NULL,
+  return_type = NULL,
+  rules = list()
+)
 }
 \arguments{
-\item{fn}{Function: Its formals are the method's signature; the first
-formal is the value the method dispatches on.}
+\item{params}{The method's parameters, from \code{\link[=params]{params()}}; the first is the
+value the method dispatches on.}
 
 \item{description}{Character: What the method does.}
 
-\item{default}{Optional function: A default implementation, used for a
-type whose impl does not define the method.}
+\item{default_impl}{Optional function: The method's default
+implementation, used for a type whose impl does not define the method.}
 
 \item{stochastic}{Logical: The method draws random numbers.}
+
+\item{dispatch}{Optional Character: The arguments the method dispatches
+on, by name, at most three and none of them \code{...}; the first argument
+by default. Every method of a trait dispatches on the same number of
+arguments, and an impl names a type for any of them (\code{impl()}).}
+
+\item{return_type}{Optional: The type of the value that every impl's
+method returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of
+the first dispatched argument. An impl may declare a type that fits it
+(\code{\link[=impl_method]{impl_method()}}). A replacement method returns a value of its
+argument's type and declares none.}
+
+\item{rules}{A \code{\link[=rule]{rule()}}, or a list of rules, over the typed parameters, which
+every call satisfies once each argument satisfies its type.}
 }
 \value{
 An \code{r8_trait_method}.
@@ -24,6 +46,14 @@ An \code{r8_trait_method}.
 Declare a trait method
 }
 \examples{
-trait_method(function(spec, x, y) NULL, description = "Trains a model.")
+trait_method(params(spec, x, y), description = "Trains a model.")
+trait_method(params(x, y, "..."), dispatch = c("x", "y"))
+trait_method(
+  params(spec, x, verbosity = arg_integer(min = 0L, default = 1L)),
+  return_type = type_double()
+)
 
+}
+\seealso{
+\code{\link[=params]{params()}}, \code{\link[=impl]{impl()}}.
 }

@@ -1,0 +1,326 @@
+{
+  "$corpus": 1,
+  "description": "The rule functions abs(), sum(), min() and max() of one array, and nchar().",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "struct",
+        "name": "F",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          },
+          {
+            "name": "p",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "double"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "k",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "integer"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "name",
+            "type": {
+              "kind": "character"
+            },
+            "description": ""
+          }
+        ],
+        "rules": [
+          {
+            "id": "ABS",
+            "invariant": {
+              "<=": [
+                {
+                  "abs": {
+                    "var": "x"
+                  }
+                },
+                1
+              ]
+            },
+            "message": "x lies in [-1, 1]."
+          },
+          {
+            "id": "SUM",
+            "invariant": {
+              "<=": [
+                {
+                  "abs": [
+                    {
+                      "-": [
+                        {
+                          "sum": {
+                            "var": "p"
+                          }
+                        },
+                        1
+                      ]
+                    }
+                  ]
+                },
+                1e-9
+              ]
+            },
+            "message": "p sums to 1."
+          },
+          {
+            "id": "MIN",
+            "invariant": {
+              ">=": [
+                {
+                  "min": {
+                    "var": "k"
+                  }
+                },
+                0
+              ]
+            },
+            "message": "k is non-negative."
+          },
+          {
+            "id": "MAX",
+            "invariant": {
+              "<=": [
+                {
+                  "max": {
+                    "var": "k"
+                  }
+                },
+                9
+              ]
+            },
+            "message": "k is at most 9."
+          },
+          {
+            "id": "NCHAR",
+            "invariant": {
+              "<=": [
+                {
+                  "nchar": {
+                    "var": "name"
+                  }
+                },
+                3
+              ]
+            },
+            "message": "name has at most 3 characters."
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "all-hold",
+      "description": "abs(), sum() within a tolerance, min() and max() of an integer vector, and nchar() counting code points.",
+      "op": "decode",
+      "type": "ns::F",
+      "input": {
+        "x": -0.5,
+        "p": [
+          0.1,
+          0.2,
+          0.7
+        ],
+        "k": [
+          0,
+          9,
+          3
+        ],
+        "name": "aé😀"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "abs",
+      "description": "abs() of -1.5 exceeds 1.",
+      "op": "decode",
+      "type": "ns::F",
+      "input": {
+        "x": -1.5,
+        "p": [
+          0.1,
+          0.2,
+          0.7
+        ],
+        "k": [
+          0,
+          9,
+          3
+        ],
+        "name": "aé😀"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "ABS"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sum",
+      "description": "The elements sum to 1.1.",
+      "op": "decode",
+      "type": "ns::F",
+      "input": {
+        "x": -0.5,
+        "p": [
+          0.5,
+          0.6
+        ],
+        "k": [
+          0,
+          9,
+          3
+        ],
+        "name": "aé😀"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "SUM"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sum-empty",
+      "description": "The empty sum is 0.",
+      "op": "decode",
+      "type": "ns::F",
+      "input": {
+        "x": -0.5,
+        "p": [],
+        "k": [
+          0,
+          9,
+          3
+        ],
+        "name": "aé😀"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "SUM"
+          }
+        ]
+      }
+    },
+    {
+      "id": "min",
+      "description": "min() of one vector is its smallest element.",
+      "op": "decode",
+      "type": "ns::F",
+      "input": {
+        "x": -0.5,
+        "p": [
+          0.1,
+          0.2,
+          0.7
+        ],
+        "k": [
+          3,
+          -1,
+          2
+        ],
+        "name": "aé😀"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "MIN"
+          }
+        ]
+      }
+    },
+    {
+      "id": "max",
+      "description": "max() of one vector is its largest element.",
+      "op": "decode",
+      "type": "ns::F",
+      "input": {
+        "x": -0.5,
+        "p": [
+          0.1,
+          0.2,
+          0.7
+        ],
+        "k": [
+          3,
+          10
+        ],
+        "name": "aé😀"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "MAX"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nchar",
+      "description": "nchar() counts Unicode code points: four.",
+      "op": "decode",
+      "type": "ns::F",
+      "input": {
+        "x": -0.5,
+        "p": [
+          0.1,
+          0.2,
+          0.7
+        ],
+        "k": [
+          0,
+          9,
+          3
+        ],
+        "name": "abc😀"
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "",
+            "rule": "NCHAR"
+          }
+        ]
+      }
+    }
+  ]
+}

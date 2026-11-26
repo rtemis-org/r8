@@ -77,17 +77,17 @@ fn cases() -> Vec<(&'static str, Value)> {
         ),
         (
             "unknown resolve policy",
-            with_fields(json!([field(
-                "a",
-                json!({"kind": "option", "inner": {"kind": "logical"}, "resolve": {"policy": "later"}})
-            )])),
+            with_fields(
+                json!([{"name": "a", "type": {"kind": "option", "inner": {"kind": "logical"}},
+                "resolve": {"policy": "later"}}]),
+            ),
         ),
         (
             "computed resolve",
-            with_fields(json!([field(
-                "a",
-                json!({"kind": "option", "inner": {"kind": "double"}, "resolve": {"policy": "computed", "expr": {"*": [{"var": "b"}, 2]}}})
-            )])),
+            with_fields(
+                json!([{"name": "a", "type": {"kind": "option", "inner": {"kind": "double"}},
+                "resolve": {"policy": "computed", "expr": {"*": [{"var": "b"}, 2]}}}]),
+            ),
         ),
         (
             "named type, qualified",
@@ -119,7 +119,7 @@ fn cases() -> Vec<(&'static str, Value)> {
         ),
         (
             "unit variant",
-            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "shape": "unit"}]}]}),
+            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "kind": "unit"}]}]}),
         ),
         (
             "variant shape missing",
@@ -173,7 +173,7 @@ fn cases() -> Vec<(&'static str, Value)> {
             "ordered map",
             with_fields(json!([field(
                 "m",
-                json!({"kind": "ordered_map", "value": {"kind": "double"}})
+                json!({"kind": "index_map", "value": {"kind": "double"}})
             )])),
         ),
         (
@@ -185,11 +185,11 @@ fn cases() -> Vec<(&'static str, Value)> {
         ),
         (
             "newtype variant",
-            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "shape": "newtype", "of": "ns::A"}]}]}),
+            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "kind": "newtype", "of": "ns::A"}]}]}),
         ),
         (
             "newtype variant without of",
-            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "shape": "newtype"}]}]}),
+            json!({"$ir": 1, "namespace": "ns", "types": [{"kind": "enum", "name": "E", "version": 1, "variants": [{"name": "A", "kind": "newtype"}]}]}),
         ),
         (
             "table open as a string",

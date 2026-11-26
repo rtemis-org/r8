@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 
 use crate::access::Access;
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 use crate::text::{Line, Role, Span, Text};
@@ -20,7 +20,7 @@ use crate::text::{Line, Role, Span, Text};
 pub struct LayoutOptions {
     /// The number of items a vector's head shows.
     pub head: usize,
-    /// Text after the top-level header, such as a Rust-native value's size,
+    /// Text after the top-level header, such as a Rust-stored value's size,
     /// as a `summary` span.
     pub summary: Option<String>,
     /// The number of entries a level of a [`Record`] shows.
@@ -30,6 +30,10 @@ pub struct LayoutOptions {
     /// The depth of the deepest entries of a [`Record`] that its layout
     /// shows.
     pub max_depth: usize,
+    /// The number of characters in a line of a table.
+    pub width: usize,
+    /// Characters outside ASCII are written.
+    pub unicode: bool,
 }
 
 impl Default for LayoutOptions {
@@ -40,6 +44,8 @@ impl Default for LayoutOptions {
             max_entries: 32,
             max_lines: 128,
             max_depth: 3,
+            width: 80,
+            unicode: true,
         }
     }
 }
@@ -70,6 +76,11 @@ pub fn layout_with<'a, A: Access<'a>>(
     display: &mut DisplayText<'_, A>,
 ) -> Text {
     let mut lines = Vec::new();
+    if let Some(TypeDef::Table(t)) = lookup.find(ty)
+        && let Some(lines) = table_grid(ty, t, v, options)
+    {
+        return Text { lines };
+    }
     let mut header = header_spans(v, ty, lookup);
     if let Some(s) = &options.summary {
         header.push(Span::new(" ", Role::Plain));
@@ -95,11 +106,19 @@ fn header_spans<'a, A: Access<'a>>(v: A, ty: &QualifiedName, lookup: &dyn TypeLo
         out.push(Span::new(variant.into_owned(), Role::Variant));
     }
     out.push(Span::new(">", Role::Bracket));
+    // A table's rows and columns.
+    if let Some(TypeDef::Table(t)) = lookup.find(ty)
+        && let Ok(t) = v.table(&t.columns, t.open)
+    {
+        let extent = format!(" {} x {}", count(t.rows), count(t.columns.len() as u64));
+        out.push(Span::new(extent, Role::Summary));
+    }
     out
 }
 
 /// The fields of the value of the named type `ty`, of its variant for an
-/// enum, as lines indented `depth` levels.
+/// enum, as lines indented `depth` levels. The value of a field declared
+/// `sensitive` is withheld.
 fn fields<'a, A: Access<'a>>(
     v: A,
     ty: &QualifiedName,
@@ -117,20 +136,30 @@ fn fields<'a, A: Access<'a>>(
                 .variants
                 .iter()
                 .find(|x| x.name.as_str() == variant)
-                .map(|x| &x.shape)
+                .map(|x| &x.kind)
             {
-                Some(VariantShape::Struct { fields, .. }) => fields,
-                Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                Some(VariantKind::Struct { fields, .. }) => fields,
+                Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                     Some(TypeDef::Struct(s)) => &s.fields,
                     _ => return,
                 },
                 _ => return,
             }
         }
+        Some(TypeDef::Table(t)) => return table_lines(t, v, options, depth, lines),
         None => return,
     };
     for (i, f) in defs.iter().enumerate() {
         let x = v.member_at(i, f.name.as_str());
+        if f.sensitive && !x.is_absent() {
+            let line = vec![
+                Span::new(f.name.to_string(), Role::FieldName),
+                Span::new(": ", Role::Plain),
+                Span::new("<sensitive>", Role::Muted),
+            ];
+            lines.push(Line::new(depth, line));
+            continue;
+        }
         field_lines(
             Span::new(f.name.to_string(), Role::FieldName),
             &f.ty,
@@ -141,6 +170,432 @@ fn fields<'a, A: Access<'a>>(
             depth,
             lines,
         );
+    }
+}
+
+/// The rows of a table that its grid shows at each end, and the number of rows up
+/// to which it shows every one.
+const END_ROWS: usize = 5;
+const ALL_ROWS: usize = 12;
+/// The cells up to which a grid counts the missing ones.
+const COUNTED_CELLS: u64 = 250_000;
+/// The characters of a cell of text.
+const CELL_WIDTH: usize = 24;
+
+/// A column of a table's grid: its header, its cells, and their widths.
+struct GridColumn {
+    name: String,
+    ty: String,
+    role: Role,
+    unit: Option<String>,
+    missing: u64,
+    /// The text of each cell shown, `None` for a missing one.
+    cells: Vec<Option<String>>,
+    right: bool,
+    width: usize,
+}
+
+/// The table `v` as a grid: the rows and columns it has, the names of the columns
+/// with their types, units, and missing cells, the first and the last rows, and
+/// what the grid leaves out.
+fn table_grid<'a, A: Access<'a>>(
+    ty: &QualifiedName,
+    def: &crate::ir::TableDef,
+    v: A,
+    options: &LayoutOptions,
+) -> Option<Vec<Line>> {
+    let t = v.table(&def.columns, def.open).ok()?;
+    let (n, k) = (t.rows as usize, t.columns.len());
+    let times = if options.unicode { "\u{2a09}" } else { "x" };
+    let of = |n: usize, what: &str| {
+        format!(
+            "{} {what}{}",
+            count(n as u64),
+            if n == 1 { "" } else { "s" }
+        )
+    };
+    // `R8::Raven` is a raven, and another table is named.
+    let label = if ty.namespace.as_str() == "R8" && ty.name.as_str() == "Raven" {
+        vec![Span::new("raven", Role::TypeName)]
+    } else {
+        vec![
+            Span::new(format!("{}::", ty.namespace), Role::Muted),
+            Span::new(ty.name.to_string(), Role::TypeName),
+        ]
+    };
+    let mut header = vec![Span::new("<", Role::Bracket)];
+    header.extend(label);
+    header.push(Span::new(" table", Role::Muted));
+    header.push(Span::new(">", Role::Bracket));
+    header.push(Span::new(
+        format!(" {} {times} {}", of(n, "row"), of(k, "column")),
+        Role::Summary,
+    ));
+    let mut lines = vec![Line::new(0, header)];
+    if k == 0 {
+        return Some(lines);
+    }
+    let shown: Vec<usize> = if n <= ALL_ROWS {
+        (0..n).collect()
+    } else {
+        (0..END_ROWS).chain(n - END_ROWS..n).collect()
+    };
+    let counted = t.rows.saturating_mul(k as u64) <= COUNTED_CELLS;
+    let numbers = count(n as u64).chars().count();
+    let mut room = options.width.saturating_sub(numbers);
+    let mut columns: Vec<GridColumn> = Vec::new();
+    for (name, cells) in &t.columns {
+        let declared = def
+            .columns
+            .iter()
+            .find(|c| c.name.as_str() == name.as_ref());
+        let (ft, unit, sensitive) = match declared {
+            Some(c) => (
+                c.ty.clone(),
+                c.unit.as_deref().map(str::to_string),
+                c.sensitive,
+            ),
+            None => (
+                v.extra_column_type(name, *cells).ok()?,
+                v.column_facts(name).unwrap_or_default().unit,
+                false,
+            ),
+        };
+        let inner = match &ft {
+            FieldType::Option { inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        let c = grid_column(name, inner, unit, sensitive, *cells, &shown, n, counted);
+        // Two spaces stand between columns; the first column is always shown.
+        if c.width + 2 > room && !columns.is_empty() {
+            break;
+        }
+        room = room.saturating_sub(c.width + 2);
+        columns.push(c);
+    }
+    let margin = " ".repeat(numbers);
+    // The text before a cell, and the cell; the last one ends its line.
+    let aligned = |s: &str, c: &GridColumn, last: bool| {
+        let pad = " ".repeat(c.width.saturating_sub(s.chars().count()));
+        match (c.right, last) {
+            (true, _) if s.is_empty() && last => (String::new(), String::new()),
+            (true, _) => (format!("  {pad}"), s.to_string()),
+            (false, true) => ("  ".to_string(), s.to_string()),
+            (false, false) => ("  ".to_string(), format!("{s}{pad}")),
+        }
+    };
+    let row = |text: &dyn Fn(&GridColumn) -> (String, Role)| {
+        let mut line = vec![Span::new(margin.clone(), Role::Plain)];
+        // Nothing follows the last text of the line.
+        let texts: Vec<(String, Role)> = columns.iter().map(text).collect();
+        let end = texts.iter().rposition(|(s, _)| !s.is_empty());
+        for (i, (c, (s, role))) in columns.iter().zip(texts).enumerate() {
+            if end.is_none_or(|e| i > e) {
+                break;
+            }
+            let (pad, s) = aligned(&s, c, Some(i) == end);
+            line.push(Span::new(pad, Role::Plain));
+            line.push(Span::new(s, role));
+        }
+        Line::new(0, line)
+    };
+    lines.push(row(&|c| (c.name.clone(), Role::FieldName)));
+    lines.push(row(&|c| (c.ty.clone(), c.role)));
+    if columns.iter().any(|c| c.unit.is_some()) {
+        lines.push(row(&|c| {
+            let unit = c.unit.as_ref().map_or(String::new(), |u| format!("[{u}]"));
+            (unit, Role::Summary)
+        }));
+    }
+    if columns.iter().any(|c| c.missing > 0) {
+        lines.push(row(&|c| {
+            let missing = if c.missing > 0 {
+                format!("{} NA", count(c.missing))
+            } else {
+                String::new()
+            };
+            (missing, Role::Highlight)
+        }));
+    }
+    let hidden_rows = n - shown.len();
+    for (i, &r) in shown.iter().enumerate() {
+        if hidden_rows > 0 && i == END_ROWS {
+            let dots = format!(
+                "{}  ... {} not shown",
+                " ".repeat(numbers),
+                of(hidden_rows, "row")
+            );
+            lines.push(Line::new(0, vec![Span::new(dots, Role::Muted)]));
+        }
+        let number = count(r as u64 + 1);
+        let pad = " ".repeat(numbers - number.chars().count());
+        let mut line = vec![Span::new(format!("{pad}{number}"), Role::Muted)];
+        for (j, c) in columns.iter().enumerate() {
+            let (s, role) = match &c.cells[i] {
+                Some(s) => (s.as_str(), Role::Plain),
+                None => ("NA", Role::Highlight),
+            };
+            let (pad, s) = aligned(s, c, j + 1 == columns.len());
+            line.push(Span::new(pad, Role::Plain));
+            line.push(Span::new(s, role));
+        }
+        lines.push(Line::new(0, line));
+    }
+    let hidden = k - columns.len();
+    if hidden > 0 {
+        let names: Vec<String> = t.columns[columns.len()..]
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect();
+        let mut line = format!("{} not shown: ", of(hidden, "column"));
+        for (i, name) in names.iter().enumerate() {
+            let sep = if i == 0 { "" } else { ", " };
+            if i > 0 && line.chars().count() + name.chars().count() + 5 > options.width {
+                line.push_str(", ...");
+                break;
+            }
+            line.push_str(sep);
+            line.push_str(name);
+        }
+        lines.push(Line::new(0, vec![Span::new(line, Role::Muted)]));
+    }
+    if !counted {
+        let line = format!(
+            "missing cells are not counted in {} cells",
+            count(t.rows.saturating_mul(k as u64))
+        );
+        lines.push(Line::new(0, vec![Span::new(line, Role::Muted)]));
+    }
+    Some(lines)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grid_column<'a, A: Access<'a>>(
+    name: &str,
+    ty: &FieldType,
+    unit: Option<String>,
+    sensitive: bool,
+    cells: A,
+    shown: &[usize],
+    n: usize,
+    counted: bool,
+) -> GridColumn {
+    let numeric = matches!(ty, FieldType::Double(_) | FieldType::Integer(_));
+    let mut missing = 0u64;
+    let factor = match ty {
+        FieldType::Factor { levels, ordered } => cells.factor(levels.as_deref(), *ordered).ok(),
+        _ => None,
+    };
+    if counted {
+        match &factor {
+            Some(f) => f.codes.each_in(0, n, |_, c| {
+                missing += u64::from(c == crate::access::MISSING_CODE);
+            }),
+            None => {
+                missing = (0..n).filter(|&i| cells.item(i).is_absent()).count() as u64;
+            }
+        }
+    }
+    let text: Vec<Option<String>> = if sensitive {
+        shown
+            .iter()
+            .map(|_| Some("<sensitive>".to_string()))
+            .collect()
+    } else if let Some(f) = &factor {
+        shown
+            .iter()
+            .map(|&i| {
+                let mut code = [crate::access::MISSING_CODE];
+                f.codes.read(i, &mut code);
+                f.level(code[0]).map(clipped)
+            })
+            .collect()
+    } else if matches!(ty, FieldType::Double(_)) {
+        let x: Vec<Option<f64>> = shown
+            .iter()
+            .map(|&i| {
+                let item = cells.item(i);
+                if item.is_absent() {
+                    None
+                } else {
+                    item.double().ok()
+                }
+            })
+            .collect();
+        doubles_text(&x)
+    } else {
+        shown
+            .iter()
+            .map(|&i| {
+                let x = cells.item(i);
+                if x.is_absent() {
+                    return None;
+                }
+                Some(match ty {
+                    FieldType::Character(_) => x.character().map_or("?".into(), |s| clipped(&s)),
+                    _ => scalar_text(ty, x),
+                })
+            })
+            .collect()
+    };
+    let mut label = element_label(ty);
+    if let FieldType::Factor { ordered: true, .. } = ty {
+        label = "ordered".into();
+    }
+    let chars = |s: &str| s.chars().count();
+    let width = [
+        chars(name),
+        chars(&label),
+        unit.as_ref().map_or(0, |u| chars(u) + 2),
+        if missing > 0 {
+            chars(&count(missing)) + 3
+        } else {
+            0
+        },
+    ]
+    .into_iter()
+    .chain(text.iter().map(|c| c.as_ref().map_or(2, |s| chars(s))))
+    .max()
+    .unwrap_or(0);
+    GridColumn {
+        name: name.to_string(),
+        ty: label,
+        role: type_role(ty),
+        unit,
+        missing,
+        cells: text,
+        right: numeric,
+        width,
+    }
+}
+
+/// A text of one line and at most [`CELL_WIDTH`] characters.
+fn clipped(s: &str) -> String {
+    let s: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if s.chars().count() <= CELL_WIDTH {
+        return s;
+    }
+    let head: String = s.chars().take(CELL_WIDTH - 3).collect();
+    format!("{head}...")
+}
+
+/// The doubles of a column with one number of decimals: four significant digits
+/// of the smallest, and no more than a value has.
+fn doubles_text(x: &[Option<f64>]) -> Vec<Option<String>> {
+    let finite = || x.iter().flatten().copied().filter(|v| v.is_finite());
+    let top = finite().fold(0.0f64, |m, v| m.max(v.abs()));
+    let low = finite()
+        .filter(|v| *v != 0.0)
+        .fold(f64::INFINITY, |m, v| m.min(v.abs()));
+    if top >= 1e9 || (low.is_finite() && low < 1e-4) {
+        return x.iter().map(|v| v.map(number)).collect();
+    }
+    let decimals = finite()
+        .map(|v| {
+            if v == 0.0 {
+                return 0;
+            }
+            let wanted = (3 - v.abs().log10().floor() as i32).max(0) as usize;
+            let text = format!("{v:.wanted$}");
+            match text.split_once('.') {
+                Some((_, d)) => d.trim_end_matches('0').len(),
+                None => 0,
+            }
+        })
+        .max()
+        .unwrap_or(0);
+    x.iter()
+        .map(|v| {
+            v.map(|v| {
+                if v.is_finite() {
+                    format!("{v:.decimals$}")
+                } else {
+                    number(v)
+                }
+            })
+        })
+        .collect()
+}
+
+/// The columns of a table, one line each: its name, the type of its cells, its
+/// unit, and its first cells, aligned; at most `LISTED_COLUMNS` of them.
+fn table_lines<'a, A: Access<'a>>(
+    def: &crate::ir::TableDef,
+    v: A,
+    options: &LayoutOptions,
+    depth: usize,
+    lines: &mut Vec<Line>,
+) {
+    const LISTED_COLUMNS: usize = 20;
+    let Ok(t) = v.table(&def.columns, def.open) else {
+        return;
+    };
+    let total = t.columns.len();
+    let shown: Vec<_> = t.columns.iter().take(LISTED_COLUMNS).collect();
+    let width = shown.iter().map(|(k, _)| k.chars().count()).max();
+    for (k, cells) in shown {
+        let declared = def.columns.iter().find(|c| c.name.as_str() == k.as_ref());
+        let (ty, unit, sensitive) = match declared {
+            Some(c) => (
+                c.ty.clone(),
+                c.unit.as_deref().map(str::to_string),
+                c.sensitive,
+            ),
+            None => match v.extra_column_type(k, *cells) {
+                Ok(ft) => (ft, v.column_facts(k).unwrap_or_default().unit, false),
+                Err(_) => continue,
+            },
+        };
+        let pad = width.unwrap_or(0) - k.chars().count();
+        let mut line = vec![
+            Span::new(k.to_string(), Role::FieldName),
+            Span::new(format!("{}  ", " ".repeat(pad)), Role::Plain),
+        ];
+        let inner = match &ty {
+            FieldType::Option { inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        line.push(Span::new(element_label(inner), type_role(inner)));
+        if let Some(u) = &unit {
+            line.push(Span::new(format!(" [{u}]"), Role::Summary));
+        }
+        line.push(Span::new(": ", Role::Plain));
+        if sensitive {
+            line.push(Span::new("<sensitive>", Role::Muted));
+        } else {
+            let n = t.rows as usize;
+            let first: Vec<String> = (0..n.min(options.head))
+                .map(|i| cell_text(inner, *cells, i))
+                .collect();
+            line.push(Span::new(with_ellipsis(first, n), Role::Scalar));
+        }
+        lines.push(Line::new(depth, line));
+    }
+    if total > LISTED_COLUMNS {
+        let more = count((total - LISTED_COLUMNS) as u64);
+        let line = vec![Span::new(format!("{more} more columns"), Role::Muted)];
+        lines.push(Line::new(depth, line));
+    }
+}
+
+/// The text of cell `i` of a column of the type `ty`.
+fn cell_text<'a, A: Access<'a>>(ty: &FieldType, cells: A, i: usize) -> String {
+    if let FieldType::Factor { levels, ordered } = ty {
+        let Ok(f) = cells.factor(levels.as_deref(), *ordered) else {
+            return String::new();
+        };
+        let mut code = [crate::access::MISSING_CODE];
+        f.codes.read(i, &mut code);
+        return f.level(code[0]).unwrap_or("NA").to_string();
+    }
+    let x = cells.item(i);
+    if x.is_absent() {
+        "NA".to_string()
+    } else {
+        scalar_text(ty, x)
     }
 }
 
@@ -392,11 +847,11 @@ fn value<'a, A: Access<'a>>(
         FieldType::Named { name } => {
             return nested(x, name.clone(), lookup, display, line);
         }
-        FieldType::Dyn { r#trait } => {
-            return match x.implementor(r#trait, lookup) {
+        FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
+            return match crate::access::concrete(x, ft, lookup).expect("a dynamic field type") {
                 Ok((name, _)) => nested(x, name, lookup, display, line),
                 Err(_) => {
-                    line.push(Span::new(format!("dyn {}", r#trait), Role::Muted));
+                    line.push(Span::new(element_label(ft), Role::Muted));
                     Nested::None
                 }
             };
@@ -419,7 +874,7 @@ fn value<'a, A: Access<'a>>(
             );
         }
         FieldType::Json => line.push(Span::new("json", Role::TypeOther)),
-        FieldType::R { class } => line.push(Span::new(class.clone(), Role::TypeOther)),
+        FieldType::HostClass { class, .. } => line.push(Span::new(class.clone(), Role::TypeOther)),
         FieldType::Vec { element, .. } => {
             let n = x.vec(element).unwrap_or(0);
             label(
@@ -529,12 +984,12 @@ fn value<'a, A: Access<'a>>(
         FieldType::TableOf { of } => {
             line.push(Span::new(format!("table of {of}"), Role::Summary));
         }
-        FieldType::Hashmap { value: vt, .. } | FieldType::OrderedMap { value: vt, .. } => {
-            let ordered = matches!(ft, FieldType::OrderedMap { .. });
+        FieldType::BtreeMap { value: vt, .. } | FieldType::IndexMap { value: vt, .. } => {
+            let ordered = matches!(ft, FieldType::IndexMap { .. });
             let n = x.map(vt, ordered).unwrap_or(0);
             label(
                 line,
-                if ordered { "ordered_map" } else { "hashmap" },
+                if ordered { "index_map" } else { "btree_map" },
                 Role::TypeOther,
                 format!("[{}]", count(n as u64)),
             );
@@ -604,6 +1059,7 @@ fn element_label(ft: &FieldType) -> String {
         FieldType::Json => "json".into(),
         FieldType::Named { name } => name.to_string(),
         FieldType::Dyn { r#trait } => format!("dyn {}", r#trait),
+        FieldType::Subtype { of } => format!("dyn {of}"),
         FieldType::Vec { element, .. } => format!("vec<{}>", element_label(element)),
         _ => "value".into(),
     }
@@ -818,19 +1274,21 @@ mod tests {
         let doc = IrDocument::from_json(
             r#"{"$ir": 1, "namespace": "demo", "types": [
               {"kind": "enum", "name": "Kernel", "description": "", "tag": "type", "version": 1,
-               "variants": [{"name": "Linear", "description": "", "shape": "unit"},
-                            {"name": "Rbf", "description": "", "shape": "struct",
+               "variants": [{"name": "Linear", "description": "", "kind": "unit"},
+                            {"name": "Rbf", "description": "", "kind": "struct",
                              "fields": [{"name": "gamma", "type": {"kind": "double"}, "description": ""}]}]},
               {"kind": "struct", "name": "Fit", "description": "", "version": 1, "fields": [
                 {"name": "name", "type": {"kind": "character"}, "description": ""},
                 {"name": "coef", "type": {"kind": "vec", "element": {"kind": "double"}}, "description": ""},
                 {"name": "k", "type": {"kind": "option", "inner": {"kind": "integer"}}, "description": ""},
+                {"name": "token", "type": {"kind": "character"}, "description": "", "sensitive": true},
                 {"name": "kernel", "type": {"kind": "named", "name": "demo::Kernel"}, "description": ""}]}]}"#,
         )
         .expect("the document reads");
         let set = DocumentSet::from(vec![doc]);
         let v: serde_json::Value = serde_json::from_str(
             r#"{"name": "a", "coef": [0.1, 0.25, 1, 2, 3, 4, 5, 6, 7, 8],
+                "token": "s3cret",
                 "kernel": {"type": "Rbf", "gamma": 0.5}}"#,
         )
         .expect("the value reads");
@@ -846,14 +1304,14 @@ mod tests {
         );
         assert_eq!(
             crate::text::encode_plain(&t),
-            "<demo::Fit> 1.00 KiB\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  kernel: <demo::Kernel@Rbf>\n    gamma: 0.5"
+            "<demo::Fit> 1.00 KiB\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  token: <sensitive>\n  kernel: <demo::Kernel@Rbf>\n    gamma: 0.5"
         );
         assert_eq!(t.lines[0].spans[1], Span::new("demo::", Role::Muted));
-        assert_eq!(t.lines[4].spans[5], Span::new("@", Role::Bracket));
+        assert_eq!(t.lines[5].spans[5], Span::new("@", Role::Bracket));
         assert_eq!(t.lines[2].spans[2], Span::new("double", Role::TypeNumber));
         assert_eq!(t.lines[2].spans[3], Span::new("[10]", Role::Summary));
         let depths: Vec<usize> = t.lines.iter().map(|l| l.depth).collect();
-        assert_eq!(depths, [0, 1, 1, 1, 1, 2]);
+        assert_eq!(depths, [0, 1, 1, 1, 1, 1, 2]);
         let mut calls = Vec::new();
         let shown = layout_with(
             Json::new(&v),
@@ -873,7 +1331,7 @@ mod tests {
         assert_eq!(calls, ["demo::Kernel"]);
         assert_eq!(
             crate::text::encode_plain(&shown),
-            "<demo::Fit>\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  kernel: RBF kernel\n      gamma = 0.5"
+            "<demo::Fit>\n  name: \"a\"\n  coef: double[10] 0.1 0.25 1 2 3 4 5 6 ...\n  k: NULL\n  token: <sensitive>\n  kernel: RBF kernel\n      gamma = 0.5"
         );
     }
 

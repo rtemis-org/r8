@@ -74,7 +74,7 @@
       "expect": {
         "errors": [
           {
-            "code": "invalid_datetime",
+            "code": "invalid_posixct",
             "path": "/t"
           }
         ]
@@ -91,7 +91,7 @@
       "expect": {
         "errors": [
           {
-            "code": "invalid_datetime",
+            "code": "invalid_posixct",
             "path": "/t"
           }
         ]
@@ -120,7 +120,7 @@
       "expect": {
         "errors": [
           {
-            "code": "invalid_datetime",
+            "code": "invalid_posixct",
             "path": "/t"
           }
         ]
@@ -137,7 +137,7 @@
       "expect": {
         "errors": [
           {
-            "code": "invalid_datetime",
+            "code": "invalid_posixct",
             "path": "/t"
           }
         ]
@@ -1073,7 +1073,7 @@
       "expect": {
         "valid": true
       },
-      "id": "hashmap",
+      "id": "btree-map",
       "input": {
         "hm": {
           "a": 1,
@@ -1093,7 +1093,7 @@
           }
         ]
       },
-      "id": "hashmap-key",
+      "id": "btree-map-key",
       "input": {
         "hm": {
           "A": 1
@@ -1121,16 +1121,16 @@
       "type": "ns::T"
     },
     {
-      "description": "A runtime-only value has no JSON form.",
+      "description": "A host-only value has no JSON form.",
       "expect": {
         "errors": [
           {
-            "code": "runtime_only",
+            "code": "host_only",
             "path": "/r"
           }
         ]
       },
-      "id": "runtime-only",
+      "id": "host-only",
       "input": {
         "r": {
           "coefficients": [
@@ -1185,7 +1185,7 @@
       "type": "ns::T"
     },
     {
-      "description": "finite = FALSE admits the non-finite strings.",
+      "description": "`infinite` and `nan` admit the non-finite strings.",
       "expect": {
         "valid": true
       },
@@ -1201,7 +1201,7 @@
       "expect": {
         "errors": [
           {
-            "code": "not_finite",
+            "code": "nan_value",
             "path": "/fin"
           }
         ]
@@ -1254,7 +1254,7 @@
       },
       "id": "unit-enum",
       "input": {
-        "shape": "Circle"
+        "figure": "Circle"
       },
       "op": "decode",
       "type": "ns::T"
@@ -1265,13 +1265,13 @@
         "errors": [
           {
             "code": "unknown_variant",
-            "path": "/shape"
+            "path": "/figure"
           }
         ]
       },
       "id": "unit-enum-unknown",
       "input": {
-        "shape": "Hexagon"
+        "figure": "Hexagon"
       },
       "op": "decode",
       "type": "ns::T"
@@ -1311,7 +1311,7 @@
       "expect": {
         "errors": [
           {
-            "code": "unresolved_type",
+            "code": "unknown_type",
             "path": "/algo"
           }
         ]
@@ -1488,7 +1488,7 @@
                       }
                     },
                     "description": "",
-                    "optional": true
+                    "required": false
                   }
                 ],
                 "open": true,
@@ -1515,7 +1515,7 @@
             "type": {
               "kind": "option",
               "inner": {
-                "kind": "ordered_map",
+                "kind": "index_map",
                 "value": {
                   "kind": "double"
                 }
@@ -1528,7 +1528,7 @@
             "type": {
               "kind": "option",
               "inner": {
-                "kind": "hashmap",
+                "kind": "btree_map",
                 "value": {
                   "kind": "integer"
                 },
@@ -1552,14 +1552,16 @@
             "type": {
               "kind": "option",
               "inner": {
-                "kind": "r",
-                "class": "lm"
-              },
-              "resolve": {
-                "policy": "runtime"
+                "kind": "host_class",
+                "host": "r",
+                "class": "lm",
+                "system": "s3"
               }
             },
-            "description": ""
+            "description": "",
+            "resolve": {
+              "policy": "context"
+            }
           },
           {
             "name": "v",
@@ -1583,7 +1585,8 @@
               "kind": "option",
               "inner": {
                 "kind": "double",
-                "finite": false
+                "infinite": true,
+                "nan": true
               }
             },
             "description": ""
@@ -1610,12 +1613,12 @@
             "description": ""
           },
           {
-            "name": "shape",
+            "name": "figure",
             "type": {
               "kind": "option",
               "inner": {
                 "kind": "named",
-                "name": "ns::Shape"
+                "name": "ns::Figure"
               }
             },
             "description": ""
@@ -1646,7 +1649,7 @@
       },
       {
         "kind": "enum",
-        "name": "Shape",
+        "name": "Figure",
         "description": "",
         "tag": "type",
         "version": 1,
@@ -1654,12 +1657,12 @@
           {
             "name": "Circle",
             "description": "",
-            "shape": "unit"
+            "kind": "unit"
           },
           {
             "name": "Square",
             "description": "",
-            "shape": "unit"
+            "kind": "unit"
           }
         ]
       },
@@ -1714,7 +1717,7 @@
       {
         "trait": "ns::Algorithm",
         "target": {
-          "kind": "type",
+          "kind": "named",
           "name": "ns::Glmnet"
         },
         "tag_value": "GLMNET",
@@ -1723,7 +1726,7 @@
       {
         "trait": "ns::Algorithm",
         "target": {
-          "kind": "type",
+          "kind": "named",
           "name": "ns::Cart"
         },
         "methods": []
@@ -1731,7 +1734,7 @@
       {
         "trait": "ns::Plain",
         "target": {
-          "kind": "type",
+          "kind": "named",
           "name": "ns::Cart"
         },
         "methods": []

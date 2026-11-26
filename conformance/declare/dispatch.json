@@ -1,0 +1,2116 @@
+{
+  "$corpus": 1,
+  "description": "Multiple dispatch, impls over tuples of types, and typed parameters.",
+  "cases": [
+    {
+      "id": "dispatch-two-positions",
+      "description": "A trait that dispatches on two arguments, with impls for two tuples.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B"
+              }
+            ]
+          },
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::C"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "any"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "dispatch-implicit",
+      "description": "A dispatch mark on the first argument alone, which the first argument has without it.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Show",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  "y"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_implicit",
+            "path": "/traits/0/methods/0/params/0/dispatch"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-dots",
+      "description": "A dispatch mark on `...`.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Show",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "...",
+                    "dispatch": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_dots",
+            "path": "/traits/0/methods/0/params/1/dispatch"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-none",
+      "description": "A method without parameters dispatches on none.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Show",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_none",
+            "path": "/traits/0/methods/0/params"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-arity",
+      "description": "Two methods of one trait that dispatch on different numbers of arguments.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Pair",
+            "description": "",
+            "methods": [
+              {
+                "name": "one",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  }
+                ]
+              },
+              {
+                "name": "two",
+                "description": "",
+                "params": [
+                  "x",
+                  "y"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_arity",
+            "path": "/traits/0/methods/1/params"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-replacement",
+      "description": "A replacement method that dispatches on two arguments.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Set",
+            "description": "",
+            "methods": [
+              {
+                "name": "f<-",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "value"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_replacement",
+            "path": "/traits/0/methods/0/params"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-tag",
+      "description": "A trait that dispatches on two arguments and has a tag member.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Pair",
+            "description": "",
+            "methods": [
+              {
+                "name": "pair",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  }
+                ]
+              }
+            ],
+            "tag": "kind"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_tag",
+            "path": "/traits/0/tag"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dyn-of-multiple-dispatch",
+      "description": "A `dyn()` field of a trait that dispatches on two arguments.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Holder",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "dyn",
+                  "trait": "ns::Combine"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dyn_dispatch",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "impl-arity",
+      "description": "An impl of a two-position trait that gives one type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "impl_arity",
+            "path": "/impls/0/type_args"
+          }
+        ]
+      }
+    },
+    {
+      "id": "impl-all-any",
+      "description": "An impl with any in every position, which the trait's default implementation serves.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "any"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "any"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "impl_all_any",
+            "path": "/impls/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "impl-first-position-any",
+      "description": "The trait's namespace may leave the first position any.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "any"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "impl-orphan",
+      "description": "An impl of another namespace's trait whose own type follows any.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "other",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "X",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "core::Combine",
+            "target": {
+              "kind": "any"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "other::X"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "impl_orphan",
+            "path": "/impls/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "impl-own-type-after-a-type",
+      "description": "An impl of another namespace's trait whose own type follows a type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "other",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "X",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "core::Combine",
+            "target": {
+              "kind": "named",
+              "name": "core::A"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "other::X"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "impl-orphan-no-own-type",
+      "description": "An impl of another namespace's trait for another namespace's types.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "other",
+        "impls": [
+          {
+            "trait": "core::Combine",
+            "target": {
+              "kind": "named",
+              "name": "core::A"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "core::B"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "impl_orphan",
+            "path": "/impls/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-ambiguous",
+      "description": "Impls for (A1, B) and (A, B1) with none for (A1, B1).",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A1"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B"
+              }
+            ]
+          },
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B1"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_ambiguous",
+            "path": "/impls/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-ambiguity-disambiguated",
+      "description": "Impls for (A1, B) and (A, B1) with one for (A1, B1), declared last.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A1"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B"
+              }
+            ]
+          },
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B1"
+              }
+            ]
+          },
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A1"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B1"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "dispatch-any-ambiguous",
+      "description": "Impls for (A, any) and (any, B) with none for (A, B).",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "any"
+              }
+            ]
+          },
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "any"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "dispatch_ambiguous",
+            "path": "/impls/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dispatch-unrelated-types",
+      "description": "Impls for (A, B) and (C, B1): no call applies to both.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "A1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "A2",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              },
+              {
+                "name": "a1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A1"
+              },
+              {
+                "name": "a2",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::A1"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B1",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::B"
+              },
+              {
+                "name": "b1",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::B"
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Combine",
+            "description": "",
+            "methods": [
+              {
+                "name": "combine",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x",
+                    "dispatch": true
+                  },
+                  {
+                    "name": "y",
+                    "dispatch": true
+                  },
+                  "..."
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B"
+              }
+            ]
+          },
+          {
+            "trait": "ns::Combine",
+            "target": {
+              "kind": "named",
+              "name": "ns::C"
+            },
+            "methods": [],
+            "type_args": [
+              {
+                "kind": "named",
+                "name": "ns::B1"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "param-form",
+      "description": "A parameter object with its name alone.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Show",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": [
+                  {
+                    "name": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "param_form",
+            "path": "/traits/0/methods/0/params/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "param-default-without-type",
+      "description": "A parameter's default without its type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Show",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "n",
+                    "default": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "param_default",
+            "path": "/traits/0/methods/0/params/1/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "param-typed",
+      "description": "Typed parameters with a default, and a return type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Show",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "integer",
+                      "min": 0
+                    },
+                    "default": 1,
+                    "description": "A count."
+                  }
+                ],
+                "return_type": {
+                  "kind": "character"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "param-default-invalid",
+      "description": "A typed parameter whose default does not satisfy its type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Show",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "integer",
+                      "min": 0
+                    },
+                    "default": -1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_invalid",
+            "path": "/traits/0/methods/0/params/1/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "return-type-self",
+      "description": "A method that returns a value of its first dispatched argument's type.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "traits": [
+          {
+            "name": "Grow",
+            "description": "",
+            "methods": [
+              {
+                "name": "grow",
+                "description": "",
+                "params": [
+                  "x"
+                ],
+                "return_type": "Self"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    }
+  ]
+}

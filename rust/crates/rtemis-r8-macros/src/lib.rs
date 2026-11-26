@@ -12,24 +12,41 @@
 //! what the Rust type does not state.
 //!
 //! On the type: `#[r8(namespace = "rtemis", version = 1)]` (both required),
-//! `tag = "type"` on an enum, and `rule(id = "...", invariant = "<JSONLogic>",
+//! `tag = "type"` on an enum, `extensible` on a struct that others extend,
+//! and `rule(id = "...", invariant = "<JSONLogic>",
 //! when = "<JSONLogic>", message = "...")`, repeated per rule. On a field:
-//! `min`, `max`, `exclusive_min`, `exclusive_max`, `pattern`, `finite`,
-//! `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
-//! `sensitive`, `external`, and `resolve = "runtime"`. Doc comments are
+//! `min`, `max`, `exclusive_min`, `exclusive_max`, `pattern`, `infinite`,
+//! `nan`, `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
+//! `sensitive`, and `context`, for a field of type `Option<T>` that
+//! `r8_resolve(x, context)` fills. Doc comments are
 //! descriptions.
+//!
+//! A struct extends another by embedding it: its first field, marked
+//! `#[r8(extends)]`, holds the parent, a struct of `#[r8(extensible)]`, and
+//! the R8 type has the parent's fields and rules, then its own.
+//! `inherited(name(default = "<JSON>", sensitive, description = "..."))`
+//! beside the mark changes an inherited field; the default `null` removes
+//! the inherited one. The derive implements `rtemis_r8::derive::Subtype` for
+//! the struct, and for an extensible struct `P` the trait `PLike`: an
+//! accessor per field, `to_p()`, and `with_p(value)`, implemented for `P`
+//! and every struct that extends it. The types of a child's own fields are
+//! `Clone`.
 //!
 //! The derive builds the declaration as `rtemis_r8::ir` values. A rule's
 //! JSONLogic and a field's default are parsed when the crate compiles, so a
 //! text that does not read is a compile error at its attribute.
 //!
-//! `#[r8(native)]` on a struct also implements `rtemis_r8_api::Native`, and
-//! on an enum `rtemis_r8_api::NativeEnum`; on both, `rtemis_r8_api::Codec`, so
+//! `#[r8(storage = "rust")]` on a struct also implements `rtemis_r8_api::RustStoredStruct`, and
+//! on an enum `rtemis_r8_api::RustStoredEnum`; on both, `rtemis_r8_api::RustStored`, so
 //! R8 holds the type's values in Rust: each field's type implements
 //! `rtemis_r8_api::Field`, a `vec()` field of numbers, logicals, or bytes is
 //! a `rtemis_r8_api::Buffer`, and a newtype variant's struct implements
-//! `rtemis_r8_api::Native`. `#[r8::methods]` and `r8::exports!`
+//! `rtemis_r8_api::RustStoredStruct`. `#[r8::methods]` and `r8::exports!`
 //! register the struct and its impls with R8.
+
+mod exports;
+mod extends;
+mod methods;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
@@ -65,6 +82,24 @@ fn valid_name(s: &str) -> bool {
     let mut c = s.chars();
     c.next().is_some_and(|f| f.is_ascii_alphabetic())
         && c.all(|x| x.is_ascii_alphanumeric() || x == '_')
+}
+
+/// The R8 name of a field's identifier.
+fn field_name(ident: &syn::Ident) -> String {
+    ident.to_string().trim_start_matches("r#").to_string()
+}
+
+/// The identifier that generated code binds a field to, which no parameter
+/// and no other variable of the generated code has.
+fn bound(ident: &syn::Ident) -> syn::Ident {
+    format_ident!("__r8_field_{}", field_name(ident))
+}
+
+/// The construction of the tree of a default, JSON text; `None` for `null`.
+fn default_tree(s: &syn::LitStr) -> Result<Option<Tokens>> {
+    let v: serde_json::Value = serde_json::from_str(&s.value())
+        .map_err(|e| Error::new_spanned(s, format!("a default is JSON text: {e}")))?;
+    Ok((!v.is_null()).then(|| tree_tokens(&v)))
 }
 
 /// A literal attribute value as JSON text: numbers (a leading `-` allowed),
@@ -128,6 +163,17 @@ const OPERATORS: &[(&str, &str)] = &[
     ("if", "If"),
     ("and", "And"),
     ("or", "Or"),
+    ("abs", "Abs"),
+    ("sum", "Sum"),
+    ("nchar", "Nchar"),
+    ("path", "Path"),
+    ("mean", "Mean"),
+    ("pmin", "Pmin"),
+    ("pmax", "Pmax"),
+    ("sqrt", "Sqrt"),
+    ("log", "Log"),
+    ("exp", "Exp"),
+    ("is_na", "IsNa"),
 ];
 
 /// The construction of a `serde_json::Number`.
@@ -231,12 +277,14 @@ struct TypeAttrs {
     version: Option<u32>,
     tag: Option<String>,
     rules: Vec<Tokens>,
-    native: bool,
+    rust_stored: bool,
+    extensible: bool,
 }
 
-/// One `rule(id = ..., invariant = ..., when = ..., message = ...)`, as the
+/// One `rule(invariant = ..., when = ..., message = ..., id = ...)`, as the
 /// construction of an `rtemis_r8::ir::RuleDef`; the expressions are
-/// JSONLogic text, parsed when the crate compiles.
+/// JSONLogic text, parsed when the crate compiles, and `invariant` alone is
+/// required.
 fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
     let (mut id, mut invariant, mut when, mut message) = (None, None, None, None);
     meta.parse_nested_meta(|m| {
@@ -246,20 +294,32 @@ fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
             Some("invariant") => invariant = Some(s),
             Some("when") => when = Some(s),
             Some("message") => message = Some(s),
-            _ => return Err(m.error("a rule takes id, invariant, when, and message")),
+            _ => return Err(m.error("a rule takes invariant, when, message, and id")),
         }
         Ok(())
     })?;
-    let missing = |what: &str| meta.error(format!("a rule needs `{what}`"));
-    let id = id.ok_or_else(|| missing("id"))?;
-    if !valid_name(&id.value()) {
-        return Err(Error::new_spanned(
-            &id,
-            "a rule ID matches [A-Za-z][A-Za-z0-9_]*",
-        ));
-    }
-    let invariant = logic_attr(&invariant.ok_or_else(|| missing("invariant"))?)?;
-    let message = message.ok_or_else(|| missing("message"))?;
+    let invariant = logic_attr(&invariant.ok_or_else(|| meta.error("a rule needs `invariant`"))?)?;
+    let id = match id {
+        Some(id) => {
+            if !valid_name(&id.value()) {
+                return Err(Error::new_spanned(
+                    &id,
+                    "a rule ID matches [A-Za-z][A-Za-z0-9_]*",
+                ));
+            }
+            quote! { ::std::option::Option::Some(::rtemis_r8::derive::name(#id)) }
+        }
+        None => quote! { ::std::option::Option::None },
+    };
+    let message = match message {
+        Some(m) => {
+            if m.value().trim().is_empty() {
+                return Err(Error::new_spanned(&m, "a rule's message is not blank"));
+            }
+            quote! { ::std::option::Option::Some(#m.to_string()) }
+        }
+        None => quote! { ::std::option::Option::None },
+    };
     let when = match when {
         Some(w) => {
             let w = logic_attr(&w)?;
@@ -269,10 +329,11 @@ fn parse_rule(meta: &syn::meta::ParseNestedMeta) -> Result<Tokens> {
     };
     Ok(quote! {
         ::rtemis_r8::ir::RuleDef {
-            id: ::rtemis_r8::derive::name(#id),
             invariant: #invariant,
             when: #when,
-            message: #message.to_string(),
+            message: #message,
+            id: #id,
+            inherited_from: ::std::option::Option::None,
         }
     })
 }
@@ -301,8 +362,21 @@ fn type_attrs(attrs: &[Attribute]) -> Result<TypeAttrs> {
                     out.tag = Some(s.value());
                 }
                 Some("rule") => out.rules.push(parse_rule(&meta)?),
-                Some("native") => out.native = true,
-                _ => return Err(meta.error("expected namespace, version, tag, rule, or native")),
+                Some("extensible") => out.extensible = true,
+                Some("storage") => {
+                    let s: syn::LitStr = meta.value()?.parse()?;
+                    match s.value().as_str() {
+                        "rust" => out.rust_stored = true,
+                        "r" => {}
+                        _ => {
+                            return Err(Error::new_spanned(&s, "storage is \"r\" or \"rust\""));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(meta
+                        .error("expected namespace, version, tag, extensible, rule, or storage"));
+                }
             }
             Ok(())
         })?;
@@ -317,10 +391,43 @@ fn number_attr(e: &Expr) -> Result<f64> {
         .map_err(|_| Error::new_spanned(e, "expected a number"))
 }
 
+/// Reads the attribute `key` of a field or a parameter as a constraint of
+/// `rtemis_r8::derive::Constraints`; `false` when it is not one.
+fn constraint(
+    meta: &syn::meta::ParseNestedMeta,
+    key: &str,
+    constraints: &mut Vec<Tokens>,
+) -> Result<bool> {
+    let k = match key {
+        "min" | "max" | "exclusive_min" | "exclusive_max" | "min_length" | "max_length"
+        | "pattern" | "infinite" | "nan" | "unique" => format_ident!("{}", key),
+        _ => return Ok(false),
+    };
+    let value = match key {
+        "min" | "max" | "exclusive_min" | "exclusive_max" => {
+            let e: Expr = meta.value()?.parse()?;
+            let x = number_attr(&e)?;
+            quote! { ::std::option::Option::Some(#x) }
+        }
+        "min_length" | "max_length" => {
+            let n: syn::LitInt = meta.value()?.parse()?;
+            let x: u64 = n.base10_parse()?;
+            quote! { ::std::option::Option::Some(#x) }
+        }
+        "pattern" => {
+            let s: syn::LitStr = meta.value()?.parse()?;
+            quote! { ::std::option::Option::Some(#s) }
+        }
+        _ => quote! { true },
+    };
+    constraints.push(quote! { #k: #value });
+    Ok(true)
+}
+
 /// The construction of one field's `rtemis_r8::ir::FieldDef`.
 fn field_def(field: &syn::Field) -> Result<Tokens> {
     let ident = field.ident.as_ref().expect("named fields");
-    let name = ident.to_string().trim_start_matches("r#").to_string();
+    let name = field_name(ident);
     if !valid_name(&name) {
         return Err(Error::new_spanned(
             ident,
@@ -329,56 +436,35 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
     }
     let ty = &field.ty;
     let mut constraints: Vec<Tokens> = Vec::new();
-    let (mut sensitive, mut external) = (false, false);
+    let mut sensitive = false;
     let mut unit = quote! { ::std::option::Option::None };
     let mut default = quote! { ::std::option::Option::None };
-    let mut resolve = quote! { ::std::option::Option::None };
+    let mut resolve = quote! { ::std::option::Option::<::rtemis_r8::ir::Resolve>::None };
     for a in field.attrs.iter().filter(|a| a.path().is_ident("r8")) {
         a.parse_nested_meta(|meta| {
-            let key = meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default();
+            let key = meta
+                .path
+                .get_ident()
+                .map(|i| i.to_string())
+                .unwrap_or_default();
+            if constraint(&meta, &key, &mut constraints)? {
+                return Ok(());
+            }
             match key.as_str() {
-                "min" | "max" | "exclusive_min" | "exclusive_max" => {
-                    let e: Expr = meta.value()?.parse()?;
-                    let x = number_attr(&e)?;
-                    let k = format_ident!("{}", key);
-                    constraints.push(quote! { #k: ::std::option::Option::Some(#x) });
-                }
-                "min_length" | "max_length" => {
-                    let n: syn::LitInt = meta.value()?.parse()?;
-                    let x: u64 = n.base10_parse()?;
-                    let k = format_ident!("{}", key);
-                    constraints.push(quote! { #k: ::std::option::Option::Some(#x) });
-                }
-                "pattern" => {
-                    let s: syn::LitStr = meta.value()?.parse()?;
-                    constraints.push(quote! { pattern: ::std::option::Option::Some(#s) });
-                }
-                "finite" => {
-                    let b: syn::LitBool = meta.value()?.parse()?;
-                    let b = b.value;
-                    constraints.push(quote! { finite: ::std::option::Option::Some(#b) });
-                }
-                "unique" => constraints.push(quote! { unique: true }),
                 "sensitive" => sensitive = true,
-                "external" => external = true,
                 "unit" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
                     unit = quote! { ::std::option::Option::Some(#s.into()) };
                 }
                 "default" => {
                     let s: syn::LitStr = meta.value()?.parse()?;
-                    let v: serde_json::Value = serde_json::from_str(&s.value())
-                        .map_err(|e| Error::new_spanned(&s, format!("a default is JSON text: {e}")))?;
-                    let v = tree_tokens(&v);
+                    let v =
+                        default_tree(&s)?.unwrap_or_else(|| tree_tokens(&serde_json::Value::Null));
                     default = quote! { ::std::option::Option::Some(::std::boxed::Box::new(#v)) };
                 }
-                "resolve" => {
-                    let s: syn::LitStr = meta.value()?.parse()?;
-                    resolve = match s.value().as_str() {
-                        "none" => quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::None) },
-                        "runtime" => quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::Runtime) },
-                        _ => return Err(Error::new_spanned(&s, "resolve is \"none\" or \"runtime\"; a computed field is declared in R")),
-                    };
+                "context" => {
+                    resolve =
+                        quote! { ::std::option::Option::Some(::rtemis_r8::ir::Resolve::Context) };
                 }
                 _ => return Err(meta.error("unknown R8 field attribute")),
             }
@@ -386,7 +472,6 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
         })?;
     }
     let desc = description(&field.attrs);
-    let field_name = name.clone();
     Ok(quote! {
         ::rtemis_r8::ir::FieldDef {
             name: ::rtemis_r8::derive::name(#name),
@@ -396,16 +481,14 @@ fn field_def(field: &syn::Field) -> Result<Tokens> {
                     #(#constraints,)*
                     ..::std::default::Default::default()
                 },
-                #resolve,
+                #resolve.is_some(),
             )
-            .unwrap_or_else(|e| panic!("field `{}`: {}", #field_name, e)),
+            .unwrap_or_else(|e| panic!("field `{}`: {}", #name, e)),
             default: #default,
             description: #desc.into(),
             sensitive: #sensitive,
             unit: #unit,
-            external: #external,
-            unique: false,
-            optional: false,
+            resolve: #resolve,
             inherited_from: ::std::option::Option::None,
             extensions: ::std::option::Option::None,
         }
@@ -420,18 +503,20 @@ fn fields_of(fields: &Fields) -> Result<Vec<&syn::Field>> {
     }
 }
 
-/// Encoding, decoding, and registration of named fields, reading and
-/// writing `m`, the object of the JSON form.
-fn field_codec(fields: &[&syn::Field]) -> (Vec<Tokens>, Vec<Tokens>, Vec<Tokens>) {
+/// Encoding, decoding, and registration of named fields: each field bound
+/// to its `bound()` identifier is written into `__r8_m`, the object of the
+/// JSON form, and read from `v`.
+fn field_json(fields: &[&syn::Field]) -> (Vec<Tokens>, Vec<Tokens>, Vec<Tokens>) {
     let mut encode = Vec::new();
     let mut decode = Vec::new();
     let mut register = Vec::new();
     for f in fields {
         let ident = f.ident.as_ref().unwrap();
         let ty = &f.ty;
-        let name = ident.to_string().trim_start_matches("r#").to_string();
+        let name = field_name(ident);
+        let var = bound(ident);
         encode.push(quote! {
-            m.insert(#name.to_string(), ::rtemis_r8::derive::Encode::encode(#ident).map_err(|e| format!("{}: {}", #name, e))?);
+            __r8_m.insert(#name.to_string(), ::rtemis_r8::derive::Encode::encode(#var).map_err(|e| format!("{}: {}", #name, e))?);
         });
         decode.push(quote! {
             #ident: ::rtemis_r8::derive::Encode::decode(v.get(#name).unwrap_or(&::rtemis_r8::derive::serde_json::Value::Null))
@@ -463,38 +548,64 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     }
     let (def, encode, decode, register) = match &input.data {
         Data::Struct(s) => {
-            let fields = fields_of(&s.fields)?;
+            let (parent, fields) = extends::split(&fields_of(&s.fields)?)?;
             let defs = fields
                 .iter()
                 .map(|f| field_def(f))
                 .collect::<Result<Vec<_>>>()?;
-            let (enc, dec, reg) = field_codec(&fields);
-            let names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-            (
-                quote! {
-                    ::rtemis_r8::ir::TypeDef::Struct(::rtemis_r8::ir::StructDef {
-                        name: ::rtemis_r8::derive::name(#type_name),
-                        description: #desc.to_string(),
-                        version: #version,
-                        fields: ::std::vec![#(#defs),*],
-                        extends: ::std::option::Option::None,
-                        rules: ::std::vec![#(#rules),*],
-                        migrations: ::std::vec::Vec::new(),
-                        aliases: ::std::vec::Vec::new(),
-                        provenance: false,
-                        s4: false,
-                        extensions: ::std::collections::BTreeMap::new(),
-                    })
-                },
-                quote! {
-                    let Self { #(#names),* } = self;
-                    let mut m = ::rtemis_r8::derive::serde_json::Map::new();
-                    #(#enc)*
-                    Ok(::rtemis_r8::derive::serde_json::Value::Object(m))
-                },
-                quote! { Ok(Self { #(#dec),* }) },
-                quote! { #(#reg)* },
-            )
+            let (enc, dec, reg) = field_json(&fields);
+            let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+            let vars: Vec<_> = idents.iter().map(|i| bound(i)).collect();
+            let def = quote! {
+                ::rtemis_r8::ir::StructDef {
+                    name: ::rtemis_r8::derive::name(#type_name),
+                    description: #desc.to_string(),
+                    version: #version,
+                    fields: ::std::vec![#(#defs),*],
+                    extends: ::std::option::Option::None,
+                    rules: ::std::vec![#(#rules),*],
+                    migrations: ::std::vec::Vec::new(),
+                    aliases: ::std::vec::Vec::new(),
+                    extensions: ::std::collections::BTreeMap::new(),
+                }
+            };
+            match &parent {
+                None => (
+                    quote! { ::rtemis_r8::ir::TypeDef::Struct(#def) },
+                    quote! {
+                        let Self { #(#idents: #vars),* } = self;
+                        let mut __r8_m = ::rtemis_r8::derive::serde_json::Map::new();
+                        #(#enc)*
+                        Ok(::rtemis_r8::derive::serde_json::Value::Object(__r8_m))
+                    },
+                    quote! { Ok(Self { #(#dec),* }) },
+                    quote! { #(#reg)* },
+                ),
+                Some(p) => {
+                    let (base, ty, changes) = (p.ident, p.ty, &p.changes);
+                    (
+                        quote! {
+                            ::rtemis_r8::derive::extended::<#ty>(#def, &[#(#changes),*])
+                        },
+                        quote! {
+                            let Self { #base: __r8_base, #(#idents: #vars),* } = self;
+                            let mut __r8_m = ::rtemis_r8::derive::inherited_members(__r8_base)?;
+                            #(#enc)*
+                            Ok(::rtemis_r8::derive::serde_json::Value::Object(__r8_m))
+                        },
+                        quote! {
+                            Ok(Self {
+                                #base: <#ty as ::rtemis_r8::derive::Encode>::decode(v)?,
+                                #(#dec),*
+                            })
+                        },
+                        quote! {
+                            <#ty as ::rtemis_r8::derive::Encode>::register(set);
+                            #(#reg)*
+                        },
+                    )
+                }
+            }
         }
         Data::Enum(e) => {
             let tag = attrs.tag.clone().unwrap_or_else(|| "type".to_string());
@@ -515,7 +626,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                             ::rtemis_r8::ir::VariantDef {
                                 name: ::rtemis_r8::derive::name(#vname),
                                 description: #vdesc.to_string(),
-                                shape: ::rtemis_r8::ir::VariantShape::Unit,
+                                kind: ::rtemis_r8::ir::VariantKind::Unit,
                             }
                         });
                         if unit_only {
@@ -527,29 +638,31 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                     }
                     Fields::Named(_) => {
                         let fields = fields_of(&v.fields)?;
+                        extends::none(&fields)?;
                         let defs = fields
                             .iter()
                             .map(|f| field_def(f))
                             .collect::<Result<Vec<_>>>()?;
-                        let (enc, dec, r) = field_codec(&fields);
-                        let names: Vec<_> =
+                        let (enc, dec, r) = field_json(&fields);
+                        let idents: Vec<_> =
                             fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+                        let vars: Vec<_> = idents.iter().map(|i| bound(i)).collect();
                         variant_defs.push(quote! {
                             ::rtemis_r8::ir::VariantDef {
                                 name: ::rtemis_r8::derive::name(#vname),
                                 description: #vdesc.to_string(),
-                                shape: ::rtemis_r8::ir::VariantShape::Struct {
+                                kind: ::rtemis_r8::ir::VariantKind::Struct {
                                     fields: ::std::vec![#(#defs),*],
                                     rules: ::std::vec![#(#vrules),*],
                                 },
                             }
                         });
                         enc_arms.push(quote! {
-                            Self::#vid { #(#names),* } => {
-                                let mut m = ::rtemis_r8::derive::serde_json::Map::new();
+                            Self::#vid { #(#idents: #vars),* } => {
+                                let mut __r8_m = ::rtemis_r8::derive::serde_json::Map::new();
                                 #(#enc)*
-                                m.insert(#tag.to_string(), #vname.into());
-                                Ok(::rtemis_r8::derive::serde_json::Value::Object(m))
+                                __r8_m.insert(#tag.to_string(), #vname.into());
+                                Ok(::rtemis_r8::derive::serde_json::Value::Object(__r8_m))
                             }
                         });
                         dec_arms.push(quote! { Some(#vname) => Ok(Self::#vid { #(#dec),* }) });
@@ -561,7 +674,7 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
                             ::rtemis_r8::ir::VariantDef {
                                 name: ::rtemis_r8::derive::name(#vname),
                                 description: #vdesc.to_string(),
-                                shape: ::rtemis_r8::ir::VariantShape::Newtype {
+                                kind: ::rtemis_r8::ir::VariantKind::Newtype {
                                     of: ::rtemis_r8::name::QualifiedName::parse(
                                         <#inner as ::rtemis_r8::derive::R8>::NAME,
                                     )
@@ -632,24 +745,46 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
             ));
         }
     };
-    let native = if attrs.native {
+    let rust_stored = if attrs.rust_stored {
         match &input.data {
-            Data::Struct(st) => native_impl(ident, &qualified, &fields_of(&st.fields)?)?,
+            Data::Struct(st) => {
+                let (parent, fields) = extends::split(&fields_of(&st.fields)?)?;
+                rust_stored_impl(ident, &qualified, parent.as_ref(), &fields)?
+            }
             Data::Enum(e) => {
-                native_enum_impl(ident, &qualified, e, attrs.tag.as_deref().unwrap_or("type"))?
+                rust_stored_enum_impl(ident, &qualified, e, attrs.tag.as_deref().unwrap_or("type"))?
             }
             Data::Union(_) => {
                 return Err(Error::new(
                     Span::call_site(),
-                    "#[r8(native)] applies to a struct or an enum",
+                    "#[r8(storage = \"rust\")] applies to a struct or an enum",
                 ));
             }
         }
     } else {
         quote! {}
     };
+    let inheritance = match &input.data {
+        Data::Struct(st) => {
+            let (parent, own) = extends::split(&fields_of(&st.fields)?)?;
+            let of_parent = parent.as_ref().map(|p| {
+                let required = extends::parent_is_extensible(p);
+                let subtype = extends::subtype_of_parent(ident, p, &own);
+                quote! { #required #subtype }
+            });
+            let interface = if attrs.extensible {
+                extends::interface(ident, &input.vis, parent.as_ref(), &own)?
+            } else {
+                quote! {}
+            };
+            quote! { #of_parent #interface }
+        }
+        _ if attrs.extensible => return Err(extends::enum_is_closed()),
+        _ => quote! {},
+    };
     Ok(quote! {
-        #native
+        #rust_stored
+        #inheritance
         impl ::rtemis_r8::derive::Encode for #ident {
             fn field_type() -> ::rtemis_r8::ir::FieldType {
                 ::rtemis_r8::derive::named(#qualified)
@@ -675,12 +810,12 @@ fn expand(input: &DeriveInput) -> Result<Tokens> {
     })
 }
 
-/// `impl rtemis_r8_api::NativeEnum` and `impl rtemis_r8_api::Codec` for an
-/// enum of `#[r8(native)]`: unit variants, struct variants whose fields are
-/// each a `Field`, and newtype variants whose struct implements `Native`.
+/// `impl rtemis_r8_api::RustStoredEnum` and `impl rtemis_r8_api::RustStored` for an
+/// enum of `#[r8(storage = "rust")]`: unit variants, struct variants whose fields are
+/// each a `Field`, and newtype variants whose struct implements `RustStoredStruct`.
 /// The state's bytes are the variant's declaration index, a `u32`, then its
 /// fields.
-fn native_enum_impl(
+fn rust_stored_enum_impl(
     ident: &syn::Ident,
     qualified: &str,
     e: &syn::DataEnum,
@@ -691,6 +826,7 @@ fn native_enum_impl(
     let tag_c = c_str(tag);
     let mut from_node = Vec::new();
     let api = quote! { ::rtemis_r8_api };
+    let of_kind = of_kind(&quote! { #api::RustStoredEnum });
     let unknown_field = quote! {
         Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name)))
     };
@@ -698,14 +834,14 @@ fn native_enum_impl(
     let mut variant = Vec::new();
     let mut get = Vec::new();
     let mut with = Vec::new();
-    let mut write = Vec::new();
-    let mut read = Vec::new();
     let mut bytes = Vec::new();
-    for (k, v) in e.variants.iter().enumerate() {
+    let mut count = Vec::new();
+    let mut names_of = Vec::new();
+    let mut each = Vec::new();
+    for v in &e.variants {
         let vid = &v.ident;
         let vname = vid.to_string();
         let vname_c = c_str(&vname);
-        let idx = k as u32;
         match &v.fields {
             Fields::Unit => {
                 from.push(quote! {
@@ -720,18 +856,16 @@ fn native_enum_impl(
                 variant.push(quote! { Self::#vid => #vname_c });
                 get.push(quote! { Self::#vid => #unknown_field });
                 with.push(quote! { Self::#vid => #unknown_field });
-                write.push(quote! { Self::#vid => out.write(&#idx.to_le_bytes()) });
-                read.push(quote! { #idx => Ok(Self::#vid) });
                 bytes.push(quote! { Self::#vid => 0 });
+                count.push(quote! { Self::#vid => 0 });
+                each.push(quote! { Self::#vid => Ok(()) });
             }
             Fields::Named(_) => {
                 let fields = fields_of(&v.fields)?;
                 let n = fields.len();
                 let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-                let names: Vec<String> = idents
-                    .iter()
-                    .map(|i| i.to_string().trim_start_matches("r#").to_string())
-                    .collect();
+                let vars: Vec<_> = idents.iter().map(|i| bound(i)).collect();
+                let names: Vec<String> = idents.iter().map(|i| field_name(i)).collect();
                 let tys: Vec<_> = fields.iter().map(|f| &f.ty).collect();
                 let conv: Vec<Tokens> = idents
                     .iter()
@@ -760,7 +894,7 @@ fn native_enum_impl(
                     .map(|((i, t), name)| {
                         let name_c = c_str(name);
                         quote! {
-                            #i: <#t as #api::Field>::from_node(r, r.field(root, #name_c))
+                            #i: <#t as #api::Field>::from_node(r, r.member(root, #name_c))
                                 .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
                         }
                     })
@@ -768,8 +902,8 @@ fn native_enum_impl(
                 from_node.push(quote! { #vname => Ok(Self::#vid { #(#node_conv),* }) });
                 variant.push(quote! { Self::#vid { .. } => #vname_c });
                 get.push(quote! {
-                    Self::#vid { #(#idents),* } => match name {
-                        #(#names => #api::Field::to_r(#idents, owner),)*
+                    Self::#vid { #(#idents: #vars),* } => match name {
+                        #(#names => #api::Field::to_r(#vars, owner),)*
                         _ => #unknown_field,
                     }
                 });
@@ -780,8 +914,9 @@ fn native_enum_impl(
                     .map(|((i, t), name)| {
                         let others: Vec<Tokens> = idents
                             .iter()
-                            .filter(|o| *o != i)
-                            .map(|o| quote! { #o: ::std::clone::Clone::clone(#o) })
+                            .zip(&vars)
+                            .filter(|(o, _)| *o != i)
+                            .map(|(o, var)| quote! { #o: ::std::clone::Clone::clone(#var) })
                             .collect();
                         quote! {
                             #name => Ok(Self::#vid {
@@ -792,50 +927,46 @@ fn native_enum_impl(
                     })
                     .collect();
                 with.push(quote! {
-                    Self::#vid { #(#idents),* } => match name {
+                    Self::#vid { #(#idents: #vars),* } => match name {
                         #(#with_arms,)*
                         _ => #unknown_field,
                     }
                 });
-                write.push(quote! {
-                    Self::#vid { #(#idents),* } => {
-                        out.write(&#idx.to_le_bytes())?;
-                        #(#api::Field::write(#idents, out)?;)*
+                bytes.push(quote! {
+                    Self::#vid { #(#idents: #vars),* } => 0 #(+ #api::Field::owned_bytes(#vars))*
+                });
+                count.push(quote! { Self::#vid { .. } => #n });
+                let names_c: Vec<Tokens> = names.iter().map(|n| c_str(n)).collect();
+                names_of.push(quote! { #vname => { #(f(#names_c);)* } });
+                each.push(quote! {
+                    Self::#vid { #(#idents: #vars),* } => {
+                        #(f(#names_c, #api::Field::to_r(#vars, owner)?)?;)*
                         Ok(())
                     }
-                });
-                read.push(quote! {
-                    #idx => Ok(Self::#vid { #(#idents: <#tys as #api::Field>::read(input)?),* })
-                });
-                bytes.push(quote! {
-                    Self::#vid { #(#idents),* } => 0 #(+ #api::Field::owned_bytes(#idents))*
                 });
             }
             Fields::Unnamed(u) if u.unnamed.len() == 1 => {
                 let inner = &u.unnamed[0].ty;
                 from.push(quote! {
-                    #vname => Ok(Self::#vid(unsafe { <#inner as #api::Native>::from_fields(fields) }?))
+                    #vname => Ok(Self::#vid(unsafe { <#inner as #api::RustStoredStruct>::from_fields(fields) }?))
                 });
                 from_node.push(quote! {
-                    #vname => Ok(Self::#vid(<#inner as #api::Native>::from_reader(r, root)?))
+                    #vname => Ok(Self::#vid(<#inner as #api::RustStoredStruct>::from_reader(r, root)?))
                 });
                 variant.push(quote! { Self::#vid(_) => #vname_c });
-                get.push(quote! { Self::#vid(inner) => <#inner as #api::Native>::get_field(inner, owner, name) });
+                get.push(quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::get_field(inner, owner, name) });
                 with.push(quote! {
-                    Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::Native>::with_field(inner, name, value) }?))
+                    Self::#vid(inner) => Ok(Self::#vid(unsafe { <#inner as #api::RustStoredStruct>::with_field(inner, name, value) }?))
                 });
-                write.push(quote! {
-                    Self::#vid(inner) => {
-                        out.write(&#idx.to_le_bytes())?;
-                        <#inner as #api::Native>::write_state(inner, out)
-                    }
-                });
-                read.push(
-                    quote! { #idx => Ok(Self::#vid(<#inner as #api::Native>::read_state(input)?)) },
-                );
                 bytes.push(
-                    quote! { Self::#vid(inner) => <#inner as #api::Native>::owned_bytes(inner) },
+                    quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::owned_bytes(inner) },
                 );
+                count
+                    .push(quote! { Self::#vid(_) => <#inner as #api::RustStoredStruct>::N_FIELDS });
+                names_of.push(quote! { #vname => <#inner as #api::RustStoredStruct>::names(f) });
+                each.push(quote! {
+                    Self::#vid(inner) => <#inner as #api::RustStoredStruct>::fields(inner, owner, f)
+                });
             }
             Fields::Unnamed(u) => {
                 return Err(Error::new_spanned(
@@ -846,16 +977,26 @@ fn native_enum_impl(
         }
     }
     Ok(quote! {
-        impl #api::Codec for #ident {
+        impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
-            const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::enum_codec::<Self>();
-            unsafe fn from_r_native(x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
+            const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::enum_codec::<Self>();
+            unsafe fn from_value(x: #api::sys::SEXP) -> #api::Result<Self> {
                 let variant = unsafe { #api::call::r_variant(x) }?;
-                unsafe { <Self as #api::NativeEnum>::from_variant(&variant, fields) }
+                let fields = unsafe {
+                    #api::call::fields_by_name(x, |f| <Self as #api::RustStoredEnum>::names(&variant, f))
+                }?;
+                unsafe { <Self as #api::RustStoredEnum>::from_variant(&variant, &fields) }
+            }
+            #of_kind
+            fn variant_name(&self) -> ::std::option::Option<&'static ::core::ffi::CStr> {
+                ::std::option::Option::Some(<Self as #api::RustStoredEnum>::variant(self))
+            }
+            fn field_count(&self) -> usize {
+                <Self as #api::RustStoredEnum>::n_fields(self)
             }
         }
         #[allow(unused_variables)]
-        impl #api::NativeEnum for #ident {
+        impl #api::RustStoredEnum for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
             unsafe fn from_variant(variant: &str, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
                 match variant {
@@ -863,8 +1004,14 @@ fn native_enum_impl(
                     _ => Err(#api::Error::new("unknown_variant", format!("`{}` has no variant `{}`", #qualified, variant))),
                 }
             }
+            fn names(variant: &str, f: &mut dyn FnMut(&'static ::core::ffi::CStr)) {
+                match variant {
+                    #(#names_of,)*
+                    _ => {}
+                }
+            }
             fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
-                let variant = if #unit_only { r.string(root)? } else { r.string(r.field(root, #tag_c))? };
+                let variant = if #unit_only { r.string(root)? } else { r.string(r.member(root, #tag_c))? };
                 match variant {
                     #(#from_node,)*
                     _ => Err(#api::Error::new("unknown_variant", format!("`{}` has no variant `{}`", #qualified, variant))),
@@ -879,20 +1026,41 @@ fn native_enum_impl(
             unsafe fn with_field(&self, name: &str, value: #api::sys::SEXP) -> #api::Result<Self> {
                 match self { #(#with,)* }
             }
-            fn write_state(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
-                match self { #(#write,)* }
-            }
-            fn read_state(input: &mut #api::StateReader) -> #api::Result<Self> {
-                match u32::from_le_bytes(input.take_array()?) {
-                    #(#read,)*
-                    i => Err(#api::Error::new("bad_state", format!("`{}` has no variant of index {}", #qualified, i))),
-                }
-            }
             fn owned_bytes(&self) -> usize {
                 match self { #(#bytes,)* }
             }
+            fn n_fields(&self) -> usize {
+                match self { #(#count,)* }
+            }
+            fn fields(
+                &self,
+                owner: #api::sys::SEXP,
+                f: &mut dyn FnMut(&'static ::core::ffi::CStr, #api::sys::SEXP) -> #api::Result<()>,
+            ) -> #api::Result<()> {
+                match self { #(#each,)* }
+            }
         }
     })
+}
+
+/// The methods of `RustStored` that the trait of the type's kind, `kind`, has.
+fn of_kind(kind: &Tokens) -> Tokens {
+    let api = quote! { ::rtemis_r8_api };
+    quote! {
+        fn from_node<'a>(r: &#api::Reader<'a>, n: #api::Node<'a>) -> #api::Result<Self> {
+            <Self as #kind>::from_reader(r, n)
+        }
+        fn heap_bytes(&self) -> usize {
+            <Self as #kind>::owned_bytes(self)
+        }
+        fn each_field(
+            &self,
+            owner: #api::sys::SEXP,
+            f: &mut dyn FnMut(&'static ::core::ffi::CStr, #api::sys::SEXP) -> #api::Result<()>,
+        ) -> #api::Result<()> {
+            <Self as #kind>::fields(self, owner, f)
+        }
+    }
 }
 
 /// A C string literal, `c"..."`, of an R8 name, which holds ASCII letters,
@@ -901,17 +1069,27 @@ fn c_str(s: &str) -> Tokens {
     format!("c{s:?}").parse().expect("a C string literal")
 }
 
-/// `impl rtemis_r8_api::Native` for a struct of `#[r8(native)]`.
-fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> Result<Tokens> {
+/// `impl rtemis_r8_api::RustStoredStruct` for a struct of
+/// `#[r8(storage = "rust")]`. A struct with an embedded parent delegates the
+/// inherited fields, which precede its own in the fields R8 passes and in
+/// the state's bytes, to the parent's implementation.
+fn rust_stored_impl(
+    ident: &syn::Ident,
+    qualified: &str,
+    parent: Option<&extends::Parent>,
+    fields: &[&syn::Field],
+) -> Result<Tokens> {
     let type_c = c_str(qualified);
     let n = fields.len();
     let idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-    let names: Vec<String> = idents
-        .iter()
-        .map(|i| i.to_string().trim_start_matches("r#").to_string())
-        .collect();
+    let names: Vec<String> = idents.iter().map(|i| field_name(i)).collect();
+    let names_c: Vec<Tokens> = names.iter().map(|n| c_str(n)).collect();
     let tys: Vec<_> = fields.iter().map(|f| &f.ty).collect();
     let api = quote! { ::rtemis_r8_api };
+    let of_kind = of_kind(&quote! { #api::RustStoredStruct });
+    let base_ident = parent.map(|p| p.ident);
+    let base: Vec<_> = parent.map(|p| p.ident).into_iter().collect();
+    let base_ty: Vec<_> = parent.map(|p| p.ty).into_iter().collect();
     let from: Vec<Tokens> = idents
         .iter()
         .zip(&tys)
@@ -919,7 +1097,7 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
         .enumerate()
         .map(|(k, ((i, t), name))| {
             quote! {
-                #i: unsafe { <#t as #api::Field>::from_r(fields[#k]) }
+                #i: unsafe { <#t as #api::Field>::from_r(__r8_own[#k]) }
                     .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
             }
         })
@@ -931,7 +1109,7 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
         .map(|((i, t), name)| {
             let name_c = c_str(name);
             quote! {
-                #i: <#t as #api::Field>::from_node(r, r.field(root, #name_c))
+                #i: <#t as #api::Field>::from_node(r, r.member(root, #name_c))
                     .map_err(|e| #api::Error::new(e.code, format!("field `{}`: {}", #name, e.message)))?
             }
         })
@@ -941,9 +1119,10 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
         .zip(&tys)
         .zip(&names)
         .map(|((i, t), name)| {
-            let others: Vec<Tokens> = idents
+            let others: Vec<Tokens> = base_ident
                 .iter()
-                .filter(|o| *o != i)
+                .copied()
+                .chain(idents.iter().copied().filter(|o| o != i))
                 .map(|o| quote! { #o: ::std::clone::Clone::clone(&self.#o) })
                 .collect();
             quote! {
@@ -954,76 +1133,169 @@ fn native_impl(ident: &syn::Ident, qualified: &str, fields: &[&syn::Field]) -> R
             }
         })
         .collect();
+    let unknown = quote! {
+        Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name)))
+    };
+    let (get_rest, with_rest) = match parent {
+        None => (unknown.clone(), unknown),
+        Some(p) => {
+            let (b, t) = (p.ident, p.ty);
+            (
+                quote! { <#t as #api::RustStoredStruct>::get_field(&self.#b, owner, name) },
+                quote! {
+                    Ok(Self {
+                        #b: unsafe { <#t as #api::RustStoredStruct>::with_field(&self.#b, name, value) }?,
+                        #(#idents: ::std::clone::Clone::clone(&self.#idents)),*
+                    })
+                },
+            )
+        }
+    };
+    let inherited = match parent {
+        None => quote! { 0 },
+        Some(p) => {
+            let t = p.ty;
+            quote! { <#t as #api::RustStoredStruct>::N_FIELDS }
+        }
+    };
     Ok(quote! {
-        impl #api::Codec for #ident {
+        impl #api::RustStored for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
-            const TABLE: #api::Shared<#api::rtemis_r8::abi::TypeVTable> = #api::codec::<Self>();
-            unsafe fn from_r_native(_x: #api::sys::SEXP, fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
-                unsafe { <Self as #api::Native>::from_fields(fields) }
+            const TABLE: #api::Shared<#api::rtemis_r8::abi::Codec> = #api::codec::<Self>();
+            unsafe fn from_value(x: #api::sys::SEXP) -> #api::Result<Self> {
+                let fields = unsafe {
+                    #api::call::fields_by_name(x, <Self as #api::RustStoredStruct>::names)
+                }?;
+                unsafe { <Self as #api::RustStoredStruct>::from_fields(&fields) }
+            }
+            #of_kind
+            fn variant_name(&self) -> ::std::option::Option<&'static ::core::ffi::CStr> {
+                ::std::option::Option::None
+            }
+            fn field_count(&self) -> usize {
+                <Self as #api::RustStoredStruct>::N_FIELDS
             }
         }
-        impl #api::Native for #ident {
+        impl #api::RustStoredStruct for #ident {
             const TYPE_NAME: &'static ::core::ffi::CStr = #type_c;
+            const N_FIELDS: usize = #inherited + #n;
             unsafe fn from_fields(fields: &[#api::sys::SEXP]) -> #api::Result<Self> {
-                if fields.len() != #n {
+                let expected = <Self as #api::RustStoredStruct>::N_FIELDS;
+                if fields.len() != expected {
                     return Err(#api::Error::new(
                         "arity",
-                        format!("`{}` has {} fields, and R8 passed {}", #qualified, #n, fields.len()),
+                        format!("`{}` has {} fields, and R8 passed {}", #qualified, expected, fields.len()),
                     ));
                 }
-                Ok(Self { #(#from),* })
+                let (__r8_inherited, __r8_own) = fields.split_at(expected - #n);
+                Ok(Self {
+                    #(#base: unsafe { <#base_ty as #api::RustStoredStruct>::from_fields(__r8_inherited) }?,)*
+                    #(#from),*
+                })
+            }
+            fn names(f: &mut dyn FnMut(&'static ::core::ffi::CStr)) {
+                #(<#base_ty as #api::RustStoredStruct>::names(f);)*
+                #(f(#names_c);)*
             }
             fn from_reader<'a>(r: &#api::Reader<'a>, root: #api::Node<'a>) -> #api::Result<Self> {
-                Ok(Self { #(#from_node),* })
+                Ok(Self {
+                    #(#base: <#base_ty as #api::RustStoredStruct>::from_reader(r, root)?,)*
+                    #(#from_node),*
+                })
             }
             fn get_field(&self, owner: #api::sys::SEXP, name: &str) -> #api::Result<#api::sys::SEXP> {
                 match name {
                     #(#names => #api::Field::to_r(&self.#idents, owner),)*
-                    _ => Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name))),
+                    _ => #get_rest,
                 }
             }
             unsafe fn with_field(&self, name: &str, value: #api::sys::SEXP) -> #api::Result<Self> {
                 match name {
                     #(#with_arms,)*
-                    _ => Err(#api::Error::new("unknown_field", format!("`{}` has no field `{}`", #qualified, name))),
+                    _ => #with_rest,
                 }
             }
-            fn write_state(&self, out: &mut #api::StateWriter) -> #api::Result<()> {
-                #(#api::Field::write(&self.#idents, out)?;)*
+            fn owned_bytes(&self) -> usize {
+                0
+                #(+ <#base_ty as #api::RustStoredStruct>::owned_bytes(&self.#base))*
+                #(+ #api::Field::owned_bytes(&self.#idents))*
+            }
+            fn fields(
+                &self,
+                owner: #api::sys::SEXP,
+                f: &mut dyn FnMut(&'static ::core::ffi::CStr, #api::sys::SEXP) -> #api::Result<()>,
+            ) -> #api::Result<()> {
+                #(<#base_ty as #api::RustStoredStruct>::fields(&self.#base, owner, f)?;)*
+                #(f(#names_c, #api::Field::to_r(&self.#idents, owner)?)?;)*
                 Ok(())
             }
-            fn read_state(input: &mut #api::StateReader) -> #api::Result<Self> {
-                Ok(Self { #(#idents: <#tys as #api::Field>::read(input)?),* })
-            }
-            fn owned_bytes(&self) -> usize {
-                0 #(+ #api::Field::owned_bytes(&self.#idents))*
-            }
+            #(
+                fn upcast(&self, type_name: &::core::ffi::CStr) -> *const ::core::ffi::c_void {
+                    if type_name == <#base_ty as #api::RustStoredStruct>::TYPE_NAME {
+                        ::core::ptr::from_ref(&self.#base).cast()
+                    } else {
+                        <#base_ty as #api::RustStoredStruct>::upcast(&self.#base, type_name)
+                    }
+                }
+            )*
         }
     })
 }
 
-/// `#[r8::methods(trait = "pkg::Trait")]` on an impl of a Rust trait for a
-/// Rust-native struct: keeps the impl, and generates one function per
-/// method that R8 calls (`R8MethodFn`), and the constant
-/// `__R8_IMPL_<Type>_<Trait>` that `r8::exports!` lists. A method takes
-/// `&self` and arguments that implement `rtemis_r8_api::FromR` or are `&T`
-/// of a Rust-native type `T` (`rtemis_r8_api::Receiver`), and returns
-/// a type that implements `rtemis_r8_api::IntoR`; the trait is declared in
-/// R, whose method has `x` and the other parameters by the same names.
+/// `#[r8::methods(trait = "ns::Trait")]` on a Rust trait, the Rust side of an
+/// R8 trait: keeps the trait, and adds the hidden function that gives
+/// `r8::exports!` the functions R8 calls for an impl. An impl is an ordinary
+/// Rust impl, a blanket impl included, and `r8::exports!` lists the types it
+/// is registered for. A method takes `&self` and arguments that implement
+/// `rtemis_r8_api::FromR` or are `&T` of a Rust-stored type `T`
+/// (`rtemis_r8_api::Receiver`), and returns a type that implements
+/// `rtemis_r8_api::IntoR`, a Rust-stored type among them; the trait is
+/// declared in R, whose method has the same parameters.
+///
+/// A type parameter of the trait is a dispatched position after the first,
+/// which `dispatch(x, y)` beside `trait` names, the first argument first:
+///
+/// ```text
+/// #[r8::methods(trait = "ns::overlaps", dispatch(x, y))]
+/// pub trait Overlaps<Y> {
+///     fn overlaps(&self, y: &Y) -> bool;
+/// }
+/// ```
+///
+/// Its argument is `&Y`, and a row names the type, `IRanges:
+/// Overlaps<GRanges>`, or any value, `IRanges: Overlaps<r8::Any>`. A
+/// replacement method `f<-` is `with_f(&self, value)`.
+///
+/// Registration checks the method's signature against the R declaration: the
+/// names of the parameters, their types, and the type of the result.
+///
+/// `traits` of `r8::exports!` lists the traits that Rust declares. The
+/// attributes of a parameter are those of a derived field's constraints and
+/// `default`, its doc comment is its description, `#[r8(name = "label<-")]`
+/// gives a method another name in R, whose identifier is the method's, and
+/// `tag = "type"` beside `trait` gives the trait a tag member. An accessor of
+/// a field that each implementing struct has is marked `#[r8(field)]`:
+///
+/// ```text
+/// #[r8::methods(trait = "ns::shifted")]
+/// pub trait Shifted {
+///     fn shifted(
+///         &self,
+///         /// The distance.
+///         #[r8(min = 0, default = "1")]
+///         by: f64,
+///     ) -> Self;
+/// }
+/// ```
+///
+/// `dyn` beside `trait` makes `dyn Trait` the name of the R8 trait in the type
+/// of an open field, `rtemis_r8_api::ImplementorValue<dyn Trait>`; the Rust
+/// trait is dyn compatible, and dispatches on one argument.
 #[proc_macro_attribute]
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as syn::ItemImpl);
-    let mut trait_name: Option<syn::LitStr> = None;
-    let parser = syn::meta::parser(|meta| {
-        if meta.path.is_ident("trait") {
-            trait_name = Some(meta.value()?.parse()?);
-            Ok(())
-        } else {
-            Err(meta.error("expected trait = \"pkg::Trait\""))
-        }
-    });
-    parse_macro_input!(attr with parser);
-    methods_impl(trait_name, &item)
+    let item = parse_macro_input!(item as syn::Item);
+    methods::args(attr.into())
+        .and_then(|args| methods::expand(&args, item))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
@@ -1032,271 +1304,18 @@ fn valid_qualified(s: &str) -> bool {
     matches!(s.split_once("::"), Some((a, b)) if valid_name(a) && valid_name(b))
 }
 
-fn methods_impl(trait_name: Option<syn::LitStr>, item: &syn::ItemImpl) -> Result<Tokens> {
-    let trait_lit = trait_name.ok_or_else(|| {
-        Error::new(
-            Span::call_site(),
-            "#[r8::methods(trait = \"pkg::Trait\")] names the R8 trait",
-        )
-    })?;
-    if !valid_qualified(&trait_lit.value()) {
-        return Err(Error::new_spanned(
-            &trait_lit,
-            "a qualified trait name is namespace::Trait",
-        ));
-    }
-    let Some((_, trait_path, _)) = &item.trait_ else {
-        return Err(Error::new_spanned(
-            item,
-            "#[r8::methods] applies to an impl of a Rust trait",
-        ));
-    };
-    let self_ty = &item.self_ty;
-    let type_ident = match &**self_ty {
-        syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.clone()),
-        _ => None,
-    }
-    .ok_or_else(|| {
-        Error::new_spanned(
-            self_ty,
-            "#[r8::methods] applies to an impl for a named struct",
-        )
-    })?;
-    let trait_ident = &trait_path.segments.last().expect("a trait path").ident;
-    let set_ident = format_ident!("__R8_IMPL_{}_{}", type_ident, trait_ident);
-    let api = quote! { ::rtemis_r8_api };
-    let trait_c = c_str(&trait_lit.value());
-    let mut fns = Vec::new();
-    let mut rows = Vec::new();
-    for it in &item.items {
-        let syn::ImplItem::Fn(f) = it else { continue };
-        let sig = &f.sig;
-        let mname = sig.ident.to_string();
-        let mut inputs = sig.inputs.iter();
-        match inputs.next() {
-            Some(syn::FnArg::Receiver(r)) if r.reference.is_some() && r.mutability.is_none() => {}
-            _ => {
-                return Err(Error::new_spanned(
-                    sig,
-                    "an R8 method takes `&self` first, which R passes as `x`",
-                ));
-            }
-        }
-        let mut convert = Vec::new();
-        let mut args = Vec::new();
-        for (k, a) in inputs.enumerate() {
-            let syn::FnArg::Typed(pt) = a else {
-                unreachable!("one receiver")
-            };
-            let syn::Pat::Ident(pi) = &*pt.pat else {
-                return Err(Error::new_spanned(
-                    &pt.pat,
-                    "an R8 method's parameter is a name",
-                ));
-            };
-            let pname = pi.ident.to_string();
-            let pident = format_ident!("__r8_arg_{}", k);
-            let ty = &pt.ty;
-            let index = k + 1;
-            match &**ty {
-                // `&T`: a value of a Rust-native type, borrowed from its
-                // state, or built from an R-native value of the type.
-                syn::Type::Reference(r) => {
-                    let is_str = matches!(&*r.elem, syn::Type::Path(p) if p.path.is_ident("str"));
-                    if r.mutability.is_some() || is_str {
-                        return Err(Error::new_spanned(
-                            ty,
-                            "a reference parameter is `&T` of a Rust-native type `T`; a string is `String`",
-                        ));
-                    }
-                    let inner = &r.elem;
-                    convert.push(quote! {
-                        let #pident = unsafe { #api::Receiver::<#inner>::from_named_arg(__r8_args[#index], #pname) }?;
-                    });
-                    args.push(quote! { &*#pident });
-                }
-                _ => {
-                    convert.push(quote! {
-                        let #pident: #ty = unsafe { <#ty as #api::FromR>::from_arg(__r8_args[#index], #pname) }?;
-                    });
-                    args.push(quote! { #pident });
-                }
-            }
-        }
-        let n_params = args.len() + 1;
-        let fn_ident = format_ident!("__r8_{}_{}_{}", type_ident, trait_ident, sig.ident);
-        let method = &sig.ident;
-        fns.push(quote! {
-            #[allow(non_snake_case)]
-            unsafe extern "C" fn #fn_ident(
-                _ctx: *const #api::rtemis_r8::abi::CallContext,
-                args: *const #api::rtemis_r8::abi::Sexp,
-                nargs: usize,
-                result: *mut #api::rtemis_r8::abi::Sexp,
-                err: *mut #api::rtemis_r8::abi::Error,
-            ) -> #api::rtemis_r8::abi::Status {
-                unsafe {
-                    #api::call::method(args, nargs, #n_params, result, err, |__r8_args| {
-                        let __r8_x = #api::Receiver::<#self_ty>::from_arg(__r8_args[0])?;
-                        #(#convert)*
-                        #api::IntoR::into_r(<#self_ty as #trait_path>::#method(&*__r8_x #(, #args)*))
-                    })
-                }
-            }
-        });
-        let name_c = c_str(&mname);
-        rows.push(quote! {
-            #api::MethodRow { name: #name_c, call: #fn_ident, n_params: #n_params }
-        });
-    }
-    Ok(quote! {
-        #item
-        #(#fns)*
-        #[allow(non_upper_case_globals)]
-        #[doc(hidden)]
-        pub const #set_ident: #api::ImplSet = #api::ImplSet {
-            trait_name: #trait_c,
-            type_name: <#self_ty as #api::Codec>::TYPE_NAME,
-            methods: &[#(#rows),*],
-        };
-    })
-}
-
-/// The arguments of `r8::exports!`.
-struct ExportsArgs {
-    package: syn::LitStr,
-    namespace: syn::LitStr,
-    types: Vec<syn::Path>,
-    impls: Vec<(syn::Path, syn::Path)>,
-}
-
-impl syn::parse::Parse for ExportsArgs {
-    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let mut package = None;
-        let mut namespace = None;
-        let mut types = Vec::new();
-        let mut impls = Vec::new();
-        while !input.is_empty() {
-            let key: syn::Ident = input.parse()?;
-            input.parse::<syn::Token![=]>()?;
-            match key.to_string().as_str() {
-                "package" => package = Some(input.parse()?),
-                "namespace" => namespace = Some(input.parse()?),
-                "types" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    types = content
-                        .parse_terminated(syn::Path::parse_mod_style, syn::Token![,])?
-                        .into_iter()
-                        .collect();
-                }
-                "impls" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    while !content.is_empty() {
-                        let ty: syn::Path = content.call(syn::Path::parse_mod_style)?;
-                        content.parse::<syn::Token![:]>()?;
-                        let tr: syn::Path = content.call(syn::Path::parse_mod_style)?;
-                        impls.push((ty, tr));
-                        if content.is_empty() {
-                            break;
-                        }
-                        content.parse::<syn::Token![,]>()?;
-                    }
-                }
-                _ => {
-                    return Err(Error::new_spanned(
-                        key,
-                        "expected package, namespace, types, or impls",
-                    ));
-                }
-            }
-            if input.is_empty() {
-                break;
-            }
-            input.parse::<syn::Token![,]>()?;
-        }
-        Ok(ExportsArgs {
-            package: package.ok_or_else(|| input.error("`package = \"...\"` is required"))?,
-            namespace: namespace.ok_or_else(|| input.error("`namespace = \"...\"` is required"))?,
-            types,
-            impls,
-        })
-    }
-}
-
 /// `r8::exports! { package = "pkg", namespace = "ns", types = [T, ...],
-/// impls = [T: Trait, ...] }`: the package's exports table, built on first
-/// use, and `r8_init(dll)`, which the package's initialization routine
-/// calls to register it with `R_RegisterCCallable(pkg, "r8_exports", ...)`.
-/// It is invoked once per package, in the module where each impl's
-/// `#[r8::methods]` constant is in scope.
+/// traits = [Trait, ...], impls = [T: Trait, T: Trait<Y>, ...] }`, where
+/// `traits` lists the traits declared in Rust: the package's exports table, built on first
+/// use, and `r8_init_<package>(dll)`, with an underscore for a period of the
+/// package's name, which the package's initialization routine calls to
+/// register it with `R_RegisterCCallable(pkg, "r8_exports", ...)`. It is
+/// invoked once per package. A crate that invokes it is a dependency of
+/// another one, whose rows may name its traits.
 #[proc_macro]
 pub fn exports(input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(input as ExportsArgs);
-    exports_impl(&args)
+    let args = parse_macro_input!(input as exports::Args);
+    exports::expand(&args)
         .unwrap_or_else(Error::into_compile_error)
         .into()
-}
-
-fn exports_impl(a: &ExportsArgs) -> Result<Tokens> {
-    if !valid_name(&a.namespace.value()) {
-        return Err(Error::new_spanned(
-            &a.namespace,
-            "a namespace matches [A-Za-z][A-Za-z0-9_]*",
-        ));
-    }
-    let api = quote! { ::rtemis_r8_api };
-    let package_c = c_str(&a.package.value());
-    let namespace = &a.namespace;
-    let types = &a.types;
-    let n_types = types.len();
-    let sets: Vec<syn::Ident> = a
-        .impls
-        .iter()
-        .map(|(ty, tr)| {
-            let t = &ty.segments.last().expect("a type path").ident;
-            let r = &tr.segments.last().expect("a trait path").ident;
-            format_ident!("__R8_IMPL_{}_{}", t, r)
-        })
-        .collect();
-    let n_impls = sets.len();
-    Ok(quote! {
-        static __R8_CODECS: #api::Shared<[#api::rtemis_r8::abi::TypeVTable; #n_types]> =
-            #api::Shared([#(<#types as #api::Codec>::TABLE.0),*]);
-        static __R8_IMPLS: [&#api::ImplSet; #n_impls] = [#(&#sets),*];
-        static __R8_TABLE: ::std::sync::OnceLock<usize> = ::std::sync::OnceLock::new();
-
-        unsafe extern "C" fn __r8_exports() -> *const #api::rtemis_r8::abi::Exports {
-            #api::exports::table(
-                &__R8_TABLE,
-                #package_c,
-                #namespace,
-                &__R8_CODECS.0,
-                // The listed types and every type of the namespace they
-                // reach, such as the struct of a newtype variant.
-                || {
-                    let mut set = #api::rtemis_r8::rules::DocumentSet::default();
-                    #(<#types as #api::rtemis_r8::derive::Encode>::register(&mut set);)*
-                    set.into_documents()
-                        .into_iter()
-                        .find(|d| d.namespace.as_str() == #namespace)
-                        .map(|d| d.types)
-                        .unwrap_or_default()
-                },
-                &__R8_IMPLS,
-            )
-        }
-
-        /// Registers the package's R8 exports; the package's
-        /// initialization routine calls it.
-        ///
-        /// # Safety
-        ///
-        /// Called once, from the package's initialization routine.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn r8_init(_dll: *mut ::core::ffi::c_void) {
-            unsafe { #api::exports::register(#package_c, __r8_exports) }
-        }
-    })
 }

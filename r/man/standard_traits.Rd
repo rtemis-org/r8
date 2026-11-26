@@ -4,10 +4,10 @@
 \alias{standard_traits}
 \alias{Display}
 \alias{Debug}
-\alias{Dim}
+\alias{Shape}
 \alias{PartialOrd}
 \alias{Print}
-\alias{r8_cmp}
+\alias{r8_partial_cmp}
 \alias{From}
 \title{Standard traits}
 \usage{
@@ -15,54 +15,67 @@ Display
 
 Debug
 
-Dim
+Shape
 
 PartialOrd
 
 Print
 
-r8_cmp(x, y)
+r8_partial_cmp(x, y)
 
 From(source)
 }
 \arguments{
-\item{x, y}{Values of one R8 type, for \code{r8_cmp()}.}
+\item{x, y}{Values of one R8 type, for \code{r8_partial_cmp()}.}
 
-\item{source}{Character: The class or qualified R8 type converted from.}
+\item{source}{The source converted from: an R8 type object, a class name
+such as \code{"data.frame"} or \code{"numeric"}, a \code{\link[=host_class]{host_class()}}, or an S4 class
+object, as a dispatched position takes it.}
 }
 \value{
-A trait object.
+A trait object. \code{From()} returns one of the internal class
+\code{r8_from_trait}, which holds its type parameter \code{source}.
 }
 \description{
 Traits that R8 declares in its namespace \code{R8}, which a type implements
 with \code{impl()} like any trait:
 }
 \details{
+Four are Rust's standard traits, with their Rust meaning:
 \itemize{
 \item \code{Display}: \code{format(x, ...)}, which \code{print()} shows for a type without
 a \code{Print} impl.
-\item \code{Print}: \code{print(x, ...)}, which \code{print()} calls before it returns \code{x}
-invisibly; \code{format()} keeps the \code{Display} text.
 \item \code{Debug}: \code{str(object, ...)}.
-\item \code{Dim}: \code{dim(x)}; \code{nrow()} and \code{ncol()} follow.
-\item \code{PartialOrd}: \code{cmp(x, y)}, which returns a negative number, zero, or a
-positive number as \code{x} sorts before, with, or after \code{y}; \code{<}, \code{<=}, \code{>},
-and \code{>=} use it, and \code{r8_cmp()} calls it.
+\item \code{PartialOrd}: \code{partial_cmp(x, y)}, which returns \code{-1L}, \code{0L}, or \code{1L}
+as \code{x} sorts before, with, or after \code{y}, and \code{NA} when the two are not
+ordered; a whole double converts, as in construction, and any other
+result raises \code{r8_result_error}. \code{<}, \code{<=}, \code{>}, and \code{>=} use it, and
+return \code{FALSE} for values that are not ordered, as Rust's do;
+\code{r8_partial_cmp()} calls it. A result of \code{0L} agrees with \code{r8_equal()}.
 \item \code{From(source)}: \code{from(x)}, which converts a value of the class or R8
 type \code{source} to the implementing type; \code{r8_convert()}, \code{Type@from()},
 and \code{r8_converter()} use it.
 }
 
-R8 provides \code{format()}, \code{print()}, and \code{str()} for every value, \code{==} and
-\code{r8_hash()} through \code{r8_equal()}, \code{to_json()} and \code{r8_from_json()}, and a
-type whose required fields have defaults is constructed with no
-arguments.
+Two are R's host traits, for R's own functions:
+\itemize{
+\item \code{Print}: \code{print(x, ...)}, which \code{print()} calls before it returns \code{x}
+invisibly; \code{format()} keeps the \code{Display} text.
+\item \code{Shape}: \code{dim(x)}; \code{nrow()} and \code{ncol()} follow.
+}
+
+Every type has, without an impl, the behavior of Rust's \code{PartialEq}
+(\code{==} and \code{r8_equal()}), \code{Hash} (\code{r8_hash()}, the hash of the canonical
+form), \code{Serialize} and \code{Deserialize} (\code{r8_to_json()} and
+\code{r8_from_json()}), and, for a type whose required fields have defaults,
+\code{Default} (the constructor called with no arguments); these are not
+traits that a type implements.
 }
 \examples{
 op <- options(r8.namespace = "demo")
 Money <- new_struct("Money", fields = list(cents = type_integer()))
 impl(Display, Money, methods = list(format = function(x, ...) sprintf("$\%.2f", x$cents / 100)))
-impl(PartialOrd, Money, methods = list(cmp = function(x, y) x$cents - y$cents))
+impl(PartialOrd, Money, methods = list(partial_cmp = function(x, y) sign(x$cents - y$cents)))
 impl(From("numeric"), Money, methods = list(
   from = function(x) Money(cents = as.integer(round(x * 100)))
 ))

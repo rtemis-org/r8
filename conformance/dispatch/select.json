@@ -1,0 +1,779 @@
+{
+  "$corpus": 1,
+  "description": "The impl that dispatch selects for a call of a multiple-dispatch trait.",
+  "ir": [
+    {
+      "$ir": 1,
+      "namespace": "core",
+      "types": [
+        {
+          "kind": "struct",
+          "name": "A",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "a",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ]
+        },
+        {
+          "kind": "struct",
+          "name": "A1",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "a",
+              "type": {
+                "kind": "double"
+              },
+              "description": "",
+              "inherited_from": "core::A"
+            },
+            {
+              "name": "a1",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ],
+          "extends": "core::A"
+        },
+        {
+          "kind": "struct",
+          "name": "A2",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "a",
+              "type": {
+                "kind": "double"
+              },
+              "description": "",
+              "inherited_from": "core::A"
+            },
+            {
+              "name": "a1",
+              "type": {
+                "kind": "double"
+              },
+              "description": "",
+              "inherited_from": "core::A1"
+            },
+            {
+              "name": "a2",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ],
+          "extends": "core::A1"
+        },
+        {
+          "kind": "struct",
+          "name": "B",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "b",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ]
+        },
+        {
+          "kind": "struct",
+          "name": "B1",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "b",
+              "type": {
+                "kind": "double"
+              },
+              "description": "",
+              "inherited_from": "core::B"
+            },
+            {
+              "name": "b1",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ],
+          "extends": "core::B"
+        },
+        {
+          "kind": "struct",
+          "name": "C",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "c",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "traits": [
+        {
+          "name": "Combine",
+          "description": "",
+          "methods": [
+            {
+              "name": "combine",
+              "description": "",
+              "params": [
+                {
+                  "name": "x",
+                  "dispatch": true
+                },
+                {
+                  "name": "y",
+                  "dispatch": true
+                },
+                "..."
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Describe",
+          "description": "",
+          "methods": [
+            {
+              "name": "describe",
+              "description": "",
+              "params": [
+                "x"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Place",
+          "description": "",
+          "methods": [
+            {
+              "name": "place",
+              "description": "",
+              "params": [
+                {
+                  "name": "x",
+                  "dispatch": true
+                },
+                "at",
+                {
+                  "name": "z",
+                  "dispatch": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "impls": [
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A1"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B1"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B1"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A1"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "any"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::C"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Describe",
+          "target": {
+            "kind": "named",
+            "name": "core::A"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Describe",
+          "target": {
+            "kind": "named",
+            "name": "core::A2"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Describe",
+          "target": {
+            "kind": "host_class",
+            "host": "r",
+            "class": "data.frame",
+            "system": "s3"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Place",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::C"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "host_class",
+              "host": "r",
+              "class": "data.frame",
+              "system": "s3"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::C"
+          },
+          "methods": []
+        },
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B"
+            }
+          ],
+          "target": {
+            "kind": "host_class",
+            "host": "r",
+            "class": "data.frame",
+            "system": "s3"
+          },
+          "methods": []
+        }
+      ]
+    },
+    {
+      "$ir": 1,
+      "namespace": "pa",
+      "types": [
+        {
+          "kind": "struct",
+          "name": "A3",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "a",
+              "type": {
+                "kind": "double"
+              },
+              "description": "",
+              "inherited_from": "core::A"
+            },
+            {
+              "name": "a3",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ],
+          "extends": "core::A"
+        }
+      ],
+      "impls": [
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "core::B"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "pa::A3"
+          },
+          "methods": []
+        }
+      ]
+    },
+    {
+      "$ir": 1,
+      "namespace": "pb",
+      "types": [
+        {
+          "kind": "struct",
+          "name": "B3",
+          "description": "",
+          "version": 1,
+          "fields": [
+            {
+              "name": "b",
+              "type": {
+                "kind": "double"
+              },
+              "description": "",
+              "inherited_from": "core::B"
+            },
+            {
+              "name": "b3",
+              "type": {
+                "kind": "double"
+              },
+              "description": ""
+            }
+          ],
+          "extends": "core::B"
+        }
+      ],
+      "impls": [
+        {
+          "trait": "core::Combine",
+          "type_args": [
+            {
+              "kind": "named",
+              "name": "pb::B3"
+            }
+          ],
+          "target": {
+            "kind": "named",
+            "name": "core::A"
+          },
+          "methods": []
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "exact-tuple",
+      "description": "Each argument of a type an impl names.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::A",
+        "core::B"
+      ],
+      "expect": {
+        "impl": [
+          "core::A",
+          "core::B"
+        ]
+      }
+    },
+    {
+      "id": "more-specific-first",
+      "description": "A child in the first position.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::A1",
+        "core::B"
+      ],
+      "expect": {
+        "impl": [
+          "core::A1",
+          "core::B"
+        ]
+      }
+    },
+    {
+      "id": "through-ancestors",
+      "description": "Children in both positions, served by the meet of their parents.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::A2",
+        "core::B1"
+      ],
+      "expect": {
+        "impl": [
+          "core::A1",
+          "core::B1"
+        ]
+      }
+    },
+    {
+      "id": "grandchild-first",
+      "description": "A grandchild in the first position.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::A2",
+        "core::B"
+      ],
+      "expect": {
+        "impl": [
+          "core::A1",
+          "core::B"
+        ]
+      }
+    },
+    {
+      "id": "any-position",
+      "description": "A position any matches a value of another type.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        "core::A"
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "any"
+        ]
+      }
+    },
+    {
+      "id": "any-position-null",
+      "description": "A position any matches a value no type names.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        null
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "any"
+        ]
+      }
+    },
+    {
+      "id": "no-impl",
+      "description": "No impl applies: the trait's default implementation.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::B",
+        "core::A"
+      ],
+      "expect": {
+        "default": true
+      }
+    },
+    {
+      "id": "single-dispatch-ancestor",
+      "description": "A child served by its parent's impl.",
+      "op": "dispatch",
+      "type": "core::Describe",
+      "input": [
+        "core::A1"
+      ],
+      "expect": {
+        "impl": [
+          "core::A"
+        ]
+      }
+    },
+    {
+      "id": "single-dispatch-own",
+      "description": "A grandchild with its own impl.",
+      "op": "dispatch",
+      "type": "core::Describe",
+      "input": [
+        "core::A2"
+      ],
+      "expect": {
+        "impl": [
+          "core::A2"
+        ]
+      }
+    },
+    {
+      "id": "host-class",
+      "description": "An object whose class vector holds a class an impl names.",
+      "op": "dispatch",
+      "type": "core::Describe",
+      "input": [
+        {
+          "classes": [
+            "tbl_df",
+            "tbl",
+            "data.frame"
+          ]
+        }
+      ],
+      "expect": {
+        "impl": [
+          "data.frame"
+        ]
+      }
+    },
+    {
+      "id": "host-class-none",
+      "description": "An object of no class an impl names.",
+      "op": "dispatch",
+      "type": "core::Describe",
+      "input": [
+        {
+          "classes": [
+            "matrix",
+            "array"
+          ]
+        }
+      ],
+      "expect": {
+        "default": true
+      }
+    },
+    {
+      "id": "non-prefix-positions",
+      "description": "A trait that dispatches on its first and third arguments.",
+      "op": "dispatch",
+      "type": "core::Place",
+      "input": [
+        "core::A2",
+        "core::C"
+      ],
+      "expect": {
+        "impl": [
+          "core::A",
+          "core::C"
+        ]
+      }
+    },
+    {
+      "id": "ambiguous-across-namespaces",
+      "description": "Impls of two namespaces, each more specific in one position.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "pa::A3",
+        "pb::B3"
+      ],
+      "expect": {
+        "ambiguous": [
+          [
+            "core::A",
+            "pb::B3"
+          ],
+          [
+            "pa::A3",
+            "core::B"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "other-namespace-impl",
+      "description": "An impl of another namespace for its own child type.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "pa::A3",
+        "core::B"
+      ],
+      "expect": {
+        "impl": [
+          "pa::A3",
+          "core::B"
+        ]
+      }
+    },
+    {
+      "id": "ambiguous-with-trait-namespace",
+      "description": "An impl of another namespace and one of the trait's, each more specific in one position.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "pa::A3",
+        "core::B1"
+      ],
+      "expect": {
+        "ambiguous": [
+          [
+            "core::A",
+            "core::B1"
+          ],
+          [
+            "pa::A3",
+            "core::B"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "host-class-second",
+      "description": "A host class in the second position, more specific than any.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        {
+          "classes": [
+            "tbl_df",
+            "tbl",
+            "data.frame"
+          ]
+        }
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "data.frame"
+        ]
+      }
+    },
+    {
+      "id": "host-class-second-other",
+      "description": "An object of another class in the second position: any.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        {
+          "classes": [
+            "matrix",
+            "array",
+            "double",
+            "numeric"
+          ]
+        }
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "any"
+        ]
+      }
+    },
+    {
+      "id": "host-class-first",
+      "description": "A host class in the first position and an R8 type's child in the second.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        {
+          "classes": [
+            "data.frame"
+          ]
+        },
+        "core::B1"
+      ],
+      "expect": {
+        "impl": [
+          "data.frame",
+          "core::B"
+        ]
+      }
+    },
+    {
+      "id": "forged-class",
+      "description": "An object whose class vector names an R8 type is not a value of that type.",
+      "op": "dispatch",
+      "type": "core::Describe",
+      "input": [
+        {
+          "classes": [
+            "core::A",
+            "r8_value"
+          ]
+        }
+      ],
+      "expect": {
+        "default": true
+      }
+    },
+    {
+      "id": "type-not-host",
+      "description": "A value of an R8 type does not match a host-class position.",
+      "op": "dispatch",
+      "type": "core::Combine",
+      "input": [
+        "core::C",
+        "core::A"
+      ],
+      "expect": {
+        "impl": [
+          "core::C",
+          "any"
+        ]
+      }
+    }
+  ]
+}

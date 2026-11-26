@@ -2,26 +2,38 @@
 % Please edit documentation in R/zzz.R
 \name{r8_converter}
 \alias{r8_converter}
+\alias{print.r8_converter}
 \title{A conversion function for an R8 type}
 \usage{
 r8_converter(type)
+
+\method{print}{r8_converter}(x, ...)
 }
 \arguments{
 \item{type}{An R8 type object.}
+
+\item{x}{A function of class \code{r8_converter}.}
+
+\item{...}{Not used.}
 }
 \value{
-Function.
+\code{r8_converter()}: A function of class \code{r8_converter}.
+\code{print()}: \code{x}, invisibly.
 }
 \description{
 Returns \code{function(x) r8_convert(x, type)}, which a type's package exports
-under a name of its choice, such as \code{as_granges()}.
+under a name of its choice, such as \code{as_granges()}. The converter is also
+the generic of the conversions to \code{type}: \code{implement(as_target, Source) <- function(x) ...} declares the conversion from the R8 type \code{Source}, and
+\code{implement(as_target, "character") <- function(x) ...} the conversion from
+a class, each an impl of \code{From(source)} for \code{type}.
 }
 \examples{
 op <- options(r8.namespace = "demo")
 Pct <- new_struct("Pct2", fields = list(p = type_double(min = 0, max = 100)))
-impl(From("numeric"), Pct, methods = list(from = function(x) Pct(p = x * 100)))
 as_pct <- r8_converter(Pct)
+implement(as_pct, "numeric") <- function(x) Pct(p = x * 100)
 as_pct(0.5)$p
+as_pct
 options(op)
 
 }

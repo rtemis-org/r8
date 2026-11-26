@@ -42,6 +42,11 @@ pub enum BuildError {
         /// The exclusive bound's argument.
         exclusive: &'static str,
     },
+    /// A flag that is not one `TRUE` or `FALSE`.
+    NotFlag {
+        /// The argument.
+        arg: &'static str,
+    },
     /// A list of numbers that holds one that is not finite.
     NotFinite {
         /// The argument.
@@ -66,14 +71,12 @@ pub enum BuildError {
     LengthOrder,
     /// Key constraints that are not a character type.
     Keys,
-    /// A computed `option()` without its expression, or an expression
-    /// without `resolve = "computed"`.
-    Compute {
-        /// The expression is given.
-        given: bool,
-    },
+    /// `compute` and `context` given together.
+    ComputeContext,
     /// A rule constant that is not one value or is missing.
     Constant,
+    /// A rule constant that is not a finite number.
+    InfiniteConstant,
     /// An array literal in a rule that holds an operand other than a
     /// constant.
     ArrayLiteral,
@@ -102,17 +105,35 @@ pub enum BuildError {
         /// The call.
         expr: String,
     },
+    /// A newtype variant (`of`) given fields.
+    VariantOfFields,
+    /// A newtype variant (`of`) given rules.
+    VariantOfRules,
+    /// A variant given rules without fields to read.
+    VariantRulesWithoutFields,
+    /// A newtype variant's `of` that is not a struct type.
+    VariantOf,
+    /// A rule indexes a field, as in `values[[1]]`.
+    RuleIndex {
+        /// The expression, as the host writes it.
+        expr: String,
+    },
     /// A rule calls a function outside the dialect; `known` lists the
     /// functions the dialect has, as the host writes them.
     UnknownFunction {
         /// The function.
         name: String,
+        /// The function of the dialect nearest to `name`, as the host
+        /// writes it, if one is near.
+        nearest: Option<String>,
         /// The functions of the dialect.
         known: &'static str,
     },
     /// The default of a field of a named type that is not a value of an R8
     /// enum.
     DefaultNotValue,
+    /// A `column()` outside the columns of `type_table()`.
+    ColumnOutsideTable,
     /// A variant argument of an enum that is not a variant declaration.
     NotVariant {
         /// The variant's name.
@@ -146,6 +167,7 @@ impl fmt::Display for BuildError {
                 f,
                 "`{inclusive}` and `{exclusive}` bound the same side; give one of them."
             ),
+            BuildError::NotFlag { arg } => write!(f, "`{arg}` is TRUE or FALSE."),
             BuildError::NotFinite { arg } => write!(f, "`{arg}` holds finite numbers."),
             BuildError::NotOneString { arg } => write!(f, "`{arg}` is one string."),
             BuildError::MissingString { arg } => write!(f, "`{arg}` holds no missing string."),
@@ -155,19 +177,17 @@ impl fmt::Display for BuildError {
             ),
             BuildError::LengthOrder => f.write_str("`min_length` is at most `max_length`."),
             BuildError::Keys => f.write_str("`keys` is a type_character()."),
-            BuildError::Compute { given: false } => {
-                f.write_str("A computed field gives its value in `compute`.")
-            }
-            BuildError::Compute { given: true } => {
-                f.write_str("`compute` belongs to resolve = \"computed\".")
-            }
+            BuildError::ComputeContext => f.write_str(
+                "A field is filled by `compute` or from the `context` of r8_resolve(), not both.",
+            ),
             BuildError::Constant => f.write_str(
                 "A constant in a rule is one value, not NA; write an array as c(...).",
             ),
+            BuildError::InfiniteConstant => f.write_str("A number in a rule is finite."),
             BuildError::ArrayLiteral => f.write_str("c() in a rule holds literal values."),
             BuildError::NotStrings { arg } => write!(f, "`{arg}` is a character vector."),
             BuildError::NotFieldType => f.write_str(
-                "A field type is a type_*(), vec(), option(), hashmap(), or ordered_map() call, or an R8 type.",
+                "A field type is a type_*(), vec(), option(), btree_map(), or index_map() call, or an R8 type.",
             ),
             BuildError::RuleId => f.write_str("A rule's `id` is an R8 name, such as \"COST_MAX\"."),
             BuildError::RuleMessage => f.write_str("A rule's `message` is one non-empty string."),
@@ -175,12 +195,39 @@ impl fmt::Display for BuildError {
             BuildError::RuleCallee { expr } => {
                 write!(f, "A rule calls a function by name: {expr}.")
             }
-            BuildError::UnknownFunction { name, known } => {
-                write!(f, "`{name}()` is not a function of R8 rules. Rules use {known}.")
+            BuildError::VariantOfFields => f.write_str(
+                "A newtype variant, `of`, holds its struct's fields; it takes no fields of its own.",
+            ),
+            BuildError::VariantOfRules => f.write_str(
+                "A newtype variant, `of`, takes its struct's rules; it takes no rules of its own.",
+            ),
+            BuildError::VariantRulesWithoutFields => {
+                f.write_str("A variant's rules read its fields; a variant without fields takes no rules.")
+            }
+            BuildError::VariantOf => {
+                f.write_str("A newtype variant's `of` is an R8 struct type.")
+            }
+            BuildError::RuleIndex { expr } => write!(
+                f,
+                "`{expr}` indexes a field; a rule reads whole fields: `all()` and `any()` test each element of a vector, and `$` reads a field of a field."
+            ),
+            BuildError::UnknownFunction {
+                name,
+                nearest,
+                known,
+            } => {
+                write!(f, "`{name}()` is not a function of R8 rules")?;
+                if let Some(n) = nearest {
+                    write!(f, "; the nearest is `{n}()`")?;
+                }
+                write!(f, ". Rules use {known}.")
             }
             BuildError::DefaultNotValue => {
                 f.write_str("The default of a field of an R8 type is a value of that type.")
             }
+            BuildError::ColumnOutsideTable => f.write_str(
+                "column() declares a column of type_table(); a field of a struct or variant is field().",
+            ),
             BuildError::NotVariant { name } => write!(f, "Variant `{name}` is a variant() call."),
             BuildError::Int64 => {
                 f.write_str("int64() in a rule holds the decimal digits of one integer.")
@@ -302,8 +349,13 @@ pub fn integer(bounds: Bounds, values: Option<&[f64]>) -> Built<FieldType> {
     }))
 }
 
-/// `type_double(min, max, exclusive_min, exclusive_max, finite, values)`.
-pub fn double(bounds: Bounds, finite_only: bool, values: Option<&[f64]>) -> Built<FieldType> {
+/// `type_double(min, max, exclusive_min, exclusive_max, infinite, nan, values)`.
+pub fn double(
+    bounds: Bounds,
+    infinite: bool,
+    nan: bool,
+    values: Option<&[f64]>,
+) -> Built<FieldType> {
     let b = bounds.checked()?;
     let lower = side(b.min, b.exclusive_min, ("min", "exclusive_min"))?;
     let upper = side(b.max, b.exclusive_max, ("max", "exclusive_max"))?;
@@ -313,7 +365,8 @@ pub fn double(bounds: Bounds, finite_only: bool, values: Option<&[f64]>) -> Buil
     Ok(FieldType::Double(DoubleType {
         lower,
         upper,
-        finite: finite_only,
+        infinite,
+        nan,
         values: values.map(Box::from),
     }))
 }
@@ -347,10 +400,13 @@ pub fn factor(levels: Option<Vec<String>>, ordered: bool) -> FieldType {
     }
 }
 
-/// `type_r(class)`.
-pub fn r_class(class: &str) -> FieldType {
-    FieldType::R {
+/// `host_class(class, package, system)` as a field type.
+pub fn host_class(class: &str, package: &str, system: super::decl::ClassSystem) -> FieldType {
+    FieldType::HostClass {
+        host: "r".into(),
+        package: package.into(),
         class: class.into(),
+        system,
     }
 }
 
@@ -386,28 +442,26 @@ pub fn lengths(
     Ok((min_length.map(u64::from), max_length.map(u64::from)))
 }
 
-/// `option(inner, resolve, compute)`: `policy` is `"none"`, `"runtime"`, or
-/// `"computed"`, with `compute` its expression.
-pub fn option(inner: FieldType, policy: &str, compute: Option<Logic>) -> Built<FieldType> {
+/// `option(inner)`.
+pub fn option(inner: FieldType) -> Built<FieldType> {
     Ok(FieldType::Option {
         inner: Box::new(inner),
-        resolve: resolve(policy, compute)?,
     })
 }
 
-/// Who fills an absent `option()` value: `policy` is `"none"`,
-/// `"runtime"`, or `"computed"`, with `compute` its expression.
-pub fn resolve(policy: &str, compute: Option<Logic>) -> Built<Resolve> {
-    Ok(match (policy, compute) {
-        ("computed", Some(expr)) => Resolve::Computed { expr },
-        ("computed", None) => return Err(BuildError::Compute { given: false }),
-        (_, Some(_)) => return Err(BuildError::Compute { given: true }),
-        ("runtime", None) => Resolve::Runtime,
-        _ => Resolve::None,
+/// A field's fill policy from `field(compute = , context = )`: `compute`,
+/// the expression of a computed field, or `context`, a field that
+/// `r8_resolve(x, context)` fills; at most one.
+pub fn resolve(compute: Option<Logic>, context: bool) -> Built<Option<Resolve>> {
+    Ok(match (compute, context) {
+        (Some(_), true) => return Err(BuildError::ComputeContext),
+        (Some(expr), false) => Some(Resolve::Computed { expr }),
+        (None, true) => Some(Resolve::Context),
+        (None, false) => None,
     })
 }
 
-/// The key constraints of `hashmap()` and `ordered_map()`, from a character
+/// The key constraints of `btree_map()` and `index_map()`, from a character
 /// type or none.
 pub fn keys(keys: Option<FieldType>) -> Built<CharacterType> {
     match keys {
@@ -417,17 +471,17 @@ pub fn keys(keys: Option<FieldType>) -> Built<CharacterType> {
     }
 }
 
-/// `hashmap(value, keys)`.
-pub fn hashmap(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
-    Ok(FieldType::Hashmap {
+/// `btree_map(value, keys)`.
+pub fn btree_map(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
+    Ok(FieldType::BtreeMap {
         value: Box::new(value),
         keys: keys(key_type)?,
     })
 }
 
-/// `ordered_map(value, keys)`.
-pub fn ordered_map(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
-    Ok(FieldType::OrderedMap {
+/// `index_map(value, keys)`.
+pub fn index_map(value: FieldType, key_type: Option<FieldType>) -> Built<FieldType> {
+    Ok(FieldType::IndexMap {
         value: Box::new(value),
         keys: keys(key_type)?,
     })
@@ -490,20 +544,50 @@ impl FieldDef {
 
 /// `rule(id, invariant, message, when)`.
 pub fn rule(
-    id: &str,
     invariant: Logic,
-    message: &str,
     when: Option<Logic>,
+    message: Option<&str>,
+    id: Option<&str>,
 ) -> Built<super::RuleDef> {
-    let id = crate::name::Name::new(id).map_err(|_| BuildError::RuleId)?;
-    if message.trim().is_empty() {
+    let id = id
+        .map(|i| crate::name::Name::new(i).map_err(|_| BuildError::RuleId))
+        .transpose()?;
+    if message.is_some_and(|m| m.trim().is_empty()) {
         return Err(BuildError::RuleMessage);
     }
     Ok(super::RuleDef {
-        id,
         invariant,
         when,
-        message: message.to_string(),
+        message: message.map(str::to_string),
+        id,
+        inherited_from: None,
+    })
+}
+
+/// Checks the parts of a variant: a newtype variant (`of`) takes neither
+/// fields nor rules, and rules need fields to read.
+pub fn variant_parts(has_of: bool, has_fields: bool, has_rules: bool) -> Built<()> {
+    match (has_of, has_fields, has_rules) {
+        (true, true, _) => Err(BuildError::VariantOfFields),
+        (true, false, true) => Err(BuildError::VariantOfRules),
+        (false, false, true) => Err(BuildError::VariantRulesWithoutFields),
+        _ => Ok(()),
+    }
+}
+
+/// The shape of a variant: a newtype for `of`, a unit variant without
+/// fields, and a struct variant otherwise; the parts are checked by
+/// [`variant_parts`].
+pub fn variant_kind(
+    fields: Vec<super::FieldDef>,
+    rules: Vec<super::RuleDef>,
+    of: Option<crate::name::QualifiedName>,
+) -> Built<super::VariantKind> {
+    variant_parts(of.is_some(), !fields.is_empty(), !rules.is_empty())?;
+    Ok(match of {
+        Some(of) => super::VariantKind::Newtype { of },
+        None if fields.is_empty() => super::VariantKind::Unit,
+        None => super::VariantKind::Struct { fields, rules },
     })
 }
 
@@ -531,6 +615,27 @@ pub fn array_literal(items: Vec<Logic>) -> Built<Logic> {
 /// A field, or a path into one, `{"var": "a.b"}`.
 pub fn var(path: impl Into<Box<str>>) -> Logic {
     Logic::Var(path.into())
+}
+
+/// A field, or a path into one, of its names in order: `{"var": "a.b"}` for
+/// R8 names, after the element `.x` of an enclosing `all()` or `any()` too,
+/// and otherwise `{"path": ["a.b"]}`.
+pub fn path(names: &[&str]) -> Logic {
+    let plain = |n: &str| {
+        n.starts_with(|c: char| c.is_ascii_alphabetic())
+            && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let rest = match names {
+        [".x", rest @ ..] => rest,
+        all => all,
+    };
+    if rest.iter().all(|n| plain(n)) {
+        return var(names.join("."));
+    }
+    call(
+        super::Operator::Path,
+        names.iter().map(|&n| Logic::String(n.into())).collect(),
+    )
 }
 
 /// `is_variant(x, "Name")`, whose variant operand is a string.
@@ -565,20 +670,20 @@ mod tests {
     #[test]
     fn bounds() {
         assert_eq!(
-            double(b(Some(0.0), Some(0.0)), true, None)
+            double(b(Some(0.0), Some(0.0)), false, false, None)
                 .unwrap_err()
                 .to_string(),
             "`min` and `exclusive_min` bound the same side; give one of them."
         );
         assert_eq!(
-            double(b(Some(f64::INFINITY), None), true, None).unwrap_err(),
+            double(b(Some(f64::INFINITY), None), false, false, None).unwrap_err(),
             BuildError::NotOneNumber { arg: "min" }
         );
-        let FieldType::Double(d) = double(b(None, Some(0.0)), true, None).unwrap() else {
+        let FieldType::Double(d) = double(b(None, Some(0.0)), false, false, None).unwrap() else {
             panic!()
         };
         assert_eq!(d.exclusive_min(), Some(0.0));
-        assert!(d.finite);
+        assert!(!d.infinite && !d.nan);
     }
 
     #[test]
@@ -619,16 +724,12 @@ mod tests {
             BuildError::NotCount { arg: "min_length" }
         );
         assert_eq!(
-            hashmap(logical(), Some(logical())).unwrap_err(),
+            btree_map(logical(), Some(logical())).unwrap_err(),
             BuildError::Keys
         );
         assert_eq!(
-            option(logical(), "computed", None).unwrap_err(),
-            BuildError::Compute { given: false }
-        );
-        assert_eq!(
-            option(logical(), "none", Some(var("x"))).unwrap_err(),
-            BuildError::Compute { given: true }
+            resolve(Some(var("x")), true).unwrap_err(),
+            BuildError::ComputeContext
         );
     }
 

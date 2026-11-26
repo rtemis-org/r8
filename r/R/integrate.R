@@ -26,8 +26,8 @@ shown_text <- function(x, output_type) {
   if (inherits(x, "r8_text")) {
     return(x)
   }
-  f <- .r8_impls[[paste("R8::Print", "print", attr(x, "r8_type"), sep = "|")]]
-  if (is.null(f)) {
+  f <- .r8_impls[[paste("R8::Print", "print", value_type(x), sep = "|")]]
+  if (is.null(f) || !is.null(r8_value_other(x))) {
     return(value_text(x))
   }
   out <- NULL
@@ -164,10 +164,10 @@ obj_sum.r8_value <- function(x) {
   # pillar wraps the summary in angle brackets: a value without a Display
   # impl gives its type, `pkgr::Resampler@Bootstrap`, which shows as
   # `<pkgr::Resampler@Bootstrap>`.
-  if (is.null(display_impl(x))) {
-    variant <- attr(x, "r8_variant")
+  if (is.null(display_impl(x)) || !is.null(r8_value_other(x))) {
+    variant <- value_variant(x)
     return(paste0(
-      attr(x, "r8_type"),
+      value_type(x),
       if (!is.null(variant)) paste0("@", variant)
     ))
   }

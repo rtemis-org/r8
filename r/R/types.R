@@ -27,6 +27,25 @@ declared <- function(x) {
   x
 } # /R8::declared
 
+# %% check_flag ----
+#' Check that an argument is TRUE or FALSE
+#'
+#' @param x The argument.
+#' @param arg Character: Its name.
+#' @param class Character: The class of the error.
+#'
+#' @return `x`; signals an error of `class`.
+#'
+#' @keywords internal
+#' @noRd
+check_flag <- function(x, arg, class = "r8_declaration_error") {
+  if (!isTRUE(x) && !isFALSE(x)) {
+    r8_abort("`", arg, "` is TRUE or FALSE.", class = class)
+  }
+  x
+} # /R8::check_flag
+
+
 # %% type_logical ----
 #' Logical field type
 #'
@@ -77,8 +96,15 @@ type_integer <- function(
 # %% type_double ----
 #' Double field type
 #'
-#' A double. The domain is finite unless `finite = FALSE`, which admits
-#' `Inf`, `-Inf`, and `NaN`.
+#' A double: a finite number within the bounds. `infinite = TRUE` admits the
+#' infinities that the bounds do not exclude, so that
+#' `type_double(min = 0, infinite = TRUE)` is `[0, Inf]`. `nan = TRUE` admits `NaN`,
+#' the result of a calculation that is undefined, which is in no range:
+#' `type_double(min = 0, max = 1, nan = TRUE)` is `[0, 1] or NaN`. A missing value,
+#' `NA`, is admitted by [option()], as of every type.
+#'
+#' A calculation on a value's field is R's and has no type. Its result is checked
+#' where it enters a field, a column, an argument, or a result that declares one.
 #'
 #' @param min Optional Numeric: Smallest admitted value.
 #' @param max Optional Numeric: Largest admitted value.
@@ -86,7 +112,8 @@ type_integer <- function(
 #'   with `min`, it raises `r8_declaration_error`.
 #' @param exclusive_max Optional Numeric: The value must be below it. Given
 #'   with `max`, it raises `r8_declaration_error`.
-#' @param finite Logical: Restrict the domain to finite values.
+#' @param infinite Logical: If TRUE, admit `Inf` and `-Inf` within the bounds.
+#' @param nan Logical: If TRUE, admit `NaN`, whatever the bounds and `values` are.
 #' @param values Optional Numeric: The admitted values.
 #'
 #' @return An `r8_field_type`.
@@ -100,10 +127,19 @@ type_double <- function(
   max = NULL,
   exclusive_min = NULL,
   exclusive_max = NULL,
-  finite = TRUE,
+  infinite = FALSE,
+  nan = FALSE,
   values = NULL
 ) {
-  declared(r8_ft_double(min, max, exclusive_min, exclusive_max, finite, values))
+  declared(r8_ft_double(
+    min,
+    max,
+    exclusive_min,
+    exclusive_max,
+    infinite,
+    nan,
+    values
+  ))
 } # /R8::type_double
 
 
@@ -213,23 +249,127 @@ type_json <- function() {
 } # /R8::type_json
 
 
-# %% type_r ----
-#' Runtime-only R field type
+# %% dyn ----
+#' A field of any implementor of a trait
 #'
-#' An R value of a class, held in R only: absent from JSON and from the hash.
-#' A field of this type is declared inside `option()`.
+#' `dyn(Trait)` holds a value of any R8 type that implements `Trait`, or
+#' that extends a type that does, as Rust's `dyn Trait`. Its JSON form names
+#' the type in the trait's tag member, or else in `"$type"`. `dyn(generic)`,
+#' for a generic from [generic()] that dispatches on one argument, holds a
+#' value of any type with a method of the generic. A value of a class of
+#' another class system is not held, even when the class has an impl of the
+#' trait; [r8_convert()] through a `From` impl turns it into an R8 value. A
+#' struct and the structs that extend it are [subtype()].
 #'
-#' @param class Character: The R class.
+#' @param trait A trait object from [new_trait()], or a generic from
+#'   [generic()] that dispatches on one argument.
 #'
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' option(type_r("lm"), resolve = "runtime")
+#' op <- options(r8.namespace = "demo")
+#' Planar <- new_trait("Planar", methods = list(area = trait_method(params(x))))
+#' Square <- new_struct("Square", fields = list(side = type_double()))
+#' impl(Planar, Square, methods = list(area = function(x) x$side^2))
+#' Drawing <- new_struct("Drawing", fields = list(shape = dyn(Planar)))
+#' Drawing(shape = Square(side = 2))
+#' options(op)
 #'
 #' @export
-type_r <- function(class) {
-  declared(r8_ft_r(class))
-} # /R8::type_r
+dyn <- function(trait) {
+  if (inherits(trait, "r8_generic")) {
+    if (length(attr(trait, "r8_dispatch")) > 1L) {
+      r8_abort(
+        "dyn() of a generic holds a value with a method of it; `",
+        attr(trait, "r8_method"),
+        "` dispatches on ",
+        length(attr(trait, "r8_dispatch")),
+        " arguments, so no single value has one.",
+        class = "r8_declaration_error"
+      )
+    }
+    return(structure(
+      list(kind = "dyn", `trait` = attr(trait, "r8_trait")),
+      class = "r8_field_type"
+    ))
+  }
+  if (inherits(trait, "r8_trait")) {
+    return(structure(
+      list(kind = "dyn", `trait` = unclass(trait)[["name"]]),
+      class = "r8_field_type"
+    ))
+  }
+  if (inherits(trait, "r8_struct_type")) {
+    r8_abort(
+      "dyn() takes a trait, as Rust's `dyn` does; a struct and the structs ",
+      "that extend it are subtype(",
+      sub("^.*::", "", attr(trait, "r8_name")),
+      ").",
+      class = "r8_declaration_error"
+    )
+  }
+  if (inherits(trait, "r8_enum_type")) {
+    r8_abort(
+      "dyn() takes a trait object; `",
+      attr(trait, "r8_name"),
+      "` is an enum, a closed set of variants: use it as the field type.",
+      class = "r8_declaration_error"
+    )
+  }
+  r8_abort(
+    "dyn() takes a trait object, such as dyn(Planar), or a generic of one ",
+    "dispatched argument.",
+    class = "r8_declaration_error"
+  )
+} # /R8::dyn
+
+
+# %% subtype ----
+#' A field of a struct or of any struct that extends it
+#'
+#' `subtype(Struct)` holds a value of `Struct` or of a struct that extends a
+#' subtype of it: a type is a subtype of itself and of every ancestor
+#' through `extends`. Such a value has the struct's fields and satisfies its
+#' rules, and [r8_upcast()] gives its value of `Struct`. A plain struct type
+#' holds exactly that struct. Its JSON form names the value's type in
+#' `"$type"`. Any implementor of a trait, related by `extends` or not, is
+#' [dyn()].
+#'
+#' @param struct An R8 struct type object.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
+#' Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
+#' Plot <- new_struct("Plot", fields = list(x = subtype(Range)))
+#' Plot(x = Window(lo = 0, hi = 1, label = "w"))
+#' options(op)
+#'
+#' @export
+subtype <- function(struct) {
+  if (inherits(struct, "r8_trait") || inherits(struct, "r8_generic")) {
+    r8_abort(
+      "subtype() takes a struct type object; any implementor of a trait is ",
+      "dyn() of the trait.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (!inherits(struct, "r8_struct_type")) {
+    r8_abort(
+      "subtype() takes a struct type object, such as subtype(Interval).",
+      class = "r8_declaration_error"
+    )
+  }
+  ensure_registered(struct)
+  name <- attr(struct, "r8_name")
+  a <- ancestry(name)
+  if (isTRUE(a[["stale"]])) {
+    stale_abort(name, a[["parent"]], "r8_declaration_error")
+  }
+  structure(list(kind = "subtype", of = name), class = "r8_field_type")
+} # /R8::subtype
 
 
 # %% vec ----
@@ -256,37 +396,32 @@ vec <- function(type, min_length = NULL, max_length = NULL, unique = FALSE) {
 # %% option ----
 #' Optional field type
 #'
-#' `Option<T>`: the value may be absent, `NULL`. `resolve` declares what
-#' absence means.
+#' `Option<T>`: the value may be absent, `NULL` for a field and `NA` for an
+#' element of a vector or a cell of a table. A struct field of this type may
+#' declare who fills an absent value, with [field()]'s `compute` or
+#' `context`.
 #'
 #' @param type An `r8_field_type` or an R8 type: The type when present.
-#' @param resolve Character \{"none", "computed", "runtime"\}: `"none"`,
-#'   absence is final; `"computed"`, `r8_resolve()` fills the value from
-#'   `compute`; `"runtime"`, `r8_resolve()` fills it from data or the
-#'   environment.
-#' @param compute Optional expression: For `resolve = "computed"`, the value
-#'   as an expression over the other fields, captured unevaluated and
-#'   written in the rule dialect.
 #'
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' option(type_integer(min = 1L), resolve = "runtime")
-#' option(type_double(), resolve = "computed", compute = dose_mg / 1000)
+#' option(type_integer(min = 1L))
 #'
 #' @export
-option <- function(type, resolve = "none", compute = NULL) {
-  if (!identical(resolve, "none")) {
-    resolve <- match.arg(resolve, c("none", "computed", "runtime"))
-  }
-  declared(r8_ft_option(type, resolve, substitute(compute)))
+option <- function(type) {
+  declared(r8_ft_option(type))
 } # /R8::option
 
 
-# %% hashmap ----
-#' Map field type
+# %% btree_map ----
+#' Sorted map field type
 #'
-#' `HashMap<String, T>`: string keys, sorted at construction.
+#' `BTreeMap<String, T>`: unique string keys in code-point order, a named
+#' vector or list in R. Two maps with the same keys and values are equal in
+#' any order of construction. Canonical JSON writes the keys in RFC 8785's
+#' UTF-16 order, which differs from code-point order only for keys that mix
+#' characters above U+FFFF with characters from U+E000 to U+FFFF.
 #'
 #' @param type An `r8_field_type` or an R8 type: The value type.
 #' @param keys Optional `r8_field_type`: A `type_character()` constraining
@@ -295,19 +430,20 @@ option <- function(type, resolve = "none", compute = NULL) {
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' hashmap(type_integer())
+#' btree_map(type_integer())
 #'
 #' @export
-hashmap <- function(type, keys = NULL) {
+btree_map <- function(type, keys = NULL) {
   declared(r8_ft_map(type, keys, FALSE))
-} # /R8::hashmap
+} # /R8::btree_map
 
 
-# %% ordered_map ----
-#' Ordered map field type
+# %% index_map ----
+#' Insertion-ordered map field type
 #'
-#' Unique string keys in insertion order: a named list in R. Order is part of
-#' the value.
+#' `IndexMap<String, T>`: unique string keys in insertion order, a named
+#' list in R and an array of `{"name", "value"}` pairs in JSON. Order is part
+#' of the value, its equality, and its hash.
 #'
 #' @param type An `r8_field_type` or an R8 type: The value type.
 #' @param keys Optional `r8_field_type`: A `type_character()` constraining
@@ -316,40 +452,27 @@ hashmap <- function(type, keys = NULL) {
 #' @return An `r8_field_type`.
 #'
 #' @examples
-#' ordered_map(type_double())
+#' index_map(type_double())
 #'
 #' @export
-ordered_map <- function(type, keys = NULL) {
+index_map <- function(type, keys = NULL) {
   declared(r8_ft_map(type, keys, TRUE))
-} # /R8::ordered_map
-
-
-# %% print.r8_field_type ----
-#' Print a field type
-#'
-#' @param x An `r8_field_type`.
-#' @param ... Not used.
-#'
-#' @return `x`, invisibly.
-#'
-#' @export
-print.r8_field_type <- function(x, ...) {
-  cat("<r8_field_type>", r8_ir_json(unclass(x)), "\n")
-  invisible(x)
-} # /R8::print.r8_field_type
+} # /R8::index_map
 
 
 # %% type_matrix ----
 #' Matrix field type
 #'
-#' A dense matrix of a scalar type, an atomic vector with `dim` in R. Given an
-#' R8 struct type, a matrix whose columns are the struct's fields, all of one
-#' scalar type.
+#' A dense matrix of a scalar type, an atomic vector with `dim` in R; with
+#' `of`, a matrix whose columns are the fields of a struct, all of one scalar
+#' type.
 #'
-#' @param type An `r8_field_type` of a scalar type (or `option()` of one, for
-#'   missing cells), or an R8 struct type.
+#' @param type An `r8_field_type` of a scalar type, or `option()` of one for
+#'   missing cells.
 #' @param nrow Optional Integer: The number of rows.
 #' @param ncol Optional Integer: The number of columns.
+#' @param of Optional R8 struct type: The struct whose fields are the
+#'   columns, in place of `type`, `nrow`, and `ncol`.
 #'
 #' @return An `r8_field_type`.
 #'
@@ -357,9 +480,59 @@ print.r8_field_type <- function(x, ...) {
 #' type_matrix(option(type_double()), nrow = 2L)
 #'
 #' @export
-type_matrix <- function(type, nrow = NULL, ncol = NULL) {
-  declared(r8_ft_matrix(type, nrow, ncol, NULL, FALSE))
+type_matrix <- function(type = NULL, nrow = NULL, ncol = NULL, of = NULL) {
+  if (!is.null(of)) {
+    return(struct_columns(
+      "matrix_of",
+      of,
+      "type_matrix",
+      is.null(type) && is.null(nrow) && is.null(ncol)
+    ))
+  }
+  if (inherits(type, "r8_struct_type")) {
+    r8_abort(
+      "A matrix whose columns are a struct's fields is type_matrix(of = ",
+      sub("^.*::", "", attr(type, "r8_name")),
+      ").",
+      class = "r8_declaration_error"
+    )
+  }
+  declared(r8_ft_matrix(type, nrow, ncol, NULL, "matrix"))
 } # /R8::type_matrix
+
+
+# %% struct_columns ----
+#' The field type of a matrix or table whose columns are a struct's fields
+#'
+#' @param kind Character: `"matrix_of"` or `"table_of"`.
+#' @param of An R8 struct type object.
+#' @param fn Character: The declaring function, for messages.
+#' @param alone Logical: `of` is given without the arguments it replaces.
+#'
+#' @return An `r8_field_type`.
+#'
+#' @keywords internal
+#' @noRd
+struct_columns <- function(kind, of, fn, alone) {
+  if (!inherits(of, "r8_struct_type")) {
+    r8_abort(
+      "`of` is an R8 struct type object.",
+      class = "r8_declaration_error"
+    )
+  }
+  if (!alone) {
+    r8_abort(
+      fn,
+      "(of = ) takes its columns from the struct and no other argument.",
+      class = "r8_declaration_error"
+    )
+  }
+  ensure_registered(of)
+  structure(
+    list(kind = kind, of = attr(of, "r8_name")),
+    class = "r8_field_type"
+  )
+} # /R8::struct_columns
 
 
 # %% type_array ----
@@ -377,7 +550,7 @@ type_matrix <- function(type, nrow = NULL, ncol = NULL) {
 #'
 #' @export
 type_array <- function(type, dim = NULL) {
-  declared(r8_ft_matrix(type, NULL, NULL, dim, FALSE))
+  declared(r8_ft_matrix(type, NULL, NULL, dim, "array"))
 } # /R8::type_array
 
 
@@ -398,7 +571,7 @@ type_array <- function(type, dim = NULL) {
 #'
 #' @export
 type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
-  declared(r8_ft_matrix(type, nrow, ncol, NULL, TRUE))
+  declared(r8_ft_matrix(type, nrow, ncol, NULL, "sparse_matrix"))
 } # /R8::type_sparse_matrix
 
 
@@ -408,28 +581,50 @@ type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
 #' A `data.frame` of equal-length columns, each a scalar type, a factor, or
 #' `option()` of one, with automatic row names. An open table also accepts
 #' columns its declaration does not name. A table's rules run once per row
-#' and read the row's columns by name. Given an R8 struct type, a table whose
-#' columns are the struct's fields.
+#' and read the row's columns by name. With `of`, a table whose columns are
+#' the fields of a struct.
 #'
-#' @param columns Named list of fields or field types, or an R8 struct type.
+#' @param columns Named list of fields or field types.
 #' @param open Logical: Accept columns the declaration does not name.
-#' @param rules List: `rule()` calls over a row's columns.
+#' @param rules A `rule()`, or a list of `rule()` calls, over a row's
+#'   columns.
+#' @param of Optional R8 struct type: The struct whose fields are the columns,
+#'   in place of `columns`, `open`, and `rules`.
 #'
 #' @return An `r8_field_type`.
 #'
 #' @examples
 #' type_table(
 #'   list(start = type_integer(), width = type_integer(min = 0L)),
-#'   rules = list(rule("END_FITS", start + width - 1 <= 2147483647, "The end fits in an integer."))
+#'   rules = list(rule(
+#'     start + width - 1 <= 2147483647,
+#'     message = "The end fits in an integer.",
+#'     id = "END_FITS"
+#'   ))
 #' )
 #'
 #' @export
-type_table <- function(columns = list(), open = FALSE, rules = list()) {
-  if (inherits(columns, "r8_struct_type")) {
-    return(structure(
-      list(kind = "table_of", of = attr(columns, "r8_name")),
-      class = "r8_field_type"
+type_table <- function(
+  columns = list(),
+  open = FALSE,
+  rules = list(),
+  of = NULL
+) {
+  if (!is.null(of)) {
+    return(struct_columns(
+      "table_of",
+      of,
+      "type_table",
+      length(columns) == 0L && isFALSE(open) && length(rules) == 0L
     ))
+  }
+  if (inherits(columns, "r8_struct_type")) {
+    r8_abort(
+      "A table whose columns are a struct's fields is type_table(of = ",
+      sub("^.*::", "", attr(columns, "r8_name")),
+      ").",
+      class = "r8_declaration_error"
+    )
   }
   if (
     length(columns) > 0L &&
@@ -440,5 +635,6 @@ type_table <- function(columns = list(), open = FALSE, rules = list()) {
       class = "r8_declaration_error"
     )
   }
-  declared(r8_ft_table(columns, open, rules))
+  check_flag(open, "open")
+  declared(r8_ft_table(columns, open, as_rules(rules)))
 } # /R8::type_table

@@ -23,7 +23,7 @@ if (MODE != "memory") {
     g <- gc()
     56 * g["Ncells", "used"] + 8 * g["Vcells", "used"]
   }
-  native_bytes <- function() {
+  rust_bytes <- function() {
     if (SYSTEM != "R8") return(0)
     s <- R8:::r8_alloc_stats()
     if (is.null(s)) stop("the memory rows run on a build of R8 with the feature `alloc-stats`")
@@ -33,10 +33,10 @@ if (MODE != "memory") {
   # measured ones.
   invisible(gbm_type(SYSTEM, "GBMS_0"))
   r0 <- r_bytes()
-  n0 <- native_bytes()
+  n0 <- rust_bytes()
   kept <- lapply(1:100, function(i) gbm_type(SYSTEM, paste0("GBMS_", i)))
   r1 <- r_bytes()
-  n1 <- native_bytes()
+  n1 <- rust_bytes()
   emit("GBM", "memory_type_r", (r1 - r0) / 100, "B")
-  emit("GBM", "memory_type_native", (n1 - n0) / 100, "B")
+  emit("GBM", "memory_type_rust", (n1 - n0) / 100, "B")
 }

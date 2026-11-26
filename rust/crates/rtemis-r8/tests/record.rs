@@ -6,11 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
-use rtemis_r8::codec::declaration_hash;
+use rtemis_r8::canonical::declaration_hash;
 use rtemis_r8::ir::{
-    Bound, CharacterType, ClassSystem, DoubleType, FieldDef, FieldType, ImplDef, ImplTarget,
-    IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep, Resolve, RuleDef,
-    SplitTarget, StructDef, TraitDef, TypeDef,
+    Bound, CharacterType, ClassSystem, ColumnDef, DoubleType, FieldDef, FieldType, HostDefault,
+    ImplDef, ImplMethod, IntegerType, IrDocument, Logic, MethodDef, Migration, MigrationStep,
+    Param, ParamDef, RequiredField, Resolve, ReturnType, RuleDef, SelfMarker, SplitTarget,
+    StructDef, TraitDef, TypeDef, TypeRef, TypedImplMethod,
 };
 use rtemis_r8::name::{MethodName, Name, QualifiedName};
 use rtemis_r8::record::{self, Declaration, DeclarationRef, Entry, RecordError};
@@ -79,6 +80,11 @@ fn entries_of(doc: &IrDocument) -> Vec<(&Name, DeclarationRef<'_>)> {
         .map(|t| (ns, DeclarationRef::Type(t)))
         .chain(doc.traits.iter().map(|t| (ns, DeclarationRef::Trait(t))))
         .chain(doc.impls.iter().map(|i| (ns, DeclarationRef::Impl(i))))
+        .chain(
+            doc.functions
+                .iter()
+                .map(|f| (ns, DeclarationRef::Function(f))),
+        )
         .collect()
 }
 
@@ -90,12 +96,14 @@ fn document_of(ns: &Name, entries: &[Entry]) -> IrDocument {
         types: Vec::new(),
         traits: Vec::new(),
         impls: Vec::new(),
+        functions: Vec::new(),
     };
     for e in entries {
         match &e.declaration {
             Declaration::Type(t) => doc.types.push(t.clone()),
             Declaration::Trait(t) => doc.traits.push(t.clone()),
             Declaration::Impl(i) => doc.impls.push(i.clone()),
+            Declaration::Function(f) => doc.functions.push(f.clone()),
         }
     }
     doc
@@ -142,9 +150,9 @@ fn full_field(n: &str, ty: FieldType) -> FieldDef {
         description: "A field.".into(),
         sensitive: true,
         unit: Some("mg/L".into()),
-        external: true,
-        unique: true,
-        optional: true,
+        resolve: Some(Resolve::Computed {
+            expr: serde_json::from_value(json!({"+": [{"var": "a"}, 1]})).unwrap(),
+        }),
         inherited_from: Some(Box::new(q("ns::Parent"))),
         extensions: Some(Box::new(ext)),
     }
@@ -158,9 +166,7 @@ fn bare_field(n: &str, ty: FieldType) -> FieldDef {
         description: Box::default(),
         sensitive: false,
         unit: None,
-        external: false,
-        unique: false,
-        optional: false,
+        resolve: None,
         inherited_from: None,
         extensions: None,
     }
@@ -169,12 +175,12 @@ fn bare_field(n: &str, ty: FieldType) -> FieldDef {
 /// One sample of every field type. The `match` below lists every variant, so
 /// a new variant fails to compile until it has a sample here.
 fn sample_types() -> Vec<FieldType> {
-    let logic: Logic = serde_json::from_value(json!({"+": [{"var": "a"}, 1]})).unwrap();
     let rule = RuleDef {
-        id: name("R"),
+        id: Some(name("R")),
         invariant: serde_json::from_value(json!({"<": [{"var": "start"}, 10]})).unwrap(),
         when: Some(serde_json::from_value(json!({"!": {"is_null": {"var": "start"}}})).unwrap()),
-        message: "start is small.".into(),
+        message: Some("start is small.".into()),
+        inherited_from: Some(Box::new(q("ns::Grand"))),
     };
     let out = vec![
         FieldType::Logical,
@@ -187,7 +193,8 @@ fn sample_types() -> Vec<FieldType> {
         FieldType::Double(DoubleType {
             lower: Some(Bound::exclusive(0.0)),
             upper: Some(Bound::inclusive(1e300)),
-            finite: false,
+            infinite: true,
+            nan: true,
             values: Some(Box::new([0.5, -0.0])),
         }),
         FieldType::Double(DoubleType::default()),
@@ -223,15 +230,32 @@ fn sample_types() -> Vec<FieldType> {
         FieldType::MatrixOf { of: q("ns::P") },
         FieldType::Table {
             columns: Box::new([
-                bare_field("start", FieldType::Integer(IntegerType::default())),
-                full_field("label", FieldType::Character(CharacterType::default())),
+                ColumnDef {
+                    field: bare_field("start", FieldType::Integer(IntegerType::default())),
+                    unique: false,
+                    required: true,
+                },
+                ColumnDef {
+                    field: FieldDef {
+                        resolve: None,
+                        inherited_from: None,
+                        ..full_field("label", FieldType::Character(CharacterType::default()))
+                    },
+                    unique: true,
+                    required: false,
+                },
             ]),
             open: true,
             rules: Box::new([rule]),
         },
         FieldType::TableOf { of: q("ns::P") },
         FieldType::Json,
-        FieldType::R { class: "lm".into() },
+        FieldType::HostClass {
+            host: "r".into(),
+            package: "stats".into(),
+            class: "lm".into(),
+            system: ClassSystem::S3,
+        },
         FieldType::Vec {
             element: Box::new(FieldType::Double(DoubleType::default())),
             min_length: Some(1),
@@ -240,20 +264,15 @@ fn sample_types() -> Vec<FieldType> {
         },
         FieldType::Option {
             inner: Box::new(FieldType::Integer(IntegerType::default())),
-            resolve: Resolve::Computed { expr: logic },
         },
-        FieldType::Option {
-            inner: Box::new(FieldType::Logical),
-            resolve: Resolve::Runtime,
-        },
-        FieldType::Hashmap {
+        FieldType::BtreeMap {
             value: Box::new(FieldType::Json),
             keys: CharacterType {
                 pattern: Some("^k".into()),
                 values: None,
             },
         },
-        FieldType::OrderedMap {
+        FieldType::IndexMap {
             value: Box::new(FieldType::Date),
             keys: CharacterType::default(),
         },
@@ -261,6 +280,7 @@ fn sample_types() -> Vec<FieldType> {
         FieldType::Dyn {
             r#trait: q("ns::Kernel"),
         },
+        FieldType::Subtype { of: q("ns::Base") },
     ];
     for t in &out {
         match t {
@@ -279,13 +299,14 @@ fn sample_types() -> Vec<FieldType> {
             | FieldType::Table { .. }
             | FieldType::TableOf { .. }
             | FieldType::Json
-            | FieldType::R { .. }
+            | FieldType::HostClass { .. }
             | FieldType::Vec { .. }
             | FieldType::Option { .. }
-            | FieldType::Hashmap { .. }
-            | FieldType::OrderedMap { .. }
+            | FieldType::BtreeMap { .. }
+            | FieldType::IndexMap { .. }
             | FieldType::Named { .. }
-            | FieldType::Dyn { .. } => {}
+            | FieldType::Dyn { .. }
+            | FieldType::Subtype { .. } => {}
         }
     }
     out
@@ -395,6 +416,14 @@ fn sample_struct() -> TypeDef {
         f.default = Some(Box::new(rtemis_r8::tree::Tree::from_value(&v)));
         fields.push(f);
     }
+    let mut context = bare_field(
+        "c0",
+        FieldType::Option {
+            inner: Box::new(FieldType::Logical),
+        },
+    );
+    context.resolve = Some(Resolve::Context);
+    fields.push(context);
     let mut ext = std::collections::BTreeMap::new();
     ext.insert("x:y".to_string(), json!({"k": 1}));
     TypeDef::Struct(StructDef {
@@ -404,10 +433,11 @@ fn sample_struct() -> TypeDef {
         fields,
         extends: Some(q("ns::Base")),
         rules: vec![RuleDef {
-            id: name("ODD"),
+            id: Some(name("ODD")),
             invariant: serde_json::from_value(json!({"nope": [1], "two": 2})).unwrap(),
             when: None,
-            message: "kept as written".into(),
+            message: Some("kept as written".into()),
+            inherited_from: None,
         }],
         migrations: vec![
             Migration {
@@ -420,8 +450,6 @@ fn sample_struct() -> TypeDef {
             },
         ],
         aliases: vec![q("old::Sample")],
-        provenance: true,
-        s4: true,
         extensions: ext,
     })
 }
@@ -434,25 +462,70 @@ fn sample_trait() -> TraitDef {
             MethodDef {
                 name: MethodName::new("apply").unwrap(),
                 description: "Applies it.".into(),
-                params: vec!["x".into(), "...".into()],
+                params: vec![
+                    ParamDef::Full(Param {
+                        name: "x".into(),
+                        dispatch: true,
+                        ty: None,
+                        default: None,
+                        host_default: None,
+                        description: "".into(),
+                    }),
+                    ParamDef::Full(Param {
+                        name: "y".into(),
+                        dispatch: true,
+                        ty: None,
+                        default: None,
+                        host_default: Some(HostDefault {
+                            host: "r".into(),
+                            text: "length(x)".into(),
+                        }),
+                        description: "The other.".into(),
+                    }),
+                    ParamDef::Full(Param {
+                        name: "scale".into(),
+                        dispatch: false,
+                        ty: Some(FieldType::Double(DoubleType::default())),
+                        default: Some(Box::new(rtemis_r8::tree::Tree::from_value(
+                            &serde_json::json!(1.5),
+                        ))),
+                        host_default: None,
+                        description: "".into(),
+                    }),
+                    "...".into(),
+                ],
+                return_type: Some(ReturnType::Type(Box::new(FieldType::Double(
+                    DoubleType::default(),
+                )))),
                 stochastic: true,
-                has_default: true,
+                has_default_impl: true,
+                rules: vec![
+                    serde_json::from_value(serde_json::json!({
+                        "invariant": {">": [{"var": "scale"}, 0]},
+                        "id": "SCALE"
+                    }))
+                    .unwrap(),
+                ],
             },
             MethodDef {
                 name: MethodName::new("[").unwrap(),
                 description: String::new(),
                 params: vec![],
+                return_type: Some(ReturnType::SelfType(SelfMarker::SelfType)),
                 stochastic: false,
-                has_default: false,
+                has_default_impl: false,
+                rules: Vec::new(),
             },
         ],
-        required_fields: vec![full_field(
-            "gamma",
-            FieldType::Double(DoubleType::default()),
-        )],
+        required_fields: vec![RequiredField {
+            name: name("gamma"),
+            ty: FieldType::Double(DoubleType::default()),
+            description: "A required field.".into(),
+        }],
         supertraits: vec![q("R8::Display")],
         tag: Some(name("kind")),
         generic: true,
+        extra_type_params: 2,
     }
 }
 
@@ -461,17 +534,35 @@ fn sample_impls() -> Vec<ImplDef> {
         ImplDef {
             r#trait: q("ns::Kernel"),
             type_args: vec![],
-            target: ImplTarget::Type {
+            target: TypeRef::Named {
                 name: q("ns::Sample"),
             },
             tag_value: Some("sample".into()),
-            methods: vec![MethodName::new("apply").unwrap()],
-            codec: false,
+            methods: vec![
+                ImplMethod::Name(MethodName::new("apply").unwrap()),
+                ImplMethod::Typed(TypedImplMethod {
+                    name: MethodName::new("[").unwrap(),
+                    return_type: FieldType::Named {
+                        name: q("ns::Sample"),
+                    },
+                }),
+            ],
         },
         ImplDef {
             r#trait: q("R8::From"),
-            type_args: vec!["data.frame".into()],
-            target: ImplTarget::HostClass {
+            type_args: vec![
+                TypeRef::Named {
+                    name: q("ns::Sample"),
+                },
+                TypeRef::HostClass {
+                    host: "r".into(),
+                    package: String::new(),
+                    class: "data.frame".into(),
+                    system: ClassSystem::S3,
+                },
+                TypeRef::Any,
+            ],
+            target: TypeRef::HostClass {
                 host: "r".into(),
                 package: "Matrix".into(),
                 class: "dgCMatrix".into(),
@@ -479,9 +570,23 @@ fn sample_impls() -> Vec<ImplDef> {
             },
             tag_value: None,
             methods: vec![],
-            codec: true,
         },
     ]
+}
+
+fn sample_table() -> TypeDef {
+    serde_json::from_value(json!({
+        "kind": "table", "name": "Rows", "description": "A table.", "version": 2, "open": true,
+        "columns": [
+            {"name": "id", "type": {"kind": "integer"}, "unique": true, "required": false},
+            {"name": "age", "type": {"kind": "option", "inner": {"kind": "double"}}, "unit": "a"}
+        ],
+        "rules": [{"id": "SIGN", "invariant": {">": [{"var": "age"}, 0]}}],
+        "migrations": [{"from_version": 1, "steps": []}],
+        "aliases": ["ns::Lines"],
+        "extensions": {"x:y": 1}
+    }))
+    .unwrap()
 }
 
 fn sample_record() -> (Name, Vec<Entry>) {
@@ -493,6 +598,10 @@ fn sample_record() -> (Name, Vec<Entry>) {
         },
         Entry {
             namespace: ns.clone(),
+            declaration: Declaration::Type(sample_table()),
+        },
+        Entry {
+            namespace: ns.clone(),
             declaration: Declaration::Trait(sample_trait()),
         },
     ];
@@ -500,6 +609,32 @@ fn sample_record() -> (Name, Vec<Entry>) {
         namespace: ns.clone(),
         declaration: Declaration::Impl(i),
     }));
+    for f in [
+        serde_json::json!({
+            "name": "clip",
+            "description": "Limits values.",
+            "params": [
+                {"name": "x", "type": {"kind": "vec", "element": {"kind": "double"}}},
+                {"name": "lo", "type": {"kind": "double"}, "default": 0},
+                {"name": "hi", "type": {"kind": "double"}, "host_default": {"host": "r", "text": "max(x)"}},
+                "..."
+            ],
+            "return_type": {"kind": "vec", "element": {"kind": "double"}},
+            "rules": [{"invariant": {"<=": [{"var": "lo"}, {"var": "hi"}]}, "id": "LO_HI"}],
+            "stochastic": true
+        }),
+        serde_json::json!({
+            "name": "plain",
+            "params": [{"name": "n", "type": {"kind": "integer"}}],
+            "typed": "strict",
+            "on": "ns::Lines"
+        }),
+    ] {
+        entries.push(Entry {
+            namespace: ns.clone(),
+            declaration: Declaration::Function(serde_json::from_value(f).unwrap()),
+        });
+    }
     (ns, entries)
 }
 
@@ -511,6 +646,7 @@ fn encode_entries(entries: &[Entry]) -> Vec<u8> {
                 Declaration::Type(t) => DeclarationRef::Type(t),
                 Declaration::Trait(t) => DeclarationRef::Trait(t),
                 Declaration::Impl(i) => DeclarationRef::Impl(i),
+                Declaration::Function(f) => DeclarationRef::Function(f),
             },
         )
     }))
@@ -534,11 +670,11 @@ fn samples_of_every_member_round_trip() {
     );
 }
 
-/// The golden record of format 1: `tests/fixtures/sample.r8d` holds the
-/// samples as format 1 wrote them, and `sample.r8d.json` their IR. With
+/// The golden record of the current format: `tests/fixtures/sample.r8d` holds the
+/// samples as that format writes them, and `sample.r8d.json` their IR. With
 /// `R8_UPDATE_RECORD=1`, the test writes both files.
 #[test]
-fn the_golden_record_of_format_1_reads_and_writes_back() {
+fn the_golden_record_of_the_current_format_reads_and_writes_back() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let (_, entries) = sample_record();
     let bytes = encode_entries(&entries);
@@ -556,7 +692,7 @@ fn the_golden_record_of_format_1_reads_and_writes_back() {
     // The header names the writer; the payload from the checksum on is the
     // format's bytes, which the current encoder reproduces.
     let (format, _) = record::header(&golden).unwrap();
-    assert_eq!(format, 1);
+    assert_eq!(format, record::FORMAT);
     let payload = |b: &[u8]| {
         let (_, writer) = record::header(b).unwrap();
         b[4 + 1 + 1 + writer.len()..].to_vec()
@@ -608,12 +744,15 @@ fn damaged_and_hostile_records_return_errors() {
     let mut magic = bytes.clone();
     magic[0] = b'X';
     assert_eq!(record::decode(&magic), Err(RecordError::Magic));
-    let mut newer = bytes.clone();
-    newer[4] = 2;
-    assert!(matches!(
-        record::decode(&newer),
-        Err(RecordError::Newer { format: 2, .. })
-    ));
+    // A format other than the current one is refused.
+    for other in [record::FORMAT as u8 - 1, record::FORMAT as u8 + 1] {
+        let mut b = bytes.clone();
+        b[4] = other;
+        assert!(matches!(
+            record::decode(&b),
+            Err(RecordError::Newer { format, .. }) if format == u32::from(other)
+        ));
+    }
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert_eq!(
@@ -650,8 +789,6 @@ fn deep_nesting_is_refused() {
         rules: vec![],
         migrations: vec![],
         aliases: vec![],
-        provenance: false,
-        s4: false,
         extensions: Default::default(),
     });
     let ns = name("ns");

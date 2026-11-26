@@ -65,10 +65,10 @@ impl Tree {
         TreeRef::Node(self).to_value()
     }
 
-    /// The member `key` of an object; the last of members of one name.
+    /// The member `key` of an object.
     pub fn get(&self, key: &str) -> Option<&Tree> {
         match self {
-            Tree::Object(m) => m.iter().rev().find(|(k, _)| &**k == key).map(|(_, v)| v),
+            Tree::Object(m) => m.iter().find(|(k, _)| &**k == key).map(|(_, v)| v),
             _ => None,
         }
     }
@@ -277,6 +277,7 @@ impl<'de> Visitor<'de> for TreeVisitor {
         if self.exact {
             let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
             while let Some(x) = seq.next_element::<Exact>()? {
+                crate::progress::tick();
                 items.push(x.0);
             }
             return Ok(Tree::Array(items.into_boxed_slice()));
@@ -287,6 +288,7 @@ impl<'de> Visitor<'de> for TreeVisitor {
         let mut numbers = false;
         let mut nodes: Option<Vec<Tree>> = None;
         while let Some(item) = seq.next_element::<Tree>()? {
+            crate::progress::tick();
             if let Some(v) = nodes.as_mut() {
                 v.push(item);
                 continue;
@@ -331,8 +333,32 @@ impl<'de> Visitor<'de> for TreeVisitor {
                 members.push((k.into_boxed_str(), v));
             }
         }
+        if let Some(k) = repeated(members.iter().map(|(k, _)| &**k)) {
+            return Err(de::Error::custom(format_args!(
+                "the member `{k}` repeats; the members of an object have distinct names"
+            )));
+        }
         Ok(Tree::Object(members.into_boxed_slice()))
     }
+}
+
+/// The first of `names` that an earlier one equals.
+pub fn repeated<T: AsRef<str>>(names: impl ExactSizeIterator<Item = T> + Clone) -> Option<T> {
+    // A few names are compared with one another, more of them through a set.
+    if names.len() <= 16 {
+        return names.clone().enumerate().find_map(|(i, n)| {
+            names
+                .clone()
+                .take(i)
+                .any(|m| m.as_ref() == n.as_ref())
+                .then_some(n)
+        });
+    }
+    let mut seen: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(names.len());
+    names
+        .into_iter()
+        .find(|n| !seen.insert(n.as_ref().to_string()))
 }
 
 impl<'de> Deserialize<'de> for Tree {
@@ -354,6 +380,13 @@ impl<'de> Deserialize<'de> for Exact {
 /// `#[serde(deserialize_with)]` on a value of the IR.
 pub fn exact_option<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Box<Tree>>, D::Error> {
     Option::<Exact>::deserialize(d).map(|o| o.map(|e| Box::new(e.0)))
+}
+
+/// Deserializes a boxed tree that is present, `null` included, with its
+/// numbers kept as written, for `#[serde(deserialize_with)]` on a member whose
+/// absence differs from `null`.
+pub fn exact_present<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Box<Tree>>, D::Error> {
+    Exact::deserialize(d).map(|e| Some(Box::new(e.0)))
 }
 
 impl Tree {
@@ -501,6 +534,28 @@ mod tests {
     #[test]
     fn a_node_takes_24_bytes() {
         assert_eq!(std::mem::size_of::<Tree>(), 24);
+    }
+
+    #[test]
+    fn a_member_that_repeats_does_not_read() {
+        for text in [
+            r#"{"a": 1, "a": 2}"#.to_string(),
+            r#"[{"b": {"a": 1, "c": 2, "a": null}}]"#.to_string(),
+            format!(
+                "{{{}}}",
+                (0..40)
+                    .map(|i| format!("\"k{}\": {i}", i % 39))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ] {
+            let e = serde_json::from_str::<Tree>(&text).unwrap_err().to_string();
+            assert!(e.contains("repeats"), "{e}");
+        }
+        assert_eq!(repeated(["a", "b", "a", "b"].iter()), Some(&"a"));
+        assert_eq!(repeated(["a", "b"].iter()), None);
+        let many: Vec<String> = (0..100).map(|i| i.to_string()).collect();
+        assert_eq!(repeated(many.iter()), None);
     }
 
     #[test]

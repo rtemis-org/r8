@@ -102,10 +102,13 @@ as_r8_text <- function(x) {
   if (inherits(x, "r8_text")) {
     return(x)
   }
-  if (inherits(x, "r8_value")) {
+  if (is_value(x)) {
     return(value_text(x))
   }
-  lines <- as.character(unlist(strsplit(as.character(x), "\n", fixed = TRUE)))
+  text <- enc2utf8(as.character(x))
+  invalid <- !is.na(text) & !validUTF8(text)
+  text[invalid] <- iconv(text[invalid], "UTF-8", "UTF-8", sub = "\ufffd")
+  lines <- as.character(unlist(strsplit(text, "\n", fixed = TRUE)))
   lines[is.na(lines)] <- "NA"
   n <- nchar(lines)
   shown <- which(n > 0)
@@ -255,7 +258,7 @@ r8_span <- function(text, role) {
 #' lines; text that `sub()` or `toupper()` changes encodes without roles.
 #' `format()` encodes it as plain text unless its caller names another
 #' output type, and `print()` writes it in the output type that
-#' `r8_output_type()` resolves.
+#' `r8_output_type()` determines.
 #'
 #' @param ... Pieces: character, `r8_text` objects, and R8 values.
 #'
@@ -323,7 +326,7 @@ display_types <- function() {
 #' @keywords internal
 #' @noRd
 display_impl <- function(x) {
-  .r8_impls[[paste("R8::Display", "format", attr(x, "r8_type"), sep = "|")]]
+  .r8_impls[[paste("R8::Display", "format", value_type(x), sep = "|")]]
 } # /R8::display_impl
 
 
@@ -341,9 +344,31 @@ display_impl <- function(x) {
 #' @keywords internal
 #' @noRd
 value_text <- function(x, summary = NULL) {
+  if (!is_value(x)) {
+    return(as_r8_text(c(
+      paste("This object", not_value_text(x)),
+      utils::capture.output(print(unclass(x)))
+    )))
+  }
+  other <- r8_value_other(x)
+  if (!is.null(other)) {
+    note <- sub("^made", "Made", other[["message"]])
+    # The fields of a saved Rust-stored value read under its own declaration only.
+    layout <- tryCatch(
+      layout_value(x, summary = summary),
+      error = function(e) r8_text("<", value_type(x), ">")
+    )
+    return(c(
+      layout,
+      r8_text(r8_span(paste0(note, "."), "summary"))
+    ))
+  }
   f <- display_impl(x)
   if (!is.null(f)) {
     return(as_r8_text(f(x)))
+  }
+  if (inherits(x, "R8::Report")) {
+    return(report_text(x))
   }
   layout_value(x, summary = summary)
 } # /R8::value_text
@@ -353,7 +378,7 @@ value_text <- function(x, summary = NULL) {
 #' The default layout of an R8 value
 #'
 #' Reads a duplicate of the value, so that the layout fills no field cache
-#' of `x`. The header of a Rust-native value shows the size of its state.
+#' of `x`. The header of a Rust-stored value shows the size of its state.
 #'
 #' @param x An R8 value.
 #' @param summary Character or `NULL`: Text after the header, in place of
@@ -366,7 +391,7 @@ value_text <- function(x, summary = NULL) {
 #' @noRd
 layout_value <- function(x, summary = NULL, head = 8L) {
   if (is.null(summary)) {
-    parts <- r8_native_parts(x)
+    parts <- r8_rust_stored_parts(x)
     if (!is.null(parts)) {
       summary <- r8_format_size(parts[["state"]])
     }
@@ -378,7 +403,9 @@ layout_value <- function(x, summary = NULL, head = 8L) {
     display_types(),
     display_parts,
     summary,
-    as.integer(head)
+    as.integer(head),
+    getOption("width", 80L),
+    isTRUE(l10n_info()[["UTF-8"]])
   ))
 } # /R8::layout_value
 
@@ -390,7 +417,7 @@ layout_value <- function(x, summary = NULL, head = 8L) {
 #' `Print` impl: a header naming the type, and each field on its own line,
 #' a nested value's fields indented under it. A vector shows its element
 #' type, its length, and its first `head` items; a factor, a matrix, a table,
-#' and a sparse matrix show their shape. The header of a Rust-native value
+#' and a sparse matrix show their shape. The header of a Rust-stored value
 #' shows the size of its state in IEC binary units. A nested value whose
 #' type implements `Display` shows the impl's text. The layout reads no
 #' vector whole.
@@ -426,7 +453,7 @@ r8_layout <- function(x, head = 8L) {
   if (!is.numeric(head) || length(head) != 1L || is.na(head) || head < 0) {
     r8_abort("`head` is one non-negative integer.", class = "r8_text_error")
   }
-  if (inherits(x, "r8_value")) {
+  if (is_value(x)) {
     return(layout_value(x, head = head))
   }
   if (is.data.frame(x) || (is.list(x) && !is.object(x))) {
@@ -510,7 +537,7 @@ check_output_type <- function(output_type) {
 } # /R8::check_output_type
 
 
-# %% resolve_output ----
+# %% determine_output ----
 #' The output type and color depth of print()
 #'
 #' @param output_type Character or `NULL`: The output type the caller
@@ -520,9 +547,9 @@ check_output_type <- function(output_type) {
 #'
 #' @keywords internal
 #' @noRd
-resolve_output <- function(output_type = NULL) {
+determine_output <- function(output_type = NULL) {
   check_output_type(output_type)
-  r8_resolve_output(list(
+  r8_determine_output(list(
     explicit = output_type,
     option = getOption("r8.output_type"),
     env = Sys.getenv("R8_OUTPUT_TYPE"),
@@ -532,20 +559,20 @@ resolve_output <- function(output_type = NULL) {
     terminal = isatty(stdout()),
     truecolor = Sys.getenv("COLORTERM") %in% c("truecolor", "24bit")
   ))
-} # /R8::resolve_output
+} # /R8::determine_output
 
 
 # %% r8_output_type ----
 #' The output type of print()
 #'
-#' Resolves the output type as `print()` does, in this order: the
+#' Determines the output type as `print()` does, in this order: the
 #' `output_type` argument; `getOption("r8.output_type")`; the environment
 #' variable `R8_OUTPUT_TYPE`; `"plain"` when `NO_COLOR` is set or knitr
 #' runs; `"ansi"` in Positron, in RStudio with console color, and when
 #' standard output is a terminal, other than in R.app and Rgui; `"plain"`
 #' otherwise. Inside a running `print()` of an R8 value or text, it returns
 #' that call's output type, so a `Print` impl that writes with `cat()`
-#' writes the type the call resolved.
+#' writes the type the call determined.
 #'
 #' @param output_type Character or `NULL`: `"plain"`, `"ansi"`, `"html"`,
 #'   or `"markdown"`.
@@ -562,7 +589,7 @@ r8_output_type <- function(output_type = NULL) {
   if (is.null(output_type) && !is.null(.r8_print[["output_type"]])) {
     return(.r8_print[["output_type"]])
   }
-  resolve_output(output_type)[[1L]]
+  determine_output(output_type)[[1L]]
 } # /R8::r8_output_type
 
 
@@ -649,7 +676,7 @@ format.r8_theme <- function(x, ...) {
 #' @rdname r8_theme
 #' @export
 print.r8_theme <- function(x, ...) {
-  cat("<r8_theme>", format(x), sep = "\n")
+  cat("<r8 theme>", format(x), sep = "\n")
   invisible(x)
 } # /R8::print.r8_theme
 
@@ -668,7 +695,7 @@ print.r8_theme <- function(x, ...) {
 #'
 #' @param theme An `r8_theme` object, or `NULL` for `getOption("r8.theme")`
 #'   or R8's theme.
-#' @param tag Logical: Wrap the stylesheet in a `<style>` element.
+#' @param style_element Logical: Wrap the stylesheet in a `<style>` element.
 #'
 #' @return Character: The stylesheet, one string.
 #'
@@ -677,8 +704,11 @@ print.r8_theme <- function(x, ...) {
 #'
 #' @examples
 #' cat(r8_css())
-#' cat(r8_css(r8_theme(type_name = list(color = "#0F6A66")), tag = TRUE))
-r8_css <- function(theme = NULL, tag = FALSE) {
+#' cat(r8_css(
+#'   r8_theme(type_name = list(color = "#0F6A66")),
+#'   style_element = TRUE
+#' ))
+r8_css <- function(theme = NULL, style_element = FALSE) {
   theme <- theme %||% getOption("r8.theme")
   if (!is.null(theme) && !inherits(theme, "r8_theme")) {
     r8_abort(
@@ -692,11 +722,11 @@ r8_css <- function(theme = NULL, tag = FALSE) {
     as.character(attr(theme, "r8_named"))
   }
   out <- r8_css_text(if (is.null(theme)) NULL else unclass(theme), named)
-  if (isTRUE(tag)) paste0("<style>\n", out, "\n</style>") else out
+  if (isTRUE(style_element)) paste0("<style>\n", out, "\n</style>") else out
 } # /R8::r8_css
 
 
-# %% resolve_theme ----
+# %% determine_theme ----
 #' The theme table of format() and print()
 #'
 #' @param theme An `r8_theme` object or `NULL`.
@@ -705,7 +735,7 @@ r8_css <- function(theme = NULL, tag = FALSE) {
 #'
 #' @keywords internal
 #' @noRd
-resolve_theme <- function(theme) {
+determine_theme <- function(theme) {
   theme <- theme %||% .r8_print[["theme"]] %||% getOption("r8.theme")
   if (is.null(theme)) {
     return(NULL)
@@ -717,7 +747,7 @@ resolve_theme <- function(theme) {
     )
   }
   unclass(theme)
-} # /R8::resolve_theme
+} # /R8::determine_theme
 
 
 # %% encode_text ----
@@ -727,10 +757,10 @@ resolve_theme <- function(theme) {
 #' @param output_type Character: The output type.
 #' @param theme An `r8_theme` object or `NULL`.
 #' @param depth Character or `NULL`: The color depth of `ansi`; `NULL`
-#'   resolves it.
+#'   determines it.
 #' @param inline Logical: markdown writes one line.
 #' @param html_style Character or `NULL`: `"inline"` or `"classes"`; `NULL`
-#'   resolves it.
+#'   determines it.
 #'
 #' @return Character: One string, lines joined by line breaks.
 #'
@@ -745,14 +775,14 @@ encode_text <- function(
   html_style = NULL
 ) {
   check_output_type(output_type)
-  html_style <- resolve_html_style(html_style, output_type)
+  html_style <- determine_html_style(html_style, output_type)
   depth <- depth %||%
     .r8_print[["depth"]] %||%
-    resolve_output(output_type)[[2L]]
+    determine_output(output_type)[[2L]]
   r8_text_encode(
     text_parts(as_r8_text(x)),
     output_type,
-    resolve_theme(theme),
+    determine_theme(theme),
     depth,
     identical(html_style, "classes"),
     isTRUE(inline)
@@ -760,7 +790,7 @@ encode_text <- function(
 } # /R8::encode_text
 
 
-# %% resolve_html_style ----
+# %% determine_html_style ----
 #' The style of html output
 #'
 #' @param html_style Character or `NULL`: `"inline"` or `"classes"`.
@@ -770,7 +800,7 @@ encode_text <- function(
 #'
 #' @keywords internal
 #' @noRd
-resolve_html_style <- function(html_style, output_type) {
+determine_html_style <- function(html_style, output_type) {
   if (!is.null(html_style) && !identical(output_type, "html")) {
     r8_abort(
       "`html_style` applies to the output type \"html\" only.",
@@ -789,13 +819,13 @@ resolve_html_style <- function(html_style, output_type) {
     )
   }
   style
-} # /R8::resolve_html_style
+} # /R8::determine_html_style
 
 
 # %% with_print_state ----
 #' Runs `expr` with the output type of a running print()
 #'
-#' @param resolved Character: The output type and color depth.
+#' @param determined Character: The output type and color depth.
 #' @param theme An `r8_theme` object or `NULL`.
 #' @param expr The code to run.
 #'
@@ -803,14 +833,14 @@ resolve_html_style <- function(html_style, output_type) {
 #'
 #' @keywords internal
 #' @noRd
-with_print_state <- function(resolved, theme, expr) {
+with_print_state <- function(determined, theme, expr) {
   old <- as.list(.r8_print)
   on.exit({
     rm(list = ls(.r8_print, all.names = TRUE), envir = .r8_print)
     list2env(old, envir = .r8_print)
   })
-  .r8_print[["output_type"]] <- resolved[[1L]]
-  .r8_print[["depth"]] <- resolved[[2L]]
+  .r8_print[["output_type"]] <- determined[[1L]]
+  .r8_print[["depth"]] <- determined[[2L]]
   .r8_print[["theme"]] <- theme
   expr
 } # /R8::with_print_state
@@ -821,17 +851,17 @@ with_print_state <- function(resolved, theme, expr) {
 #'
 #' `format()` encodes text as plain text unless its caller names another
 #' output type, so that files, snapshots, and `paste()` receive no markup.
-#' `print()` writes the output type that `r8_output_type()` resolves. The
+#' `print()` writes the output type that `r8_output_type()` determines. The
 #' text of an R8 value is its type's `Display` impl's, or its default layout
 #' (`r8_layout()`); a `Print` impl replaces the output of `print()`, and a
 #' `Debug` impl the output of `str()`. The default `str()` adds to the size
-#' of a Rust-native value the fields read into R that are not views of its
-#' state, which together make `r8_size(x)`: `<pkgc::Signal> 7.63 MiB + 112 B
+#' of a Rust-stored value the fields read into R that are not views of its
+#' state, which together make `r8_size(x)`: `<pkgr::Signal> 7.63 MiB + 112 B
 #' read`.
 #'
 #' @param x,object An R8 value or an `r8_text` object.
 #' @param output_type Character: `"plain"`, `"ansi"`, `"html"`, or
-#'   `"markdown"`; `NULL` in `print()` resolves it with `r8_output_type()`.
+#'   `"markdown"`; `NULL` in `print()` determines it with `r8_output_type()`.
 #' @param theme An `r8_theme` object, or `NULL` for `getOption("r8.theme")`
 #'   or R8's theme.
 #' @param inline Logical: markdown writes one line.
@@ -880,15 +910,19 @@ format.r8_text <- function(
 #' @rdname r8_value_text
 #' @export
 print.r8_text <- function(x, output_type = NULL, theme = NULL, ...) {
-  resolved <- if (
+  determined <- if (
     is.null(output_type) && !is.null(.r8_print[["output_type"]])
   ) {
     c(.r8_print[["output_type"]], .r8_print[["depth"]])
   } else {
-    resolve_output(output_type)
+    determine_output(output_type)
   }
   if (length(x) > 0L) {
-    cat(encode_text(x, resolved[[1L]], theme, resolved[[2L]]), "\n", sep = "")
+    cat(
+      encode_text(x, determined[[1L]], theme, determined[[2L]]),
+      "\n",
+      sep = ""
+    )
   }
   invisible(x)
 } # /R8::print.r8_text
@@ -928,7 +962,11 @@ print.r8_value <- function(x, output_type = NULL, theme = NULL, ...) {
 #' @rdname r8_value_text
 #' @export
 str.r8_value <- function(object, ...) {
-  parts <- r8_native_parts(object)
+  if (!is_value(object)) {
+    print(value_text(object))
+    return(invisible(NULL))
+  }
+  parts <- r8_rust_stored_parts(object)
   summary <- NULL
   if (!is.null(parts)) {
     # The fields read, counted before the layout, which reads a duplicate.
@@ -969,7 +1007,7 @@ display_method <- function(f) {
     ...
   ) {
     format(
-      as_r8_text(f(x, ...)),
+      if (is.null(r8_value_other(x))) as_r8_text(f(x, ...)) else value_text(x),
       output_type = output_type,
       theme = theme,
       inline = inline,
@@ -982,7 +1020,7 @@ display_method <- function(f) {
 # %% print_method ----
 #' The S3 print method of a `Print` impl
 #'
-#' Resolves the output type, which `r8_output_type()` reports while the impl
+#' Determines the output type, which `r8_output_type()` reports while the impl
 #' runs, calls the impl, writes the `r8_text` object it returns in that
 #' type, and returns the value invisibly. An impl that writes with `cat()`
 #' and returns anything else writes once.
@@ -996,8 +1034,12 @@ display_method <- function(f) {
 print_method <- function(f) {
   force(f)
   function(x, output_type = NULL, theme = NULL, ...) {
-    resolved <- resolve_output(output_type)
-    with_print_state(resolved, theme, {
+    if (!is.null(r8_value_other(x))) {
+      print(value_text(x), output_type = output_type, theme = theme)
+      return(invisible(x))
+    }
+    determined <- determine_output(output_type)
+    with_print_state(determined, theme, {
       out <- f(x, ...)
       if (inherits(out, "r8_text")) {
         print(out)

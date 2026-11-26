@@ -3,8 +3,8 @@
 # 2026- EDG rtemis.org
 
 # The benchmark types, Wide20, GBM, Resampler, and GBMRun, in each system:
-# S3, S4, Reference Classes (RC), R6, S7, R8 with R-native values, and R8
-# with Rust-native values (the package r8benchR, for Wide20 and GBM).
+# S3, S4, Reference Classes (RC), R6, S7, R8 with R-stored values, and R8
+# with Rust-stored values (the package r8benchR, for Wide20 and GBM).
 # `declare_system(system, where)` declares a system's types in `where`, the
 # namespace of the system's package (syspkg.R) or the global environment,
 # and returns the expressions the rows time, each reading `x` and `xw`, GBM
@@ -488,7 +488,7 @@ declare_s7 <- function(where = globalenv()) {
 }
 
 # %% R8 ----
-# The R8 declarations. With `native = TRUE`, Wide20 and GBM are the
+# The R8 declarations. With `storage = "rust"`, Wide20 and GBM are the
 # declarations of r8benchR, whose values Rust holds; the declarations here
 # equal them (checked before timing).
 r8_declarations <- function() {
@@ -518,23 +518,23 @@ r8_declarations <- function() {
       ),
       rules = list(
         R8::rule(
-          "early_stop_below_trees",
           early_stopping_rounds < n_trees,
-          "early_stopping_rounds is below n_trees.",
-          when = !is.null(early_stopping_rounds)
+          when = !is.null(early_stopping_rounds),
+          message = "early_stopping_rounds is below n_trees.",
+          id = "early_stop_below_trees"
         ),
         R8::rule(
-          "num_class_iff_multiclass",
           (objective == "multiclass") == !is.null(num_class),
-          "num_class is present exactly when the objective is multiclass."
+          message = "num_class is present exactly when the objective is multiclass.",
+          id = "num_class_iff_multiclass"
         )
       )
     ))
   )
 }
 
-declare_r8 <- function(where = globalenv(), native = FALSE) {
-  if (native) {
+declare_r8 <- function(where = globalenv(), storage = "r") {
+  if (identical(storage, "rust")) {
     where$Wide20 <- getExportedValue("r8benchR", "Wide20")
     where$GBM <- getExportedValue("r8benchR", "GBM")
     where$complexity <- getExportedValue("r8benchR", "complexity")
@@ -542,7 +542,7 @@ declare_r8 <- function(where = globalenv(), native = FALSE) {
     for (n in names(r8_declarations())) assign(n, eval(r8_declarations()[[n]], envir = where), envir = where)
     where$Complexity <- R8::new_trait(
       "Complexity",
-      methods = list(complexity = R8::trait_method(function(x) NULL))
+      methods = list(complexity = R8::trait_method(R8::params(x)))
     )
     where$complexity <- where$Complexity@complexity
     R8::impl(where$Complexity, where$GBM, methods = list(complexity = function(x) 1L))
@@ -566,7 +566,7 @@ declare_r8 <- function(where = globalenv(), native = FALSE) {
         folds = R8::vec(where$Resampler)
       ),
       rules = list(
-        R8::rule("folds_per_resample", length(folds) == resampler$n, "There is one fold per resample.")
+        R8::rule(length(folds) == resampler$n, message = "There is one fold per resample.", id = "folds_per_resample")
       )
     )
   }
@@ -598,8 +598,8 @@ declare_system <- function(system, where = globalenv()) {
     "RC" = declare_rc(where),
     "R6" = declare_r6(where),
     "S7" = declare_s7(where),
-    "R8" = declare_r8(where, native = FALSE),
-    "R8 Rust" = declare_r8(where, native = TRUE),
+    "R8" = declare_r8(where, storage = "r"),
+    "R8 Rust" = declare_r8(where, storage = "rust"),
     stop("unknown system ", system)
   )
 }

@@ -11,18 +11,24 @@
 //! A derived type validates and encodes through the same checks as a type
 //! declared in R: [`R8::to_document`] validates the encoded value, rules
 //! included, and writes a document; [`R8::from_document`] reads and validates
-//! a document, then decodes it.
+//! a document, then decodes it. A struct extends another by embedding it
+//! ([`Extensible`], [`Subtype`]). A field of any struct that extends another
+//! is a [`SubtypeOf`], and one of any implementor of a trait an
+//! [`ImplementorOf`].
 
 use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 
-use crate::codec::{read_document, to_document};
-use crate::ir::{FieldType, TypeDef};
+use crate::canonical::{declaration_hash, read_document, to_document};
+use crate::ir::{FieldType, InheritedChange, StructDef, TypeDef};
 use crate::name::{Name, QualifiedName};
-use crate::rules::DocumentSet;
+use crate::rules::{DocumentSet, TypeLookup};
 use crate::validate::ValueError;
 
+#[doc(hidden)]
+pub use crate::open::implementor_type;
+pub use crate::open::{ImplementorOf, SubtypeOf, TraitObject};
 #[doc(hidden)]
 pub use serde_json;
 
@@ -61,14 +67,308 @@ pub trait R8: Encode {
 
     /// Validates the value and writes it as a document.
     fn to_document(&self) -> Result<String, Vec<ValueError>> {
-        let v = self.encode().map_err(|e| vec![encode_error(e)])?;
-        to_document(&v, &Self::qualified_name(), &Self::declarations())
+        write(self, &Self::declarations())
     }
 
     /// Reads and validates a document, then decodes it.
     fn from_document(text: &str) -> Result<Self, Vec<ValueError>> {
-        let v = read_document(text, &Self::qualified_name(), &Self::declarations())?;
-        Self::decode(&v).map_err(|e| vec![encode_error(e)])
+        read(text, &Self::declarations())
+    }
+
+    /// [`to_document`](R8::to_document) with the declarations of `types`, for
+    /// a value that holds values of types that the type does not reach
+    /// ([`SubtypeOf`], [`ImplementorOf`]). `types` holds the type and each
+    /// named type it reaches as [`declarations`](R8::declarations) does.
+    fn to_document_in(&self, types: &dyn TypeLookup) -> Result<String, Vec<ValueError>> {
+        same_declarations::<Self>(types)?;
+        write(self, types)
+    }
+
+    /// [`from_document`](R8::from_document) with the declarations of `types`,
+    /// as for [`to_document_in`](R8::to_document_in).
+    fn from_document_in(text: &str, types: &dyn TypeLookup) -> Result<Self, Vec<ValueError>> {
+        same_declarations::<Self>(types)?;
+        read(text, types)
+    }
+}
+
+fn write<T: R8>(value: &T, types: &dyn TypeLookup) -> Result<String, Vec<ValueError>> {
+    let mut v = value.encode().map_err(|e| vec![encode_error(e)])?;
+    let name = T::qualified_name();
+    crate::open::name_tags(&mut v, &name, types);
+    to_document(&v, &name, types)
+}
+
+fn read<T: R8>(text: &str, types: &dyn TypeLookup) -> Result<T, Vec<ValueError>> {
+    let name = T::qualified_name();
+    let mut v = read_document(text, &name, types)?;
+    crate::open::name_types(&mut v, &name, types);
+    T::decode(&v).map_err(|e| vec![encode_error(e)])
+}
+
+/// Checks that `types` declares `T` and the named types it reaches as `T`
+/// does: `T` decodes a value by its own declaration.
+fn same_declarations<T: R8>(types: &dyn TypeLookup) -> Result<(), Vec<ValueError>> {
+    let own = T::declarations();
+    let mut errors = Vec::new();
+    for d in own.documents() {
+        for t in &d.types {
+            let q = QualifiedName {
+                namespace: d.namespace.clone(),
+                name: t.name().clone(),
+            };
+            let (code, message) = if types.find(&q).is_none() {
+                (
+                    "unknown_type",
+                    format!("the declarations do not hold `{q}`"),
+                )
+            } else if declaration_hash(&q, types) != declaration_hash(&q, &own) {
+                (
+                    "declaration_changed",
+                    format!("the declarations declare `{q}` in another way than its Rust type"),
+                )
+            } else {
+                continue;
+            };
+            errors.push(ValueError {
+                code,
+                message,
+                ..Default::default()
+            });
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+/// A subtype of the struct `P`: `P` itself, or a struct that extends a
+/// subtype of `P`.
+///
+/// The derive implements it for a struct of `#[r8(extensible)]`, as a
+/// subtype of itself, and for a struct with a field of `#[r8(extends)]`, as
+/// a subtype of each type that the field's type is a subtype of, whichever
+/// crates declare them. The interface trait `PLike` of an extensible struct
+/// `P` is implemented for every `Subtype<P>`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a subtype of `{P}`",
+    note = "a struct extends another with a field of `#[r8(extends)]`, whose type is declared with `#[r8(extensible)]`"
+)]
+pub trait Subtype<P> {
+    /// The value of `P` that the value holds: the value itself, or its
+    /// embedded ancestor.
+    fn upcast(&self) -> &P;
+
+    /// The value that holds `value` in place of its value of `P`: `value`
+    /// itself, or a value with another embedded ancestor, whose other fields
+    /// are clones of this one's.
+    fn with_upcast(&self, value: P) -> Self
+    where
+        Self: Sized;
+}
+
+/// A struct that other structs extend, declared with `#[r8(extensible)]`.
+/// Its `Clone` gives the parent value of a child's value.
+///
+/// A child embeds its parent as its first field, marked `#[r8(extends)]`.
+/// The derive writes the interface trait of an extensible struct, named with
+/// `Like` after the struct: an accessor per field, the struct's value, and
+/// the child with another value of the struct.
+///
+#[cfg_attr(
+    feature = "macros",
+    doc = r##"
+```
+use rtemis_r8::R8;
+use rtemis_r8::derive::{R8 as _, Subtype};
+
+/// A numeric range.
+#[derive(R8, Clone)]
+#[r8(namespace = "demo", version = 1, extensible)]
+pub struct Range {
+    pub lo: f64,
+    pub hi: f64,
+}
+
+/// A labeled range, whose `lo` is 0 by default.
+#[derive(R8, Clone)]
+#[r8(namespace = "demo", version = 1)]
+pub struct Window {
+    #[r8(extends, inherited(lo(default = "0")))]
+    pub base: Range,
+    pub label: String,
+}
+
+// A function for `Range` and every struct that extends it.
+fn width(x: &impl RangeLike) -> f64 {
+    x.hi() - x.lo()
+}
+
+let w = Window::from_document(
+    r#"{"$type": "demo::Window", "$types": {"demo::Window": 1}, "hi": 4, "label": "w"}"#,
+)
+.unwrap();
+assert_eq!(width(&w), 4.0);
+let range: &Range = w.upcast();
+assert_eq!(range.hi, w.to_range().hi);
+
+// A function that keeps the type of its argument.
+fn shifted<T: RangeLike>(x: &T, by: f64) -> T {
+    x.with_range(Range { lo: x.lo() + by, hi: x.hi() + by })
+}
+
+let w = shifted(&w, 1.0);
+assert_eq!((w.lo(), w.hi(), w.label.as_str()), (&1.0, &5.0, "w"));
+```
+"##
+)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not extensible",
+    label = "a struct that others extend is required here",
+    note = "a struct that others extend is declared with `#[r8(extensible)]`"
+)]
+pub trait Extensible: R8 + Clone + Subtype<Self> {}
+
+/// Declarations that the derive refuses when the crate compiles.
+///
+/// A parent that is not extensible:
+///
+/// ```compile_fail,E0277
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends)] base: Range, label: String }
+/// ```
+///
+/// An extensible struct without `Clone`:
+///
+/// ```compile_fail,E0277
+/// use rtemis_r8::R8;
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// ```
+///
+/// A parent that is not the first field:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { label: String, #[r8(extends)] base: Range }
+/// ```
+///
+/// A constraint beside `extends`, and a change that changes nothing:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends, min = 0)] base: Range }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends, inherited(lo()))] base: Range }
+/// ```
+///
+/// A field named as a method of the values that extend the struct:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { to_range: f64 }
+/// ```
+///
+/// A child with a field of a type that is not `Clone`:
+///
+/// ```compile_fail,E0277
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// enum Side { Left, Right }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// struct Window { #[r8(extends)] base: Range, side: Side }
+/// ```
+///
+/// `extensible` on an enum, and `extends` in a variant:
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// enum Kernel { Linear, Rbf { gamma: f64 } }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8::R8;
+/// #[derive(R8, Clone)]
+/// #[r8(namespace = "demo", version = 1, extensible)]
+/// struct Range { lo: f64 }
+/// #[derive(R8)]
+/// #[r8(namespace = "demo", version = 1)]
+/// enum Figure { Flat { #[r8(extends)] base: Range, n: i32 } }
+/// ```
+#[cfg(all(doctest, feature = "macros"))]
+struct RefusedByTheDerive;
+
+/// The declaration of `child`, which holds the fields and rules it adds,
+/// lowered onto its parent `P` with the changes to inherited fields.
+///
+/// # Panics
+///
+/// When the declaration cannot extend `P`, such as a field of a name that
+/// `P` holds; the message lists each problem.
+#[doc(hidden)]
+pub fn extended<P: Extensible>(mut child: StructDef, changes: &[InheritedChange]) -> TypeDef {
+    let parent = P::qualified_name();
+    let TypeDef::Struct(def) = P::type_def() else {
+        unreachable!("the derive implements `Extensible` for structs only");
+    };
+    if let Err(errors) = crate::ir::extend(&mut child, &parent, &def, changes) {
+        let lines: Vec<String> = errors
+            .iter()
+            .map(|e| format!("{} [{}]", e.message, e.code))
+            .collect();
+        panic!(
+            "`{}` does not extend `{parent}`: {}",
+            child.name,
+            lines.join("; ")
+        );
+    }
+    TypeDef::Struct(child)
+}
+
+/// The members of the JSON form of an embedded parent, which the child's
+/// object continues.
+#[doc(hidden)]
+pub fn inherited_members<P: Extensible>(
+    base: &P,
+) -> Result<serde_json::Map<String, Value>, String> {
+    match base.encode()? {
+        Value::Object(m) => Ok(m),
+        _ => Err(format!("`{}` is not an object", P::NAME)),
     }
 }
 
@@ -77,7 +377,10 @@ fn encode_error(message: String) -> ValueError {
         code: "encode_failed",
         path: String::new(),
         rule: None,
+        rule_index: None,
         message,
+        diagnosis: None,
+        ..Default::default()
     }
 }
 
@@ -259,7 +562,6 @@ impl<T: Encode> Encode for Option<T> {
     fn field_type() -> FieldType {
         FieldType::Option {
             inner: Box::new(T::field_type()),
-            resolve: Default::default(),
         }
     }
     fn encode(&self) -> Result<Value, String> {
@@ -284,7 +586,7 @@ macro_rules! map {
     ($($m:ident),*) => {$(
         impl<T: Encode> Encode for $m<String, T> {
             fn field_type() -> FieldType {
-                FieldType::Hashmap { value: Box::new(T::field_type()), keys: Default::default() }
+                FieldType::BtreeMap { value: Box::new(T::field_type()), keys: Default::default() }
             }
             fn encode(&self) -> Result<Value, String> {
                 let mut m = serde_json::Map::new();
@@ -312,14 +614,15 @@ map!(HashMap, BTreeMap);
 
 /// The constraints of a derived field's attributes.
 #[doc(hidden)]
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Constraints {
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub exclusive_min: Option<f64>,
     pub exclusive_max: Option<f64>,
     pub pattern: Option<&'static str>,
-    pub finite: Option<bool>,
+    pub infinite: bool,
+    pub nan: bool,
     pub min_length: Option<u64>,
     pub max_length: Option<u64>,
     pub unique: bool,
@@ -359,14 +662,11 @@ fn bound<T: PartialOrd + Copy>(
 
 /// Applies a derived field's constraints to its field type: `min_length`,
 /// `max_length`, and `unique` on the outermost `vec()`, every other
-/// constraint on the innermost scalar, through `option()` and `vec()`; a
+/// constraint on the innermost scalar, through `option()` and `vec()`, and
+/// checks that a field with a fill policy (`filled`) is `option()`; a
 /// constraint that the scalar's type does not take is an error.
 #[doc(hidden)]
-pub fn constrain(
-    mut ft: FieldType,
-    c: Constraints,
-    resolve: Option<crate::ir::Resolve>,
-) -> Result<FieldType, String> {
+pub fn constrain(mut ft: FieldType, c: Constraints, filled: bool) -> Result<FieldType, String> {
     fn outer_vec(ft: &mut FieldType) -> Option<&mut FieldType> {
         match ft {
             FieldType::Vec { .. } => Some(ft),
@@ -411,13 +711,14 @@ pub fn constrain(
             if c.max.is_some() || c.exclusive_max.is_some() {
                 d.upper = bound(c.max, c.exclusive_max, ("max", "exclusive_max"))?;
             }
-            if let Some(f) = c.finite {
-                d.finite = f;
-            }
+            d.infinite |= c.infinite;
+            d.nan |= c.nan;
         }
         FieldType::Integer(i) => {
-            if c.pattern.is_some() || c.finite.is_some() {
-                return Err("`pattern` and `finite` do not apply to an integer field".to_string());
+            if c.pattern.is_some() || c.infinite || c.nan {
+                return Err(
+                    "`pattern`, `infinite`, and `nan` do not apply to an integer field".to_string(),
+                );
             }
             if c.min.is_some() || c.exclusive_min.is_some() {
                 i.lower = bound(
@@ -435,7 +736,7 @@ pub fn constrain(
             }
         }
         FieldType::Character(ch) => {
-            if numeric || c.finite.is_some() {
+            if numeric || c.infinite || c.nan {
                 return Err("numeric constraints do not apply to a String field".to_string());
             }
             if let Some(p) = c.pattern {
@@ -443,16 +744,13 @@ pub fn constrain(
             }
         }
         _ => {
-            if numeric || c.finite.is_some() || c.pattern.is_some() {
+            if numeric || c.infinite || c.nan || c.pattern.is_some() {
                 return Err("value constraints apply to a number or a String field".to_string());
             }
         }
     }
-    if let Some(r) = resolve {
-        match &mut ft {
-            FieldType::Option { resolve, .. } => *resolve = r,
-            _ => return Err("resolve applies to an Option field".to_string()),
-        }
+    if filled && !matches!(ft, FieldType::Option { .. }) {
+        return Err("context applies to an Option field".to_string());
     }
     Ok(ft)
 }

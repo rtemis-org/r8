@@ -1,4 +1,4 @@
-//! `Buffer<T>`, the field type of a large vector in a Rust-native struct:
+//! `Buffer<T>`, the field type of a large vector in a Rust-stored struct:
 //! immutable, read as `&[T]`, cloned in O(1), and either borrowed from an R
 //! vector, which a [`Token`] keeps alive, or owned by Rust.
 
@@ -163,7 +163,7 @@ enum Backing<T> {
     Owned(Arc<[T]>),
 }
 
-/// An immutable vector of `T` in a Rust-native struct: borrowed from an R
+/// An immutable vector of `T` in a Rust-stored struct: borrowed from an R
 /// vector with a data pointer, or owned by Rust. It reads as `&[T]` on any
 /// thread and clones in O(1).
 pub struct Buffer<T: Element> {
@@ -294,10 +294,7 @@ impl<T: Element> Buffer<T> {
             Backing::Owned(a) => {
                 let api = api::api()?;
                 let mut value: SEXP = unsafe { sys::R_NilValue };
-                let mut err = abi::Error {
-                    code: [0; 64],
-                    message: [0; 1024],
-                };
+                let mut err = api::blank();
                 if unsafe { T::view(api, owner, a.as_ptr(), a.len(), &mut value, &mut err) }
                     != abi::OK
                 {
@@ -315,29 +312,5 @@ impl<T: Element> Buffer<T> {
             Backing::R { .. } => 0,
             Backing::Owned(a) => std::mem::size_of_val::<[T]>(a),
         }
-    }
-
-    /// The elements as bytes in the host's order, for a codec's state.
-    pub(crate) fn as_bytes(&self) -> &[u8] {
-        let s: &[T] = self;
-        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u8>(), std::mem::size_of_val(s)) }
-    }
-
-    /// An owned buffer of `len` elements read from `bytes` in the host's
-    /// order.
-    pub(crate) fn from_bytes(bytes: &[u8], len: usize) -> Result<Self> {
-        let size = std::mem::size_of::<T>();
-        if bytes.len() != len * size {
-            return Err(Error::new(
-                "bad_state",
-                "the state's bytes do not hold the vector",
-            ));
-        }
-        let mut v: Vec<T> = Vec::with_capacity(len);
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), v.as_mut_ptr().cast::<u8>(), bytes.len());
-            v.set_len(len);
-        }
-        Ok(v.into())
     }
 }

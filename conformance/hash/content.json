@@ -4,7 +4,7 @@
     {
       "description": "The Svm defaults.",
       "expect": {
-        "hash": "sha256:19dc8b7b087bc6bc4d58f62af46e48af5c205777613e605d7ea1bf2ef514a8cd"
+        "hash": "sha256:4fc4f82ab100305a9987767b1cda11a6296e3a589e1282ae1814a389c5dc0e10"
       },
       "id": "svm-defaults",
       "input": {},
@@ -14,7 +14,7 @@
     {
       "description": "The same value with defaults written out and members in another order hashes the same.",
       "expect": {
-        "hash": "sha256:19dc8b7b087bc6bc4d58f62af46e48af5c205777613e605d7ea1bf2ef514a8cd"
+        "hash": "sha256:4fc4f82ab100305a9987767b1cda11a6296e3a589e1282ae1814a389c5dc0e10"
       },
       "id": "svm-defaults-explicit",
       "input": {
@@ -30,7 +30,7 @@
     {
       "description": "A struct variant.",
       "expect": {
-        "hash": "sha256:b19e1a92249594fa94e6648445b820ccfcc14c99da3be72e57d5c808e172bc02"
+        "hash": "sha256:19ae193b21096023f06c62c1ef9795b367b4a2127c8da84d114f7f4558900643"
       },
       "id": "svm-rbf",
       "input": {
@@ -47,7 +47,7 @@
     {
       "description": "A matrix with a missing cell, an infinity, and dimnames; a date and a date-time.",
       "expect": {
-        "hash": "sha256:f5a3c81088e5717844e6cc629761a88fa116fd553218e35c9a0907f8022ee9f6"
+        "hash": "sha256:71976c0b9ebffd958bcc53d013ffecb1711a3f1b49266946b6521847204edefa"
       },
       "id": "matrix-dates",
       "input": {
@@ -197,7 +197,7 @@
         ]
       },
       "expect": {
-        "hash": "sha256:3ab738c3660785361fa4c645c749d0e8aff5576a87312431bbd7207a59dc4099"
+        "hash": "sha256:38725dfc0b7ced642c949c68577fb1051ed8324023f3de0eada4e01b0bf025d6"
       }
     }
   ],
@@ -217,12 +217,12 @@
             {
               "name": "Linear",
               "description": "",
-              "shape": "unit"
+              "kind": "unit"
             },
             {
               "name": "Rbf",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "gamma",
@@ -274,8 +274,7 @@
                   }
                 }
               },
-              "description": "Case weights.",
-              "external": true
+              "description": "Case weights."
             },
             {
               "name": "mtry",
@@ -284,12 +283,12 @@
                 "inner": {
                   "kind": "integer",
                   "min": 1
-                },
-                "resolve": {
-                  "policy": "runtime"
                 }
               },
-              "description": "Variables per split."
+              "description": "Variables per split.",
+              "resolve": {
+                "policy": "context"
+              }
             }
           ],
           "rules": [
@@ -349,7 +348,7 @@
         {
           "trait": "rtemis::Fit",
           "target": {
-            "kind": "type",
+            "kind": "named",
             "name": "rtemis::Svm"
           },
           "methods": [
@@ -376,7 +375,8 @@
                   "kind": "option",
                   "inner": {
                     "kind": "double",
-                    "finite": false
+                    "infinite": true,
+                    "nan": true
                   }
                 }
               },

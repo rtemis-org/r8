@@ -16,14 +16,14 @@
 //! reports [`Access::is_absent`].
 //!
 //! The trait is public so that host bindings can implement it; its shape is
-//! unstable until the Rust-native values of M3.
+//! unstable until the Rust-stored values of M3.
 
 use std::borrow::Cow;
 
 use serde_json::{Map, Value};
 
-use crate::codec::{date_days, datetime_micros};
-use crate::ir::{EnumDef, FieldDef, FieldType, VariantShape};
+use crate::canonical::{date_days, datetime_micros};
+use crate::ir::{EnumDef, FieldType, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -36,6 +36,10 @@ pub struct Form {
     pub suffix: String,
     /// The message.
     pub message: String,
+    /// What the value fails and the value found, when the reader states the
+    /// problem by its parts; `None` reports `message` as text. Boxed, so a
+    /// read's result stays small.
+    pub detail: Option<Box<(crate::problem::Problem, Option<crate::rules::Shown>)>>,
 }
 
 impl Form {
@@ -45,6 +49,22 @@ impl Form {
             code,
             suffix: String::new(),
             message: message.into(),
+            detail: None,
+        }
+    }
+
+    /// A problem with the value itself, stated by its parts.
+    pub fn problem(
+        code: &'static str,
+        problem: crate::problem::Problem,
+        found: Option<crate::rules::Shown>,
+    ) -> Self {
+        let message = problem.sentence(&[], found.as_ref(), None, &crate::problem::Neutral);
+        Form {
+            code,
+            suffix: String::new(),
+            message,
+            detail: Some(Box::new((problem, found))),
         }
     }
 
@@ -56,12 +76,25 @@ impl Form {
 
     /// `type_mismatch`: the value is not of the expected kind.
     pub fn mismatch(want: &str, found: &str) -> Self {
-        Form::new("type_mismatch", format!("expected {want}, found {found}"))
+        Form::problem(
+            "type_mismatch",
+            crate::problem::Problem::Kind(want.to_string()),
+            Some(crate::rules::Shown::Kind(found.to_string())),
+        )
     }
 }
 
 /// A read from a host form.
 pub type Read<T> = Result<T, Form>;
+
+/// Why a value of a `dyn()` or `subtype()` type does not name its type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unnamed {
+    /// The value names no type, or one that is not known: the message.
+    Unknown(String),
+    /// The host's object is not a value of an R8 type: what it is.
+    NotValue(String),
+}
 
 /// The names of a dense matrix's or array's dimensions: per dimension, a
 /// handle over its names, or `None` for a dimension without names.
@@ -74,6 +107,34 @@ pub struct Names<A> {
     pub seq: A,
     /// The number of names.
     pub len: usize,
+}
+
+/// Whether the arrays and objects of a JSON value nest at most `levels` deep.
+fn node_fits<'a, N: Node<'a>>(n: N, levels: u32) -> bool {
+    if n.f64_slice().is_some() {
+        return levels > 0;
+    }
+    if let Some(len) = n.array_len() {
+        return levels > 0
+            && (0..len)
+                .filter_map(|i| n.item(i))
+                .all(|x| node_fits(x, levels - 1));
+    }
+    match n.entries() {
+        Some(m) => levels > 0 && m.into_iter().all(|(_, x)| node_fits(x, levels - 1)),
+        None => true,
+    }
+}
+
+/// The problem of a value that nests deeper than a value may.
+pub fn too_deep() -> Form {
+    let max = crate::validate::MAX_NESTING;
+    Form::new(
+        "too_deep",
+        format!(
+            "a value nests at most {max} levels deep, so that every JSON parser reads its document; hold a longer chain in a vec()"
+        ),
+    )
 }
 
 impl<'a, A: Access<'a>> Names<A> {
@@ -273,6 +334,21 @@ pub struct Table<'a, A> {
     pub problems: Vec<Form>,
 }
 
+/// What a value says of an extra column of a table beyond its type.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ColumnFacts {
+    /// The unit of the cells.
+    pub unit: Option<String>,
+    /// The description.
+    pub description: Option<String>,
+}
+
+/// Whether `name` is a name that an extra column of a table may have: a
+/// document keeps the names that begin with `$`.
+pub fn is_column_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('$')
+}
+
 /// The 1-based codes of a factor: `i32::MIN` for a missing cell, and, in
 /// codes read from another form, 0 for a cell whose problem is among the
 /// factor's `problems`. The validator checks that every other code lies in
@@ -376,7 +452,8 @@ pub trait Access<'a>: Copy + 'a {
     fn logical(self) -> Read<bool>;
     /// A whole number; the validator checks the integer range.
     fn integer(self) -> Read<i64>;
-    /// A double, non-finite values included; the validator checks `finite`.
+    /// A double, non-finite values included; the validator checks whether the type
+    /// admits it.
     fn double(self) -> Read<f64>;
     /// A string.
     fn character(self) -> Read<Cow<'a, str>>;
@@ -388,10 +465,11 @@ pub trait Access<'a>: Copy + 'a {
     fn raw(self) -> Read<()>;
     /// The bytes of a `type_raw()` value.
     fn bytes(self) -> Read<Cow<'a, [u8]>>;
-    /// A value of `type_json()`.
-    fn json(self) -> Read<()>;
-    /// A present value of a runtime-only field.
-    fn runtime(self) -> Read<()>;
+    /// A value of `type_json()`, whose lists nest at most `levels` deep.
+    fn json(self, levels: u32) -> Read<()>;
+    /// A present value of a host-only field, an object of the class `class`
+    /// of the host `host`.
+    fn host_class(self, host: &str, class: &str) -> Read<()>;
 
     /// A `vec()` of `element`: the number of items.
     fn vec(self, element: &FieldType) -> Read<usize>;
@@ -400,7 +478,8 @@ pub trait Access<'a>: Copy + 'a {
 
     /// The doubles of a sequence held as one array, where the host form has
     /// one; a missing item is R's `NA_real_`, the `NaN` whose low word is
-    /// 1954. The validator scans the array and reads items one by one only
+    /// 1954. Dates held so are days, and date-times seconds, a missing one a
+    /// `NaN`. The validator scans the array and reads items one by one only
     /// to report a problem.
     fn f64_slice(self) -> Option<&'a [f64]> {
         None
@@ -423,6 +502,13 @@ pub trait Access<'a>: Copy + 'a {
     /// [`Access::f64_region`] copies doubles; a missing item is `i32::MIN`.
     fn i32_region(self, _start: usize, _buf: &mut [i32]) -> Option<usize> {
         None
+    }
+
+    /// Writes a key of each string of a sequence from item `start` into `out`,
+    /// where the host holds one object for each text: items with one key are
+    /// one text, and 0 is a missing item. `false` where the host has no keys.
+    fn text_keys(self, _start: usize, _out: &mut [usize]) -> bool {
+        false
     }
 
     /// `Some(true)` when the host records the sequence as sorted in
@@ -573,7 +659,7 @@ pub trait Access<'a>: Copy + 'a {
         }
     }
 
-    /// A `hashmap()` (`ordered = false`) or an `ordered_map()` of `value`:
+    /// A `btree_map()` (`ordered = false`) or an `index_map()` of `value`:
     /// the number of entries.
     fn map(self, value: &FieldType, ordered: bool) -> Read<usize>;
     /// Each entry of a map, in the host's order: its key and its value. A
@@ -588,10 +674,25 @@ pub trait Access<'a>: Copy + 'a {
     /// A sparse matrix of `element`.
     fn sparse(self, element: &FieldType) -> Read<Sparse<Self>>;
     /// A table whose type declares `columns`; `open` admits other columns.
-    fn table(self, columns: &[FieldDef], open: bool) -> Read<Table<'a, Self>>;
+    fn table<C: crate::ir::Column>(self, columns: &[C], open: bool) -> Read<Table<'a, Self>>;
     /// The type of a column of an open table that the declaration does not
-    /// list, from the host form.
-    fn extra_column_type(self, name: &str) -> Read<FieldType>;
+    /// list, from the host form; `cells` is the column's handle.
+    fn extra_column_type(self, name: &str, cells: Self) -> Read<FieldType>;
+    /// What a value of a named table says of its extra column `name`.
+    fn column_facts(self, _name: &str) -> Read<ColumnFacts> {
+        Ok(ColumnFacts::default())
+    }
+    /// The problems with the order of the extra columns of a value of a named
+    /// table, in a host form whose members have no order.
+    fn column_order(self, _extra: &[Cow<'a, str>]) -> Vec<Form> {
+        Vec::new()
+    }
+    /// Whether every item of a sequence is known, from its host form, to be a
+    /// value of the scalar type `ty`, which has no constraints, or missing, so
+    /// that no item has anything to check.
+    fn holds_only(self, _ty: &FieldType) -> bool {
+        false
+    }
     /// Row `i` of a table, whose members are the row's cells.
     fn row(self, i: usize) -> Self;
 
@@ -615,7 +716,10 @@ pub trait Access<'a>: Copy + 'a {
         self,
         r#trait: &QualifiedName,
         lookup: &dyn TypeLookup,
-    ) -> Result<(QualifiedName, Option<String>), String>;
+    ) -> Result<(QualifiedName, Option<String>), Unnamed>;
+    /// The type a value of a `subtype(Parent)` field names, and the member of
+    /// the value that names it, if the host form has one.
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), Unnamed>;
 
     /// Whether two handles name the same object, which is then equal to
     /// itself without a read.
@@ -623,13 +727,49 @@ pub trait Access<'a>: Copy + 'a {
         false
     }
 
-    /// Whether two values of a runtime-only field are identical in the host.
+    /// Whether two values of a host-only field are identical in the host.
     fn identical(self, other: Self) -> bool {
         self.to_value(&FieldType::Json, &NoTypes) == other.to_value(&FieldType::Json, &NoTypes)
     }
 
     /// The value's JSON form, for the rule evaluator and for export.
     fn to_value(self, ft: &FieldType, lookup: &dyn TypeLookup) -> Value;
+}
+
+/// The concrete type of a value of the field type `ft`, and the member of
+/// the value that names it: a trait's implementor for `dyn(Trait)`, the named
+/// struct for `subtype(Parent)`, and `None` for any other field type.
+pub fn concrete<'a, A: Access<'a>>(
+    v: A,
+    ft: &FieldType,
+    lookup: &dyn TypeLookup,
+) -> Option<Result<(QualifiedName, Option<String>), Unnamed>> {
+    match ft {
+        FieldType::Dyn { r#trait } => Some(v.implementor(r#trait, lookup)),
+        FieldType::Subtype { .. } => Some(v.named_type()),
+        _ => None,
+    }
+}
+
+/// The extra columns of a table, in the order of the value, each with its type
+/// and its facts.
+pub fn extra_columns<'a, A: Access<'a>, C: crate::ir::Column>(
+    columns: &[C],
+    open: bool,
+    v: A,
+) -> Vec<(Cow<'a, str>, FieldType, ColumnFacts)> {
+    let Ok(t) = v.table(columns, open) else {
+        return Vec::new();
+    };
+    t.columns
+        .into_iter()
+        .filter(|(k, _)| !columns.iter().any(|c| c.field().name.as_str() == k))
+        .filter_map(|(k, cells)| {
+            let ft = v.extra_column_type(&k, cells).ok()?;
+            let facts = v.column_facts(&k).unwrap_or_default();
+            Some((k, ft, facts))
+        })
+        .collect()
 }
 
 /// A lookup that holds no type.
@@ -1082,7 +1222,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
             Ok(datetime_micros(s))
         } else {
             Err(Form::new(
-                "invalid_datetime",
+                "invalid_posixct",
                 format!(
                     "`{s}` is not a date-time of the form YYYY-MM-DDTHH:MM:SS.ffffffZ from {POSIXCT_MIN} to {POSIXCT_MAX}"
                 ),
@@ -1108,14 +1248,17 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         Ok(Cow::Owned(base64_decode(s)))
     }
 
-    fn json(self) -> Read<()> {
-        Ok(())
+    fn json(self, levels: u32) -> Read<()> {
+        match self.val() {
+            Some(n) if !node_fits(n, levels) => Err(too_deep()),
+            _ => Ok(()),
+        }
     }
 
-    fn runtime(self) -> Read<()> {
+    fn host_class(self, _host: &str, _class: &str) -> Read<()> {
         Err(Form::new(
-            "runtime_only",
-            "a runtime-only R value has no JSON form; the member is null or omitted",
+            "host_only",
+            "a host-only R value has no JSON form; the member is null or omitted",
         ))
     }
 
@@ -1401,7 +1544,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         })
     }
 
-    fn table(self, columns: &[FieldDef], open: bool) -> Read<Table<'a, Self>> {
+    fn table<C: crate::ir::Column>(self, columns: &[C], open: bool) -> Read<Table<'a, Self>> {
         let m = self
             .val()
             .filter(|v| v.object_len().is_some())
@@ -1420,7 +1563,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
                     .at("/$columns"),
                 ),
                 Some(listed) => {
-                    let declared = |k: &str| columns.iter().any(|c| c.name.as_str() == k);
+                    let declared = |k: &str| columns.iter().any(|c| c.field().name.as_str() == k);
                     for (k, _) in listed
                         .into_iter()
                         .filter(|(k, _)| m.get(k).is_none() || declared(k))
@@ -1436,13 +1579,23 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
                 }
             }
         }
-        let columns = m
+        let mut columns: Vec<(Cow<'a, str>, Self)> = m
             .entries()
             .unwrap_or_default()
             .into_iter()
             .filter(|(k, _)| !k.starts_with('$'))
             .map(|(k, v)| (Cow::Borrowed(k), JsonOf::V(v)))
             .collect();
+        // A document of a named table holds the order of its extra columns,
+        // which follow the declared ones.
+        if let Some(order) = m.get("$order").filter(|_| open) {
+            let place = |k: &str| {
+                let listed = (0..order.array_len().unwrap_or(0))
+                    .position(|i| order.item(i).and_then(Node::as_str) == Some(k));
+                listed.unwrap_or(usize::MAX)
+            };
+            columns.sort_by_key(|(k, _)| place(k));
+        }
         Ok(Table {
             rows,
             columns,
@@ -1450,7 +1603,7 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         })
     }
 
-    fn extra_column_type(self, name: &str) -> Read<FieldType> {
+    fn extra_column_type(self, name: &str, _cells: Self) -> Read<FieldType> {
         let listed = self
             .val()
             .and_then(|v| v.get("$columns"))
@@ -1466,6 +1619,85 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
             Some(Ok(ft)) => Ok(ft),
             _ => Err(fail()),
         }
+    }
+
+    fn column_facts(self, name: &str) -> Read<ColumnFacts> {
+        let Some(of) = self
+            .val()
+            .and_then(|v| v.get("$facts"))
+            .and_then(|f| f.get(name))
+        else {
+            return Ok(ColumnFacts::default());
+        };
+        let mut facts = ColumnFacts::default();
+        for (k, v) in of.entries().unwrap_or_default() {
+            let fact = match k {
+                "unit" => &mut facts.unit,
+                "description" => &mut facts.description,
+                _ => {
+                    return Err(Form::new(
+                        "column_facts",
+                        format!("`{k}` is not a fact of a column: `unit` or `description`"),
+                    )
+                    .at(format!("/$facts/{}", esc(name))));
+                }
+            };
+            *fact = match v.as_str() {
+                Some(s) => Some(s.to_string()),
+                None => {
+                    return Err(Form::new("column_facts", format!("`{k}` is a string"))
+                        .at(format!("/$facts/{}/{k}", esc(name))));
+                }
+            };
+        }
+        Ok(facts)
+    }
+
+    fn column_order(self, extra: &[Cow<'a, str>]) -> Vec<Form> {
+        let Some(m) = self.val() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(listed) = m.get("$facts").and_then(Node::entries) {
+            for (k, _) in listed {
+                if !extra.iter().any(|e| e == k) {
+                    out.push(
+                        Form::new(
+                            "column_facts",
+                            format!(
+                                "`$facts` lists `{k}`, which is not an extra column of the table"
+                            ),
+                        )
+                        .at(format!("/$facts/{}", esc(k))),
+                    );
+                }
+            }
+        }
+        let listed: Option<Vec<&str>> = m.get("$order").map(|o| {
+            (0..o.array_len().unwrap_or(0))
+                .filter_map(|i| o.item(i).and_then(Node::as_str))
+                .collect()
+        });
+        let same = match &listed {
+            None => extra.len() < 2,
+            Some(l) => {
+                let mut a = l.clone();
+                let mut b: Vec<&str> = extra.iter().map(|e| e.as_ref()).collect();
+                a.sort_unstable();
+                b.sort_unstable();
+                a == b
+            }
+        };
+        if !same {
+            out.push(
+                Form::new(
+                    "column_order",
+                    "`$order` lists the extra columns of the table, each once",
+                )
+                .at("/$order"),
+            );
+        }
+        out
     }
 
     fn row(self, i: usize) -> Self {
@@ -1503,13 +1735,16 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         let unit_only = def
             .variants
             .iter()
-            .all(|x| matches!(x.shape, VariantShape::Unit));
-        if unit_only {
+            .all(|x| matches!(x.kind, VariantKind::Unit));
+        let tag = def.tag.as_str();
+        // Inside `dyn()`, a unit-only enum's value is an object holding the
+        // type member and its tag.
+        let object = self.val().is_some_and(|v| v.object_len().is_some());
+        if unit_only && !object {
             return self
                 .string(&format!("a variant name of `{name}`"))
                 .map(Cow::Borrowed);
         }
-        let tag = def.tag.as_str();
         match self.val() {
             Some(v) if v.object_len().is_some() => match v.get(tag).and_then(Node::as_str) {
                 Some(s) => Ok(Cow::Borrowed(s)),
@@ -1526,12 +1761,24 @@ impl<'a, N: Node<'a> + std::fmt::Debug> Access<'a> for JsonOf<N> {
         self,
         r#trait: &QualifiedName,
         lookup: &dyn TypeLookup,
-    ) -> Result<(QualifiedName, Option<String>), String> {
+    ) -> Result<(QualifiedName, Option<String>), Unnamed> {
         let found = match self.val() {
             Some(v) => v.with_value(|v| lookup.implementor(r#trait, v)),
             None => lookup.implementor(r#trait, &Value::Null),
         };
-        found.map(|(ty, member)| (ty, Some(member)))
+        found
+            .map(|(ty, member)| (ty, Some(member)))
+            .map_err(Unnamed::Unknown)
+    }
+
+    fn named_type(self) -> Result<(QualifiedName, Option<String>), Unnamed> {
+        let found = match self.val() {
+            Some(v) => v.with_value(crate::rules::dollar_type),
+            None => crate::rules::dollar_type(&Value::Null),
+        };
+        found
+            .map(|(ty, member)| (ty, Some(member)))
+            .map_err(Unnamed::Unknown)
     }
 
     fn same(self, other: Self) -> bool {

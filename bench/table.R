@@ -14,7 +14,7 @@ table_types <- function() {
   list(
     S = S,
     Vecs = R8::new_struct("Vecs", fields = list(items = R8::vec(S))),
-    Rows = R8::new_struct("Rows", fields = list(items = R8::type_table(S)))
+    Rows = R8::new_struct("Rows", fields = list(items = R8::type_table(of = S)))
   )
 }
 

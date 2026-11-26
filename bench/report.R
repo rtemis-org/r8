@@ -4,7 +4,10 @@
 
 # Writes the Markdown tables of one run from bench/results/<commit>.jsonl:
 # medians over repeated processes, control processes subtracted from gc()
-# times and peak resident memory. Usage: Rscript bench/report.R <commit>.
+# times and peak resident memory. A difference from a control reads as the
+# median of the differences within each round of processes, with their
+# range in parentheses, and as "≈ 0" when the range includes 0.
+# Usage: Rscript bench/report.R <commit>.
 # spec: R8/class-system#benchmark
 
 sha <- commandArgs(trailingOnly = TRUE)[[1L]]
@@ -17,9 +20,29 @@ d <- do.call(rbind, lapply(lines, function(l) {
 systems <- c("S3", "S4", "RC", "R6", "S7", "R8", "R8 Rust")
 r_systems <- setdiff(systems, "R8 Rust")
 
+# The values of a measurement, in the order its processes ran.
+values_of <- function(row, system, type, metric, mode = "") {
+  d$value[d$row == row & d$system == system & d$type == type & d$metric == metric & d$mode == mode]
+}
+
 value_of <- function(row, system, type, metric, mode = "") {
-  v <- d$value[d$row == row & d$system == system & d$type == type & d$metric == metric & d$mode == mode]
+  v <- values_of(row, system, type, metric, mode)
   if (length(v)) stats::median(v) else NA_real_
+}
+
+# The difference of a measurement between `mode` and `control`: the k-th
+# process of each mode ran in round k (run.R, `run_alternating()`), and the
+# result is the median of the k differences, with their range and count in
+# the attributes "range" and "n".
+delta_of <- function(row, system, type, metric, mode, control) {
+  a <- values_of(row, system, type, metric, mode)
+  b <- values_of(row, system, type, metric, control)
+  n <- min(length(a), length(b))
+  if (n == 0L) {
+    return(NA_real_)
+  }
+  dd <- a[seq_len(n)] - b[seq_len(n)]
+  structure(stats::median(dd), range = range(dd), n = n)
 }
 
 fmt <- function(v, unit) {
@@ -35,22 +58,32 @@ fmt <- function(v, unit) {
   )
 }
 
+# A difference with its range over two or more rounds: "≈ 0" in place of
+# the median when the range includes 0.
+fmt_delta <- function(v, unit) {
+  if (is.na(v)) return("")
+  if (attr(v, "n") < 2L) return(fmt(v, unit))
+  r <- attr(v, "range")
+  f <- function(x) trimws(fmt(x, unit))
+  center <- if (r[[1L]] <= 0 && r[[2L]] >= 0) "≈ 0" else f(v)
+  paste0(center, " (", f(r[[1L]]), " to ", f(r[[2L]]), ")")
+}
+
 table_of <- function(title, rows, cols = systems, note = NULL) {
   cat("\n### ", title, "\n\n", sep = "")
   if (!is.null(note)) cat(note, "\n\n", sep = "")
   cat("| | ", paste(cols, collapse = " | "), " |\n", sep = "")
   cat("|---|", paste(rep("---:", length(cols)), collapse = "|"), "|\n", sep = "")
   for (r in rows) {
-    cells <- vapply(cols, function(s) fmt(r$f(s), r$unit), "")
+    cells <- vapply(cols, function(s) r$format(r$f(s), r$unit), "")
     cat("| ", r$label, " | ", paste(cells, collapse = " | "), " |\n", sep = "")
   }
 }
 
-row_spec <- function(label, unit, f) list(label = label, unit = unit, f = f)
+row_spec <- function(label, unit, f, format = fmt) list(label = label, unit = unit, f = f, format = format)
+delta_spec <- function(label, unit, f) row_spec(label, unit, f, fmt_delta)
 vals <- function(type, metric) function(s) value_of("values", s, type, metric)
-peak_delta <- function(row, s, mode, control, type = "process") {
-  value_of(row, s, type, "peak_rss", mode) - value_of(row, s, type, "peak_rss", control)
-}
+peak_delta <- function(row, s, mode, control) delta_of(row, s, "process", "peak_rss", mode, control)
 
 table_of("GBM, vectors of 10 (median time, µs; sizes, bytes)", list(
   row_spec("Construction, every argument supplied", "us", vals("GBM", "construct")),
@@ -101,18 +134,18 @@ table_of("GBM with vectors of 10^6 (median time, ms)", list(
   row_spec("Field write keeping the original", "ms", big("write_keep")),
   row_spec("Whole-value validation", "ms", big("validate")),
   row_spec("Whole-value validation, compact feature indices", "ms", big("validate", "compact", "GBM 1e6 compact")),
-  row_spec("Peak resident memory beyond the input, MB", "MB", function(s) peak_delta("peak", s, "value", "control")),
+  delta_spec("Peak resident memory beyond the input, MB", "MB", function(s) peak_delta("peak", s, "value", "control")),
   row_spec("JSON write (R8)", "ms", big("json_write")),
   row_spec("JSON read (R8)", "ms", big("json_read")),
-  row_spec("Peak resident memory of a JSON read beyond its text, MB (R8)", "MB", function(s) peak_delta("peak", s, "json", "json_control"))
+  delta_spec("Peak resident memory of a JSON read beyond its text, MB (R8)", "MB", function(s) peak_delta("peak", s, "json", "json_control"))
 ))
 ns <- function(metric, mode = "pkg") function(s) value_of("namespace", s, "GBM x 200", metric, mode)
 table_of("Types: 200 GBM types", list(
   row_spec("Declaring 200 types in a session, s (median of 5 processes)", "s", function(s) value_of("types", s, "GBM", "declare_200")),
   row_spec("Memory per type in R, B", "B", function(s) value_of("types", s, "GBM", "memory_type_r", "memory")),
-  row_spec("Memory per type in Rust (R8's registry), B", "B", function(s) value_of("types", s, "GBM", "memory_type_native", "memory")),
+  row_spec("Memory per type in Rust (R8's registry), B", "B", function(s) value_of("types", s, "GBM", "memory_type_rust", "memory")),
   row_spec("Memory per type, total, B", "B", function(s) {
-    value_of("types", s, "GBM", "memory_type_r", "memory") + value_of("types", s, "GBM", "memory_type_native", "memory")
+    value_of("types", s, "GBM", "memory_type_r", "memory") + value_of("types", s, "GBM", "memory_type_rust", "memory")
   }),
   row_spec("loadNamespace() of a package of 200 types, s", "s", ns("load_time")),
   row_spec("Loading, every binding read, s", "s", ns("bindings_time")),
@@ -120,8 +153,10 @@ table_of("Types: 200 GBM types", list(
   row_spec("Cons cells after loading", "n", ns("ncells_load")),
   row_spec("Cons cells, every binding read", "n", ns("ncells_bindings")),
   row_spec("Cons cells, a value of each type", "n", ns("ncells_values")),
-  row_spec("Full gc() beyond the control, ms", "ms", function(s) ns("gc_full")(s) - ns("gc_full", "control")(s)),
-  row_spec("Peak resident memory beyond the control, MB", "MB", function(s) peak_delta("namespace", s, "pkg", "control"))
+  delta_spec("Full gc() beyond the control, ms", "ms", function(s) {
+    delta_of("namespace", s, "GBM x 200", "gc_full", "pkg", "control")
+  }),
+  delta_spec("Peak resident memory beyond the control, MB", "MB", function(s) peak_delta("namespace", s, "pkg", "control"))
 ), r_systems, note = paste(
   "R8 checks each declaration (field types, defaults against their types, rules, references); the other systems check none.",
   "S7, R6, and RC lazy-load their class objects, which reading the bindings brings into memory; R8 registers its types as its package loads and compiles a type's rules at its first value."
@@ -132,8 +167,8 @@ cat("| Construction, s | ", fmt(value_of("table", "R8", "vec(S) 1e6", "construct
     fmt(value_of("table", "R8", "type_table(S) 1e6", "construct"), "s"), " |\n", sep = "")
 cat("| Size (obj_size()), MB | ", fmt(value_of("table", "R8", "vec(S) 1e6", "size"), "MB"), " | ",
     fmt(value_of("table", "R8", "type_table(S) 1e6", "size"), "MB"), " |\n", sep = "")
-cat("| Peak resident memory beyond the input, MB | ", fmt(peak_delta("peak", "R8", "vec", "rows"), "MB"), " | ",
-    fmt(peak_delta("peak", "R8", "table", "rows"), "MB"), " |\n", sep = "")
+cat("| Peak resident memory beyond the input, MB | ", fmt_delta(peak_delta("peak", "R8", "vec", "rows"), "MB"), " | ",
+    fmt_delta(peak_delta("peak", "R8", "table", "rows"), "MB"), " |\n", sep = "")
 cat("\n### The S7 baseline of 2026-11-17, measured again\n\n")
 cat("| | Value |\n|---|---:|\n")
 s7 <- function(m) value_of("s7_baseline", "S7", "Cls", m)

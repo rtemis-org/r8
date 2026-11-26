@@ -1,0 +1,536 @@
+{
+  "$corpus": 1,
+  "description": "The tag values of a trait's implementors.",
+  "cases": [
+    {
+      "id": "tags-distinct",
+      "description": "Two implementors with distinct tag values.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "y",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Algorithm",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "tag": "algorithm"
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": []
+          },
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::B"
+            },
+            "methods": [],
+            "tag_value": "Bee"
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "duplicate-tag",
+      "description": "Two impls give one tag value.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "y",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Algorithm",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "tag": "algorithm"
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "tag_value": "X"
+          },
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::B"
+            },
+            "methods": [],
+            "tag_value": "X"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_tag",
+            "path": "/impls/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-tag-type-name",
+      "description": "A tag value equal to another implementor's type name.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "y",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Algorithm",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "tag": "algorithm"
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "tag_value": "B"
+          },
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::B"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_tag",
+            "path": "/impls/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-tag-inherited",
+      "description": "A descendant without an impl writes its type name, which another impl gives.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "C",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::A"
+              }
+            ],
+            "extends": "ns::A"
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "y",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Algorithm",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "tag": "algorithm"
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": []
+          },
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::B"
+            },
+            "methods": [],
+            "tag_value": "C"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "duplicate_tag",
+            "path": "/impls/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-value-invalid",
+      "description": "A tag value outside the name grammar.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Algorithm",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "tag": "algorithm"
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "tag_value": "a-b"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "tag_value_invalid",
+            "path": "/impls/0/tag_value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-without-member",
+      "description": "A tag value on an impl of a trait without a tag member.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Plain",
+            "description": "",
+            "methods": [
+              {
+                "name": "show",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Plain",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": [],
+            "tag_value": "AA"
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "tag_without_member",
+            "path": "/impls/0/tag_value"
+          }
+        ]
+      }
+    },
+    {
+      "id": "field-is-tag",
+      "description": "An implementor with a field named as the trait's tag member.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "algorithm",
+                "type": {
+                  "kind": "character"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Algorithm",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x"
+                ]
+              }
+            ],
+            "tag": "algorithm"
+          }
+        ],
+        "impls": [
+          {
+            "trait": "ns::Algorithm",
+            "target": {
+              "kind": "named",
+              "name": "ns::A"
+            },
+            "methods": []
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "field_is_tag",
+            "path": "/impls/0"
+          }
+        ]
+      }
+    }
+  ]
+}

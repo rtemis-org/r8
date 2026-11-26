@@ -24,7 +24,8 @@ pub fn init() {
     let _ = MAIN.set(thread::current().id());
 }
 
-fn on_main_thread() -> bool {
+/// Whether the running thread is R's main thread.
+pub(crate) fn on_main_thread() -> bool {
     MAIN.get().is_some_and(|m| *m == thread::current().id())
 }
 
@@ -40,6 +41,18 @@ fn head() -> SEXP {
         HEAD.store(h, Ordering::Release);
         h
     }
+}
+
+/// Allocates the list's head, so that [`Token::keep`] allocates one cell, which
+/// protects the object it holds.
+///
+/// # Safety
+///
+/// Called on R's main thread.
+pub(crate) unsafe fn prepare() -> crate::Result<()> {
+    crate::api::protect(&|| head())
+        .map(|_| ())
+        .map_err(crate::api::Jumped::into_error)
 }
 
 /// Removes the cells that tokens dropped on other threads queued. Called on

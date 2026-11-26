@@ -1,7 +1,12 @@
 /*
- * R8.h -- the C interface between R packages and the R8 registry.
+ * R8.h -- the binary interface between R8 and the compiled code of R packages.
  *
- * ABI version 1. The Rust types in `rtemis_r8::abi` mirror these declarations
+ * The compiled code of a package is written in Rust, through the crate
+ * `rtemis-r8-api`, whose types (`rtemis_r8::abi`) mirror this header. R8's own C
+ * code and the tests of the interface include it, with `R8_INTERNAL_ABI`
+ * defined.
+ *
+ * ABI version 2. The Rust types in `rtemis_r8::abi` mirror these declarations
  * field for field; the crate `rtemis-r8-abi-check` compiles this header and asserts
  * that every size and offset matches.
  *
@@ -12,7 +17,7 @@
  *    initialization routine, where `fn` is an `R8ExportsFn` returning its
  *    static `R8Exports`. `R8::r8_register()`, called from the package's
  *    `.onLoad`, fetches `fn` with `R_GetCCallable()` and registers the table:
- *    the IR document, the codecs of Rust-native types, and the impl
+ *    the IR document, the codecs of Rust-stored types, and the impl
  *    functions. Registering a package again replaces its entries.
  *
  * 2. The API, from R8 to a package. `R8_api()` returns R8's function table
@@ -31,8 +36,8 @@
  * - An `SEXP` returned through an out-parameter is unprotected; the caller
  *   protects it before the next allocation.
  * - Each side frees only what it allocated. A type's `state` is freed only by
- *   that type's `drop`; encoded JSON passes through an `R8Writer` supplied by
- *   the caller; error text is written into the fixed buffers of `R8Error`.
+ *   that type's `drop`, and only code of the codec's `module` reads it;
+ *   error text is written into the fixed buffers of `R8Error`.
  * - Strings are UTF-8 and NUL-terminated.
  * - Everything an `R8Exports` points to is static: it stays valid while the
  *   package's shared object is loaded. R8 reads the declaration record and
@@ -45,6 +50,10 @@
 #ifndef R8_H
 #define R8_H
 
+#ifndef R8_INTERNAL_ABI
+#error "R8.h is the interface between R8 and the crate rtemis-r8-api; the compiled code of a package is written in Rust, and an R method calls C code with .Call()"
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -55,7 +64,7 @@
 extern "C" {
 #endif
 
-#define R8_ABI_VERSION 1u
+#define R8_ABI_VERSION 2u
 
 /* Return status of every function that can fail. */
 typedef int32_t R8Status;
@@ -72,12 +81,6 @@ typedef struct R8Error {
   char message[1024];
 } R8Error;
 
-/* A sink for bytes, supplied by the caller of `encode`. */
-typedef struct R8Writer {
-  void *context;
-  R8Status (*write)(void *context, const uint8_t *bytes, size_t len);
-} R8Writer;
-
 /* A part of a value that R8 has read and validated, lent to a codec for the
  * length of one call and read only through `R8Reader`. */
 typedef const void *R8Node;
@@ -90,6 +93,13 @@ typedef const void *R8Node;
 #define R8_NODE_STRING 4u
 #define R8_NODE_ARRAY 5u
 #define R8_NODE_OBJECT 6u
+
+/* What `R8Reader.value` reads a node as: a value of the named type exactly, of
+ * the named struct or a struct that extends it, or of an implementor of the
+ * named trait. */
+#define R8_VALUE_TYPE 0u
+#define R8_VALUE_SUBTYPE 1u
+#define R8_VALUE_IMPLEMENTOR 2u
 
 /* The integer and logical a null reads as (R's NA_integer_), and the bits of
  * the double a null reads as (R's NA_real_, a NaN whose low word is 1954). */
@@ -107,7 +117,7 @@ typedef struct R8Reader {
   /* The node's kind, an R8_NODE_* constant. */
   uint32_t (*kind)(void *context, R8Node node);
   /* An object's member by name, or NULL when the object has none. */
-  R8Node (*field)(void *context, R8Node node, const char *name);
+  R8Node (*member)(void *context, R8Node node, const char *name);
   /* An array's item, or NULL past its end. */
   R8Node (*item)(void *context, R8Node node, size_t i);
   /* An array's or an object's length; 0 for any other node. */
@@ -131,41 +141,42 @@ typedef struct R8Reader {
    * `logical` reads each. */
   R8Status (*logicals)(void *context, R8Node node, size_t start, size_t count, int32_t *out,
                        R8Error *err);
+  /* The R value of a node, unprotected: of the type, of a subtype of the
+   * struct, or of an implementor of the trait that `name` names, by `kind`, an
+   * R8_VALUE_* constant. A value of a Rust-stored type is built by its codec. */
+  R8Status (*value)(void *context, R8Node node, uint32_t kind, const char *name, SEXP *out,
+                    R8Error *err);
 } R8Reader;
 
-/* Set in `R8CallContext.flags` when `seed` holds a seed. */
-#define R8_CONTEXT_HAS_SEED 1u
+/* Set in `R8CallInputs.flags` when `seed` holds a seed. */
+#define R8_CALL_HAS_SEED 1u
 
 /* Per-call inputs of an impl function. A stochastic method receives its
  * 64-bit seed here, given by the caller or derived by R8 from R's RNG
- * stream. Later minor versions append the event and provenance context. */
-typedef struct R8CallContext {
+ * stream. */
+typedef struct R8CallInputs {
   uint32_t size;
   uint32_t flags;
   uint64_t seed;
-} R8CallContext;
+} R8CallInputs;
 
-/* The codec of a Rust-native type. `state` is the type's Rust value, owned
+/* The codec of a Rust-stored type. `state` is the type's Rust value, owned
  * by R8 between `from_fields`, `from_reader`, or `with_field` and `drop`. A
  * package's `types` array holds codecs of one size, `size`, which is the
  * array's stride; fields are appended within a major version. */
-typedef struct R8TypeVTable {
+typedef struct R8Codec {
   /* The size of this struct in bytes. */
   uint32_t size;
   /* Qualified name, "namespace::Type". */
   const char *type_name;
+  /* The compiled code that builds and reads the codec's states: the address
+   * of an object of the package's shared object, the same in each of its
+   * codecs. A state crosses to compiled code that names the same module
+   * only, since its layout is that code's. */
+  const void *module;
   /* Builds a state from the type's fields, `n` R values in declaration
    * order, which R8 has validated and converted to their stored forms. */
   R8Status (*from_fields)(const SEXP *fields, size_t n, void **state, R8Error *err);
-  /* Writes the state's JSON document, for export (`to_json()`). */
-  R8Status (*encode)(const void *state, R8Writer *out, R8Error *err);
-  /* Writes the state's bytes, in a form of the package's choosing, for
-   * `saveRDS()` and parallel workers. R8 calls it twice per serialization,
-   * once to count the bytes and once to write them into a buffer of that
-   * size, so every call writes the same bytes. */
-  R8Status (*write_state)(const void *state, R8Writer *out, R8Error *err);
-  /* Builds a state from bytes that `write_state` wrote. */
-  R8Status (*read_state)(const uint8_t *bytes, size_t len, void **state, R8Error *err);
   /* Reads one field as an R value. `owner` is the external pointer that
    * holds `state`; a field that views the state's memory, through
    * `R8Api.view_doubles` and its siblings, passes it as the view's owner,
@@ -178,8 +189,8 @@ typedef struct R8TypeVTable {
   R8Status (*with_field)(const void *state, const char *field, SEXP value, void **new_state, R8Error *err);
   /* Frees a state. */
   void (*drop)(void *state);
-  /* The state's size in bytes, including memory it owns. */
-  size_t (*bytes)(const void *state);
+  /* The bytes the state owns: its inline size and the memory it owns. */
+  size_t (*owned_bytes)(const void *state);
   /* Enum codecs. An enum's codec sets `variant` and `from_variant` and
    * leaves `from_fields` NULL; a struct's codec sets `from_fields` and
    * leaves both NULL. R8 reads them when `size` covers them. */
@@ -193,54 +204,80 @@ typedef struct R8TypeVTable {
   R8Status (*from_variant)(const char *variant, const SEXP *fields, size_t n, void **state,
                            R8Error *err);
   /* Builds a state from the value R8 has read from a document and validated,
-   * through the reader, from the value's root node. R8 reads a document
-   * through it when `size` covers it and it is set, and through
-   * `from_fields` or `from_variant` otherwise. */
+   * through the reader, from the value's root node. */
   R8Status (*from_reader)(const R8Reader *reader, R8Node root, void **state, R8Error *err);
-  /* The declaration hash of the type the codec was written against,
-   * "sha256:<hex>": set by a codec written by hand in C, whose type has no
-   * declaration in the exports' record, and NULL otherwise. Registration
-   * requires it to equal the hash of the type's R declaration, since
-   * `from_fields` and `from_variant` read fields by position; a mismatch
-   * reports the declaration's current hash. */
-  const char *declaration_hash;
-} R8TypeVTable;
+  /* The state of the ancestor named `type_name` that the state embeds, which
+   * lives as long as the state; NULL when it embeds none of that name. NULL
+   * in the codec of a type whose states embed no ancestor. */
+  const void *(*upcast)(const void *state, const char *type_name);
+} R8Codec;
 
 /* An impl function: a trait method implemented in compiled code. `args`
  * holds the call's arguments in the method's declared order. */
-typedef R8Status (*R8MethodFn)(const R8CallContext *ctx, const SEXP *args, size_t nargs,
+typedef R8Status (*R8MethodFn)(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
                                SEXP *result, R8Error *err);
+
+/* What a position of an impl names: an R8 type, a class of R, or any value.
+ * Registration refuses a class of R, whose methods are written in R. */
+#define R8_POSITION_TYPE 0
+#define R8_POSITION_CLASS 1
+#define R8_POSITION_ANY 2
+
+/* A position of an impl. */
+typedef struct R8Position {
+  uint32_t kind;
+  /* The qualified name of a type, or the name of a class; NULL for any. */
+  const char *name;
+  /* Of a class: the package that defines it, which is NULL or empty when the
+   * declaration names none. */
+  const char *package;
+  /* Of a class: its class system, "s3", "s4", or "implicit". */
+  const char *system;
+} R8Position;
 
 /* One method of one impl. */
 typedef struct R8ImplEntry {
-  /* Qualified names of the trait and of the type it is implemented for. */
+  /* The qualified name of the trait. */
   const char *trait_name;
-  const char *type_name;
-  /* The method's name, as declared by the trait. */
+  /* The type the trait is implemented for, its first dispatched position, then
+   * the trait's other dispatched positions in order; for R8::From, the type
+   * and the source. The entries of one impl have equal positions. */
+  const R8Position *positions;
+  size_t n_positions;
+  /* The method's name, as declared by the trait, or its identifier in the
+   * languages other than R, such as `with_labels` for `labels<-`. */
   const char *method;
   R8MethodFn call;
-  /* The number of the method's parameters, `x` included and `...` counted
-   * as one, which registration checks against the trait's declaration. */
-  size_t n_params;
+  /* The signatures of the impl's methods as the compiled code has them, a
+   * declaration record of one trait that holds them, which rtemis-r8-api
+   * writes and registration checks against the trait's declaration. The
+   * entries of one impl have one. */
+  const uint8_t *signature;
+  size_t signature_len;
 } R8ImplEntry;
 
 /* What a package registers: the declarations of its types in Rust, the
- * codecs of its Rust-native types, and its impl functions. R8 builds each
- * impl declaration from the impl entries, grouped by trait and type. */
+ * codecs of its Rust-stored types, and its impl functions. R8 builds each
+ * impl declaration from the impl entries, grouped by trait and positions. */
 typedef struct R8Exports {
   uint32_t abi_version;
   uint32_t size;
   /* The R package's name. */
   const char *package;
-  /* The declarations of the package's types in Rust as a declaration record,
-   * which rtemis-r8-api writes; NULL in a table written by hand in C, whose
-   * types are the package's R declarations. */
+  /* The compiled code of the package, as its codecs name it. */
+  const void *module;
+  /* The declarations of the package's types and traits in Rust as a
+   * declaration record, which rtemis-r8-api writes, with the types of other
+   * namespaces that the code was compiled against, which R8 compares with the
+   * registered ones and does not register. */
   const uint8_t *ir_record;
   size_t ir_record_len;
-  const R8TypeVTable *types;
+  const R8Codec *types;
   size_t n_types;
   const R8ImplEntry *impls;
   size_t n_impls;
+  /* sizeof(R8ImplEntry), the stride of `impls`. */
+  size_t impl_size;
 } R8Exports;
 
 /* The function a package registers as "r8_exports". */
@@ -250,12 +287,31 @@ typedef const R8Exports *(*R8ExportsFn)(void);
 typedef struct R8Api {
   uint32_t abi_version;
   uint32_t size;
-  /* Wraps a state of a registered Rust-native type as an R8 value. Takes
-   * ownership of `state`, also on error. */
-  R8Status (*new_value)(const char *type_name, void *state, SEXP *value, R8Error *err);
-  /* Borrows the state of a value of the given type; the state stays valid
-   * while `value` is protected. */
-  R8Status (*value_state)(SEXP value, const char *type_name, const void **state, R8Error *err);
+  /* Wraps a state of a registered Rust-stored type, which the caller's
+   * module built, as an R8 value. R8 owns the state once it returns R8_OK;
+   * on an error the state stays the caller's. The code `other_module`
+   * reports a type whose codec has another module, whose value
+   * `value_of_fields` builds. */
+  R8Status (*new_value)(const char *type_name, const void *module, void *state, SEXP *value,
+                        R8Error *err);
+  /* Lends the state of a value of the named type to the caller's module; the
+   * state stays valid while `value` is protected. The code `not_lent` reports
+   * a value of the type whose state the module does not read: an R-stored
+   * value, or one whose codec has another module, whose fields the caller
+   * reads by name as R values instead; `type_mismatch` reports any other
+   * object. Of a value whose state the module does not read, `not_pinned`
+   * reports that R8 does not hold the declaration of the named type that the
+   * module was compiled against, which the caller gives it (`pin`), and
+   * `declaration_changed` that the registered declaration does not refine it,
+   * so the module does not read the value's fields. */
+  R8Status (*value_state)(SEXP value, const char *type_name, const void *module,
+                          const void **state, R8Error *err);
+  /* `value_state`, and for a value of a struct that extends the named type,
+   * the state of that type which the value's state embeds
+   * (`R8Codec.upcast`). An impl function reads its receiver through it, since
+   * an impl for a struct applies to the structs that extend it. */
+  R8Status (*upcast_state)(SEXP value, const char *type_name, const void *module,
+                           const void **state, R8Error *err);
   /* Views `n` elements at `data`, memory that `owner` keeps alive, as an R
    * vector, without copying. A write to the vector goes to a copy that R
    * makes; the memory is only read. */
@@ -270,6 +326,29 @@ typedef struct R8Api {
    * R8_UNWIND returns it. `fn` owns nothing that needs freeing, since a jump
    * skips the rest of it. */
   R8Status (*protect)(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err);
+  /* Builds a value of a registered struct, or of the variant `variant` of an
+   * enum, from `fields`, the list of its fields in declaration order and in
+   * their stored forms, whichever module the type's codec has; `variant` is
+   * NULL for a struct. R8 does not validate the fields, and takes the list.
+   * `declaration_hash` is the hash of the declaration that the caller was
+   * compiled against, "sha256:<hex>"; the code `declaration_changed` reports
+   * a registered declaration of another hash. */
+  R8Status (*value_of_fields)(const char *type_name, const char *variant,
+                              const char *declaration_hash, SEXP fields, SEXP *value,
+                              R8Error *err);
+  /* Builds a value from `value`, an R8 value, with the fields of `fields`, a
+   * named list, in place of its own. R8 validates the fields and runs the
+   * rules that read them, as `value[names] <- fields` does in R; the code
+   * `invalid_value` reports what they violate. */
+  R8Status (*with_fields)(SEXP value, SEXP fields, SEXP *new_value, R8Error *err);
+  /* Gives R8 the declarations that `module` was compiled against, a declaration
+   * record of `len` bytes, of a type whose values the module reads by their
+   * fields and the record of its exports does not hold. */
+  R8Status (*pin)(const void *module, const uint8_t *record, size_t len, R8Error *err);
+  /* The qualified name of the type of `value` and the variant of an enum's
+   * value, NULL for a struct's, strings that R8 keeps for the session; both
+   * are NULL for an object that is not an R8 value. */
+  R8Status (*value_type)(SEXP value, const char **type_name, const char **variant);
 } R8Api;
 
 /* The entry point R8 registers with R_RegisterCCallable("R8", "r8_api").

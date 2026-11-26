@@ -111,10 +111,10 @@
                   "kind": "option",
                   "inner": {
                     "kind": "logical"
-                  },
-                  "resolve": {
-                    "policy": "later"
                   }
+                },
+                "resolve": {
+                  "policy": "later"
                 }
               }
             ]
@@ -123,7 +123,8 @@
       },
       "expect": {
         "parse_error": true
-      }
+      },
+      "description": "A fill policy outside the IR's policies does not read."
     },
     {
       "id": "version-zero",
@@ -275,12 +276,14 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "runtime"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
+                },
+                "resolve": {
+                  "policy": "context"
                 }
               }
             ]
@@ -293,7 +296,7 @@
     },
     {
       "id": "r-value-bare",
-      "description": "A runtime-only field is absent after reading, so it is declared `option()`.",
+      "description": "A host-only field is absent after reading, so it is declared `option()`.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -307,8 +310,10 @@
               {
                 "name": "model",
                 "type": {
-                  "kind": "r",
-                  "class": "lm"
+                  "kind": "host_class",
+                  "host": "r",
+                  "class": "lm",
+                  "system": "s3"
                 }
               }
             ]
@@ -318,7 +323,7 @@
       "expect": {
         "errors": [
           {
-            "code": "r_outside_option",
+            "code": "host_outside_option",
             "path": "/types/0/fields/0/type"
           }
         ]
@@ -343,8 +348,10 @@
                   "element": {
                     "kind": "option",
                     "inner": {
-                      "kind": "r",
-                      "class": "lm"
+                      "kind": "host_class",
+                      "host": "r",
+                      "class": "lm",
+                      "system": "s3"
                     }
                   }
                 }
@@ -356,7 +363,7 @@
       "expect": {
         "errors": [
           {
-            "code": "r_outside_option",
+            "code": "host_outside_option",
             "path": "/types/0/fields/0/type/element/inner"
           }
         ]
@@ -597,12 +604,12 @@
         "types": [
           {
             "kind": "enum",
-            "name": "Shape",
+            "name": "Figure",
             "version": 1,
             "variants": [
               {
                 "name": "Circle",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "type",
@@ -768,7 +775,7 @@
     },
     {
       "id": "unique-on-struct-field",
-      "description": "unique applies to a table column.",
+      "description": "A struct field does not take a column's `unique`.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -792,17 +799,12 @@
         ]
       },
       "expect": {
-        "errors": [
-          {
-            "code": "column_only",
-            "path": "/types/0/fields/0/unique"
-          }
-        ]
+        "parse_error": true
       }
     },
     {
-      "id": "optional-on-struct-field",
-      "description": "optional applies to a table column.",
+      "id": "required-on-struct-field",
+      "description": "A struct field does not take a column's `required`.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -819,24 +821,19 @@
                 "type": {
                   "kind": "character"
                 },
-                "optional": true
+                "required": false
               }
             ]
           }
         ]
       },
       "expect": {
-        "errors": [
-          {
-            "code": "column_only",
-            "path": "/types/0/fields/0/optional"
-          }
-        ]
+        "parse_error": true
       }
     },
     {
-      "id": "unique-and-optional-columns",
-      "description": "A column may be unique, and a column may be optional.",
+      "id": "unique-and-not-required-columns",
+      "description": "A column may be unique, and a column may be absent (`required: false`).",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -868,7 +865,7 @@
                           "kind": "double"
                         }
                       },
-                      "optional": true
+                      "required": false
                     }
                   ]
                 }
@@ -1032,7 +1029,7 @@
               {
                 "name": "m",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
                     "kind": "double"
                   }
@@ -1048,7 +1045,7 @@
     },
     {
       "id": "ordered-map-r-value",
-      "description": "A runtime-only value is declared option() at the field.",
+      "description": "A host-only value is declared option() at the field.",
       "op": "declare",
       "input": {
         "$ir": 1,
@@ -1063,10 +1060,12 @@
               {
                 "name": "m",
                 "type": {
-                  "kind": "ordered_map",
+                  "kind": "index_map",
                   "value": {
-                    "kind": "r",
-                    "class": "lm"
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
                 }
               }
@@ -1077,7 +1076,7 @@
       "expect": {
         "errors": [
           {
-            "code": "r_outside_option",
+            "code": "host_outside_option",
             "path": "/types/0/fields/0/type/value"
           }
         ]
@@ -1126,7 +1125,7 @@
             "variants": [
               {
                 "name": "Z",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           },
@@ -1137,12 +1136,12 @@
             "variants": [
               {
                 "name": "Ax",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "ns::A"
               },
               {
                 "name": "Other",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "other::C"
               }
             ]
@@ -1196,7 +1195,7 @@
             "variants": [
               {
                 "name": "Z",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           },
@@ -1207,12 +1206,12 @@
             "variants": [
               {
                 "name": "A1",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "ns::A"
               },
               {
                 "name": "A2",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "ns::A"
               }
             ]
@@ -1271,7 +1270,7 @@
             "variants": [
               {
                 "name": "Z",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           },
@@ -1282,7 +1281,7 @@
             "variants": [
               {
                 "name": "Bx",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "ns::B"
               }
             ]
@@ -1341,7 +1340,7 @@
             "variants": [
               {
                 "name": "Z",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           },
@@ -1352,7 +1351,7 @@
             "variants": [
               {
                 "name": "Nx",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "ns::N"
               }
             ]
@@ -1411,7 +1410,7 @@
             "variants": [
               {
                 "name": "Z",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           },
@@ -1422,7 +1421,7 @@
             "variants": [
               {
                 "name": "Qx",
-                "shape": "newtype",
+                "kind": "newtype",
                 "of": "ns::Q"
               }
             ]
@@ -1488,11 +1487,11 @@
             "variants": [
               {
                 "name": "A",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "A",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           }
@@ -1682,13 +1681,15 @@
                 "type": {
                   "kind": "option",
                   "inner": {
-                    "kind": "r",
-                    "class": "lm"
-                  },
-                  "resolve": {
-                    "policy": "computed",
-                    "expr": 1
+                    "kind": "host_class",
+                    "host": "r",
+                    "class": "lm",
+                    "system": "s3"
                   }
+                },
+                "resolve": {
+                  "policy": "computed",
+                  "expr": 1
                 }
               }
             ]
@@ -1698,8 +1699,8 @@
       "expect": {
         "errors": [
           {
-            "code": "r_resolve",
-            "path": "/types/0/fields/0/type/resolve"
+            "code": "host_resolve",
+            "path": "/types/0/fields/0/resolve"
           }
         ]
       }
@@ -1798,11 +1799,11 @@
             "variants": [
               {
                 "name": "L",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "R",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "g",
@@ -1860,11 +1861,11 @@
             "variants": [
               {
                 "name": "L",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "R",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "g",
@@ -2278,6 +2279,967 @@
             "path": "/traits/0/name"
           }
         ]
+      }
+    },
+    {
+      "id": "default-that-holds-itself",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "t",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "N",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "v",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              },
+              {
+                "name": "nx",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "named",
+                    "name": "t::N"
+                  }
+                },
+                "default": {
+                  "v": 1
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_recursive",
+            "path": "/types/0/fields/1/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "default-of-a-recursive-type",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "t",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "N",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "v",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              },
+              {
+                "name": "nx",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "named",
+                    "name": "t::N"
+                  }
+                },
+                "default": {
+                  "v": 1,
+                  "nx": {
+                    "v": 2,
+                    "nx": {
+                      "v": 3
+                    }
+                  }
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_recursive",
+            "path": "/types/0/fields/1/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mutually-recursive-defaults",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "t",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "A",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "named",
+                    "name": "t::B"
+                  }
+                },
+                "default": {},
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "B",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "option",
+                  "inner": {
+                    "kind": "named",
+                    "name": "t::A"
+                  }
+                },
+                "default": {},
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "default_recursive",
+            "path": "/types/0/fields/0/default"
+          },
+          {
+            "code": "default_recursive",
+            "path": "/types/1/fields/0/default"
+          }
+        ]
+      }
+    },
+    {
+      "id": "field-type-too-deep",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "t",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "vec",
+                    "element": {
+                      "kind": "vec",
+                      "element": {
+                        "kind": "vec",
+                        "element": {
+                          "kind": "vec",
+                          "element": {
+                            "kind": "vec",
+                            "element": {
+                              "kind": "vec",
+                              "element": {
+                                "kind": "vec",
+                                "element": {
+                                  "kind": "vec",
+                                  "element": {
+                                    "kind": "vec",
+                                    "element": {
+                                      "kind": "vec",
+                                      "element": {
+                                        "kind": "vec",
+                                        "element": {
+                                          "kind": "vec",
+                                          "element": {
+                                            "kind": "vec",
+                                            "element": {
+                                              "kind": "vec",
+                                              "element": {
+                                                "kind": "vec",
+                                                "element": {
+                                                  "kind": "vec",
+                                                  "element": {
+                                                    "kind": "vec",
+                                                    "element": {
+                                                      "kind": "vec",
+                                                      "element": {
+                                                        "kind": "vec",
+                                                        "element": {
+                                                          "kind": "vec",
+                                                          "element": {
+                                                            "kind": "vec",
+                                                            "element": {
+                                                              "kind": "vec",
+                                                              "element": {
+                                                                "kind": "vec",
+                                                                "element": {
+                                                                  "kind": "vec",
+                                                                  "element": {
+                                                                    "kind": "vec",
+                                                                    "element": {
+                                                                      "kind": "vec",
+                                                                      "element": {
+                                                                        "kind": "vec",
+                                                                        "element": {
+                                                                          "kind": "vec",
+                                                                          "element": {
+                                                                            "kind": "vec",
+                                                                            "element": {
+                                                                              "kind": "vec",
+                                                                              "element": {
+                                                                                "kind": "vec",
+                                                                                "element": {
+                                                                                  "kind": "vec",
+                                                                                  "element": {
+                                                                                    "kind": "vec",
+                                                                                    "element": {
+                                                                                      "kind": "vec",
+                                                                                      "element": {
+                                                                                        "kind": "vec",
+                                                                                        "element": {
+                                                                                          "kind": "vec",
+                                                                                          "element": {
+                                                                                            "kind": "vec",
+                                                                                            "element": {
+                                                                                              "kind": "vec",
+                                                                                              "element": {
+                                                                                                "kind": "vec",
+                                                                                                "element": {
+                                                                                                  "kind": "vec",
+                                                                                                  "element": {
+                                                                                                    "kind": "vec",
+                                                                                                    "element": {
+                                                                                                      "kind": "vec",
+                                                                                                      "element": {
+                                                                                                        "kind": "vec",
+                                                                                                        "element": {
+                                                                                                          "kind": "vec",
+                                                                                                          "element": {
+                                                                                                            "kind": "vec",
+                                                                                                            "element": {
+                                                                                                              "kind": "vec",
+                                                                                                              "element": {
+                                                                                                                "kind": "vec",
+                                                                                                                "element": {
+                                                                                                                  "kind": "vec",
+                                                                                                                  "element": {
+                                                                                                                    "kind": "vec",
+                                                                                                                    "element": {
+                                                                                                                      "kind": "vec",
+                                                                                                                      "element": {
+                                                                                                                        "kind": "vec",
+                                                                                                                        "element": {
+                                                                                                                          "kind": "vec",
+                                                                                                                          "element": {
+                                                                                                                            "kind": "vec",
+                                                                                                                            "element": {
+                                                                                                                              "kind": "vec",
+                                                                                                                              "element": {
+                                                                                                                                "kind": "vec",
+                                                                                                                                "element": {
+                                                                                                                                  "kind": "vec",
+                                                                                                                                  "element": {
+                                                                                                                                    "kind": "vec",
+                                                                                                                                    "element": {
+                                                                                                                                      "kind": "vec",
+                                                                                                                                      "element": {
+                                                                                                                                        "kind": "vec",
+                                                                                                                                        "element": {
+                                                                                                                                          "kind": "vec",
+                                                                                                                                          "element": {
+                                                                                                                                            "kind": "vec",
+                                                                                                                                            "element": {
+                                                                                                                                              "kind": "vec",
+                                                                                                                                              "element": {
+                                                                                                                                                "kind": "vec",
+                                                                                                                                                "element": {
+                                                                                                                                                  "kind": "vec",
+                                                                                                                                                  "element": {
+                                                                                                                                                    "kind": "vec",
+                                                                                                                                                    "element": {
+                                                                                                                                                      "kind": "vec",
+                                                                                                                                                      "element": {
+                                                                                                                                                        "kind": "vec",
+                                                                                                                                                        "element": {
+                                                                                                                                                          "kind": "vec",
+                                                                                                                                                          "element": {
+                                                                                                                                                            "kind": "vec",
+                                                                                                                                                            "element": {
+                                                                                                                                                              "kind": "vec",
+                                                                                                                                                              "element": {
+                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                "element": {
+                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                  "element": {
+                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                    "element": {
+                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                      "element": {
+                                                                                                                                                                        "kind": "vec",
+                                                                                                                                                                        "element": {
+                                                                                                                                                                          "kind": "vec",
+                                                                                                                                                                          "element": {
+                                                                                                                                                                            "kind": "vec",
+                                                                                                                                                                            "element": {
+                                                                                                                                                                              "kind": "vec",
+                                                                                                                                                                              "element": {
+                                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                                "element": {
+                                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                                  "element": {
+                                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                                    "element": {
+                                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                                      "element": {
+                                                                                                                                                                                        "kind": "vec",
+                                                                                                                                                                                        "element": {
+                                                                                                                                                                                          "kind": "vec",
+                                                                                                                                                                                          "element": {
+                                                                                                                                                                                            "kind": "vec",
+                                                                                                                                                                                            "element": {
+                                                                                                                                                                                              "kind": "vec",
+                                                                                                                                                                                              "element": {
+                                                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                                                "element": {
+                                                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                                                  "element": {
+                                                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                                                    "element": {
+                                                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                                                      "element": {
+                                                                                                                                                                                                        "kind": "vec",
+                                                                                                                                                                                                        "element": {
+                                                                                                                                                                                                          "kind": "vec",
+                                                                                                                                                                                                          "element": {
+                                                                                                                                                                                                            "kind": "vec",
+                                                                                                                                                                                                            "element": {
+                                                                                                                                                                                                              "kind": "vec",
+                                                                                                                                                                                                              "element": {
+                                                                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                                                                "element": {
+                                                                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                                                                  "element": {
+                                                                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                                                                    "element": {
+                                                                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                                                                      "element": {
+                                                                                                                                                                                                                        "kind": "vec",
+                                                                                                                                                                                                                        "element": {
+                                                                                                                                                                                                                          "kind": "double"
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                    }
+                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                              }
+                                                                                                                                                                                                            }
+                                                                                                                                                                                                          }
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                      }
+                                                                                                                                                                                                    }
+                                                                                                                                                                                                  }
+                                                                                                                                                                                                }
+                                                                                                                                                                                              }
+                                                                                                                                                                                            }
+                                                                                                                                                                                          }
+                                                                                                                                                                                        }
+                                                                                                                                                                                      }
+                                                                                                                                                                                    }
+                                                                                                                                                                                  }
+                                                                                                                                                                                }
+                                                                                                                                                                              }
+                                                                                                                                                                            }
+                                                                                                                                                                          }
+                                                                                                                                                                        }
+                                                                                                                                                                      }
+                                                                                                                                                                    }
+                                                                                                                                                                  }
+                                                                                                                                                                }
+                                                                                                                                                              }
+                                                                                                                                                            }
+                                                                                                                                                          }
+                                                                                                                                                        }
+                                                                                                                                                      }
+                                                                                                                                                    }
+                                                                                                                                                  }
+                                                                                                                                                }
+                                                                                                                                              }
+                                                                                                                                            }
+                                                                                                                                          }
+                                                                                                                                        }
+                                                                                                                                      }
+                                                                                                                                    }
+                                                                                                                                  }
+                                                                                                                                }
+                                                                                                                              }
+                                                                                                                            }
+                                                                                                                          }
+                                                                                                                        }
+                                                                                                                      }
+                                                                                                                    }
+                                                                                                                  }
+                                                                                                                }
+                                                                                                              }
+                                                                                                            }
+                                                                                                          }
+                                                                                                        }
+                                                                                                      }
+                                                                                                    }
+                                                                                                  }
+                                                                                                }
+                                                                                              }
+                                                                                            }
+                                                                                          }
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "too_deep",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "field-type-at-the-limit",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "t",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "vec",
+                  "element": {
+                    "kind": "vec",
+                    "element": {
+                      "kind": "vec",
+                      "element": {
+                        "kind": "vec",
+                        "element": {
+                          "kind": "vec",
+                          "element": {
+                            "kind": "vec",
+                            "element": {
+                              "kind": "vec",
+                              "element": {
+                                "kind": "vec",
+                                "element": {
+                                  "kind": "vec",
+                                  "element": {
+                                    "kind": "vec",
+                                    "element": {
+                                      "kind": "vec",
+                                      "element": {
+                                        "kind": "vec",
+                                        "element": {
+                                          "kind": "vec",
+                                          "element": {
+                                            "kind": "vec",
+                                            "element": {
+                                              "kind": "vec",
+                                              "element": {
+                                                "kind": "vec",
+                                                "element": {
+                                                  "kind": "vec",
+                                                  "element": {
+                                                    "kind": "vec",
+                                                    "element": {
+                                                      "kind": "vec",
+                                                      "element": {
+                                                        "kind": "vec",
+                                                        "element": {
+                                                          "kind": "vec",
+                                                          "element": {
+                                                            "kind": "vec",
+                                                            "element": {
+                                                              "kind": "vec",
+                                                              "element": {
+                                                                "kind": "vec",
+                                                                "element": {
+                                                                  "kind": "vec",
+                                                                  "element": {
+                                                                    "kind": "vec",
+                                                                    "element": {
+                                                                      "kind": "vec",
+                                                                      "element": {
+                                                                        "kind": "vec",
+                                                                        "element": {
+                                                                          "kind": "vec",
+                                                                          "element": {
+                                                                            "kind": "vec",
+                                                                            "element": {
+                                                                              "kind": "vec",
+                                                                              "element": {
+                                                                                "kind": "vec",
+                                                                                "element": {
+                                                                                  "kind": "vec",
+                                                                                  "element": {
+                                                                                    "kind": "vec",
+                                                                                    "element": {
+                                                                                      "kind": "vec",
+                                                                                      "element": {
+                                                                                        "kind": "vec",
+                                                                                        "element": {
+                                                                                          "kind": "vec",
+                                                                                          "element": {
+                                                                                            "kind": "vec",
+                                                                                            "element": {
+                                                                                              "kind": "vec",
+                                                                                              "element": {
+                                                                                                "kind": "vec",
+                                                                                                "element": {
+                                                                                                  "kind": "vec",
+                                                                                                  "element": {
+                                                                                                    "kind": "vec",
+                                                                                                    "element": {
+                                                                                                      "kind": "vec",
+                                                                                                      "element": {
+                                                                                                        "kind": "vec",
+                                                                                                        "element": {
+                                                                                                          "kind": "vec",
+                                                                                                          "element": {
+                                                                                                            "kind": "vec",
+                                                                                                            "element": {
+                                                                                                              "kind": "vec",
+                                                                                                              "element": {
+                                                                                                                "kind": "vec",
+                                                                                                                "element": {
+                                                                                                                  "kind": "vec",
+                                                                                                                  "element": {
+                                                                                                                    "kind": "vec",
+                                                                                                                    "element": {
+                                                                                                                      "kind": "vec",
+                                                                                                                      "element": {
+                                                                                                                        "kind": "vec",
+                                                                                                                        "element": {
+                                                                                                                          "kind": "vec",
+                                                                                                                          "element": {
+                                                                                                                            "kind": "vec",
+                                                                                                                            "element": {
+                                                                                                                              "kind": "vec",
+                                                                                                                              "element": {
+                                                                                                                                "kind": "vec",
+                                                                                                                                "element": {
+                                                                                                                                  "kind": "vec",
+                                                                                                                                  "element": {
+                                                                                                                                    "kind": "vec",
+                                                                                                                                    "element": {
+                                                                                                                                      "kind": "vec",
+                                                                                                                                      "element": {
+                                                                                                                                        "kind": "vec",
+                                                                                                                                        "element": {
+                                                                                                                                          "kind": "vec",
+                                                                                                                                          "element": {
+                                                                                                                                            "kind": "vec",
+                                                                                                                                            "element": {
+                                                                                                                                              "kind": "vec",
+                                                                                                                                              "element": {
+                                                                                                                                                "kind": "vec",
+                                                                                                                                                "element": {
+                                                                                                                                                  "kind": "vec",
+                                                                                                                                                  "element": {
+                                                                                                                                                    "kind": "vec",
+                                                                                                                                                    "element": {
+                                                                                                                                                      "kind": "vec",
+                                                                                                                                                      "element": {
+                                                                                                                                                        "kind": "vec",
+                                                                                                                                                        "element": {
+                                                                                                                                                          "kind": "vec",
+                                                                                                                                                          "element": {
+                                                                                                                                                            "kind": "vec",
+                                                                                                                                                            "element": {
+                                                                                                                                                              "kind": "vec",
+                                                                                                                                                              "element": {
+                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                "element": {
+                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                  "element": {
+                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                    "element": {
+                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                      "element": {
+                                                                                                                                                                        "kind": "vec",
+                                                                                                                                                                        "element": {
+                                                                                                                                                                          "kind": "vec",
+                                                                                                                                                                          "element": {
+                                                                                                                                                                            "kind": "vec",
+                                                                                                                                                                            "element": {
+                                                                                                                                                                              "kind": "vec",
+                                                                                                                                                                              "element": {
+                                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                                "element": {
+                                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                                  "element": {
+                                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                                    "element": {
+                                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                                      "element": {
+                                                                                                                                                                                        "kind": "vec",
+                                                                                                                                                                                        "element": {
+                                                                                                                                                                                          "kind": "vec",
+                                                                                                                                                                                          "element": {
+                                                                                                                                                                                            "kind": "vec",
+                                                                                                                                                                                            "element": {
+                                                                                                                                                                                              "kind": "vec",
+                                                                                                                                                                                              "element": {
+                                                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                                                "element": {
+                                                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                                                  "element": {
+                                                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                                                    "element": {
+                                                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                                                      "element": {
+                                                                                                                                                                                                        "kind": "vec",
+                                                                                                                                                                                                        "element": {
+                                                                                                                                                                                                          "kind": "vec",
+                                                                                                                                                                                                          "element": {
+                                                                                                                                                                                                            "kind": "vec",
+                                                                                                                                                                                                            "element": {
+                                                                                                                                                                                                              "kind": "vec",
+                                                                                                                                                                                                              "element": {
+                                                                                                                                                                                                                "kind": "vec",
+                                                                                                                                                                                                                "element": {
+                                                                                                                                                                                                                  "kind": "vec",
+                                                                                                                                                                                                                  "element": {
+                                                                                                                                                                                                                    "kind": "vec",
+                                                                                                                                                                                                                    "element": {
+                                                                                                                                                                                                                      "kind": "vec",
+                                                                                                                                                                                                                      "element": {
+                                                                                                                                                                                                                        "kind": "double"
+                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                    }
+                                                                                                                                                                                                                  }
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                              }
+                                                                                                                                                                                                            }
+                                                                                                                                                                                                          }
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                      }
+                                                                                                                                                                                                    }
+                                                                                                                                                                                                  }
+                                                                                                                                                                                                }
+                                                                                                                                                                                              }
+                                                                                                                                                                                            }
+                                                                                                                                                                                          }
+                                                                                                                                                                                        }
+                                                                                                                                                                                      }
+                                                                                                                                                                                    }
+                                                                                                                                                                                  }
+                                                                                                                                                                                }
+                                                                                                                                                                              }
+                                                                                                                                                                            }
+                                                                                                                                                                          }
+                                                                                                                                                                        }
+                                                                                                                                                                      }
+                                                                                                                                                                    }
+                                                                                                                                                                  }
+                                                                                                                                                                }
+                                                                                                                                                              }
+                                                                                                                                                            }
+                                                                                                                                                          }
+                                                                                                                                                        }
+                                                                                                                                                      }
+                                                                                                                                                    }
+                                                                                                                                                  }
+                                                                                                                                                }
+                                                                                                                                              }
+                                                                                                                                            }
+                                                                                                                                          }
+                                                                                                                                        }
+                                                                                                                                      }
+                                                                                                                                    }
+                                                                                                                                  }
+                                                                                                                                }
+                                                                                                                              }
+                                                                                                                            }
+                                                                                                                          }
+                                                                                                                        }
+                                                                                                                      }
+                                                                                                                    }
+                                                                                                                  }
+                                                                                                                }
+                                                                                                              }
+                                                                                                            }
+                                                                                                          }
+                                                                                                        }
+                                                                                                      }
+                                                                                                    }
+                                                                                                  }
+                                                                                                }
+                                                                                              }
+                                                                                            }
+                                                                                          }
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "infinite-within-two-bounds",
+      "description": "Two bounds leave no infinity to admit.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0,
+                  "max": 1.0,
+                  "infinite": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "infinite_unused",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "infinite-with-values",
+      "description": "The listed values are finite.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "values": [
+                    1.0
+                  ],
+                  "infinite": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "infinite_unused",
+            "path": "/types/0/fields/0/type"
+          }
+        ]
+      }
+    },
+    {
+      "id": "infinite-within-one-bound",
+      "description": "The range ends at infinity.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0,
+                  "infinite": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "nan-with-bounds-and-values",
+      "description": "NaN is outside the bounds and the values.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "x",
+                "type": {
+                  "kind": "double",
+                  "min": 0.0,
+                  "max": 3.0,
+                  "values": [
+                    1.0
+                  ],
+                  "nan": true
+                },
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
       }
     }
   ]

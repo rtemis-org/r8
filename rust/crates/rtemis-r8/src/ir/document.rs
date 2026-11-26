@@ -3,13 +3,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::decl::{EnumDef, ImplDef, StructDef, TraitDef};
+use super::decl::{EnumDef, FunctionDef, ImplDef, StructDef, TableDef, TraitDef};
 use crate::name::Name;
 
 /// The version of the IR document format that this crate reads and writes.
 pub const IR_VERSION: u32 = 1;
 
-/// A struct or an enum.
+/// A struct, an enum, or a table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -18,6 +18,8 @@ pub enum TypeDef {
     Struct(StructDef),
     /// An enum.
     Enum(EnumDef),
+    /// A table.
+    Table(TableDef),
 }
 
 impl TypeDef {
@@ -26,6 +28,16 @@ impl TypeDef {
         match self {
             TypeDef::Struct(s) => &s.name,
             TypeDef::Enum(e) => &e.name,
+            TypeDef::Table(t) => &t.name,
+        }
+    }
+
+    /// The declared version.
+    pub fn version(&self) -> u32 {
+        match self {
+            TypeDef::Struct(s) => s.version,
+            TypeDef::Enum(e) => e.version,
+            TypeDef::Table(t) => t.version,
         }
     }
 }
@@ -42,7 +54,7 @@ pub struct IrDocument {
     /// The namespace the declarations belong to.
     pub namespace: Name,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    /// The structs and enums.
+    /// The structs, the enums, and the tables.
     pub types: Vec<TypeDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// The traits.
@@ -50,6 +62,9 @@ pub struct IrDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// The impls.
     pub impls: Vec<ImplDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The functions.
+    pub functions: Vec<FunctionDef>,
 }
 
 /// Why a document could not be read.

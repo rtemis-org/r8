@@ -29,7 +29,7 @@ the spans of its roles, the depth of each line, and a copy of the plain
 lines; text that \code{sub()} or \code{toupper()} changes encodes without roles.
 \code{format()} encodes it as plain text unless its caller names another
 output type, and \code{print()} writes it in the output type that
-\code{r8_output_type()} resolves.
+\code{r8_output_type()} determines.
 }
 \examples{
 t <- r8_text("GBM ", r8_span("trained", "highlight"))

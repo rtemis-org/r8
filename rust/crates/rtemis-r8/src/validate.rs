@@ -3,9 +3,9 @@
 //! [`validate`] checks a value's JSON form against a named type: every field
 //! type, constraint, and rule, collecting every error with a stable code, a
 //! JSON Pointer path, and, for a rule, its ID. A value's JSON form is the form
-//! the codec writes: an absent field is `null` or an omitted member, and the
-//! document envelope (`"$type"`, `"$types"`, `"$provenance"`) is accepted on
-//! the outermost object.
+//! [`crate::canonical::to_document`] writes: an absent field is `null` or an
+//! omitted member, and the document envelope (`"$type"`, `"$types"`, `"$declarations"`, and `"$ir"`) is
+//! accepted on the outermost object.
 //!
 //! [`validate_access`] checks a value in any host form through
 //! [`Access`]; [`validate`] is its JSON instance. Paths are the JSON Pointers
@@ -19,33 +19,68 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::access::{
-    Access, CSC_FORM, Codes, DATE_MAX_DAYS, DATE_MIN_DAYS, Form, Json, MISSING_CODE, POSIXCT_MAX,
-    POSIXCT_MICROS, POSIXCT_MIN, csc_well_formed,
+    Access, CSC_FORM, Codes, DATE_MAX_DAYS, DATE_MIN_DAYS, Form, Json, MISSING_CODE,
+    POSIXCT_MICROS, Unnamed, csc_well_formed,
 };
 use crate::ir::{
-    CharacterType, DoubleType, FieldDef, FieldType, IntegerType, RuleDef, TypeDef, VariantShape,
+    CharacterType, DoubleType, FieldDef, FieldType, IntegerType, RuleDef, TableDef, TypeDef,
+    VariantKind,
 };
 use crate::name::{Name, QualifiedName};
-use crate::rules::{CompiledRule, Outcome, TypeLookup};
+use crate::problem::{Lit, Problem, Segment, listed};
+use crate::rules::{CompiledRule, Outcome, RowRule, Shown, TypeLookup};
 
 /// A problem in a value.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ValueError {
     /// A stable code, such as `missing_field`.
     pub code: &'static str,
     /// A JSON Pointer into the value's JSON form.
     pub path: String,
-    /// The ID of the violated rule, for `rule_violation` and `rule_error`.
+    /// The ID of the violated rule, for `rule_violation` and `rule_error`,
+    /// when the rule has one.
     pub rule: Option<Name>,
+    /// The violated rule's 0-based position among its scope's rules, for
+    /// `rule_violation` and `rule_error`.
+    pub rule_index: Option<usize>,
     /// The message.
     pub message: String,
+    /// The values a violated rule read, for the first violations of each
+    /// rule ([`DIAGNOSED`]); `None` for other problems.
+    pub diagnosis: Option<Box<crate::rules::Diagnosis>>,
+    /// The path as typed segments, from which a host writes it in its own
+    /// syntax; `path` is their JSON Pointer.
+    pub segments: Vec<crate::problem::Segment>,
+    /// What the value fails, for a host to write its message.
+    pub problem: Option<crate::problem::Problem>,
+    /// The value found: bounded in size, and withheld for a `sensitive` field.
+    pub found: Option<crate::rules::Shown>,
+    /// The nearest allowed name or value.
+    pub suggestion: Option<String>,
+}
+
+/// The number of violations of one rule in one validation that carry a
+/// diagnosis.
+pub const DIAGNOSED: usize = 5;
+
+/// A diagnosis with its rule's expressions, as declared.
+pub fn diagnosis(r: &RuleDef, mut d: crate::rules::Diagnosis) -> Box<crate::rules::Diagnosis> {
+    d.invariant = Some(r.invariant.clone());
+    d.when = r.when.clone();
+    Box::new(d)
 }
 
 /// The range of `type_integer()`: `i32::MIN` is R's `NA_integer_`.
 const INT_MIN: i64 = -2_147_483_647;
 const INT_MAX: i64 = 2_147_483_647;
 
-const ENVELOPE: [&str; 3] = ["$type", "$types", "$provenance"];
+/// The deepest nesting of a value: of named types, `vec()`, maps, and the lists of
+/// a `type_json()` value. A document of a value of this depth reads within the
+/// 128 levels of a JSON parser's recursion limit, and the stack holds every walk of
+/// the value.
+pub const MAX_NESTING: u32 = 100;
+
+const ENVELOPE: [&str; 4] = ["$type", "$types", "$declarations", "$ir"];
 
 /// Compiled rules and patterns, kept between validations.
 ///
@@ -56,6 +91,7 @@ const ENVELOPE: [&str; 3] = ["$type", "$types", "$provenance"];
 pub struct RuleCache {
     patterns: HashMap<String, Option<Regex>>,
     rules: HashMap<usize, Option<Arc<CompiledRule>>>,
+    row_rules: HashMap<usize, Option<Arc<RowRule>>>,
 }
 
 impl RuleCache {
@@ -68,6 +104,7 @@ impl RuleCache {
     /// compiled form depends on its text alone.
     pub fn clear(&mut self) {
         self.rules.clear();
+        self.row_rules.clear();
     }
 
     /// The compiled form of `rule` in the scope of `fields`, compiled on
@@ -88,13 +125,33 @@ impl RuleCache {
             })
             .clone()
     }
+
+    /// The compiled form of `rule`, which the rows of a table of the declared
+    /// columns `columns` satisfy, as [`RuleCache::compiled`] gives a rule's.
+    pub fn compiled_rows<C: crate::ir::Column>(
+        &mut self,
+        rule: &RuleDef,
+        columns: &[C],
+        lookup: &dyn TypeLookup,
+    ) -> Option<Arc<RowRule>> {
+        self.row_rules
+            .entry(rule as *const RuleDef as usize)
+            .or_insert_with(|| RowRule::compile(rule, &columns, lookup).ok().map(Arc::new))
+            .clone()
+    }
 }
 
 /// A JSON Pointer, built as a chain and rendered for an error only.
 #[derive(Clone, Copy)]
 enum P<'p> {
     Root(&'p str),
+    /// A field.
     Key(&'p P<'p>, &'p str),
+    /// A key of a `btree_map()`.
+    MapKey(&'p P<'p>, &'p str),
+    /// A table column.
+    Col(&'p P<'p>, &'p str),
+    /// An element of a vector or an `index_map()`.
     Idx(&'p P<'p>, usize),
     /// A JSON Pointer suffix, already escaped.
     Raw(&'p P<'p>, &'p str),
@@ -104,10 +161,28 @@ impl P<'_> {
     fn render(&self) -> String {
         match self {
             P::Root(s) => s.to_string(),
-            P::Key(p, k) => format!("{}/{}", p.render(), esc(k)),
+            P::Key(p, k) | P::MapKey(p, k) | P::Col(p, k) => format!("{}/{}", p.render(), esc(k)),
             P::Idx(p, i) => format!("{}/{i}", p.render()),
             P::Raw(p, s) => format!("{}{s}", p.render()),
         }
+    }
+
+    fn segments(&self) -> Vec<Segment> {
+        let mut out = match self {
+            P::Root(_) => return Vec::new(),
+            P::Key(p, _) | P::MapKey(p, _) | P::Col(p, _) | P::Idx(p, _) | P::Raw(p, _) => {
+                p.segments()
+            }
+        };
+        out.push(match self {
+            P::Root(_) => unreachable!(),
+            P::Key(_, k) => Segment::Field(k.to_string()),
+            P::MapKey(_, k) => Segment::Key(k.to_string()),
+            P::Col(_, k) => Segment::Column(k.to_string()),
+            P::Idx(_, i) => Segment::Element(*i as u64),
+            P::Raw(_, s) => Segment::Form(s.to_string()),
+        });
+        out
     }
 }
 
@@ -151,24 +226,6 @@ fn number_key(x: f64) -> Key {
     })
 }
 
-/// Whether a double satisfies its constraints; the reporting check runs
-/// only when it does not.
-#[inline(always)]
-fn double_ok(c: &DoubleType, x: f64) -> bool {
-    (!c.finite || x.is_finite())
-        && c.in_range(x)
-        && c.values.as_ref().is_none_or(|v| v.contains(&x))
-}
-
-/// Whether a whole number satisfies the integer range and its constraints.
-#[inline(always)]
-fn integer_ok(c: &IntegerType, x: i64) -> bool {
-    (INT_MIN..=INT_MAX).contains(&x) && {
-        let y = x as i32;
-        c.in_range(y) && c.values.as_ref().is_none_or(|v| v.contains(&y))
-    }
-}
-
 /// A chunk of a numeric sequence.
 #[derive(Clone, Copy)]
 enum Chunk<'c> {
@@ -184,19 +241,37 @@ fn chunk_ok(inner: &FieldType, optional: bool, chunk: Chunk) -> bool {
     match (inner, chunk) {
         (FieldType::Double(c), Chunk::F64(s)) => s
             .iter()
-            .all(|&x| na_ok(crate::access::is_na_real(x), double_ok(c, x))),
+            .all(|&x| na_ok(crate::access::is_na_real(x), c.admits(x))),
         (FieldType::Double(c), Chunk::I32(s)) => s
             .iter()
-            .all(|&x| na_ok(x == i32::MIN, double_ok(c, f64::from(x)))),
+            .all(|&x| na_ok(x == i32::MIN, c.admits(f64::from(x)))),
         (FieldType::Integer(c), Chunk::I32(s)) => s
             .iter()
-            .all(|&x| na_ok(x == i32::MIN, integer_ok(c, i64::from(x)))),
+            .all(|&x| na_ok(x == i32::MIN, c.admits(i64::from(x)))),
         (FieldType::Integer(c), Chunk::F64(s)) => s.iter().all(|&x| {
             na_ok(
                 crate::access::is_na_real(x),
-                x.fract() == 0.0 && integer_ok(c, x as i64),
+                x.fract() == 0.0 && c.admits(x as i64),
             )
         }),
+        _ => false,
+    }
+}
+
+/// Whether a scalar type has nothing to check in an item of its own host type:
+/// a logical, an integer, or a double without bounds, of which `NaN` and the
+/// infinities are values.
+fn is_unconstrained(ty: &FieldType) -> bool {
+    match ty {
+        FieldType::Logical => true,
+        FieldType::Integer(c) => *c == IntegerType::default(),
+        FieldType::Double(c) => {
+            *c == DoubleType {
+                infinite: true,
+                nan: true,
+                ..Default::default()
+            }
+        }
         _ => false,
     }
 }
@@ -285,7 +360,17 @@ struct Validator<'l, 'c> {
     errors: Vec<ValueError>,
     /// The number of errors found, including those past the limit.
     count: usize,
+    /// The number of errors that are listed.
+    limit: usize,
+    /// The number of elements with an error, in an order in which the errors
+    /// of one element follow one another, and the last such element.
+    elements: u64,
+    last: Option<u64>,
     cache: &'c mut RuleCache,
+    /// The depth of `sensitive` fields around the value being checked.
+    sensitive: u32,
+    /// The nesting of the value being checked.
+    nesting: u32,
 }
 
 impl<'l, 'c> Validator<'l, 'c> {
@@ -294,13 +379,24 @@ impl<'l, 'c> Validator<'l, 'c> {
             lookup,
             errors: Vec::new(),
             count: 0,
+            limit: ERROR_LIMIT,
+            elements: 0,
+            last: None,
             cache,
+            sensitive: 0,
+            nesting: 0,
         }
     }
 
     fn push(&mut self, e: ValueError) {
         self.count += 1;
-        if self.errors.len() < ERROR_LIMIT {
+        if let Some(Segment::Element(i)) = e.segments.last()
+            && self.last != Some(*i)
+        {
+            self.last = Some(*i);
+            self.elements += 1;
+        }
+        if self.errors.len() < self.limit {
             self.errors.push(e);
         }
     }
@@ -311,9 +407,12 @@ impl<'l, 'c> Validator<'l, 'c> {
                 code: "error_limit",
                 path: String::new(),
                 rule: None,
+                rule_index: None,
                 message: format!(
                     "the value has more than {ERROR_LIMIT} errors; the first {ERROR_LIMIT} are listed"
                 ),
+                diagnosis: None,
+                ..Default::default()
             };
             self.errors.push(limit);
         }
@@ -323,29 +422,55 @@ impl<'l, 'c> Validator<'l, 'c> {
 
 impl<'l> Validator<'l, '_> {
     fn error(&mut self, code: &'static str, path: &P, message: String) {
+        self.report(code, path, Problem::Text(message), None, None);
+    }
+
+    /// A problem at `path`: its parts, and its message in the host-neutral
+    /// syntax. A value found within a `sensitive` field is withheld.
+    fn report(
+        &mut self,
+        code: &'static str,
+        path: &P,
+        problem: Problem,
+        found: Option<Shown>,
+        suggestion: Option<String>,
+    ) {
+        let segments = path.segments();
+        let found = if self.sensitive > 0 {
+            found.map(|_| Shown::Sensitive)
+        } else {
+            found
+        };
+        let message = problem.sentence(
+            &segments,
+            found.as_ref(),
+            suggestion.as_deref(),
+            &crate::problem::Neutral,
+        );
         self.push(ValueError {
             code,
             path: path.render(),
-            rule: None,
             message,
+            segments,
+            problem: Some(problem),
+            found,
+            suggestion,
+            ..ValueError::default()
         });
     }
 
     fn form(&mut self, f: Form, path: &P) {
-        self.push(ValueError {
-            code: f.code,
-            path: format!("{}{}", path.render(), f.suffix),
-            rule: None,
-            message: f.message,
-        });
+        let suffix = P::Raw(path, &f.suffix);
+        let p = if f.suffix.is_empty() { *path } else { suffix };
+        let (problem, found) = match f.detail {
+            Some(d) => *d,
+            None => (Problem::Text(f.message), None),
+        };
+        self.report(f.code, &p, problem, found, None);
     }
 
     fn missing(&mut self, path: &P) {
-        self.error(
-            "missing_value",
-            path,
-            "a value is required here".to_string(),
-        );
+        self.report("missing_value", path, Problem::Present, None, None);
     }
 
     fn regex(&mut self, pattern: &str) -> Option<&Regex> {
@@ -360,6 +485,35 @@ impl<'l> Validator<'l, '_> {
     /// Checks a value of a field type. An absent value is reported as a
     /// missing value; callers handle absence where the type admits it.
     fn value<'a, A: Access<'a>>(&mut self, ft: &FieldType, v: A, path: &P) {
+        crate::progress::tick();
+        match ft {
+            FieldType::Vec { .. }
+            | FieldType::BtreeMap { .. }
+            | FieldType::IndexMap { .. }
+            | FieldType::Named { .. }
+            | FieldType::Dyn { .. }
+            | FieldType::Subtype { .. }
+                if self.nesting == MAX_NESTING =>
+            {
+                // The path has as many segments as the limit.
+                self.form(crate::access::too_deep(), &P::Root(""));
+            }
+            FieldType::Vec { .. }
+            | FieldType::BtreeMap { .. }
+            | FieldType::IndexMap { .. }
+            | FieldType::Named { .. }
+            | FieldType::Dyn { .. }
+            | FieldType::Subtype { .. } => {
+                self.nesting += 1;
+                self.value_of(ft, v, path);
+                self.nesting -= 1;
+            }
+            _ => self.value_of(ft, v, path),
+        }
+    }
+
+    /// [`Validator::value`] of a type whose nesting is counted.
+    fn value_of<'a, A: Access<'a>>(&mut self, ft: &FieldType, v: A, path: &P) {
         match ft {
             FieldType::Option { inner, .. } => {
                 if !v.is_absent() {
@@ -373,12 +527,12 @@ impl<'l> Validator<'l, '_> {
                 }
             }
             FieldType::Integer(c) => match v.integer() {
-                Ok(x) if integer_ok(c, x) => {}
+                Ok(x) if c.admits(x) => {}
                 Ok(x) => self.integer(c, x, path),
                 Err(f) => self.form(f, path),
             },
             FieldType::Double(c) => match v.double() {
-                Ok(x) if double_ok(c, x) => {}
+                Ok(x) if c.admits(x) => {}
                 Ok(x) => self.double(c, x, path),
                 Err(f) => self.form(f, path),
             },
@@ -421,28 +575,32 @@ impl<'l> Validator<'l, '_> {
                         let n = s.fields.len() as u32;
                         self.dense(element, v, path, Some([None, Some(n)]), None);
                     }
-                    _ => self.unresolved(of, path),
+                    _ => self.unknown_type(of, path),
                 }
             }
             FieldType::Table {
                 columns,
                 open,
                 rules,
-            } => self.table(columns, *open, rules, v, path),
+            } => {
+                self.table(columns, *open, rules, v, path);
+            }
             FieldType::TableOf { of } => {
                 let lookup = self.lookup;
                 match lookup.find(of) {
-                    Some(TypeDef::Struct(s)) => self.table(&s.fields, false, &[], v, path),
-                    _ => self.unresolved(of, path),
+                    Some(TypeDef::Struct(s)) => {
+                        self.table(&s.fields, false, &[], v, path);
+                    }
+                    _ => self.unknown_type(of, path),
                 }
             }
             FieldType::Json => {
-                if let Err(f) = v.json() {
+                if let Err(f) = v.json(MAX_NESTING - self.nesting) {
                     self.form(f, path);
                 }
             }
-            FieldType::R { .. } => {
-                if let Err(f) = v.runtime() {
+            FieldType::HostClass { host, class, .. } => {
+                if let Err(f) = v.host_class(host, class) {
                     self.form(f, path);
                 }
             }
@@ -459,10 +617,11 @@ impl<'l> Validator<'l, '_> {
                 self.lengths(n, *min_length, *max_length, path);
                 self.sequence(element, v, n, path, false, *unique);
             }
-            FieldType::Hashmap { value, keys } => self.map(value, keys, false, v, path),
-            FieldType::OrderedMap { value, keys } => self.map(value, keys, true, v, path),
+            FieldType::BtreeMap { value, keys } => self.map(value, keys, false, v, path),
+            FieldType::IndexMap { value, keys } => self.map(value, keys, true, v, path),
             FieldType::Named { name } => self.named(name, v, path, &[]),
             FieldType::Dyn { r#trait } => self.dynamic(r#trait, v, path),
+            FieldType::Subtype { of } => self.subtype(of, v, path),
         }
     }
 
@@ -495,27 +654,38 @@ impl<'l> Validator<'l, '_> {
         // A sequence held as one array, or read by region in chunks, is
         // scanned first; items are read one by one only when the scan finds a
         // problem.
-        if !unique && scan_clean(inner, optional, v, n) {
+        if !unique
+            && ((optional && is_unconstrained(inner) && v.holds_only(inner))
+                || scan_clean(inner, optional, v, n))
+        {
             return;
         }
         let mut seen: HashSet<Key> = HashSet::new();
-        let mut dup = |this: &mut Self, i: usize, k: Key, shown: &dyn Fn() -> String| {
+        let mut dup = |this: &mut Self, i: usize, k: Key, shown: &dyn Fn() -> Shown| {
             if !seen.insert(k) {
-                this.error(
+                let found = shown();
+                let text = if this.sensitive > 0 {
+                    crate::problem::Syntax::shown(&crate::problem::Neutral, &Shown::Sensitive)
+                } else {
+                    crate::problem::Syntax::shown(&crate::problem::Neutral, &found)
+                };
+                this.report(
                     "not_unique",
                     &P::Idx(path, i),
-                    format!("{} appears more than once", shown()),
+                    Problem::Text(format!("{text} appears more than once")),
+                    Some(found),
+                    None,
                 );
             }
         };
         match inner {
             FieldType::Double(c) => v.each_double(n, |i, r| match r {
                 Ok(Some(x)) => {
-                    if !double_ok(c, x) {
+                    if !c.admits(x) {
                         self.double(c, x, &P::Idx(path, i));
                     }
                     if unique {
-                        dup(self, i, number_key(x), &|| x.to_string());
+                        dup(self, i, number_key(x), &|| Shown::number(x));
                     }
                 }
                 Ok(None) if optional => {}
@@ -524,11 +694,11 @@ impl<'l> Validator<'l, '_> {
             }),
             FieldType::Integer(c) => v.each_integer(n, |i, r| match r {
                 Ok(Some(x)) => {
-                    if !integer_ok(c, x) {
+                    if !c.admits(x) {
                         self.integer(c, x, &P::Idx(path, i));
                     }
                     if unique {
-                        dup(self, i, number_key(x as f64), &|| x.to_string());
+                        dup(self, i, number_key(x as f64), &|| Shown::number(x as f64));
                     }
                 }
                 Ok(None) if optional => {}
@@ -538,7 +708,7 @@ impl<'l> Validator<'l, '_> {
             FieldType::Logical => v.each_logical(n, |i, r| match r {
                 Ok(Some(b)) => {
                     if unique {
-                        dup(self, i, Key::B(b), &|| b.to_string());
+                        dup(self, i, Key::B(b), &|| Shown::Bool(b));
                     }
                 }
                 Ok(None) if optional => {}
@@ -549,7 +719,7 @@ impl<'l> Validator<'l, '_> {
                 Ok(Some(s)) => {
                     self.character(c, &s, &P::Idx(path, i));
                     if unique {
-                        let shown = format!("\"{s}\"");
+                        let shown = Shown::string(&s);
                         dup(self, i, Key::S(s.into_owned()), &|| shown.clone());
                     }
                 }
@@ -563,7 +733,9 @@ impl<'l> Validator<'l, '_> {
                         self.date(d, &P::Idx(path, i));
                     }
                     if unique {
-                        dup(self, i, Key::N(d as u64), &|| crate::codec::date_text(d));
+                        dup(self, i, Key::N(d as u64), &|| {
+                            Shown::Date(crate::canonical::date_text(d))
+                        });
                     }
                 }
                 Ok(None) if optional => {}
@@ -577,7 +749,7 @@ impl<'l> Validator<'l, '_> {
                     }
                     if unique {
                         dup(self, i, Key::N(m as u64), &|| {
-                            crate::codec::datetime_text(m)
+                            Shown::DateTime(crate::canonical::datetime_text(m))
                         });
                     }
                 }
@@ -610,10 +782,13 @@ impl<'l> Validator<'l, '_> {
             e.value(element, item);
             let key: [u8; 32] = e.w.out.finalize().into();
             if let Some(&first) = seen.get(&key) {
-                self.error(
+                let first = P::Idx(path, first).segments();
+                self.report(
                     "not_unique",
                     &P::Idx(path, i),
-                    format!("the item at index {i} equals the item at index {first}"),
+                    Problem::Repeats { first },
+                    None,
+                    None,
                 );
             } else {
                 seen.insert(key, i);
@@ -632,7 +807,7 @@ impl<'l> Validator<'l, '_> {
         if let Err(f) = v.map(value, ordered) {
             return self.form(f, path);
         }
-        let mut seen: HashSet<String> = HashSet::new();
+        let mut seen: HashMap<std::borrow::Cow<'a, str>, usize> = HashMap::new();
         v.each_entry(|i, entry| {
             let at = P::Idx(path, i);
             let (k, x) = match entry {
@@ -641,33 +816,53 @@ impl<'l> Validator<'l, '_> {
             };
             if ordered {
                 let name = P::Raw(&at, "/name");
-                if !seen.insert(k.to_string()) {
-                    self.error("duplicate_key", &name, format!("key `{k}` appears twice"));
+                if let Some(&first) = seen.get(&k) {
+                    let first = P::Raw(&P::Idx(path, first), "/name").segments();
+                    self.report(
+                        "duplicate_key",
+                        &name,
+                        Problem::Repeats { first },
+                        None,
+                        None,
+                    );
+                } else {
+                    seen.insert(k.clone(), i);
                 }
                 self.key(keys, &k, &name);
                 self.value(value, x, &P::Raw(&at, "/value"));
             } else {
-                let p = P::Key(path, &k);
+                let p = P::MapKey(path, &k);
+                if seen.insert(k.clone(), i).is_some() {
+                    self.error(
+                        "duplicate_key",
+                        &p,
+                        format!("two entries are named `{k}`; the keys of a map are distinct"),
+                    );
+                }
                 self.key(keys, &k, &p);
                 self.value(value, x, &p);
             }
         });
     }
 
-    fn unresolved(&mut self, name: &QualifiedName, path: &P) {
-        self.error(
-            "unresolved_type",
+    fn unknown_type(&mut self, name: &QualifiedName, path: &P) {
+        self.report(
+            "unknown_type",
             path,
-            format!("`{name}` is not registered"),
+            Problem::UnknownType(name.to_string()),
+            None,
+            None,
         );
     }
 
     fn integer(&mut self, c: &IntegerType, x: i64, path: &P) {
         if !(INT_MIN..=INT_MAX).contains(&x) {
-            return self.error(
+            return self.report(
                 "out_of_range",
                 path,
-                format!("{x} is outside the integer range, -2147483647 to 2147483647"),
+                Problem::IntegerRange,
+                Some(Shown::number(x as f64)),
+                None,
             );
         }
         let x = x as i32;
@@ -682,25 +877,38 @@ impl<'l> Validator<'l, '_> {
         if let Some(values) = &c.values
             && !values.contains(&x)
         {
-            self.error("not_in_enum", path, format!("{x} is not one of {values:?}"));
+            let (values, total) = listed(values);
+            let values = values.into_iter().map(|v| Lit::Num(f64::from(v))).collect();
+            self.report(
+                "not_in_values",
+                path,
+                Problem::OneOf { values, total },
+                Some(Shown::number(f64::from(x))),
+                None,
+            );
         }
     }
 
     fn double(&mut self, c: &DoubleType, x: f64, path: &P) {
-        if c.finite && !x.is_finite() {
-            let shown = if x.is_nan() {
-                "NaN"
-            } else if x > 0.0 {
-                "Infinity"
-            } else {
-                "-Infinity"
-            };
-            return self.error(
+        if x.is_nan() {
+            if !c.nan {
+                self.report(
+                    "nan_value",
+                    path,
+                    Problem::Number,
+                    Some(Shown::number(x)),
+                    None,
+                );
+            }
+            return;
+        }
+        if x.is_infinite() && !c.infinite {
+            return self.report(
                 "not_finite",
                 path,
-                format!(
-                    "`{shown}` is not finite; declare `type_double(finite = FALSE)` to admit it"
-                ),
+                Problem::Finite,
+                Some(Shown::number(x)),
+                None,
             );
         }
         self.bounds(
@@ -714,11 +922,19 @@ impl<'l> Validator<'l, '_> {
         if let Some(values) = &c.values
             && !values.contains(&x)
         {
-            self.error("not_in_enum", path, format!("{x} is not one of {values:?}"));
+            let (values, total) = listed(values);
+            let values = values.into_iter().map(Lit::Num).collect();
+            self.report(
+                "not_in_values",
+                path,
+                Problem::OneOf { values, total },
+                Some(Shown::number(x)),
+                None,
+            );
         }
     }
 
-    /// Bounds; `NaN` satisfies none.
+    /// Bounds.
     fn bounds(
         &mut self,
         x: f64,
@@ -729,55 +945,67 @@ impl<'l> Validator<'l, '_> {
         path: &P,
     ) {
         if let Some(m) = min
-            && (x.is_nan() || x < m)
+            && x < m
         {
-            self.error("below_min", path, format!("{x} is below the minimum {m}"));
+            self.report(
+                "below_min",
+                path,
+                Problem::AtLeast(Lit::Num(m)),
+                Some(Shown::number(x)),
+                None,
+            );
         }
         if let Some(m) = max
-            && (x.is_nan() || x > m)
+            && x > m
         {
-            self.error("above_max", path, format!("{x} is above the maximum {m}"));
+            self.report(
+                "above_max",
+                path,
+                Problem::AtMost(Lit::Num(m)),
+                Some(Shown::number(x)),
+                None,
+            );
         }
         if let Some(m) = emin
-            && (x.is_nan() || x <= m)
+            && x <= m
         {
-            self.error("below_min", path, format!("{x} is not above {m}"));
+            self.report(
+                "below_min",
+                path,
+                Problem::Above(Lit::Num(m)),
+                Some(Shown::number(x)),
+                None,
+            );
         }
         if let Some(m) = emax
-            && (x.is_nan() || x >= m)
+            && x >= m
         {
-            self.error("above_max", path, format!("{x} is not below {m}"));
+            self.report(
+                "above_max",
+                path,
+                Problem::Below(Lit::Num(m)),
+                Some(Shown::number(x)),
+                None,
+            );
         }
     }
 
     fn character(&mut self, c: &CharacterType, s: &str, path: &P) {
         if s.contains('\0') {
-            return self.error(
-                "nul_character",
-                path,
-                "a string cannot hold U+0000, which R cannot represent".to_string(),
-            );
+            return self.report("nul_character", path, Problem::NoNul, None, None);
         }
         self.string_constraints(c, s, path);
     }
 
     fn date(&mut self, d: i64, path: &P) {
         if !(DATE_MIN_DAYS..=DATE_MAX_DAYS).contains(&d) {
-            self.error(
-                "invalid_date",
-                path,
-                format!("{d} days since 1970-01-01 is outside the years 0000 to 9999"),
-            );
+            self.report("invalid_date", path, Problem::DateRange, None, None);
         }
     }
 
     fn datetime(&mut self, m: i64, path: &P) {
         if !(-POSIXCT_MICROS..=POSIXCT_MICROS).contains(&m) {
-            self.error(
-                "invalid_datetime",
-                path,
-                format!("the date-time is outside {POSIXCT_MIN} to {POSIXCT_MAX}"),
-            );
+            self.report("invalid_posixct", path, Problem::DateTimeRange, None, None);
         }
     }
 
@@ -786,26 +1014,38 @@ impl<'l> Validator<'l, '_> {
             && let Some(re) = self.regex(p)
             && !re.is_match(s)
         {
-            self.error(
+            let p = p.to_string();
+            self.report(
                 "pattern_mismatch",
                 path,
-                format!("`{s}` does not match `{p}`"),
+                Problem::Pattern(p),
+                Some(Shown::string(s)),
+                None,
             );
         }
         if let Some(values) = &c.values
             && !values.iter().any(|x| &**x == s)
         {
-            self.error(
-                "not_in_enum",
+            let suggestion =
+                crate::name::nearest(s, values.iter().map(|v| &**v)).map(str::to_string);
+            let (values, total) = listed(values);
+            let values = values
+                .into_iter()
+                .map(|v| Lit::Str(v.to_string()))
+                .collect();
+            self.report(
+                "not_in_values",
                 path,
-                format!("`{s}` is not one of {values:?}"),
+                Problem::OneOf { values, total },
+                Some(Shown::string(s)),
+                suggestion,
             );
         }
     }
 
     fn key(&mut self, keys: &CharacterType, k: &str, path: &P) {
         if k.is_empty() {
-            return self.error("invalid_key", path, "a map key is not empty".to_string());
+            return self.report("invalid_key", path, Problem::NonEmptyKey, None, None);
         }
         self.string_constraints(keys, k, path);
     }
@@ -814,19 +1054,23 @@ impl<'l> Validator<'l, '_> {
         if let Some(m) = min
             && (n as u64) < m
         {
-            self.error(
+            self.report(
                 "length_below_min",
                 path,
-                format!("length {n} is below the minimum {m}"),
+                Problem::LengthAtLeast(m),
+                Some(Shown::Length(n as u64)),
+                None,
             );
         }
         if let Some(m) = max
             && (n as u64) > m
         {
-            self.error(
+            self.report(
                 "length_above_max",
                 path,
-                format!("length {n} is above the maximum {m}"),
+                Problem::LengthAtMost(m),
+                Some(Shown::Length(n as u64)),
+                None,
             );
         }
     }
@@ -861,14 +1105,19 @@ impl<'l> Validator<'l, '_> {
         };
         if declared.is_none() {
             let lp = P::Raw(path, "/levels");
-            let mut seen: HashSet<&str> = HashSet::new();
+            let mut seen: HashMap<&str, usize> = HashMap::new();
             for (i, l) in f.levels.iter().enumerate() {
-                if !seen.insert(l) {
-                    self.error(
+                if let Some(&first) = seen.get(&**l) {
+                    let first = P::Idx(&lp, first).segments();
+                    self.report(
                         "not_unique",
                         &P::Idx(&lp, i),
-                        format!("\"{l}\" appears more than once"),
+                        Problem::Repeats { first },
+                        None,
+                        None,
                     );
+                } else {
+                    seen.insert(l, i);
                 }
             }
         }
@@ -904,29 +1153,41 @@ impl<'l> Validator<'l, '_> {
                     let i = start + j;
                     match c {
                         MISSING_CODE if cells_optional => {}
-                        MISSING_CODE if declared.is_some() => self.error(
+                        MISSING_CODE if declared.is_some() => self.report(
                             "type_mismatch",
                             &P::Idx(cell_base, i),
-                            "expected a level, found null".to_string(),
+                            Problem::Present,
+                            None,
+                            None,
                         ),
                         0 if reported => {}
                         c if (c as u32).wrapping_sub(1) < k as u32 => {
                             if !known[c as usize - 1] {
-                                self.error(
+                                let found = &*f.levels[c as usize - 1];
+                                let all = declared.unwrap_or_default();
+                                let suggestion =
+                                    crate::name::nearest(found, all.iter().map(|l| &**l))
+                                        .map(str::to_string);
+                                let (levels, total) = listed(all);
+                                let levels = levels
+                                    .into_iter()
+                                    .map(|l| Lit::Str(l.to_string()))
+                                    .collect();
+                                self.report(
                                     "not_a_level",
                                     &P::Idx(cell_base, i),
-                                    format!(
-                                        "`{}` is not one of the levels {:?}",
-                                        f.levels[c as usize - 1],
-                                        declared.unwrap_or_default()
-                                    ),
+                                    Problem::Level { levels, total },
+                                    Some(Shown::string(found)),
+                                    suggestion,
                                 );
                             }
                         }
-                        _ => self.error(
+                        _ => self.report(
                             "invalid_code",
                             &P::Idx(cell_base, i),
-                            format!("a code is an integer from 1 to {k}"),
+                            Problem::Code(k as u64),
+                            Some(Shown::number(f64::from(c))),
+                            None,
                         ),
                     }
                 }
@@ -981,7 +1242,7 @@ impl<'l> Validator<'l, '_> {
                 format!("shape {shape:?} differs from the declared {dim:?}"),
             );
         }
-        let n: u64 = shape.iter().product();
+        let n = shape.iter().fold(1u64, |n, &d| n.saturating_mul(d));
         let data = P::Raw(path, "/data");
         if d.len as u64 != n {
             return self.error(
@@ -1025,156 +1286,277 @@ impl<'l> Validator<'l, '_> {
         self.sequence(element, s.data, s.len, &P::Raw(path, "/data"), false, false);
     }
 
-    fn table<'a, A: Access<'a>>(
+    /// A value of the table `name`; `envelope` holds the members of a document
+    /// beside its value.
+    fn named_table<'a, A: Access<'a>>(&mut self, def: &TableDef, v: A, path: &P) {
+        let before = self.count;
+        let Some(extra) = self.table(&def.columns, def.open, &def.rules, v, path) else {
+            return;
+        };
+        if self.count > before {
+            return;
+        }
+        for f in v.column_order(&extra) {
+            self.form(f, path);
+        }
+        for k in &extra {
+            match v.column_facts(k) {
+                Ok(facts) => {
+                    if let Some(unit) = &facts.unit
+                        && (unit.is_empty() || unit.trim() != unit)
+                    {
+                        self.error(
+                            "unit_blank",
+                            &P::Col(path, k),
+                            "a unit is not empty and has no surrounding spaces".to_string(),
+                        );
+                    }
+                }
+                Err(f) => self.form(f, path),
+            }
+        }
+    }
+
+    /// A table; the names of its extra columns, unless it does not read.
+    fn table<'a, A: Access<'a>, C: crate::ir::Column>(
         &mut self,
-        columns: &[FieldDef],
+        columns: &[C],
         open: bool,
         rules: &[RuleDef],
         v: A,
         path: &P,
-    ) {
+    ) -> Option<Vec<std::borrow::Cow<'a, str>>> {
         let t = match v.table(columns, open) {
             Ok(t) => t,
-            Err(f) => return self.form(f, path),
+            Err(f) => {
+                self.form(f, path);
+                return None;
+            }
         };
         let before = self.count;
         for f in t.problems {
             self.form(f, path);
         }
+        if let Some(k) = crate::tree::repeated(t.columns.iter().map(|(k, _)| k.as_ref())) {
+            self.error(
+                "duplicate_column",
+                path,
+                format!("two columns are named `{k}`; the columns of a table have distinct names"),
+            );
+            return None;
+        }
         let n = t.rows;
-        let present = |name: &str| t.columns.iter().find(|(k, _)| k == name).map(|(_, c)| *c);
-        let mut all_columns: Vec<(FieldDef, A)> = Vec::new();
+        // The columns by name, for a table of more than a few.
+        let index: HashMap<&str, A> = t.columns.iter().map(|(k, c)| (k.as_ref(), *c)).collect();
+        let declared: HashSet<&str> = columns.iter().map(|c| c.field().name.as_str()).collect();
+        // Each column's name, its type, whether its values are distinct, and its
+        // cells.
+        let mut cells: Vec<(&str, std::borrow::Cow<'_, FieldType>, bool, A)> = Vec::new();
         for c in columns {
-            match present(c.name.as_str()) {
-                Some(cells) => all_columns.push((c.clone(), cells)),
-                None if c.optional => {}
-                None => self.error(
+            let f = c.field();
+            match index.get(f.name.as_str()) {
+                Some(x) => cells.push((
+                    f.name.as_str(),
+                    std::borrow::Cow::Borrowed(&f.ty),
+                    c.unique(),
+                    *x,
+                )),
+                None if !c.required() => {}
+                None => self.report(
                     "missing_column",
-                    &P::Key(path, c.name.as_str()),
-                    format!("column `{}` is required", c.name),
+                    &P::Col(path, f.name.as_str()),
+                    Problem::Required,
+                    None,
+                    None,
                 ),
             }
         }
-        for (k, cells) in &t.columns {
-            if columns.iter().any(|c| c.name.as_str() == k.as_ref()) {
+        let mut extra = Vec::new();
+        for (k, x) in &t.columns {
+            if declared.contains(k.as_ref()) {
                 continue;
             }
             if !open {
-                self.error(
+                let suggestion =
+                    crate::name::nearest(k, columns.iter().map(|c| c.field().name.as_str()))
+                        .map(str::to_string);
+                let names = if columns.len() <= crate::problem::LISTED_NAMES {
+                    columns.iter().map(|c| c.field().name.to_string()).collect()
+                } else {
+                    Vec::new()
+                };
+                self.report(
                     "unknown_column",
-                    &P::Key(path, k),
-                    format!("`{k}` is not a column of this table"),
+                    &P::Col(path, k),
+                    Problem::UnknownColumn { names },
+                    None,
+                    suggestion,
                 );
                 continue;
             }
-            match (v.extra_column_type(k), Name::new(k.to_string())) {
-                (_, Err(e)) => self.error("unknown_column", &P::Key(path, k), e.to_string()),
-                (Ok(ft), Ok(name)) if crate::ir::is_column_type(&ft) => all_columns.push((
-                    FieldDef {
-                        name,
-                        ty: ft,
-                        default: None,
-                        description: Box::default(),
-                        sensitive: false,
-                        unit: None,
-                        external: false,
-                        unique: false,
-                        optional: false,
-                        inherited_from: None,
-                        extensions: Default::default(),
-                    },
-                    *cells,
-                )),
-                (Ok(_), Ok(_)) => self.error(
+            if !crate::access::is_column_name(k) {
+                self.error(
+                    "column_name",
+                    path,
+                    format!("`{k}` is not a name of a column: a name is not empty and does not begin with `$`"),
+                );
+                continue;
+            }
+            match v.extra_column_type(k, *x) {
+                Ok(ft) if crate::ir::is_column_type(&ft) => {
+                    extra.push(k.clone());
+                    cells.push((k.as_ref(), std::borrow::Cow::Owned(ft), false, *x));
+                }
+                Ok(_) => self.error(
                     "column_type",
-                    &P::Key(&P::Raw(path, "/$columns"), k),
+                    &P::Raw(&P::Raw(path, "/$columns"), &format!("/{}", esc(k))),
                     format!("column `{k}` of an open table needs its type in `$columns`: a scalar, a factor, or option() of one"),
                 ),
-                (Err(f), Ok(_)) => self.form(f, path),
+                Err(f) => self.form(f, path),
             }
         }
-        for (c, cells) in &all_columns {
-            let p = P::Key(path, c.name.as_str());
-            let (inner, optional) = unwrap_option(&c.ty);
-            if let FieldType::Factor { levels, ordered } = inner {
-                if let Some(len) = self.factor(levels.as_deref(), *ordered, optional, *cells, &p)
-                    && len as u64 != n
-                {
-                    self.error(
-                        "column_length",
-                        &p,
-                        format!(
-                            "column `{}` has {len} cells, the table has {n} rows",
-                            c.name
-                        ),
-                    );
-                }
-                continue;
-            }
-            let len = match cells.vec(inner) {
-                Ok(len) => len,
-                Err(f) => {
-                    self.form(f, &p);
-                    continue;
-                }
-            };
-            if len as u64 != n {
-                self.error(
-                    "column_length",
-                    &p,
-                    format!(
-                        "column `{}` has {len} cells, the table has {n} rows",
-                        c.name
-                    ),
-                );
-                continue;
-            }
-            self.sequence(inner, *cells, len, &p, optional, c.unique);
+        for (name, ty, unique, cells) in &cells {
+            let p = P::Col(path, name);
+            self.cells(ty, *unique, *cells, n, &p);
         }
         if !rules.is_empty() && self.count == before {
-            let scope: Vec<FieldDef> = all_columns.into_iter().map(|(c, _)| c).collect();
-            for r in rules {
-                if let Some(rule) = self.compiled(r, &scope) {
-                    match rule.check_rows_access(v, n as usize, &scope, self.lookup) {
-                        Ok(paths) => {
-                            for p in paths {
-                                self.violation(&rule, &format!("{}{p}", path.render()));
+            for (ri, r) in rules.iter().enumerate() {
+                let Some(rule) = self.cache.compiled_rows(r, columns, self.lookup) else {
+                    self.uncompiled(ri);
+                    continue;
+                };
+                match rule.failing(v, n as usize) {
+                    Ok(rows) => {
+                        for (k, (row, error)) in rows.into_iter().enumerate() {
+                            let mut segments = path.segments();
+                            segments.extend(rule.path(row));
+                            let d = (k < DIAGNOSED)
+                                .then(|| diagnosis(r, rule.diagnose(v, n as usize, row)));
+                            match error {
+                                Some(e) => self.push(ValueError {
+                                    code: "rule_error",
+                                    path: crate::problem::pointer(&segments),
+                                    segments,
+                                    rule: rule.id.clone(),
+                                    rule_index: Some(ri),
+                                    message: e.to_string(),
+                                    diagnosis: d.map(|mut d| {
+                                        d.operands.clear();
+                                        d
+                                    }),
+                                    ..Default::default()
+                                }),
+                                None => {
+                                    self.violation(&rule.id, &rule.message, ri, segments, d);
+                                }
                             }
                         }
-                        Err(e) => self.rule_error(&rule, &path.render(), e),
                     }
+                    Err(e) => self.rule_error(&rule.id, ri, &path.render(), e, None),
                 }
             }
         }
+        Some(extra)
     }
 
-    fn compiled(&mut self, r: &RuleDef, scope: &[FieldDef]) -> Option<Arc<CompiledRule>> {
+    /// Checks the cells of a column of `n` rows; `false` where the column is
+    /// not of the type's kind or has another length, so that its cells are not
+    /// read.
+    fn cells<'a, A: Access<'a>>(
+        &mut self,
+        ty: &FieldType,
+        unique: bool,
+        cells: A,
+        n: u64,
+        p: &P,
+    ) -> bool {
+        let (inner, optional) = unwrap_option(ty);
+        let len = if let FieldType::Factor { levels, ordered } = inner {
+            match self.factor(levels.as_deref(), *ordered, optional, cells, p) {
+                Some(len) if len as u64 == n => return true,
+                Some(len) => len,
+                None => return false,
+            }
+        } else {
+            match cells.vec(inner) {
+                Ok(len) if len as u64 == n => {
+                    self.sequence(inner, cells, len, p, optional, unique);
+                    return true;
+                }
+                Ok(len) => len,
+                Err(f) => {
+                    self.form(f, p);
+                    return false;
+                }
+            }
+        };
+        self.report(
+            "column_length",
+            p,
+            Problem::Cells(n),
+            Some(Shown::Length(len as u64)),
+            None,
+        );
+        false
+    }
+
+    fn compiled(
+        &mut self,
+        r: &RuleDef,
+        index: usize,
+        scope: &[FieldDef],
+    ) -> Option<Arc<CompiledRule>> {
         let c = self.cache.compiled(r, scope, self.lookup);
         if c.is_none() {
-            self.error(
-                "rule_invalid",
-                &P::Root(""),
-                format!("rule `{}` does not compile; check the declaration", r.id),
-            );
+            self.uncompiled(index);
         }
         c
     }
 
-    fn violation(&mut self, rule: &CompiledRule, path: &str) {
+    fn uncompiled(&mut self, index: usize) {
+        self.error(
+            "rule_invalid",
+            &P::Root(""),
+            format!("rule {index} does not compile; check the declaration"),
+        );
+    }
+
+    fn violation(
+        &mut self,
+        id: &Option<Name>,
+        message: &Option<String>,
+        index: usize,
+        segments: Vec<Segment>,
+        diagnosis: Option<Box<crate::rules::Diagnosis>>,
+    ) {
         self.push(ValueError {
             code: "rule_violation",
-            path: path.to_string(),
-            rule: Some(rule.id.clone()),
-            message: rule.message.clone(),
+            path: crate::problem::pointer(&segments),
+            segments,
+            rule: id.clone(),
+            rule_index: Some(index),
+            message: message.clone().unwrap_or_default(),
+            diagnosis,
+            ..Default::default()
         });
     }
 
-    fn rule_error(&mut self, rule: &CompiledRule, path: &str, e: String) {
+    fn rule_error(
+        &mut self,
+        id: &Option<Name>,
+        index: usize,
+        path: &str,
+        e: String,
+        diagnosis: Option<Box<crate::rules::Diagnosis>>,
+    ) {
         self.push(ValueError {
             code: "rule_error",
             path: path.to_string(),
-            rule: Some(rule.id.clone()),
+            rule: id.clone(),
+            rule_index: Some(index),
             message: e,
+            diagnosis,
+            ..Default::default()
         });
     }
 
@@ -1182,6 +1564,7 @@ impl<'l> Validator<'l, '_> {
     /// the rules, when the fields themselves hold no error.
     fn object<'a, A: Access<'a>>(
         &mut self,
+        owner: &str,
         fields: &[FieldDef],
         rules: &[RuleDef],
         v: A,
@@ -1197,10 +1580,23 @@ impl<'l> Validator<'l, '_> {
         if !in_order {
             for k in members {
                 if !allowed.contains(&k.as_ref()) && !fields.iter().any(|f| f.name.as_str() == k) {
-                    self.error(
+                    let suggestion =
+                        crate::name::nearest(&k, fields.iter().map(|f| f.name.as_str()))
+                            .map(str::to_string);
+                    let names = if fields.len() <= crate::problem::LISTED_NAMES {
+                        fields.iter().map(|f| f.name.to_string()).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    self.report(
                         "unknown_field",
                         &P::Key(path, &k),
-                        format!("`{k}` is not a field"),
+                        Problem::UnknownField {
+                            of: owner.to_string(),
+                            names,
+                        },
+                        None,
+                        suggestion,
                     );
                 }
             }
@@ -1212,29 +1608,42 @@ impl<'l> Validator<'l, '_> {
                 let admits_absence =
                     matches!(f.ty, FieldType::Option { .. }) || f.default.is_some();
                 if !admits_absence {
-                    self.error(
+                    self.report(
                         "missing_field",
                         &P::Key(path, f.name.as_str()),
-                        format!("field `{}` is required", f.name),
+                        Problem::Required,
+                        None,
+                        None,
                     );
                 }
             } else {
+                self.sensitive += u32::from(f.sensitive);
                 self.value(&f.ty, x, &P::Key(path, f.name.as_str()));
+                self.sensitive -= u32::from(f.sensitive);
             }
         }
         if self.count > before {
             return;
         }
-        for r in rules {
-            if let Some(rule) = self.compiled(r, fields) {
+        for (ri, r) in rules.iter().enumerate() {
+            if let Some(rule) = self.compiled(r, ri, fields) {
                 match rule.check_access(v, fields, self.lookup) {
                     Ok(Outcome::Holds) => {}
                     Ok(Outcome::Violated(paths)) => {
-                        for p in paths {
-                            self.violation(&rule, &format!("{}{p}", path.render()));
+                        for (k, p) in paths.into_iter().enumerate() {
+                            let d = (k < DIAGNOSED).then(|| {
+                                diagnosis(r, rule.diagnose_access(v, fields, self.lookup, &p))
+                            });
+                            let mut segments = path.segments();
+                            segments.extend(p);
+                            self.violation(&rule.id, &rule.message, ri, segments, d);
                         }
                     }
-                    Err(e) => self.rule_error(&rule, &path.render(), e),
+                    Err(e) => {
+                        let mut d = diagnosis(r, rule.diagnose_access(v, fields, self.lookup, &[]));
+                        d.operands.clear();
+                        self.rule_error(&rule.id, ri, &path.render(), e, Some(d));
+                    }
                 }
             }
         }
@@ -1249,44 +1658,98 @@ impl<'l> Validator<'l, '_> {
     ) {
         let lookup = self.lookup;
         match lookup.find(name) {
-            None => self.unresolved(name, path),
+            None => self.unknown_type(name, path),
+            Some(TypeDef::Struct(s)) if lookup.is_stale(name) => {
+                let parent = s
+                    .extends
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.to_string());
+                self.error(
+                    "type_stale",
+                    path,
+                    format!(
+                        "`{name}` was declared against an earlier declaration of `{parent}`; declare `{name}` again, or reload or reinstall the package that declares it"
+                    ),
+                )
+            }
             Some(TypeDef::Struct(s)) => match v.record(name) {
-                Ok(()) => self.object(&s.fields, &s.rules, v, path, envelope),
+                Ok(()) => self.object(&name.to_string(), &s.fields, &s.rules, v, path, envelope),
+                Err(f) => self.form(f, path),
+            },
+            Some(TypeDef::Table(t)) => match v.record(name) {
+                Ok(()) => self.named_table(t, v, path),
                 Err(f) => self.form(f, path),
             },
             Some(TypeDef::Enum(e)) => {
                 let unit_only = e
                     .variants
                     .iter()
-                    .all(|x| matches!(x.shape, VariantShape::Unit));
+                    .all(|x| matches!(x.kind, VariantKind::Unit));
                 let variant = match v.variant(name, e) {
                     Ok(s) => s,
                     Err(f) => return self.form(f, path),
                 };
                 let tag = e.tag.as_str();
                 let Some(def) = e.variants.iter().find(|x| x.name.as_str() == variant) else {
-                    let at = if unit_only { *path } else { P::Key(path, tag) };
-                    return self.error(
+                    // The subject is the enum value; the path reaches its tag.
+                    let tag_suffix = format!("/{}", esc(tag));
+                    let at = if unit_only {
+                        *path
+                    } else {
+                        P::Raw(path, &tag_suffix)
+                    };
+                    let names: Vec<&str> = e.variants.iter().map(|x| x.name.as_str()).collect();
+                    let suggestion =
+                        crate::name::nearest(&variant, names.iter().copied()).map(str::to_string);
+                    let (variants, total) = listed(&names);
+                    let variants = variants
+                        .into_iter()
+                        .map(|v| Lit::Str(v.to_string()))
+                        .collect();
+                    return self.report(
                         "unknown_variant",
                         &at,
-                        format!("`{variant}` is not a variant of `{name}`"),
+                        Problem::Variant {
+                            of: name.to_string(),
+                            variants,
+                            total,
+                        },
+                        Some(Shown::string(&variant)),
+                        suggestion,
                     );
                 };
-                if unit_only {
-                    return;
-                }
                 let mut allowed: Vec<&str> = envelope.to_vec();
                 allowed.push(tag);
-                match &def.shape {
-                    VariantShape::Unit => self.object(&[], &[], v, path, &allowed),
-                    VariantShape::Struct { fields, rules } => {
-                        self.object(fields, rules, v, path, &allowed)
+                if unit_only {
+                    // The object form inside `dyn()` holds the type member
+                    // and the tag only.
+                    if !envelope.is_empty() {
+                        self.object(&format!("{name}@{variant}"), &[], &[], v, path, &allowed);
                     }
-                    VariantShape::Newtype { of } => match lookup.find(of) {
-                        Some(TypeDef::Struct(s)) => {
-                            self.object(&s.fields, &s.rules, v, path, &allowed)
-                        }
-                        _ => self.unresolved(of, path),
+                    return;
+                }
+                match &def.kind {
+                    VariantKind::Unit => {
+                        self.object(&format!("{name}@{variant}"), &[], &[], v, path, &allowed)
+                    }
+                    VariantKind::Struct { fields, rules } => self.object(
+                        &format!("{name}@{variant}"),
+                        fields,
+                        rules,
+                        v,
+                        path,
+                        &allowed,
+                    ),
+                    VariantKind::Newtype { of } => match lookup.find(of) {
+                        Some(TypeDef::Struct(s)) => self.object(
+                            &format!("{name}@{variant}"),
+                            &s.fields,
+                            &s.rules,
+                            v,
+                            path,
+                            &allowed,
+                        ),
+                        _ => self.unknown_type(of, path),
                     },
                 }
             }
@@ -1295,13 +1758,98 @@ impl<'l> Validator<'l, '_> {
 
     fn dynamic<'a, A: Access<'a>>(&mut self, tr: &QualifiedName, v: A, path: &P) {
         match v.implementor(tr, self.lookup) {
+            Ok((ty, _)) if self.lookup.find(&ty).is_none() => self.error(
+                "unknown_type",
+                path,
+                format!("`{ty}` is not a registered type"),
+            ),
+            Ok((ty, _)) if self.lookup.implements(tr, &ty).is_none() => {
+                self.not_implementor(tr, format!("a value of `{ty}`"), path);
+            }
             // The type member names the type; the rest is the type's value.
             Ok((ty, member)) => match &member {
                 Some(m) => self.named(&ty, v, path, &[m.as_str()]),
                 None => self.named(&ty, v, path, &[]),
             },
-            Err(msg) => self.error("unresolved_type", path, msg),
+            Err(Unnamed::Unknown(msg)) => self.error("unknown_type", path, msg),
+            Err(Unnamed::NotValue(found)) => self.not_implementor(tr, found, path),
         }
+    }
+
+    fn not_implementor(&mut self, tr: &QualifiedName, found: String, path: &P) {
+        self.report(
+            "not_implementor",
+            path,
+            Problem::Kind(format!("a value of a type that implements `{tr}`")),
+            Some(Shown::Kind(found)),
+            None,
+        );
+    }
+
+    fn not_subtype(&mut self, of: &QualifiedName, found: String, path: &P) {
+        self.report(
+            "not_subtype",
+            path,
+            Problem::Kind(format!("a value of `{of}` or of a struct that extends it")),
+            Some(Shown::Kind(found)),
+            None,
+        );
+    }
+
+    /// Checks a value of `subtype(of)` for the struct `of`: the type the value
+    /// names is a subtype of `of`, and the value is valid as that
+    /// type.
+    fn subtype<'a, A: Access<'a>>(&mut self, of: &QualifiedName, v: A, path: &P) {
+        match v.named_type() {
+            Ok((ty, member)) if self.lookup.is_subtype(&ty, of) => match &member {
+                Some(m) => self.named(&ty, v, path, &[m.as_str()]),
+                None => self.named(&ty, v, path, &[]),
+            },
+            Ok((ty, _)) if self.lookup.find(&ty).is_none() => self.error(
+                "unknown_type",
+                path,
+                format!("`{ty}` is not a registered type"),
+            ),
+            Ok((ty, _)) => self.not_subtype(of, format!("a value of `{ty}`"), path),
+            Err(Unnamed::Unknown(msg)) => self.error("unknown_type", path, msg),
+            Err(Unnamed::NotValue(found)) => self.not_subtype(of, found, path),
+        }
+    }
+}
+
+/// What a check of a column found.
+#[derive(Debug, Clone, Default)]
+pub struct ColumnCheck {
+    /// The first problems, at most as many as asked for, whose paths are the
+    /// column's name and the row.
+    pub errors: Vec<ValueError>,
+    /// The number of rows with a problem.
+    pub rows: u64,
+    /// The column is of the type's kind and length, so that its cells were
+    /// read.
+    pub read: bool,
+}
+
+/// Checks the cells of the column `name` of a table of `rows` rows against its
+/// type, and lists at most `limit` problems.
+#[allow(clippy::too_many_arguments)]
+pub fn check_column<'a, A: Access<'a>>(
+    name: &str,
+    ty: &FieldType,
+    unique: bool,
+    cells: A,
+    rows: u64,
+    lookup: &dyn TypeLookup,
+    cache: &mut RuleCache,
+    limit: usize,
+) -> ColumnCheck {
+    let mut v = Validator::new(lookup, cache);
+    v.limit = limit;
+    let read = v.cells(ty, unique, cells, rows, &P::Col(&P::Root(""), name));
+    ColumnCheck {
+        rows: v.elements,
+        read,
+        errors: v.errors,
     }
 }
 

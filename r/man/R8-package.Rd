@@ -6,12 +6,67 @@
 \alias{R8-package}
 \title{R8: Structs, Enums, and Traits with a 'Rust' Runtime}
 \description{
-A developer-facing type system for R whose runtime is the 'rtemis-r8' 'Rust'
-crate, shared with other host languages.
+A type system for R whose runtime is the 'rtemis-r8' 'Rust' crate, shared
+with other host languages.
 }
 \section{Runtime}{
 
-\code{\link[=r8_core_version]{r8_core_version()}}.
+\code{\link[=r8_runtime_version]{r8_runtime_version()}}.
+}
+
+\section{Names}{
+
+A function that a declaration is written with takes no prefix:
+\code{\link[=new_struct]{new_struct()}}, \code{\link[=type_double]{type_double()}}, \code{\link[=field]{field()}}, \code{\link[=rule]{rule()}}, \code{\link[=impl]{impl()}},
+\code{\link[=generic]{generic()}}, \code{\link[=params]{params()}}, \code{\link[=arg]{arg()}}, and the standard traits. A function that operates on values,
+types, or packages takes the prefix \code{r8_}: \code{\link[=r8_to_json]{r8_to_json()}}, \code{\link[=r8_hash]{r8_hash()}},
+\code{\link[=r8_validate]{r8_validate()}}, \code{\link[=r8_register]{r8_register()}}. S3 classes, condition classes, and value
+attributes take the prefix \code{r8_}; \code{R8_} prefixes the environment
+variable \code{R8_OUTPUT_TYPE}.
+}
+
+\section{Conditions}{
+
+Every error R8 signals has the class \code{r8_error}, after one of:
+\itemize{
+\item \code{r8_declaration_error}: a declaration of a type, trait, impl, or generic
+that does not pass its checks, or a package whose declarations do not
+register.
+\item \code{r8_type_error}: an argument of the wrong kind, such as a type object
+where a value is expected; its subclass \code{r8_result_error} is a method's
+result that does not satisfy the return type, or a replacement method or
+\code{From} impl that returns a value of another type.
+\item \code{r8_value_error}: a value that does not satisfy its type; its subclasses
+are \code{r8_argument_error}, the arguments of a generic's call that do not
+satisfy their types, \code{r8_codec_missing_error}, a Rust-stored type whose
+codec is not registered, and \code{r8_unknown_type_error}, a document that
+names a type no loaded package declares.
+\item \code{r8_dispatch_error}: a generic or trait method with no impl for the
+value's type, a conversion without a \code{From} impl, or \code{r8_next_impl()}
+without a next impl.
+\item \code{r8_other_declaration_error}, beside \code{r8_value_error} or
+\code{r8_dispatch_error}: a value made under another declaration of its type
+than the registered one, which \code{\link[=r8_update]{r8_update()}} converts or refuses.
+\item \code{r8_file_error}: a damaged file (\code{\link[=r8_read_rds]{r8_read_rds()}}).
+\item \code{r8_text_error}: text output given invalid arguments.
+}
+
+Every warning R8 signals has the class \code{r8_warning}:
+\itemize{
+\item \code{r8_stale_warning}: a declaration that leaves structs stale, which extend an
+earlier declaration of their parent.
+\item \code{r8_declaration_warning}: a package whose compiled code was compiled against
+another declaration of a type of another package, and may not read it
+(\code{\link[=r8_register]{r8_register()}}).
+}
+}
+
+\section{Types that other packages use}{
+
+A package does not change a type that other packages use without coordinating
+the change with them, with a minimum version of the declaring package in their
+\code{DESCRIPTION}: see the section "Changing a type that other packages use" of
+\code{\link[=new_struct]{new_struct()}}.
 }
 
 \seealso{

@@ -1,6 +1,6 @@
 Package: R8
 Title: Structs, Enums, and Traits with a 'Rust' Runtime
-Version: 0.4.0
+Version: 0.5.0
 Date: 2026-11-18
 Authors@R: c(
     person(given = "E.D.", family = "Gennatas", role = c("aut", "cre", "cph"),
@@ -9,12 +9,11 @@ Authors@R: c(
     person(given = "Authors of the bundled Rust crates", role = c("ctb", "cph"),
            comment = "Rust crates compiled into the package; see inst/AUTHORS")
     )
-Description: A developer-facing type system for R whose runtime is the
-    'rtemis-r8' 'Rust' crate, shared with other host languages. Types are
-    structs, enums, and traits, declared in R or in 'Rust'; values are
-    immutable and validated once per value. This version reports the version
-    of the compiled 'rtemis-r8' crate; declarations, validation, and JSON
-    encoding are under development.
+Description: A type system for R whose runtime is the 'rtemis-r8' 'Rust'
+    crate, shared with other host languages. Types are structs, enums, and
+    traits, declared in R or in 'Rust'; values are immutable and validated
+    once per value, and one declaration drives validation, JSON encoding,
+    and hashing.
 URL: https://www.rtemis.org, https://github.com/rtemis-org/r8
 BugReports: https://github.com/rtemis-org/r8/issues
 License: BSD_3_clause + file LICENSE
@@ -27,6 +26,7 @@ Imports:
     stats,
     utils
 Suggests:
+    data.table,
     knitr,
     Matrix,
     pillar,
@@ -38,3 +38,32 @@ Roxygen: list(markdown = TRUE)
 Config/rextendr/version: 0.5.0
 SystemRequirements: Cargo (Rust's package manager), rustc >= 1.88.0, xz
 Config/roxygen2/version: 8.1.1
+Collate: 
+    'R8-package.R'
+    'check.R'
+    'conform.R'
+    'declare.R'
+    'dispatch.R'
+    'extendr-wrappers.R'
+    'extends.R'
+    'format.R'
+    'function.R'
+    'generate.R'
+    'generic.R'
+    'identity.R'
+    'integrate.R'
+    'types.R'
+    'params.R'
+    'rds.R'
+    'register.R'
+    'report.R'
+    'resolve.R'
+    'roclet.R'
+    'rules.R'
+    'table.R'
+    'text.R'
+    'traits.R'
+    'utils.R'
+    'values.R'
+    'variant.R'
+    'zzz.R'

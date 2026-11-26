@@ -1,6 +1,6 @@
 //! Static types of rule expressions, derived from field types.
 
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 
 /// Finds the declaration of a named type. A type that the lookup does not
@@ -24,9 +24,115 @@ pub trait TypeLookup {
     fn type_member(&self, _trait: &QualifiedName) -> String {
         "$type".to_string()
     }
+
+    /// The impls of the trait `tr` that the lookup holds.
+    fn impls_of(&self, _tr: &QualifiedName) -> Vec<&crate::ir::ImplDef> {
+        Vec::new()
+    }
+
+    /// The declaration of the trait `tr`, if the lookup holds it.
+    fn trait_of(&self, _tr: &QualifiedName) -> Option<&crate::ir::TraitDef> {
+        None
+    }
+
+    /// The declaration of the function `f`, if the lookup holds it.
+    fn function_of(&self, _f: &QualifiedName) -> Option<&crate::ir::FunctionDef> {
+        None
+    }
+
+    /// The structs that descend from `ty` through `extends`, as far as the
+    /// lookup holds them, every parent before its children.
+    fn descendants_of(&self, _ty: &QualifiedName) -> Vec<QualifiedName> {
+        Vec::new()
+    }
+
+    /// The impl of the trait `tr` for the type `ty` itself, with no other
+    /// position: an impl of one dispatched position and no type parameter.
+    fn impl_for(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<&crate::ir::ImplDef> {
+        self.impls_of(tr).into_iter().find(|i| {
+            i.type_args.is_empty()
+                && matches!(&i.target, crate::ir::TypeRef::Named { name } if name == ty)
+        })
+    }
+
+    /// The type whose impl of the trait `tr` applies to the type `ty`: `ty`,
+    /// or its nearest ancestor through `extends` with an impl, as dispatch
+    /// finds it; `None` when neither has one.
+    fn implements(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<QualifiedName> {
+        if self.impl_for(tr, ty).is_some() {
+            return Some(ty.clone());
+        }
+        self.ancestors(ty)
+            .into_iter()
+            .find(|a| self.impl_for(tr, a).is_some())
+    }
+
+    /// The written tag value of the type `ty` for the trait `tr`, when the
+    /// trait has a tag member: the `tag_value` of `ty`'s own impl, or else
+    /// `ty`'s name, bare when `ty` is in the trait's namespace and prefixed
+    /// with its namespace otherwise.
+    fn tag_value(&self, tr: &QualifiedName, ty: &QualifiedName) -> Option<String> {
+        if self.type_member(tr) == "$type" {
+            return None;
+        }
+        let own = self.impl_for(tr, ty).and_then(|i| i.tag_value.clone());
+        let value = own.unwrap_or_else(|| ty.name.to_string());
+        Some(if ty.namespace == tr.namespace {
+            value
+        } else {
+            format!("{}::{value}", ty.namespace)
+        })
+    }
+
+    /// Whether the struct `ty` is stale: its inherited fields or rules
+    /// disagree with its parent's, or its parent is stale.
+    fn is_stale(&self, _ty: &QualifiedName) -> bool {
+        false
+    }
+
+    /// Whether the type `ty` is a subtype of the struct `base`: `base`, or a
+    /// struct that extends a subtype of it, as far as the lookup holds the
+    /// chain.
+    fn is_subtype(&self, ty: &QualifiedName, base: &QualifiedName) -> bool {
+        let mut cur = ty;
+        // A chain longer than the lookup's types is a cycle.
+        for _ in 0..MAX_DEPTH {
+            if cur == base {
+                return true;
+            }
+            match self.find(cur) {
+                Some(TypeDef::Struct(s)) => match &s.extends {
+                    Some(p) => cur = p,
+                    None => return false,
+                },
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// The ancestors of the type `ty` through `extends`, the parent first,
+    /// as far as the lookup holds the chain; a chain that returns to a type
+    /// already listed ends before it.
+    fn ancestors(&self, ty: &QualifiedName) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = Vec::new();
+        let mut cur = ty;
+        while let Some(TypeDef::Struct(s)) = self.find(cur) {
+            let Some(p) = &s.extends else { break };
+            if p == ty || out.contains(p) {
+                break;
+            }
+            out.push(p.clone());
+            cur = p;
+        }
+        out
+    }
 }
 
-fn dollar_type(value: &serde_json::Value) -> Result<(QualifiedName, String), String> {
+/// The longest `extends` chain that [`TypeLookup::is_subtype`] follows.
+const MAX_DEPTH: usize = 1024;
+
+pub(crate) fn dollar_type(value: &serde_json::Value) -> Result<(QualifiedName, String), String> {
     let s = value
         .get("$type")
         .and_then(serde_json::Value::as_str)
@@ -44,7 +150,7 @@ impl TypeLookup for crate::ir::IrDocument {
         self.types.iter().find(|t| t.name() == &name.name)
     }
 
-    /// Resolves through the trait's tag member when the document declares the
+    /// Finds the implementor through the trait's tag member when the document declares the
     /// trait with one: a bare tag value names an implementor in the trait's
     /// namespace, and `namespace::Value` one in another namespace. Each
     /// implementor's tag value is its impl's `tag_value`, or its type name.
@@ -53,8 +159,40 @@ impl TypeLookup for crate::ir::IrDocument {
         tr: &QualifiedName,
         value: &serde_json::Value,
     ) -> Result<(QualifiedName, String), String> {
-        let home = (tr.namespace == self.namespace).then_some(self);
-        implementor_in(home, self.impls.iter(), tr, value)
+        implementor_of(self, tr, value)
+    }
+
+    fn impls_of(&self, tr: &QualifiedName) -> Vec<&crate::ir::ImplDef> {
+        self.impls.iter().filter(|i| &i.r#trait == tr).collect()
+    }
+
+    fn trait_of(&self, tr: &QualifiedName) -> Option<&crate::ir::TraitDef> {
+        (tr.namespace == self.namespace)
+            .then(|| self.traits.iter().find(|t| t.name == tr.name))
+            .flatten()
+    }
+
+    /// The document's structs that descend from `ty`.
+    fn descendants_of(&self, ty: &QualifiedName) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = Vec::new();
+        let mut frontier = vec![ty.clone()];
+        while let Some(p) = frontier.pop() {
+            for t in &self.types {
+                if let TypeDef::Struct(s) = t
+                    && s.extends.as_ref() == Some(&p)
+                {
+                    let q = QualifiedName {
+                        namespace: self.namespace.clone(),
+                        name: s.name.clone(),
+                    };
+                    if &q != ty && !out.contains(&q) {
+                        out.push(q.clone());
+                        frontier.push(q);
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {
@@ -67,44 +205,106 @@ impl TypeLookup for crate::ir::IrDocument {
 }
 
 /// The implementor of the trait `tr` that a `dyn()` value names: through
-/// the trait's tag member when `home`, the trait's declaring document,
-/// declares one, over `impls`; otherwise through `"$type"`.
-fn implementor_in<'d>(
-    home: Option<&crate::ir::IrDocument>,
-    impls: impl Iterator<Item = &'d crate::ir::ImplDef>,
+/// the trait's tag member when the trait declares one, and otherwise through
+/// `"$type"`. A written tag value `v` names, in the trait's namespace, or
+/// `ns::v` in the namespace `ns`, the type whose impl of `tr` gives `v` as
+/// its `tag_value`, or else the type named `v` there whose impl gives none
+/// or which inherits an impl through `extends`.
+fn implementor_of(
+    lookup: &dyn TypeLookup,
     tr: &QualifiedName,
     value: &serde_json::Value,
 ) -> Result<(QualifiedName, String), String> {
-    let tag = home
-        .and_then(|d| d.traits.iter().find(|t| t.name == tr.name))
-        .and_then(|t| t.tag.as_ref());
-    let Some(tag) = tag else {
+    let tag = lookup.type_member(tr);
+    if tag == "$type" {
         return dollar_type(value);
-    };
+    }
     let written = value
         .get(tag.as_str())
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format!("a `dyn({tr})` value names its type in `{tag}`"))?;
-    for imp in impls.filter(|i| &i.r#trait == tr) {
-        let crate::ir::ImplTarget::Type { name } = &imp.target else {
-            continue;
-        };
-        let bare = imp.tag_value.as_deref().unwrap_or(name.name.as_str());
-        let matches = if name.namespace == tr.namespace {
-            written == bare
-        } else {
-            written
-                .strip_prefix(name.namespace.as_str())
-                .and_then(|r| r.strip_prefix("::"))
-                == Some(bare)
-        };
-        if matches {
-            return Ok((name.clone(), tag.to_string()));
+    implementor_of_tag(lookup, tr, written)
+        .map(|q| (q, tag.clone()))
+        .ok_or_else(|| {
+            let known = tag_values(lookup, tr);
+            let listed = if known.is_empty() {
+                "none".to_string()
+            } else {
+                known.iter().map(|v| format!("`{v}`")).collect::<Vec<_>>().join(", ")
+            };
+            format!(
+                "no registered implementor of `{tr}` has the tag value `{written}`; the registered tag values are {listed}"
+            )
+        })
+}
+
+/// The written tag values of the registered implementors of `tr`.
+fn tag_values(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<String> {
+    let mut out = Vec::new();
+    for t in implementors(lookup, tr) {
+        if let Some(v) = lookup.tag_value(tr, &t)
+            && !out.contains(&v)
+        {
+            out.push(v);
         }
     }
-    Err(format!(
-        "no registered implementor of `{tr}` has the tag value `{written}`"
-    ))
+    out
+}
+
+/// The implementors of `tr` that the lookup holds: the targets of its
+/// impls, each followed by the descendants that inherit its impl.
+pub fn implementors(lookup: &dyn TypeLookup, tr: &QualifiedName) -> Vec<QualifiedName> {
+    let mut out: Vec<QualifiedName> = Vec::new();
+    for imp in lookup.impls_of(tr) {
+        let crate::ir::TypeRef::Named { name } = &imp.target else {
+            continue;
+        };
+        for t in std::iter::once(name.clone()).chain(
+            lookup
+                .descendants_of(name)
+                .into_iter()
+                .filter(|d| lookup.implements(tr, d).as_ref() == Some(name)),
+        ) {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    out
+}
+
+/// The implementor of `tr` whose written tag value is `written`.
+fn implementor_of_tag(
+    lookup: &dyn TypeLookup,
+    tr: &QualifiedName,
+    written: &str,
+) -> Option<QualifiedName> {
+    let (ns, v) = match written.split_once("::") {
+        Some((ns, v)) => (ns, v),
+        None => (tr.namespace.as_str(), written),
+    };
+    // A prefix names another namespace than the trait's.
+    if written.contains("::") && ns == tr.namespace.as_str() {
+        return None;
+    }
+    for imp in lookup.impls_of(tr) {
+        if let crate::ir::TypeRef::Named { name } = &imp.target
+            && name.namespace.as_str() == ns
+            && imp.tag_value.as_deref() == Some(v)
+        {
+            return Some(name.clone());
+        }
+    }
+    let candidate = QualifiedName::parse(&format!("{ns}::{v}")).ok()?;
+    lookup.find(&candidate)?;
+    lookup.implements(tr, &candidate)?;
+    match lookup
+        .impl_for(tr, &candidate)
+        .and_then(|i| i.tag_value.as_deref())
+    {
+        Some(own) if own != v => None,
+        _ => Some(candidate),
+    }
 }
 
 /// The static type of an expression.
@@ -117,6 +317,10 @@ pub enum Ty {
     Number {
         /// The declared unit.
         unit: Option<String>,
+        /// The number is an integer: an integer field or literal, or a
+        /// result of integers that rounding leaves exact. A double field or
+        /// literal, and a quotient, are not.
+        exact: bool,
     },
     /// A string.
     String,
@@ -141,20 +345,20 @@ pub enum Ty {
     },
     /// A matrix, array, or sparse matrix of the element type.
     Matrix(Box<Ty>),
-    /// A map; `ordered` for `ordered_map()`, whose JSON is an array of
+    /// A map; `ordered` for `index_map()`, whose JSON is an array of
     /// `{"name", "value"}` pairs.
     Map {
         /// The value type.
         value: Box<Ty>,
-        /// An `ordered_map()`.
+        /// An `index_map()`.
         ordered: bool,
     },
     /// A named struct or enum.
     Named(QualifiedName),
     /// Any JSON value (`type_json()`).
     Json,
-    /// A runtime-only R value, which rules cannot read.
-    Runtime,
+    /// A host-only R value, which rules cannot read.
+    HostOnly,
     /// Unknown until run time: `dyn()`, `type_raw()`, and named types the
     /// lookup does not hold.
     Any,
@@ -165,8 +369,13 @@ impl Ty {
     pub fn of(ft: &FieldType, unit: Option<&str>) -> Ty {
         match ft {
             FieldType::Logical => Ty::Bool,
-            FieldType::Integer(_) | FieldType::Double(_) => Ty::Number {
+            FieldType::Integer(_) => Ty::Number {
                 unit: unit.map(str::to_string),
+                exact: true,
+            },
+            FieldType::Double(_) => Ty::Number {
+                unit: unit.map(str::to_string),
+                exact: false,
             },
             FieldType::Character(_) => Ty::String,
             FieldType::Raw => Ty::Any,
@@ -182,7 +391,7 @@ impl Ty {
             }
             FieldType::MatrixOf { .. } => Ty::Matrix(Box::new(Ty::Any)),
             FieldType::Table { columns, open, .. } => Ty::Table {
-                columns: columns.clone(),
+                columns: columns.iter().map(|c| c.field.clone()).collect(),
                 open: *open,
             },
             FieldType::TableOf { .. } => Ty::Table {
@@ -190,19 +399,19 @@ impl Ty {
                 open: true,
             },
             FieldType::Json => Ty::Json,
-            FieldType::R { .. } => Ty::Runtime,
+            FieldType::HostClass { .. } => Ty::HostOnly,
             FieldType::Vec { element, .. } => Ty::Array(Box::new(Ty::of(element, unit))),
             FieldType::Option { inner, .. } => Ty::of(inner, unit),
-            FieldType::Hashmap { value, .. } => Ty::Map {
+            FieldType::BtreeMap { value, .. } => Ty::Map {
                 value: Box::new(Ty::of(value, unit)),
                 ordered: false,
             },
-            FieldType::OrderedMap { value, .. } => Ty::Map {
+            FieldType::IndexMap { value, .. } => Ty::Map {
                 value: Box::new(Ty::of(value, unit)),
                 ordered: true,
             },
             FieldType::Named { name } => Ty::Named(name.clone()),
-            FieldType::Dyn { .. } => Ty::Any,
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => Ty::Any,
         }
     }
 
@@ -210,8 +419,8 @@ impl Ty {
     pub fn describe(&self) -> String {
         match self {
             Ty::Bool => "a logical".into(),
-            Ty::Number { unit: Some(u) } => format!("a number in `{u}`"),
-            Ty::Number { unit: None } => "a number".into(),
+            Ty::Number { unit: Some(u), .. } => format!("a number in `{u}`"),
+            Ty::Number { unit: None, .. } => "a number".into(),
             Ty::String => "a string".into(),
             Ty::Date => "a date".into(),
             Ty::Posixct => "a date-time".into(),
@@ -222,15 +431,15 @@ impl Ty {
             Ty::Map { .. } => "a map".into(),
             Ty::Named(q) => format!("a `{q}`"),
             Ty::Json => "a JSON value".into(),
-            Ty::Runtime => "a runtime-only R value".into(),
+            Ty::HostOnly => "a host-only R value".into(),
             Ty::Any => "a value of unknown type".into(),
         }
     }
 }
 
-/// What a named type contributes to path resolution: its fields, and for an
+/// The members of a named type that a path binds to: its fields, and for an
 /// enum, how a value names its variant.
-pub enum Shape<'a> {
+pub enum Members<'a> {
     Struct(&'a [FieldDef]),
     Enum {
         /// `None` for an enum of unit variants, whose values are strings.
@@ -248,23 +457,24 @@ pub enum VariantFields<'a> {
     Wrapped(Option<&'a [FieldDef]>),
 }
 
-/// The shape of a named type, when the lookup holds it.
-pub fn shape<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Shape<'a>> {
+/// The members of a named type, when the lookup holds it.
+pub fn members<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Members<'a>> {
     match lookup.find(name)? {
-        TypeDef::Struct(s) => Some(Shape::Struct(&s.fields)),
+        TypeDef::Table(_) => None,
+        TypeDef::Struct(s) => Some(Members::Struct(&s.fields)),
         TypeDef::Enum(e) => {
             let unit_only = e
                 .variants
                 .iter()
-                .all(|v| matches!(v.shape, VariantShape::Unit));
+                .all(|v| matches!(v.kind, VariantKind::Unit));
             let variants = e
                 .variants
                 .iter()
                 .map(|v| {
-                    let fields = match &v.shape {
-                        VariantShape::Unit => VariantFields::None,
-                        VariantShape::Struct { fields, .. } => VariantFields::Fields(fields),
-                        VariantShape::Newtype { of } => {
+                    let fields = match &v.kind {
+                        VariantKind::Unit => VariantFields::None,
+                        VariantKind::Struct { fields, .. } => VariantFields::Fields(fields),
+                        VariantKind::Newtype { of } => {
                             VariantFields::Wrapped(match lookup.find(of) {
                                 Some(TypeDef::Struct(s)) => Some(&s.fields),
                                 _ => None,
@@ -274,7 +484,7 @@ pub fn shape<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Sha
                     (v.name.as_str(), fields)
                 })
                 .collect();
-            Some(Shape::Enum {
+            Some(Members::Enum {
                 tag: (!unit_only).then_some(e.tag.as_str()),
                 variants,
             })
@@ -282,7 +492,7 @@ pub fn shape<'a>(lookup: &'a dyn TypeLookup, name: &QualifiedName) -> Option<Sha
     }
 }
 
-/// A set of IR documents, each a namespace, resolved together: the lookup a
+/// A set of IR documents, each a namespace, read together: the lookup a
 /// registry provides once every package's declarations are loaded.
 ///
 /// The set indexes its types by qualified name, so [`TypeLookup::find`] takes
@@ -296,6 +506,11 @@ pub struct DocumentSet {
     /// `(document, type)` positions, hashed by namespace and name.
     index: hashbrown::HashTable<(u32, u32)>,
     hasher: hashbrown::DefaultHashBuilder,
+    /// The structs that name each struct as their parent, by the parent.
+    children: std::collections::HashMap<QualifiedName, Vec<QualifiedName>>,
+    /// The structs whose inherited fields or rules disagree with their
+    /// parent's, or whose parent is stale.
+    stale: std::collections::HashSet<QualifiedName>,
 }
 
 impl std::fmt::Debug for DocumentSet {
@@ -319,6 +534,30 @@ impl FromIterator<crate::ir::IrDocument> for DocumentSet {
     fn from_iter<I: IntoIterator<Item = crate::ir::IrDocument>>(iter: I) -> Self {
         DocumentSet::from(iter.into_iter().collect::<Vec<_>>())
     }
+}
+
+/// Where `DocumentSet::put_function()` put a function, and the function it
+/// replaced; [`DocumentSet::undo_put_function`] takes it back.
+#[derive(Debug)]
+pub struct PlacedFunction {
+    /// The position of the namespace's document.
+    pub document: usize,
+    /// The position of the function in the document.
+    pub index: usize,
+    /// The function of the same name that the put replaced.
+    pub previous: Option<crate::ir::FunctionDef>,
+}
+
+/// Where `put_trait()` placed a trait, and the trait it replaced;
+/// [`DocumentSet::undo_put_trait`] takes it back.
+#[derive(Debug)]
+pub struct PlacedTrait {
+    /// The position of the namespace's document.
+    pub document: usize,
+    /// The position of the trait in the document.
+    pub index: usize,
+    /// The trait of the same name that the put replaced.
+    pub previous: Option<crate::ir::TraitDef>,
 }
 
 /// Where [`DocumentSet::put_type`] placed a declaration, and the one it
@@ -381,11 +620,93 @@ impl DocumentSet {
 
     fn reindex(&mut self) {
         self.index.clear();
+        self.children.clear();
         for d in 0..self.docs.len() {
             for t in 0..self.docs[d].types.len() {
                 self.insert_slot(d, t);
             }
         }
+        for doc in &self.docs {
+            for t in &doc.types {
+                if let TypeDef::Struct(s) = t
+                    && let Some(parent) = &s.extends
+                {
+                    self.children
+                        .entry(parent.clone())
+                        .or_default()
+                        .push(QualifiedName {
+                            namespace: doc.namespace.clone(),
+                            name: s.name.clone(),
+                        });
+                }
+            }
+        }
+    }
+
+    /// Adds or removes the entry of the struct `def` of the namespace `ns`
+    /// in the index of children.
+    fn link(&mut self, ns: &crate::name::Name, def: &TypeDef, add: bool) {
+        let TypeDef::Struct(s) = def else { return };
+        let Some(parent) = &s.extends else { return };
+        let child = QualifiedName {
+            namespace: ns.clone(),
+            name: s.name.clone(),
+        };
+        let list = self.children.entry(parent.clone()).or_default();
+        if add {
+            if !list.contains(&child) {
+                list.push(child);
+            }
+        } else {
+            list.retain(|c| c != &child);
+            if list.is_empty() {
+                self.children.remove(parent);
+            }
+        }
+    }
+
+    /// The structs whose parent is `q`.
+    pub fn children(&self, q: &QualifiedName) -> &[QualifiedName] {
+        self.children.get(q).map_or(&[], Vec::as_slice)
+    }
+
+    /// The structs that descend from `q`, each once, every parent before its
+    /// children.
+    pub fn descendants(&self, q: &QualifiedName) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = Vec::new();
+        let mut i = 0;
+        let mut next: Vec<QualifiedName> = self.children(q).to_vec();
+        while i < next.len() {
+            let c = next[i].clone();
+            i += 1;
+            if c == *q || out.contains(&c) {
+                continue;
+            }
+            next.extend(self.children(&c).iter().cloned());
+            out.push(c);
+        }
+        out
+    }
+
+    /// Marks the struct `q` stale, or clears its mark.
+    pub fn set_stale(&mut self, q: &QualifiedName, stale: bool) {
+        if stale {
+            self.stale.insert(q.clone());
+        } else {
+            self.stale.remove(q);
+        }
+    }
+
+    /// Whether any struct is stale.
+    pub fn has_stale(&self) -> bool {
+        !self.stale.is_empty()
+    }
+
+    /// The stale structs, sorted.
+    pub fn stale_types(&self) -> Vec<QualifiedName> {
+        let mut out: Vec<QualifiedName> = self.stale.iter().cloned().collect();
+        out.sort_by_key(|q| q.to_string());
+        out
     }
 
     /// The documents, one per namespace.
@@ -415,6 +736,7 @@ impl DocumentSet {
                     types: Vec::new(),
                     traits: Vec::new(),
                     impls: Vec::new(),
+                    functions: Vec::new(),
                 });
                 (self.docs.len() - 1, true)
             }
@@ -425,9 +747,19 @@ impl DocumentSet {
     /// of the same name.
     pub fn put_type(&mut self, ns: &crate::name::Name, def: TypeDef) -> Placed {
         let (d, new_document) = self.document_of(ns);
+        self.link(ns, &def, true);
         match self.slot(ns.as_str(), def.name().as_str()) {
             Some((_, t)) => {
                 let previous = std::mem::replace(&mut self.docs[d].types[t as usize], def);
+                // Unlink the replaced declaration's parent, unless it is the
+                // new one's.
+                let same_parent = matches!(
+                    (&previous, &self.docs[d].types[t as usize]),
+                    (TypeDef::Struct(a), TypeDef::Struct(b)) if a.extends == b.extends
+                );
+                if !same_parent {
+                    self.link(ns, &previous, false);
+                }
                 Placed {
                     document: d,
                     index: t as usize,
@@ -459,6 +791,12 @@ impl DocumentSet {
             previous,
             new_document,
         } = placed;
+        let ns = self.docs[d].namespace.clone();
+        let current = self.docs[d].types[t].clone();
+        self.link(&ns, &current, false);
+        if let Some(p) = &previous {
+            self.link(&ns, p, true);
+        }
         match previous {
             Some(p) => self.docs[d].types[t] = p,
             None => {
@@ -499,15 +837,111 @@ impl DocumentSet {
         &mut self.docs[d].traits
     }
 
+    /// Puts a function into the namespace's document, replacing a function
+    /// of the same name; `undo_put_function()` with the result restores the
+    /// set.
+    pub fn put_function(
+        &mut self,
+        ns: &crate::name::Name,
+        def: crate::ir::FunctionDef,
+    ) -> PlacedFunction {
+        let d = self.document_position(ns);
+        let functions = &mut self.docs[d].functions;
+        match functions.iter().position(|f| f.name == def.name) {
+            Some(i) => PlacedFunction {
+                document: d,
+                index: i,
+                previous: Some(std::mem::replace(&mut functions[i], def)),
+            },
+            None => {
+                functions.push(def);
+                PlacedFunction {
+                    document: d,
+                    index: functions.len() - 1,
+                    previous: None,
+                }
+            }
+        }
+    }
+
+    /// Undoes a `put_function()`.
+    pub fn undo_put_function(&mut self, placed: PlacedFunction) {
+        let PlacedFunction {
+            document: d,
+            index,
+            previous,
+        } = placed;
+        let functions = &mut self.docs[d].functions;
+        match previous {
+            Some(p) => functions[index] = p,
+            None => {
+                functions.pop();
+            }
+        }
+        self.remove_document_if_empty(d);
+    }
+
     /// The impls of the document at `d`, to add or replace an impl.
     pub fn impls_mut(&mut self, d: usize) -> &mut Vec<crate::ir::ImplDef> {
         &mut self.docs[d].impls
     }
 
+    /// Puts a trait into the namespace's document, replacing a trait of the
+    /// same name; `undo_put_trait()` with the result restores the set.
+    pub fn put_trait(&mut self, ns: &crate::name::Name, def: crate::ir::TraitDef) -> PlacedTrait {
+        let d = self.document_position(ns);
+        let traits = self.traits_mut(d);
+        match traits.iter().position(|t| t.name == def.name) {
+            Some(i) => PlacedTrait {
+                document: d,
+                index: i,
+                previous: Some(std::mem::replace(&mut traits[i], def)),
+            },
+            None => {
+                traits.push(def);
+                PlacedTrait {
+                    document: d,
+                    index: traits.len() - 1,
+                    previous: None,
+                }
+            }
+        }
+    }
+
+    /// Undoes a `put_trait()`.
+    pub fn undo_put_trait(&mut self, placed: PlacedTrait) {
+        let PlacedTrait {
+            document: d,
+            index,
+            previous,
+        } = placed;
+        let traits = self.traits_mut(d);
+        match previous {
+            Some(p) => traits[index] = p,
+            None => {
+                traits.pop();
+            }
+        }
+        self.remove_document_if_empty(d);
+    }
+
+    /// The qualified names of `q` and of every named type it reaches
+    /// through field types, newtype variants, and `extends`, each once, the
+    /// reached types before the types that reach them.
+    pub fn reached(&self, q: &crate::name::QualifiedName) -> Vec<crate::name::QualifiedName> {
+        let mut out = Vec::new();
+        reached_into(self, q, &mut out);
+        out
+    }
+
     /// Removes the document at `d` when it declares nothing.
     pub fn remove_document_if_empty(&mut self, d: usize) {
         let doc = &self.docs[d];
-        if doc.types.is_empty() && doc.traits.is_empty() && doc.impls.is_empty() {
+        if doc.types.is_empty()
+            && doc.traits.is_empty()
+            && doc.impls.is_empty()
+            && doc.functions.is_empty()
+        {
             self.docs.remove(d);
             self.reindex();
         }
@@ -520,7 +954,11 @@ impl TypeLookup for DocumentSet {
             .map(|s| self.at(s))
     }
 
-    /// Resolves through the trait's declaring document, over the impls of
+    fn is_stale(&self, ty: &QualifiedName) -> bool {
+        !self.stale.is_empty() && self.stale.contains(ty)
+    }
+
+    /// Finds the implementor through the trait's declaring document, over the impls of
     /// every document: the declaring document's first, then the others' in
     /// order.
     fn implementor(
@@ -528,15 +966,32 @@ impl TypeLookup for DocumentSet {
         tr: &QualifiedName,
         value: &serde_json::Value,
     ) -> Result<(QualifiedName, String), String> {
-        let Some(home) = self.namespace(&tr.namespace) else {
-            return dollar_type(value);
-        };
-        let others = self
-            .docs
-            .iter()
-            .filter(|d| d.namespace != tr.namespace)
-            .flat_map(|d| d.impls.iter());
-        implementor_in(Some(home), home.impls.iter().chain(others), tr, value)
+        implementor_of(self, tr, value)
+    }
+
+    fn descendants_of(&self, ty: &QualifiedName) -> Vec<QualifiedName> {
+        self.descendants(ty)
+    }
+
+    /// The impls of `tr` in every document: the trait's own document's
+    /// first, then the others' in order.
+    fn impls_of(&self, tr: &QualifiedName) -> Vec<&crate::ir::ImplDef> {
+        let home = self.docs.iter().filter(|d| d.namespace == tr.namespace);
+        let others = self.docs.iter().filter(|d| d.namespace != tr.namespace);
+        home.chain(others)
+            .flat_map(|d| d.impls.iter())
+            .filter(|i| &i.r#trait == tr)
+            .collect()
+    }
+
+    fn trait_of(&self, tr: &QualifiedName) -> Option<&crate::ir::TraitDef> {
+        self.namespace(&tr.namespace)
+            .and_then(|d| d.traits.iter().find(|t| t.name == tr.name))
+    }
+
+    fn function_of(&self, f: &QualifiedName) -> Option<&crate::ir::FunctionDef> {
+        self.namespace(&f.namespace)
+            .and_then(|d| d.functions.iter().find(|x| x.name == f.name))
     }
 
     fn type_member(&self, tr: &QualifiedName) -> String {
@@ -545,4 +1000,73 @@ impl TypeLookup for DocumentSet {
             None => "$type".to_string(),
         }
     }
+}
+
+fn reached_into(
+    reg: &DocumentSet,
+    q: &crate::name::QualifiedName,
+    out: &mut Vec<crate::name::QualifiedName>,
+) {
+    use crate::ir::{FieldDef, FieldType, VariantKind};
+    fn of_type(reg: &DocumentSet, t: &FieldType, out: &mut Vec<crate::name::QualifiedName>) {
+        match t {
+            FieldType::Named { name }
+            | FieldType::MatrixOf { of: name }
+            | FieldType::TableOf { of: name }
+            | FieldType::Subtype { of: name } => reached_into(reg, name, out),
+            FieldType::Matrix { element, .. }
+            | FieldType::Array { element, .. }
+            | FieldType::SparseMatrix { element, .. }
+            | FieldType::Vec { element, .. } => of_type(reg, element, out),
+            FieldType::Option { inner, .. } => of_type(reg, inner, out),
+            FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. } => {
+                of_type(reg, value, out)
+            }
+            FieldType::Table { columns, .. } => {
+                for c in columns {
+                    of_type(reg, &c.ty, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn of_fields(
+        reg: &DocumentSet,
+        fields: &[FieldDef],
+        out: &mut Vec<crate::name::QualifiedName>,
+    ) {
+        for f in fields {
+            of_type(reg, &f.ty, out);
+        }
+    }
+    if out.contains(q) {
+        return;
+    }
+    let Some(def) = TypeLookup::find(reg, q) else {
+        return;
+    };
+    // Marked before its fields are walked, so a recursive type terminates.
+    out.push(q.clone());
+    let mark = out.len() - 1;
+    match def {
+        TypeDef::Struct(s) => {
+            if let Some(p) = &s.extends {
+                reached_into(reg, p, out);
+            }
+            of_fields(reg, &s.fields, out)
+        }
+        TypeDef::Enum(e) => {
+            for v in &e.variants {
+                match &v.kind {
+                    VariantKind::Struct { fields, .. } => of_fields(reg, fields, out),
+                    VariantKind::Newtype { of } => reached_into(reg, of, out),
+                    VariantKind::Unit => {}
+                }
+            }
+        }
+        TypeDef::Table(_) => {}
+    }
+    // The type follows the types it reaches.
+    let me = out.remove(mark);
+    out.push(me);
 }

@@ -819,7 +819,7 @@
       "type": "SummarizedExperiment::RangedSummarizedExperiment"
     }
   ],
-  "description": "Values of the Bioconductor exercise types, resolved across the Seqinfo, GenomicRanges, and SummarizedExperiment namespaces.",
+  "description": "Values of the Bioconductor exercise types, read across the Seqinfo, GenomicRanges, and SummarizedExperiment namespaces.",
   "ir": [
     {
       "$ir": 1,
@@ -1212,14 +1212,14 @@
         {
           "kind": "enum",
           "name": "AssayData",
-          "description": "The values of one assay, features by samples; on-disk DelayedArray assays are runtime-only through a host-class impl.",
+          "description": "The values of one assay, features by samples; on-disk DelayedArray assays are host-only through a host-class impl.",
           "tag": "type",
           "version": 1,
           "variants": [
             {
               "name": "Integer",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "values",
@@ -1239,7 +1239,7 @@
             {
               "name": "Double",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "values",
@@ -1249,7 +1249,8 @@
                       "kind": "option",
                       "inner": {
                         "kind": "double",
-                        "finite": false
+                        "infinite": true,
+                        "nan": true
                       }
                     }
                   },
@@ -1260,7 +1261,7 @@
             {
               "name": "Sparse",
               "description": "",
-              "shape": "struct",
+              "kind": "struct",
               "fields": [
                 {
                   "name": "values",
@@ -1268,7 +1269,8 @@
                     "kind": "sparse_matrix",
                     "element": {
                       "kind": "double",
-                      "finite": false
+                      "infinite": true,
+                      "nan": true
                     }
                   },
                   "description": ""
@@ -1287,13 +1289,13 @@
             {
               "name": "GRanges",
               "description": "",
-              "shape": "newtype",
+              "kind": "newtype",
               "of": "GenomicRanges::GRanges"
             },
             {
               "name": "GRangesList",
               "description": "",
-              "shape": "newtype",
+              "kind": "newtype",
               "of": "GenomicRanges::GRangesList"
             }
           ]
@@ -1307,7 +1309,7 @@
             {
               "name": "assays",
               "type": {
-                "kind": "ordered_map",
+                "kind": "index_map",
                 "value": {
                   "kind": "named",
                   "name": "SummarizedExperiment::AssayData"
@@ -1460,7 +1462,7 @@
             {
               "name": "assays",
               "type": {
-                "kind": "ordered_map",
+                "kind": "index_map",
                 "value": {
                   "kind": "named",
                   "name": "SummarizedExperiment::AssayData"
@@ -1537,6 +1539,89 @@
           ],
           "extends": "SummarizedExperiment::SummarizedExperiment",
           "rules": [
+            {
+              "id": "ASSAY_ROWS",
+              "invariant": {
+                "all": [
+                  {
+                    "var": "assays"
+                  },
+                  {
+                    "===": [
+                      {
+                        "nrow": [
+                          {
+                            "var": ".x.values"
+                          }
+                        ]
+                      },
+                      {
+                        "nrow": [
+                          {
+                            "var": "row_data"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "Every assay has one row per feature.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment"
+            },
+            {
+              "id": "ASSAY_COLS",
+              "invariant": {
+                "all": [
+                  {
+                    "var": "assays"
+                  },
+                  {
+                    "===": [
+                      {
+                        "ncol": [
+                          {
+                            "var": ".x.values"
+                          }
+                        ]
+                      },
+                      {
+                        "nrow": [
+                          {
+                            "var": "col_data"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "Every assay has one column per sample.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment"
+            },
+            {
+              "id": "COL_NAMES_LENGTH",
+              "invariant": {
+                "===": [
+                  {
+                    "length": [
+                      {
+                        "var": "col_names"
+                      }
+                    ]
+                  },
+                  {
+                    "nrow": [
+                      {
+                        "var": "col_data"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "col_names has one entry per sample.",
+              "inherited_from": "SummarizedExperiment::SummarizedExperiment"
+            },
             {
               "id": "RSE_NO_NAMES",
               "invariant": {

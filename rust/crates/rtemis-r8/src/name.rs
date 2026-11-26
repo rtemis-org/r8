@@ -260,8 +260,10 @@ impl<'de> Deserialize<'de> for QualifiedName {
 /// A trait method's name: a syntactic R name that is not reserved, optionally
 /// ending in `<-` for a replacement method, or `[`.
 ///
-/// Each binding maps periods to underscores (`as.data.frame` becomes
-/// `as_data_frame`).
+/// Each binding names the method by its host identifier
+/// ([`MethodName::host_identifier`]): periods become underscores
+/// (`as.data.frame` becomes `as_data_frame`), and a replacement method `f<-`,
+/// which returns a new value, becomes `with_f`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MethodName(Box<str>);
 
@@ -287,6 +289,17 @@ impl MethodName {
     /// `true` for a replacement method, whose name ends in `<-`.
     pub fn is_replacement(&self) -> bool {
         self.0.ends_with("<-")
+    }
+
+    /// The identifier that names the method in the bindings other than R:
+    /// periods become underscores, and a replacement method `f<-` becomes
+    /// `with_f` (`labels<-` is `with_labels`, `row.names<-` is
+    /// `with_row_names`); `[` keeps its name.
+    pub fn host_identifier(&self) -> String {
+        match self.0.strip_suffix("<-") {
+            Some(base) => format!("with_{}", base.replace('.', "_")),
+            None => self.0.replace('.', "_"),
+        }
     }
 }
 
@@ -400,6 +413,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn host_identifiers_map_periods_and_replacement_methods() {
+        let id = |s: &str| MethodName::new(s).unwrap().host_identifier();
+        assert_eq!(id("as.data.frame"), "as_data_frame");
+        assert_eq!(id("labels<-"), "with_labels");
+        assert_eq!(id("row.names<-"), "with_row_names");
+        assert_eq!(id("fit"), "fit");
+        assert_eq!(id("["), "[");
+    }
+
+    #[test]
     fn names_follow_the_pattern() {
         for ok in [
             "cost",
@@ -478,5 +501,47 @@ mod tests {
             assert!(MethodName::new(bad).is_err(), "{bad}");
         }
         assert!(MethodName::new("labels<-").unwrap().is_replacement());
+    }
+}
+
+/// The candidate nearest to `name` by edit distance (Levenshtein, in
+/// characters), when it is within one edit, or two for a name of six
+/// characters or more; the first of equally near candidates.
+pub fn nearest<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    fn distance(a: &str, b: &str) -> usize {
+        let b: Vec<char> = b.chars().collect();
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.chars().enumerate() {
+            let mut prev = row[0];
+            row[0] = i + 1;
+            for (j, &cb) in b.iter().enumerate() {
+                let next = (prev + usize::from(ca != cb))
+                    .min(row[j] + 1)
+                    .min(row[j + 1] + 1);
+                prev = row[j + 1];
+                row[j + 1] = next;
+            }
+        }
+        row[b.len()]
+    }
+    let limit = if name.chars().count() >= 6 { 2 } else { 1 };
+    candidates
+        .into_iter()
+        .map(|c| (distance(name, c), c))
+        .filter(|&(d, c)| d <= limit && c != name)
+        .min_by_key(|&(d, _)| d)
+        .map(|(_, c)| c)
+}
+
+#[cfg(test)]
+mod nearest_tests {
+    use super::nearest;
+
+    #[test]
+    fn nearest_within_the_limit() {
+        assert_eq!(nearest("hj", ["lo", "hi", "values"]), Some("hi"));
+        assert_eq!(nearest("valeus", ["lo", "hi", "values"]), Some("values"));
+        assert_eq!(nearest("mean", ["min", "max"]), None);
+        assert_eq!(nearest("sum", ["sum"]), None);
     }
 }

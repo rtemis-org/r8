@@ -1,7 +1,7 @@
 [package]
 name = 'r8-r'
 publish = false
-version = '0.4.0'
+version = '0.5.0'
 edition = '2024'
 rust-version = '1.88'
 
@@ -17,7 +17,7 @@ name = 'r8_r'
 name = 'document'
 path = 'document.rs'
 
-# `oracle`: the differential oracle that the tests compare native
+# `oracle`: the differential oracle that the tests compare in-place
 # construction with (src/oracle.rs); tools/config.R enables it when R8_ORACLE is
 # set.
 [features]
@@ -27,7 +27,7 @@ alloc-stats = []
 [dependencies]
 extendr-api = '0.9'
 extendr-ffi = '0.9'
-rtemis-r8 = '0.4'
+rtemis-r8 = '0.5'
 serde = '1'
 serde_json = { version = '1', features = ['float_roundtrip', 'preserve_order'] }
 

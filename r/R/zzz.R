@@ -12,34 +12,47 @@
 #' Traits that R8 declares in its namespace `R8`, which a type implements
 #' with `impl()` like any trait:
 #'
+#' Four are Rust's standard traits, with their Rust meaning:
+#'
 #' - `Display`: `format(x, ...)`, which `print()` shows for a type without
 #'   a `Print` impl.
-#' - `Print`: `print(x, ...)`, which `print()` calls before it returns `x`
-#'   invisibly; `format()` keeps the `Display` text.
 #' - `Debug`: `str(object, ...)`.
-#' - `Dim`: `dim(x)`; `nrow()` and `ncol()` follow.
-#' - `PartialOrd`: `cmp(x, y)`, which returns a negative number, zero, or a
-#'   positive number as `x` sorts before, with, or after `y`; `<`, `<=`, `>`,
-#'   and `>=` use it, and `r8_cmp()` calls it.
+#' - `PartialOrd`: `partial_cmp(x, y)`, which returns `-1L`, `0L`, or `1L`
+#'   as `x` sorts before, with, or after `y`, and `NA` when the two are not
+#'   ordered; a whole double converts, as in construction, and any other
+#'   result raises `r8_result_error`. `<`, `<=`, `>`, and `>=` use it, and
+#'   return `FALSE` for values that are not ordered, as Rust's do;
+#'   `r8_partial_cmp()` calls it. A result of `0L` agrees with `r8_equal()`.
 #' - `From(source)`: `from(x)`, which converts a value of the class or R8
 #'   type `source` to the implementing type; `r8_convert()`, `Type@from()`,
 #'   and `r8_converter()` use it.
 #'
-#' R8 provides `format()`, `print()`, and `str()` for every value, `==` and
-#' `r8_hash()` through `r8_equal()`, `to_json()` and `r8_from_json()`, and a
-#' type whose required fields have defaults is constructed with no
-#' arguments.
+#' Two are R's host traits, for R's own functions:
 #'
-#' @param source Character: The class or qualified R8 type converted from.
-#' @param x,y Values of one R8 type, for `r8_cmp()`.
+#' - `Print`: `print(x, ...)`, which `print()` calls before it returns `x`
+#'   invisibly; `format()` keeps the `Display` text.
+#' - `Shape`: `dim(x)`; `nrow()` and `ncol()` follow.
 #'
-#' @return A trait object.
+#' Every type has, without an impl, the behavior of Rust's `PartialEq`
+#' (`==` and `r8_equal()`), `Hash` (`r8_hash()`, the hash of the canonical
+#' form), `Serialize` and `Deserialize` (`r8_to_json()` and
+#' `r8_from_json()`), and, for a type whose required fields have defaults,
+#' `Default` (the constructor called with no arguments); these are not
+#' traits that a type implements.
+#'
+#' @param source The source converted from: an R8 type object, a class name
+#'   such as `"data.frame"` or `"numeric"`, a [host_class()], or an S4 class
+#'   object, as a dispatched position takes it.
+#' @param x,y Values of one R8 type, for `r8_partial_cmp()`.
+#'
+#' @return A trait object. `From()` returns one of the internal class
+#'   `r8_from_trait`, which holds its type parameter `source`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Money <- new_struct("Money", fields = list(cents = type_integer()))
 #' impl(Display, Money, methods = list(format = function(x, ...) sprintf("$%.2f", x$cents / 100)))
-#' impl(PartialOrd, Money, methods = list(cmp = function(x, y) x$cents - y$cents))
+#' impl(PartialOrd, Money, methods = list(partial_cmp = function(x, y) sign(x$cents - y$cents)))
 #' impl(From("numeric"), Money, methods = list(
 #'   from = function(x) Money(cents = as.integer(round(x * 100)))
 #' ))
@@ -54,7 +67,7 @@ Display <- build_trait(
   "Display",
   list(
     format = trait_method(
-      function(x, ...) NULL,
+      params(x, "..."),
       description = "The text that print() shows."
     )
   ),
@@ -70,7 +83,7 @@ Debug <- build_trait(
   "Debug",
   list(
     str = trait_method(
-      function(object, ...) NULL,
+      params(object, "..."),
       description = "The structure, for developers."
     )
   ),
@@ -82,9 +95,9 @@ Debug <- build_trait(
 
 #' @rdname standard_traits
 #' @export
-Dim <- build_trait(
-  "Dim",
-  list(dim = trait_method(function(x) NULL, description = "The dimensions.")),
+Shape <- build_trait(
+  "Shape",
+  list(dim = trait_method(params(x), description = "The dimensions.")),
   "A value's dimensions.",
   NULL,
   "R8",
@@ -96,9 +109,9 @@ Dim <- build_trait(
 PartialOrd <- build_trait(
   "PartialOrd",
   list(
-    cmp = trait_method(
-      function(x, y) NULL,
-      description = "The order of x relative to y."
+    partial_cmp = trait_method(
+      params(x, y),
+      description = "The order of x relative to y, or NA when not ordered."
     )
   ),
   "An order between values of a type.",
@@ -113,7 +126,7 @@ Print <- build_trait(
   "Print",
   list(
     print = trait_method(
-      function(x, ...) NULL,
+      params(x, "..."),
       description = "Writes the value to the console."
     )
   ),
@@ -125,13 +138,14 @@ Print <- build_trait(
 
 #' @rdname standard_traits
 #' @export
-r8_cmp <- unclass(PartialOrd)[["generics"]][["cmp"]]
+r8_partial_cmp <- unclass(PartialOrd)[["generics"]][["partial_cmp"]]
 
 # The declaration of `From`, one trait whose impls carry their source as a
 # type argument.
 FROM_IR <- list(
   name = "From",
   description = "Conversion from a source class or type.",
+  extra_type_params = 1L,
   methods = list(list(
     name = "from",
     description = "Converts x to the implementing type.",
@@ -142,36 +156,63 @@ FROM_IR <- list(
 #' @rdname standard_traits
 #' @export
 From <- function(source) {
-  if (!is.character(source) || length(source) != 1L || !nzchar(source)) {
-    r8_abort(
-      "`source` is one class or qualified type name.",
-      class = "r8_declaration_error"
-    )
-  }
+  p <- position_of(source)[["ir"]]
   structure(
     list(
       name = "R8::From",
       ir = FROM_IR,
       generics = list(),
       defaults = list(),
-      source = source
+      # The key of the source's impls: a qualified type name or a class.
+      source = if (identical(p[["kind"]], "named")) {
+        p[["name"]]
+      } else {
+        p[["class"]]
+      },
+      source_ir = p
     ),
     class = c("r8_from_trait", "r8_trait")
   )
 } # /R8::From
 
 
+# %% from_text ----
+#' A `From()` source as R code, for messages
+#'
+#' @param s Character: A source key, a qualified type name or a class.
+#'
+#' @return Character: The type's name, or the class in double quotes.
+#'
+#' @keywords internal
+#' @noRd
+from_text <- function(s) {
+  if (grepl("::", s, fixed = TRUE)) {
+    sub("^.*::", "", s)
+  } else {
+    paste0("\"", s, "\"")
+  }
+} # /R8::from_text
+
+
 # %% r8_convert ----
 #' Convert a value to an R8 type
 #'
-#' Calls the `From(source)` impl of `type` for the class of `x`, or for its
-#' R8 type when `x` is an R8 value, and checks that the result is a value of
-#' `type`.
+#' Returns `x` when it is a value of `type`, and its upcast when `type` is an
+#' ancestor of its type (`r8_upcast()`). Otherwise calls the `From(source)`
+#' impl of `type` for the nearest source with one: for an R8 value, its type,
+#' then its ancestors through `extends`, nearest first; for any other object,
+#' its class vector as [.class2()] gives it, which includes the implicit
+#' classes, such as `"matrix"`, `"integer"`, and `"numeric"`, and an S4
+#' object's superclasses. The impl receives `x`
+#' unchanged, and its result must be a value of `type`. Conversions are not
+#' chained.
 #'
 #' @param x The value to convert.
 #' @param type An R8 type object.
 #'
-#' @return A value of `type`.
+#' @return A value of `type`. A source without an impl raises
+#'   `r8_dispatch_error`, and an impl's result of another type
+#'   `r8_result_error`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -186,28 +227,45 @@ r8_convert <- function(x, type) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
   target <- attr(type, "r8_name")
-  if (inherits(x, "r8_value") && identical(attr(x, "r8_type"), target)) {
+  r8 <- is_value(x)
+  if (r8) {
+    require_current(x)
+  }
+  if (r8 && identical(value_type(x), target)) {
     return(x)
   }
-  sources <- if (inherits(x, "r8_value")) {
-    attr(x, "r8_type")
+  struct <- r8 && is.null(value_variant(x))
+  ancestors <- if (struct) r8_ancestors(x) else character()
+  # A child converts to an ancestor by upcast.
+  if (target %in% ancestors) {
+    return(r8_upcast(x, type))
+  }
+  sources <- if (r8) {
+    c(value_type(x), ancestors)
   } else {
-    unique(c(class(x), if (is.numeric(x)) "numeric"))
+    .class2(x)
   }
   for (s in sources) {
     fn <- .r8_impls[[paste("R8::From", s, target, sep = "|")]]
     if (!is.null(fn)) {
       out <- fn(x)
-      if (
-        !inherits(out, "r8_value") || !identical(attr(out, "r8_type"), target)
-      ) {
+      if (!is_value(out) || !identical(value_type(out), target)) {
         r8_abort(
-          "The From(\"",
-          s,
-          "\") impl of `",
+          "The From(",
+          from_text(s),
+          ") impl of `",
           target,
-          "` returned another kind of value.",
-          class = "r8_dispatch_error"
+          "` returned ",
+          if (is_value(out)) {
+            paste0("a value of `", value_type(out), "`")
+          } else {
+            paste0(
+              "an object of class ",
+              paste0("\"", class(out), "\"", collapse = ", ")
+            )
+          },
+          "; a From impl returns a value of its target.",
+          class = c("r8_result_error", "r8_type_error")
         )
       }
       return(out)
@@ -228,31 +286,118 @@ r8_convert <- function(x, type) {
 #' A conversion function for an R8 type
 #'
 #' Returns `function(x) r8_convert(x, type)`, which a type's package exports
-#' under a name of its choice, such as `as_granges()`.
+#' under a name of its choice, such as `as_granges()`. The converter is also
+#' the generic of the conversions to `type`: `implement(as_target, Source)
+#' <- function(x) ...` declares the conversion from the R8 type `Source`, and
+#' `implement(as_target, "character") <- function(x) ...` the conversion from
+#' a class, each an impl of `From(source)` for `type`.
 #'
 #' @param type An R8 type object.
 #'
-#' @return Function.
+#' @return `r8_converter()`: A function of class `r8_converter`.
+#'   `print()`: `x`, invisibly.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Pct <- new_struct("Pct2", fields = list(p = type_double(min = 0, max = 100)))
-#' impl(From("numeric"), Pct, methods = list(from = function(x) Pct(p = x * 100)))
 #' as_pct <- r8_converter(Pct)
+#' implement(as_pct, "numeric") <- function(x) Pct(p = x * 100)
 #' as_pct(0.5)$p
+#' as_pct
 #' options(op)
 #'
 #' @export
 r8_converter <- function(type) {
+  if (!inherits(type, "r8_type")) {
+    r8_abort("`type` is an R8 type object.", class = "r8_type_error")
+  }
   force(type)
-  function(x) r8_convert(x, type)
+  structure(
+    function(x) r8_convert(x, type),
+    class = c("r8_converter", "function")
+  )
 } # /R8::r8_converter
+
+
+# %% converter_target ----
+#' The target type object of a converter
+#'
+#' @param f A function of class `r8_converter`.
+#'
+#' @return An R8 type object.
+#'
+#' @keywords internal
+#' @noRd
+converter_target <- function(f) {
+  get("type", envir = environment(f), inherits = FALSE)
+} # /R8::converter_target
+
+
+# %% print.r8_converter ----
+#' @rdname r8_converter
+#' @param x A function of class `r8_converter`.
+#' @param ... Not used.
+#' @export
+print.r8_converter <- function(x, ...) {
+  target <- attr(converter_target(x), "r8_name")
+  cat("<r8 converter ", target, ">\n", sep = "")
+  keys <- ls(.r8_impls, all.names = TRUE)
+  keys <- keys[
+    startsWith(keys, "R8::From|") & endsWith(keys, paste0("|", target))
+  ]
+  sources <- substr(
+    keys,
+    nchar("R8::From|") + 1L,
+    nchar(keys) - nchar(target) - 1L
+  )
+  if (length(sources) > 0L) {
+    cat("Methods for: ", paste(sort(sources), collapse = ", "), "\n", sep = "")
+  }
+  invisible(x)
+} # /R8::print.r8_converter
+
+
+# %% declare_conversion ----
+#' Declare a conversion through a converter
+#'
+#' `implement(converter, source) <- fn` lowers to `impl(From(source),
+#' Target, methods = list(from = fn))`.
+#'
+#' @param converter A function of class `r8_converter`.
+#' @param source An R8 type object, or Character: a class name.
+#' @param fn Function: The conversion, of one argument `x`.
+#' @param env Environment: The declaring environment.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+declare_conversion <- function(converter, source, fn, env) {
+  target <- converter_target(converter)
+  if (!is_position(source)) {
+    r8_abort(
+      "A converter's method is declared for the class of `x`: an R8 type ",
+      "object, a class name, host_class(), or an S4 class object, such as ",
+      "implement(as_",
+      tolower(sub("^.*::", "", attr(target, "r8_name"))),
+      ", \"character\") <- function(x) ...",
+      class = "r8_declaration_error"
+    )
+  }
+  check_method_formals(
+    fn,
+    "x",
+    paste0("r8_converter(", sub("^.*::", "", attr(target, "r8_name")), ")")
+  )
+  impl_declare(From(source), target, list(from = fn), NULL, env)
+} # /R8::declare_conversion
 
 
 # %% @.r8_struct_type ----
 #' Items of a struct type
 #'
-#' `Type@from(x)` converts `x` with the type's `From` impls.
+#' `Type@from(x)` converts `x` with the type's `From` impls, as
+#' `r8_converter(Type)(x)` does.
 #'
 #' @param object A struct type object.
 #' @param name The item's name.
@@ -290,9 +435,24 @@ r8_converter <- function(type) {
   list2env(r8_native_symbols(), envir = .r8_native)
   ns <- topenv()
   assign(".r8_c_find", .r8_native[["find"]], envir = ns)
+  assign(".r8_c_replaced", .r8_native[["replaced"]], envir = ns)
+  assign(".r8_c_find2", .r8_native[["find2"]], envir = ns)
+  assign(".r8_c_find3", .r8_native[["find3"]], envir = ns)
   assign(".r8_c_invoke", .r8_native[["invoke"]], envir = ns)
+  assign(".r8_c_call", .r8_native[["call"]], envir = ns)
+  assign(".r8_c_result", .r8_native[["result"]], envir = ns)
+  assign(".r8_c_variant", .r8_native[["variant"]], envir = ns)
+  assign(".r8_c_is_variant", .r8_native[["is_variant"]], envir = ns)
+  assign(".r8_c_type", .r8_native[["type"]], envir = ns)
+  assign(".r8_c_variant_of", .r8_native[["variant_of"]], envir = ns)
+  assign(".r8_c_is_value", .r8_native[["is_value"]], envir = ns)
+  assign(".r8_c_names", .r8_native[["names"]], envir = ns)
+  assign(".r8_c_require", .r8_native[["require"]], envir = ns)
+  assign(".r8_c_get", .r8_native[["get"]], envir = ns)
+  assign(".r8_c_fields", .r8_native[["fields"]], envir = ns)
+  assign(".r8_c_check", .r8_native[["check"]], envir = ns)
   claim_namespace("R8", "R8")
-  for (t in list(Display, Debug, Dim, PartialOrd, Print)) {
+  for (t in list(Display, Debug, Shape, PartialOrd, Print)) {
     register_trait(t, "R8")
   }
   register_trait(
@@ -307,4 +467,15 @@ r8_converter <- function(type) {
     ),
     "R8"
   )
+  # The type of the tables without declared columns.
+  assign(
+    "Raven",
+    new_table(
+      "Raven",
+      open = TRUE,
+      description = "A table of any columns."
+    ),
+    envir = ns
+  )
+  declare_report()
 }

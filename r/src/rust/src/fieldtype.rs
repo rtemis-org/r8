@@ -98,14 +98,14 @@ fn string(x: SEXP, arg: &'static str) -> Built<Option<String>> {
     }
 }
 
-/// `isTRUE(x)`.
-fn is_true(x: SEXP) -> bool {
-    sexptype(x) == SEXPTYPE::LGLSXP && xlen(x) == 1 && unsafe { *LOGICAL(x) } == 1
-}
-
-/// `isFALSE(x)`.
-fn is_false(x: SEXP) -> bool {
-    sexptype(x) == SEXPTYPE::LGLSXP && xlen(x) == 1 && unsafe { *LOGICAL(x) } == 0
+/// One `TRUE` or `FALSE`.
+fn flag(x: SEXP, arg: &'static str) -> Built<bool> {
+    let given = (sexptype(x) == SEXPTYPE::LGLSXP && xlen(x) == 1).then(|| unsafe { *LOGICAL(x) });
+    match given {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err(BuildError::NotFlag { arg }),
+    }
 }
 
 /// The qualified name of an R8 type object.
@@ -180,13 +180,19 @@ fn r8_ft_double(
     max: Robj,
     exclusive_min: Robj,
     exclusive_max: Robj,
-    finite: Robj,
+    infinite: Robj,
+    nan: Robj,
     values: Robj,
 ) -> Robj {
     written((|| {
         let b = bounds(&min, &max, &exclusive_min, &exclusive_max)?;
         let v = numbers(unsafe { values.get() }, "values")?;
-        build::double(b, !is_false(unsafe { finite.get() }), v.as_deref())
+        build::double(
+            b,
+            flag(unsafe { infinite.get() }, "infinite")?,
+            flag(unsafe { nan.get() }, "nan")?,
+            v.as_deref(),
+        )
     })())
 }
 
@@ -207,22 +213,10 @@ fn r8_ft_character(pattern: Robj, values: Robj) -> Robj {
 /// @noRd
 #[extendr]
 fn r8_ft_factor(levels: Robj, ordered: Robj) -> Robj {
-    written(
-        strings(unsafe { levels.get() }, "levels")
-            .map(|l| build::factor(l, is_true(unsafe { ordered.get() }))),
-    )
-}
-
-/// `type_r()`.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_ft_r(class: Robj) -> Robj {
-    written(
-        string(unsafe { class.get() }, "class")
-            .and_then(|c| c.ok_or(BuildError::NotOneString { arg: "class" }))
-            .map(|c| build::r_class(&c)),
-    )
+    written((|| {
+        let l = strings(unsafe { levels.get() }, "levels")?;
+        Ok(build::factor(l, flag(unsafe { ordered.get() }, "ordered")?))
+    })())
 }
 
 /// A field-type argument as the R list a container holds: an
@@ -245,7 +239,6 @@ enum Member<'a> {
     Count(u64),
     Counts(&'a [u32]),
     Flag,
-    Resolve(&'a rtemis_r8::ir::Resolve),
     Keys(&'a rtemis_r8::ir::CharacterType),
 }
 
@@ -264,7 +257,6 @@ fn container(kind: &str, members: &[(&str, Option<Member<'_>>)]) -> Robj {
             Some(Member::Count(n)) => b.value(name, n),
             Some(Member::Counts(d)) => b.value(name, d),
             Some(Member::Flag) => b.value(name, &true),
-            Some(Member::Resolve(r)) => b.value(name, *r),
             Some(Member::Keys(k)) => b.value(name, *k),
         };
     }
@@ -284,24 +276,30 @@ fn r8_field(
     description: Robj,
     sensitive: Robj,
     unit: Robj,
-    external: Robj,
-    unique: Robj,
-    optional: Robj,
+    compute: Robj,
+    context: Robj,
     extensions: Robj,
 ) -> Robj {
     let ty = match element(unsafe { r#type.get() }) {
         Ok(t) => t,
         Err(e) => return message(e),
     };
-    let flag = |x: &Robj| Robj::from(is_true(unsafe { x.get() }));
-    let (s, e, u, o) = (
-        flag(&sensitive),
-        flag(&external),
-        flag(&unique),
-        flag(&optional),
-    );
+    let read = (|| {
+        let c = unsafe { compute.get() };
+        let expr = if is_null(c) { None } else { Some(logic(c)?) };
+        let resolve = build::resolve(expr, flag(unsafe { context.get() }, "context")?)?;
+        Ok((resolve, flag(unsafe { sensitive.get() }, "sensitive")?))
+    })();
+    let (resolve, s) = match read {
+        Ok(r) => r,
+        Err(e) => return message(e),
+    };
+    let s = Robj::from(s);
     let has = Robj::from(has_default);
-    let mut b = crate::irser::Builder::named(10);
+    let mut b = crate::irser::Builder::named(7 + usize::from(resolve.is_some()));
+    if let Some(r) = &resolve {
+        let _ = b.value("resolve", r);
+    }
     unsafe {
         b.object("type", ty.get());
         b.object("default", default.get());
@@ -309,9 +307,6 @@ fn r8_field(
         b.object("description", description.get());
         b.object("sensitive", s.get());
         b.object("unit", unit.get());
-        b.object("external", e.get());
-        b.object("unique", u.get());
-        b.object("optional", o.get());
         b.object("extensions", extensions.get());
     }
     b.finish("r8_field")
@@ -333,45 +328,36 @@ fn r8_ft_vec(r#type: Robj, min_length: Robj, max_length: Robj, unique: Robj) -> 
             number(min_length.get(), "min_length")?,
             number(max_length.get(), "max_length")?,
         )?;
+        let unique = flag(unique.get(), "unique")?;
         Ok(container(
             "vec",
             &[
                 ("element", Some(Member::Object(&el))),
                 ("min_length", lo.map(Member::Count)),
                 ("max_length", hi.map(Member::Count)),
-                ("unique", is_true(unique.get()).then_some(Member::Flag)),
+                ("unique", unique.then_some(Member::Flag)),
             ],
         ))
     })();
     built.unwrap_or_else(message)
 }
 
-/// `option()`: `resolve` is matched in R, and `compute` is the unevaluated
-/// expression of a computed field, or `NULL`.
+/// `option()`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_ft_option(r#type: Robj, resolve: &str, compute: Robj) -> Robj {
+fn r8_ft_option(r#type: Robj) -> Robj {
     let built = (|| {
         let inner = element(unsafe { r#type.get() })?;
-        let c = unsafe { compute.get() };
-        let expr = if is_null(c) { None } else { Some(logic(c)?) };
-        let r = build::resolve(resolve, expr)?;
         Ok(container(
             "option",
-            &[
-                ("inner", Some(Member::Object(&inner))),
-                (
-                    "resolve",
-                    (r != rtemis_r8::ir::Resolve::None).then_some(Member::Resolve(&r)),
-                ),
-            ],
+            &[("inner", Some(Member::Object(&inner)))],
         ))
     })();
     built.unwrap_or_else(message)
 }
 
-/// `hashmap()` and, with `ordered = TRUE`, `ordered_map()`.
+/// `btree_map()` and, with `ordered = TRUE`, `index_map()`.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -388,7 +374,7 @@ fn r8_ft_map(r#type: Robj, keys: Robj, ordered: bool) -> Robj {
         };
         let constraints = build::keys(key_type)?;
         Ok(container(
-            if ordered { "ordered_map" } else { "hashmap" },
+            if ordered { "index_map" } else { "btree_map" },
             &[
                 ("value", Some(Member::Object(&value))),
                 (
@@ -402,28 +388,32 @@ fn r8_ft_map(r#type: Robj, keys: Robj, ordered: bool) -> Robj {
     built.unwrap_or_else(message)
 }
 
-/// `type_matrix()`, `type_array()` (`dim`), and `type_sparse_matrix()`
-/// (`sparse = TRUE`).
+/// `type_matrix()`, `type_array()` (`dim`), and `type_sparse_matrix()`, as `kind`
+/// names them: `"matrix"`, `"array"`, and `"sparse_matrix"`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, sparse: bool) -> Robj {
+fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, kind: crate::utf8::Utf8) -> Robj {
+    let kind: &str = &kind;
     let built = (|| unsafe {
         let t = r#type.get();
-        if !sparse && is_null(dim.get()) && inherits(t, "r8_struct_type") {
+        if kind == "matrix" && inherits(t, "r8_struct_type") {
             return Ok(field_type_list(&build::matrix_of(type_name(t)?)));
         }
         let el = element(t)?;
-        if let Some(d) = numbers(dim.get(), "dim")? {
-            let d = d
-                .iter()
-                .map(|&x| build::count(x, "dim"))
-                .collect::<Built<Vec<u32>>>()?;
+        if kind == "array" {
+            let d = numbers(dim.get(), "dim")?
+                .map(|d| {
+                    d.iter()
+                        .map(|&x| build::count(x, "dim"))
+                        .collect::<Built<Vec<u32>>>()
+                })
+                .transpose()?;
             return Ok(container(
                 "array",
                 &[
                     ("element", Some(Member::Object(&el))),
-                    ("dim", Some(Member::Counts(&d))),
+                    ("dim", d.as_deref().map(Member::Counts)),
                 ],
             ));
         }
@@ -433,7 +423,11 @@ fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, sparse: bool) -
             count(number(ncol.get(), "ncol")?, "ncol")?,
         );
         Ok(container(
-            if sparse { "sparse_matrix" } else { "matrix" },
+            if kind == "sparse_matrix" {
+                "sparse_matrix"
+            } else {
+                "matrix"
+            },
             &[
                 ("element", Some(Member::Object(&el))),
                 ("nrow", nrow.map(|v| Member::Count(u64::from(v)))),
@@ -444,23 +438,29 @@ fn r8_ft_matrix(r#type: Robj, nrow: Robj, ncol: Robj, dim: Robj, sparse: bool) -
     built.unwrap_or_else(message)
 }
 
-/// `rule()`: `invariant` and `when` are the unevaluated expressions.
+/// `rule()`: `invariant` and `when` are the unevaluated expressions;
+/// `message` and `id` are `NULL` or one string.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_rule(id: Robj, invariant: Robj, message: Robj, when: Robj) -> Robj {
+fn r8_rule(invariant: Robj, when: Robj, message: Robj, id: Robj) -> Robj {
     let built = (|| unsafe {
-        let id = string(id.get(), "id")
-            .ok()
-            .flatten()
-            .ok_or(BuildError::RuleId)?;
-        let message = string(message.get(), "message")
-            .ok()
-            .flatten()
-            .ok_or(BuildError::RuleMessage)?;
+        let text = |x: &Robj, e: BuildError| -> Built<Option<String>> {
+            if is_null(x.get()) {
+                return Ok(None);
+            }
+            string(x.get(), "").ok().flatten().map(Some).ok_or(e)
+        };
+        let id = text(&id, BuildError::RuleId)?;
+        let message = text(&message, BuildError::RuleMessage)?;
         let w = when.get();
         let when = if is_null(w) { None } else { Some(logic(w)?) };
-        build::rule(&id, logic(invariant.get())?, &message, when)
+        build::rule(
+            logic(invariant.get())?,
+            when,
+            message.as_deref(),
+            id.as_deref(),
+        )
     })();
     match built {
         Ok(r) => {
@@ -482,6 +482,26 @@ fn r8_logic(expr: Robj) -> Robj {
         Ok(l) => crate::irser::to_r(&l).unwrap_or_else(|e| Robj::from(e.to_string())),
         Err(e) => Robj::from(e.to_string()),
     }
+}
+
+/// Dates or date-times as a rule writes them.
+///
+/// @param x Double: Days, or seconds, since 1970-01-01.
+/// @param datetime Logical: `x` holds seconds.
+/// @return Character.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_date_literals(x: Vec<f64>, datetime: bool) -> Vec<String> {
+    x.into_iter()
+        .map(|v| {
+            if datetime {
+                rtemis_r8::canonical::datetime_text((v * 1e6).round() as i64)
+            } else {
+                rtemis_r8::canonical::date_text(v as i64)
+            }
+        })
+        .collect()
 }
 
 /// The R functions and operators of a rule and the operators of the dialect
@@ -517,6 +537,16 @@ const OPERATORS: &[(&str, Operator)] = &[
     ("round", Operator::Round),
     ("min", Operator::Min),
     ("max", Operator::Max),
+    ("abs", Operator::Abs),
+    ("sqrt", Operator::Sqrt),
+    ("log", Operator::Log),
+    ("exp", Operator::Exp),
+    ("sum", Operator::Sum),
+    ("mean", Operator::Mean),
+    ("pmin", Operator::Pmin),
+    ("pmax", Operator::Pmax),
+    ("is.na", Operator::IsNa),
+    ("nchar", Operator::Nchar),
     ("all", Operator::All),
     ("any", Operator::Any),
     ("subset", Operator::Subset),
@@ -529,6 +559,41 @@ fn operator(name: &str) -> Option<Operator> {
         .iter()
         .find(|(r, _)| *r == name)
         .map(|&(_, op)| op)
+}
+
+/// A message on a rule with its operators as R writes them.
+pub(crate) fn in_r(message: &str) -> String {
+    const AFTER: [&str; 9] = [
+        " takes",
+        " compares",
+        " combines",
+        " searches",
+        " joins",
+        " counts",
+        " tests",
+        " reads whole",
+        " reads a whole",
+    ];
+    let mut out = message.to_string();
+    let mut seen: Vec<Operator> = Vec::new();
+    for &(r, op) in OPERATORS {
+        // The first spelling is the one that R shows.
+        if r == op.as_str() || seen.contains(&op) {
+            continue;
+        }
+        seen.push(op);
+        let name = format!("`{}`", op.as_str());
+        if !out.contains(&name) {
+            continue;
+        }
+        for after in AFTER {
+            out = out.replace(&format!("{name}{after}"), &format!("`{r}`{after}"));
+        }
+        for before in ["operand of ", "condition of "] {
+            out = out.replace(&format!("{before}{name}"), &format!("{before}`{r}`"));
+        }
+    }
+    out
 }
 
 /// The R spelling of each operator of the dialect: the dialect operators,
@@ -548,9 +613,43 @@ fn r8_rule_operators() -> Robj {
 }
 
 /// The functions of the dialect, as R writes them, for a message.
-const KNOWN_FUNCTIONS: &str = "comparisons, arithmetic, logical operators, %in%, is.null(), \
-is_variant(), length(), nrow(), ncol(), dim(), levels(), floor(), ceiling(), round(), min(), max(), \
-all(), any(), subset(), non_increasing(), and non_decreasing()";
+const KNOWN_FUNCTIONS: &str = "comparisons, arithmetic, logical operators, %in%, if, is.na(), \
+is.null(), is_variant(), length(), nchar(), nrow(), ncol(), dim(), levels(), abs(), sqrt(), log(), \
+exp(), floor(), ceiling(), round(), min(), max(), pmin(), pmax(), sum(), mean(), all(), any(), \
+subset(), non_increasing(), non_decreasing(), and val() for a constant from R";
+
+/// The function of rules nearest to `name`, as R writes it.
+fn nearest_function(name: &str) -> Option<String> {
+    rtemis_r8::name::nearest(
+        name,
+        OPERATORS
+            .iter()
+            .map(|(r, _)| *r)
+            .chain(["if", "is_variant", "val", "c"])
+            .filter(|r| {
+                r.chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            }),
+    )
+    .map(str::to_string)
+}
+
+/// The candidate nearest to `name`, for a message.
+///
+/// @param name Character: The name.
+/// @param candidates Character: The candidates.
+/// @return Character: The nearest, or a vector of length 0.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_nearest_name(name: crate::utf8::Utf8, candidates: crate::utf8::Utf8s) -> Vec<String> {
+    let name: &str = &name;
+    let candidates: Vec<String> = candidates.to_vec();
+    rtemis_r8::name::nearest(name, candidates.iter().map(String::as_str))
+        .map(str::to_string)
+        .into_iter()
+        .collect()
+}
 
 /// The name of a symbol.
 fn symbol_name(x: SEXP) -> String {
@@ -585,31 +684,73 @@ fn args(x: SEXP) -> Vec<SEXP> {
 }
 
 /// A constant of a rule: one value of an atomic vector, not `NA`.
-fn constant(x: SEXP) -> Option<Logic> {
+fn constant(x: SEXP) -> Built<Logic> {
+    signed(x, false)
+}
+
+/// [`constant`], of which `negative` gives the negative, as of a number.
+fn signed(x: SEXP, negative: bool) -> Built<Logic> {
     if xlen(x) != 1 {
-        return None;
+        return Err(BuildError::Constant);
     }
+    let number = |d: f64| {
+        if d.is_infinite() {
+            Err(BuildError::InfiniteConstant)
+        } else if d.is_nan() {
+            Err(BuildError::Constant)
+        } else {
+            Ok(Logic::Number(Number::F64(d)))
+        }
+    };
     unsafe {
         match sexptype(x) {
-            SEXPTYPE::LGLSXP => match *LOGICAL(x) {
-                NA_INTEGER => None,
-                b => Some(Logic::Bool(b != 0)),
-            },
             SEXPTYPE::INTSXP => match *INTEGER(x) {
-                NA_INTEGER => None,
-                i => Some(Logic::Number(if i >= 0 {
-                    Number::U64(i as u64)
-                } else {
-                    Number::I64(i64::from(i))
-                })),
+                NA_INTEGER => Err(BuildError::Constant),
+                i => {
+                    let i = if negative { -i } else { i };
+                    Ok(Logic::Number(if i >= 0 {
+                        Number::U64(i as u64)
+                    } else {
+                        Number::I64(i64::from(i))
+                    }))
+                }
             },
-            SEXPTYPE::REALSXP => {
-                let d = *REAL(x);
-                d.is_finite().then_some(Logic::Number(Number::F64(d)))
-            }
-            SEXPTYPE::STRSXP => string_elt(x, 0).map(|s| Logic::String(s.as_ref().into())),
-            _ => None,
+            SEXPTYPE::REALSXP if negative => number(-*REAL(x)),
+            SEXPTYPE::REALSXP => number(*REAL(x)),
+            SEXPTYPE::LGLSXP if !negative => match *LOGICAL(x) {
+                NA_INTEGER => Err(BuildError::Constant),
+                b => Ok(Logic::Bool(b != 0)),
+            },
+            SEXPTYPE::STRSXP if !negative => string_elt(x, 0)
+                .map(|s| Logic::String(s.as_ref().into()))
+                .ok_or(BuildError::Constant),
+            _ => Err(BuildError::Constant),
         }
+    }
+}
+
+/// The constant that an expression writes: a value, `-1`, or `+1`; `None` for
+/// another expression. R reads `-1` as a call of `-`.
+fn literal(x: SEXP) -> Option<Built<Logic>> {
+    if is_atomic(x) {
+        return Some(constant(x));
+    }
+    if sexptype(x) != SEXPTYPE::LANGSXP {
+        return None;
+    }
+    let f = unsafe { CAR(x) };
+    let sign = match sexptype(f) {
+        SEXPTYPE::SYMSXP => symbol_name(f),
+        _ => return None,
+    };
+    let a = args(x);
+    let [of] = a.as_slice() else { return None };
+    let number = matches!(sexptype(*of), SEXPTYPE::INTSXP | SEXPTYPE::REALSXP);
+    match sign.as_str() {
+        "-" if number => Some(signed(*of, true)),
+        "+" if number => Some(signed(*of, false)),
+        "(" => literal(*of),
+        _ => None,
     }
 }
 
@@ -625,21 +766,22 @@ fn is_atomic(x: SEXP) -> bool {
     )
 }
 
-/// The path of `a`, `a$b`, `a$b$c`, as `a.b.c`.
-fn path(x: SEXP) -> Option<String> {
+/// The names of `a`, `a$b`, `a$b$c`, in order: a symbol is one name, and `$`
+/// makes a path.
+fn path(x: SEXP) -> Option<Vec<String>> {
     match sexptype(x) {
-        SEXPTYPE::SYMSXP => Some(symbol_name(x)),
+        SEXPTYPE::SYMSXP => Some(vec![symbol_name(x)]),
         SEXPTYPE::LANGSXP => {
             let f = unsafe { CAR(x) };
             let a = args(x);
             if sexptype(f) == SEXPTYPE::SYMSXP && symbol_name(f) == "$" && a.len() == 2 {
-                let head = path(a[0])?;
-                let tail = match sexptype(a[1]) {
+                let mut names = path(a[0])?;
+                names.push(match sexptype(a[1]) {
                     SEXPTYPE::SYMSXP => symbol_name(a[1]),
                     SEXPTYPE::STRSXP => string_elt(a[1], 0)?.into_owned(),
                     _ => return None,
-                };
-                Some(format!("{head}.{tail}"))
+                });
+                Some(names)
             } else {
                 None
             }
@@ -653,18 +795,19 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
     if is_null(x) {
         return Ok(Logic::Null);
     }
-    if is_atomic(x) {
-        return constant(x).ok_or(BuildError::Constant);
+    if let Some(c) = literal(x) {
+        return c;
     }
     if let Some(p) = path(x) {
-        return Ok(build::var(p));
+        let names: Vec<&str> = p.iter().map(String::as_str).collect();
+        return Ok(build::path(&names));
     }
     if sexptype(x) != SEXPTYPE::LANGSXP {
         return Err(BuildError::RuleOperand { expr: deparsed(x) });
     }
     let mut f = unsafe { CAR(x) };
-    // `R8::is_variant()` and `base::is.null()` name the same functions as
-    // their bare forms.
+    // `base::is.null()` and `R8::` before a dialect word name the same
+    // functions as their bare forms.
     if sexptype(f) == SEXPTYPE::LANGSXP {
         let head = unsafe { CAR(f) };
         let a = args(f);
@@ -713,12 +856,9 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
         ),
         "c" => build::array_literal(
             a.iter()
-                .map(|&v| {
-                    if is_atomic(v) {
-                        constant(v).ok_or(BuildError::ArrayLiteral)
-                    } else {
-                        Err(BuildError::ArrayLiteral)
-                    }
+                .map(|&v| match literal(v) {
+                    Some(Err(BuildError::Constant)) | None => Err(BuildError::ArrayLiteral),
+                    Some(c) => c,
                 })
                 .collect::<Built<Vec<_>>>()?,
         ),
@@ -730,19 +870,21 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
             [v, name] => build::is_variant(
                 logic(*v)?,
                 if is_atomic(*name) {
-                    constant(*name).ok_or(BuildError::VariantName)?
+                    constant(*name).map_err(|_| BuildError::VariantName)?
                 } else {
                     return Err(BuildError::VariantName);
                 },
             ),
             _ => Err(BuildError::VariantName),
         },
+        "[[" | "[" => Err(BuildError::RuleIndex { expr: deparsed(x) }),
         _ => match operator(&name) {
             Some(op) => Ok(build::call(
                 op,
                 a.iter().map(|&v| logic(v)).collect::<Built<Vec<_>>>()?,
             )),
             None => Err(BuildError::UnknownFunction {
+                nearest: nearest_function(&name),
                 name,
                 known: KNOWN_FUNCTIONS,
             }),
@@ -752,17 +894,18 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
 
 extendr_module! {
     mod fieldtype;
+    fn r8_nearest_name;
     fn r8_ft_integer;
     fn r8_field;
     fn r8_ft_double;
     fn r8_ft_character;
     fn r8_ft_factor;
-    fn r8_ft_r;
     fn r8_ft_vec;
     fn r8_ft_option;
     fn r8_ft_map;
     fn r8_ft_matrix;
     fn r8_rule;
     fn r8_logic;
+    fn r8_date_literals;
     fn r8_rule_operators;
 }

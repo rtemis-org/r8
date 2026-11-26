@@ -6,7 +6,7 @@
 //! difference. Numbers are equal when their canonical forms are (`-0` equals
 //! `0`, a `NaN` equals a `NaN`, and a missing value equals only a missing
 //! value); an absent field with a default equals its default; members of
-//! maps and tables compare by name. Runtime-only fields, which have no JSON
+//! maps and tables compare by name. Host-only fields, which have no JSON
 //! form, compare with [`Access::identical`]. Two handles to the same object
 //! are equal without a read ([`Access::same`]).
 
@@ -16,7 +16,7 @@ use std::borrow::Cow;
 
 use crate::access::{Access, Read, same_dimnames};
 use crate::emit::Emitter;
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 use crate::name::QualifiedName;
 use crate::rules::TypeLookup;
 
@@ -83,6 +83,7 @@ impl Eq<'_> {
     }
 
     fn value<'a, A: Access<'a>>(&self, ft: &FieldType, a: A, b: A) -> bool {
+        crate::progress::tick();
         if a.same(b) {
             return true;
         }
@@ -104,7 +105,7 @@ impl Eq<'_> {
             FieldType::Date => a.date().ok() == b.date().ok(),
             FieldType::Posixct => a.datetime().ok() == b.datetime().ok(),
             FieldType::Raw => a.bytes().ok() == b.bytes().ok(),
-            FieldType::R { .. } => a.identical(b),
+            FieldType::HostClass { .. } => a.identical(b),
             FieldType::Vec { element, .. } => match (a.vec(element), b.vec(element)) {
                 (Ok(n), Ok(m)) if n == m => self.sequence(element, a, b, n),
                 _ => false,
@@ -120,12 +121,12 @@ impl Eq<'_> {
                 _ => false,
             },
             FieldType::Named { name } => self.named(name, a, b),
-            FieldType::Dyn { r#trait } => {
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => {
                 match (
-                    a.implementor(r#trait, lookup),
-                    b.implementor(r#trait, lookup),
+                    crate::access::concrete(a, ft, lookup),
+                    crate::access::concrete(b, ft, lookup),
                 ) {
-                    (Ok((x, _)), Ok((y, _))) if x == y => self.named(&x, a, b),
+                    (Some(Ok((x, _))), Some(Ok((y, _)))) if x == y => self.named(&x, a, b),
                     _ => false,
                 }
             }
@@ -136,8 +137,8 @@ impl Eq<'_> {
                 Some(TypeDef::Struct(s)) => self.table(&s.fields, false, a, b),
                 _ => false,
             },
-            FieldType::Hashmap { value, .. } => self.map(value, false, a, b),
-            FieldType::OrderedMap { value, .. } => self.map(value, true, a, b),
+            FieldType::BtreeMap { value, .. } => self.map(value, false, a, b),
+            FieldType::IndexMap { value, .. } => self.map(value, true, a, b),
             // JSON values compare by the digest of their canonical form.
             _ => self.digest(ft, a) == self.digest(ft, b),
         }
@@ -302,7 +303,13 @@ impl Eq<'_> {
 
     /// Two tables: rows, then each column by name, with equal types for the
     /// extra columns of an open table.
-    fn table<'a, A: Access<'a>>(&self, columns: &[FieldDef], open: bool, a: A, b: A) -> bool {
+    fn table<'a, A: Access<'a>, C: crate::ir::Column>(
+        &self,
+        columns: &[C],
+        open: bool,
+        a: A,
+        b: A,
+    ) -> bool {
         let (Ok(x), Ok(y)) = (a.table(columns, open), b.table(columns, open)) else {
             return false;
         };
@@ -310,13 +317,21 @@ impl Eq<'_> {
             return false;
         }
         let n = x.rows as usize;
+        let of_y: std::collections::HashMap<&str, A> =
+            y.columns.iter().map(|(k, c)| (k.as_ref(), *c)).collect();
         x.columns.iter().all(|(name, cx)| {
-            let Some((_, cy)) = y.columns.iter().find(|(k, _)| k == name) else {
+            let Some(cy) = of_y.get(name.as_ref()) else {
                 return false;
             };
-            let ty = match columns.iter().find(|c| c.name.as_str() == name.as_ref()) {
-                Some(c) => c.ty.clone(),
-                None => match (a.extra_column_type(name), b.extra_column_type(name)) {
+            let ty = match columns
+                .iter()
+                .find(|c| c.field().name.as_str() == name.as_ref())
+            {
+                Some(c) => c.field().ty.clone(),
+                None => match (
+                    a.extra_column_type(name, *cx),
+                    b.extra_column_type(name, *cy),
+                ) {
                     (Ok(p), Ok(q)) if p == q => p,
                     _ => return false,
                 },
@@ -328,7 +343,7 @@ impl Eq<'_> {
         })
     }
 
-    /// Two maps: an ordered map pairs entries by position, a hashmap by
+    /// Two maps: an index map pairs entries by position, a btree map by
     /// name.
     fn map<'a, A: Access<'a>>(&self, value: &FieldType, ordered: bool, a: A, b: A) -> bool {
         let entries = |v: A| {
@@ -378,6 +393,16 @@ impl Eq<'_> {
         let lookup = self.lookup;
         match lookup.find(name) {
             Some(TypeDef::Struct(s)) => self.fields(&s.fields, a, b),
+            Some(TypeDef::Table(t)) => {
+                // The names in order, and the units, of the extra columns.
+                let of = |v: A| -> Vec<_> {
+                    crate::access::extra_columns(&t.columns, t.open, v)
+                        .into_iter()
+                        .map(|(k, _, f)| (k, f.unit))
+                        .collect()
+                };
+                of(a) == of(b) && self.table(&t.columns, t.open, a, b)
+            }
             Some(TypeDef::Enum(e)) => {
                 let (Ok(va), Ok(vb)) = (a.variant(name, e), b.variant(name, e)) else {
                     return false;
@@ -389,10 +414,10 @@ impl Eq<'_> {
                     .variants
                     .iter()
                     .find(|x| x.name.as_str() == va)
-                    .map(|x| &x.shape)
+                    .map(|x| &x.kind)
                 {
-                    Some(VariantShape::Struct { fields, .. }) => self.fields(fields, a, b),
-                    Some(VariantShape::Newtype { of }) => match lookup.find(of) {
+                    Some(VariantKind::Struct { fields, .. }) => self.fields(fields, a, b),
+                    Some(VariantKind::Newtype { of }) => match lookup.find(of) {
                         Some(TypeDef::Struct(s)) => self.fields(&s.fields, a, b),
                         _ => false,
                     },

@@ -5,19 +5,53 @@
 \alias{print.r8_generic}
 \title{Declare a generic}
 \usage{
-generic(name, args = "x", description = "")
+generic(
+  name,
+  params,
+  description = "",
+  dispatch = NULL,
+  return_type = NULL,
+  rules = list()
+)
 
 \method{print}{r8_generic}(x, ...)
 }
 \arguments{
 \item{name}{Character: The generic's name, an R8 name such as
-\code{"describe"}: a letter, then letters, digits, or underscores. It is the
-name the generic is assigned to.}
+\code{"describe"}: a letter, then letters, digits, or underscores; or such a
+name followed by \verb{<-} for a replacement generic, such as \code{"labels<-"}.
+It is the name the generic is assigned to.}
 
-\item{args}{Character: The formal argument names. The first is the value
-dispatched on; \code{...} is appended when absent.}
+\item{params}{The generic's parameters, from \code{\link[=params]{params()}}. The first is the
+value dispatched on. A generic with \code{"..."} lets each method add named
+arguments after the generic's; a generic without it calls its methods
+with exactly its arguments, and a call with another argument is an
+error. Removing \code{"..."} from a generic breaks the methods that add
+arguments.}
 
 \item{description}{Character: What the generic does.}
+
+\item{dispatch}{Optional Character: The arguments the generic dispatches
+on, by name, at most three and none of them \code{...}; the first argument
+by default. A method names a type for any of them, by position or by
+name, and a position it does not name matches any value: with
+\code{dispatch = c("x", "y")}, \code{implement(f, A, B)} specializes both,
+\code{implement(f, A)} the first, and \code{implement(f, y = B)} the second. The
+generic forces exactly these arguments to choose a method. The most
+specific method in every position applies; two methods each more
+specific in one position make a call on both ambiguous, an
+\code{r8_dispatch_error} that names the method to declare, and
+\code{\link[=r8_ambiguities]{r8_ambiguities()}} lists such pairs.}
+
+\item{return_type}{Optional: The type of the value that every method
+returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of the
+first dispatched argument. A method may declare a type that fits it
+(\link{implement<-}). A replacement generic returns a value of its argument's
+type and declares none.}
+
+\item{rules}{A \code{\link[=rule]{rule()}}, or a list of rules, over the typed parameters, which
+every call satisfies once each argument satisfies its type, before the method
+is chosen.}
 
 \item{x}{A generic of class \code{r8_generic}.}
 
@@ -33,17 +67,48 @@ package assigns it to the generic's name, documents it with roxygen2, and
 exports it. The generic is a trait with one method named as the generic,
 \code{ns::describe}, which Rust and the C interface implement as any trait.
 }
+\details{
+A call checks its typed arguments before it dispatches: it forces them, in
+the order of the parameters, converts them as a constructor does, such as
+a whole double for an integer, and raises \code{r8_argument_error} with every
+problem of every argument. A result that does not satisfy the return type
+raises \code{r8_result_error}. An argument without a type stays lazy. The checks
+belong to the generic's call: \code{\link[=r8_method]{r8_method()}} and \code{\link[=r8_next_impl]{r8_next_impl()}} call a
+method without them.
+
+A replacement generic, \code{generic("labels<-", params(x, value))}, is called
+as \code{labels(x) <- value}, which rebinds \code{x} to the method's result; the
+original value is unchanged. Its last argument is \code{value}, and each
+method returns a value of the type of \code{x}: for a child type, the child,
+such as \code{x} after \code{x$label <- value}; any other result raises
+\code{r8_result_error}. Its trait is \code{ns::with_labels}, the method's name in the
+bindings other than R.
+}
 \examples{
 op <- options(r8.namespace = "models")
 GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
-describe <- generic("describe", "x")
-implement(describe, GBM) <- function(x, ...) {
-  paste("Gradient boosting,", x$n_trees, "trees")
+describe <- generic(
+  "describe",
+  params(x, digits = arg_integer(min = 0L, default = 3L)),
+  return_type = type_character()
+)
+implement(describe, GBM) <- function(x, digits) {
+  paste("Gradient boosting,", format(x$n_trees, digits = digits), "trees")
 }
 describe(GBM(n_trees = 100L))
+
+`n_trees<-` <- generic("n_trees<-", params(x, value))
+implement(`n_trees<-`, GBM) <- function(x, value) {
+  x$n_trees <- value
+  x
+}
+m <- GBM(n_trees = 100L)
+n_trees(m) <- 200L
+m$n_trees
 options(op)
 
 }
 \seealso{
-\link{implement<-} declares a method; \code{\link[=r8_method]{r8_method()}} returns one.
+\code{\link[=params]{params()}} declares the parameters; \link{implement<-} declares a
+method; \code{\link[=r8_method]{r8_method()}} returns one.
 }

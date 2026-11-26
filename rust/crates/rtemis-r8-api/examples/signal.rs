@@ -1,4 +1,4 @@
-//! A Rust-native struct with impls of an R8 trait declared in R
+//! A Rust-stored struct with impls of an R8 trait declared in R
 //! (`pkgr::Norm`) and of `R8::Display`, as an R package's Rust code writes
 //! them. `cargo check --examples` compiles it; R links it in a package.
 
@@ -8,7 +8,7 @@ use rtemis_r8_api::{Buffer, Dots};
 
 /// A named series of values.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub struct Signal {
     /// The name.
     pub name: String,
@@ -18,12 +18,12 @@ pub struct Signal {
 
 /// The Rust side of `pkgr::Norm`, declared in R with `magnitude(x)` and
 /// `ratio(x, by)`.
+#[r8::methods(trait = "pkgr::Norm")]
 pub trait Norm {
     fn magnitude(&self) -> f64;
     fn ratio(&self, by: f64) -> r8::Result<f64>;
 }
 
-#[r8::methods(trait = "pkgr::Norm")]
 impl Norm for Signal {
     fn magnitude(&self) -> f64 {
         self.values.iter().map(|v| v * v).sum::<f64>().sqrt()
@@ -36,7 +36,6 @@ impl Norm for Signal {
     }
 }
 
-#[r8::methods(trait = "R8::Display")]
 impl r8::Display for Signal {
     fn format(&self, _dots: Dots) -> String {
         format!("Signal {} ({} values)", self.name, self.values.len())
@@ -47,7 +46,7 @@ r8::exports! {
     package = "r8pkgR",
     namespace = "pkgr",
     types = [Signal],
-    impls = [Signal: Norm, Signal: Display],
+    impls = [Signal: Norm, Signal: r8::Display],
 }
 
 fn main() {}

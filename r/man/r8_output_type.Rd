@@ -14,14 +14,14 @@ or \code{"markdown"}.}
 Character: The output type.
 }
 \description{
-Resolves the output type as \code{print()} does, in this order: the
+Determines the output type as \code{print()} does, in this order: the
 \code{output_type} argument; \code{getOption("r8.output_type")}; the environment
 variable \code{R8_OUTPUT_TYPE}; \code{"plain"} when \code{NO_COLOR} is set or knitr
 runs; \code{"ansi"} in Positron, in RStudio with console color, and when
 standard output is a terminal, other than in R.app and Rgui; \code{"plain"}
 otherwise. Inside a running \code{print()} of an R8 value or text, it returns
 that call's output type, so a \code{Print} impl that writes with \code{cat()}
-writes the type the call resolved.
+writes the type the call determined.
 }
 \examples{
 r8_output_type()

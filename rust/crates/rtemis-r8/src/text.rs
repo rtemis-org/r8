@@ -252,8 +252,8 @@ pub enum HostKind {
     Other,
 }
 
-/// The facts from which a host resolves the output type of `print()`, in
-/// the order the resolution reads them.
+/// The facts from which a host determines the output type of `print()`,
+/// in the order [`determine`] reads them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Facts {
     /// The output type the caller names.
@@ -280,7 +280,7 @@ pub struct Facts {
 /// RStudio with console color; plain in R.app and Rgui; ANSI in a
 /// terminal, in 24-bit color when `COLORTERM` says so and 256 colors
 /// otherwise; and plain in any other host.
-pub fn resolve(facts: &Facts) -> (OutputType, ColorDepth) {
+pub fn determine(facts: &Facts) -> (OutputType, ColorDepth) {
     let depth = if facts.truecolor {
         ColorDepth::TrueColor
     } else {
@@ -998,35 +998,35 @@ mod tests {
     fn resolution_reads_the_facts_in_order() {
         use ColorDepth::*;
         use OutputType::*;
-        assert_eq!(resolve(&facts()), (Plain, Colors256));
+        assert_eq!(determine(&facts()), (Plain, Colors256));
         let terminal = Facts {
             terminal: true,
             ..facts()
         };
-        assert_eq!(resolve(&terminal), (Ansi, Colors256));
+        assert_eq!(determine(&terminal), (Ansi, Colors256));
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 truecolor: true,
                 ..terminal.clone()
             }),
             (Ansi, TrueColor)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 no_color: true,
                 ..terminal.clone()
             }),
             (Plain, Colors256)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 knitr: true,
                 ..terminal.clone()
             }),
             (Plain, Colors256)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 no_color: true,
                 explicit: Some(Html),
                 ..terminal.clone()
@@ -1034,7 +1034,7 @@ mod tests {
             (Html, Colors256)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 option: Some(Markdown),
                 env: Some(Ansi),
                 ..facts()
@@ -1042,14 +1042,14 @@ mod tests {
             (Markdown, Colors256)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 host: HostKind::Positron,
                 ..facts()
             }),
             (Ansi, TrueColor)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 host: HostKind::RStudio {
                     console_color: true
                 },
@@ -1058,7 +1058,7 @@ mod tests {
             (Ansi, Colors256)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 host: HostKind::RStudio {
                     console_color: false
                 },
@@ -1067,7 +1067,7 @@ mod tests {
             (Plain, Colors256)
         );
         assert_eq!(
-            resolve(&Facts {
+            determine(&Facts {
                 host: HostKind::NoAnsiGui,
                 terminal: true,
                 ..facts()

@@ -1,16 +1,22 @@
-//! The Rust code of r8pkgR: a Rust-native struct, `pkgr::Signal`, with
+//! The Rust code of r8pkgR: a Rust-stored struct, `pkgr::Signal`, with
 //! impls of `pkgr::Norm`, declared in R, and of `R8::Display`; and a
-//! Rust-native enum, `pkgr::Resampler`, of every variant shape, with an impl
-//! of `R8::Display`; and `pkgr::Conform`, a field of every Rust field type,
-//! against which the conformance tests of `tests/testthat/conformance` run.
+//! Rust-stored enum, `pkgr::Resampler`, of every variant shape, with an impl
+//! of `R8::Display`; `pkgr::Probe`, a field of every Rust field type,
+//! against which the conformance tests of `tests/testthat/conformance` run;
+//! structs that extend one another (`interval`); and open fields (`open`).
 
+pub mod interval;
+pub mod open;
+
+use interval::*;
+use open::*;
 use rtemis_r8::R8;
 use rtemis_r8_api as r8;
 use rtemis_r8_api::{Buffer, Dots, Logical};
 
 /// A named series of values.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub struct Signal {
     /// The name.
     pub name: String,
@@ -20,13 +26,13 @@ pub struct Signal {
 
 /// The Rust side of `pkgr::Norm`, declared in R with `magnitude(x)`,
 /// `ratio(x, by)`, and `distance(x, y)`.
+#[r8::methods(trait = "pkgr::Norm")]
 pub trait Norm {
     fn magnitude(&self) -> f64;
     fn ratio(&self, by: f64) -> r8::Result<f64>;
     fn distance(&self, y: &Signal) -> r8::Result<f64>;
 }
 
-#[r8::methods(trait = "pkgr::Norm")]
 impl Norm for Signal {
     fn magnitude(&self) -> f64 {
         self.values.iter().map(|v| v * v).sum::<f64>().sqrt()
@@ -54,7 +60,6 @@ impl Norm for Signal {
     }
 }
 
-#[r8::methods(trait = "R8::Display")]
 impl r8::Display for Signal {
     fn format(&self, _dots: Dots) -> String {
         format!("Signal {} ({} values)", self.name, self.values.len())
@@ -64,7 +69,7 @@ impl r8::Display for Signal {
 /// A field of every Rust field type, with constraints, a default, and
 /// rules.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 #[r8(rule(
     id = "seed_below_count",
     invariant = r#"{"<": [{"var": "seed"}, {"var": "count"}]}"#,
@@ -76,7 +81,7 @@ impl r8::Display for Signal {
     invariant = r#"{"===": [{"length": {"var": "weights"}}, {"length": {"var": "index"}}]}"#,
     message = "There is one weight per index."
 ))]
-pub struct Conform {
+pub struct Probe {
     /// A fraction.
     #[r8(min = 0, max = 1)]
     pub ratio: f64,
@@ -100,23 +105,20 @@ pub struct Conform {
     pub mask: Buffer<Logical>,
 }
 
-#[r8::methods(trait = "R8::Display")]
-impl r8::Display for Conform {
+impl r8::Display for Probe {
     fn format(&self, _dots: Dots) -> String {
-        format!("Conform {} ({})", self.label, self.count)
+        format!("Probe {} ({})", self.label, self.count)
     }
 }
 
-#[r8::methods(trait = "R8::PartialOrd")]
-impl r8::PartialOrd for Conform {
-    fn cmp(&self, other: r8::Sexp) -> Option<i32> {
-        let other = unsafe { r8::Receiver::<Conform>::from_named_arg(other.0, "y") }.ok()?;
-        self.ratio.partial_cmp(&other.ratio).map(|o| o as i32)
+impl r8::PartialOrd for Probe {
+    fn partial_cmp(&self, y: r8::Sexp) -> Option<std::cmp::Ordering> {
+        let y = unsafe { r8::Receiver::<Probe>::from_named_arg(y.0, "y") }.ok()?;
+        self.ratio.partial_cmp(&y.ratio)
     }
 }
 
-#[r8::methods(trait = "R8::Dim")]
-impl r8::Dim for Conform {
+impl r8::Shape for Probe {
     fn dim(&self) -> Vec<i32> {
         vec![self.index.len() as i32, 2]
     }
@@ -124,7 +126,7 @@ impl r8::Dim for Conform {
 
 /// A train and test split of case indices.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub struct Split {
     /// The indices of the training cases.
     pub train: Buffer<i32>,
@@ -134,7 +136,7 @@ pub struct Split {
 
 /// A resampling method.
 #[derive(R8, Clone)]
-#[r8(namespace = "pkgr", version = 1, native)]
+#[r8(namespace = "pkgr", version = 1, storage = "rust")]
 pub enum Resampler {
     /// K-fold cross-validation.
     KFold {
@@ -159,7 +161,6 @@ pub enum Resampler {
     Loocv,
 }
 
-#[r8::methods(trait = "R8::Display")]
 impl r8::Display for Resampler {
     fn format(&self, _dots: Dots) -> String {
         match self {
@@ -177,13 +178,39 @@ impl r8::Display for Resampler {
 r8::exports! {
     package = "r8pkgR",
     namespace = "pkgr",
-    types = [Signal, Resampler, Conform],
+    types = [Signal, Resampler, Probe, Interval, Band, Strip, Square, Panel],
+    traits = [
+        Shifted, Meets, WithLabel, Figure, Contents, Moved, Banded, HeldRange, Refit,
+    ],
     impls = [
         Signal: Norm,
-        Signal: Display,
-        Resampler: Display,
-        Conform: Display,
-        Conform: PartialOrd,
-        Conform: Dim,
+        Signal: r8::Display,
+        Resampler: r8::Display,
+        Probe: r8::Display,
+        Probe: r8::PartialOrd,
+        Probe: r8::Shape,
+        Interval: Width,
+        Interval: Middle,
+        Interval: Overlap,
+        Interval: r8::Display,
+        Interval: Shifted,
+        Band: Shifted,
+        Strip: Shifted,
+        Band: Total,
+        Strip: Shares,
+        Interval: Meets<Interval>,
+        Interval: Meets<Band>,
+        Signal: Meets<r8::Any>,
+        Band: WithLabel,
+        Strip: WithLabel,
+        Interval: WithUpper,
+        Interval: r8::From<Signal>,
+        Signal: r8::From<Band>,
+        Square: Figure,
+        Panel: Contents,
+        Panel: Moved,
+        Panel: Banded,
+        Panel: HeldRange,
+        Panel: Refit,
     ],
 }

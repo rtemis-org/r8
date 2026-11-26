@@ -1,6 +1,6 @@
-//! `Field`: a field type of a Rust-native struct, with its conversions from
-//! and to R, its bytes in the codec's state, and the memory Rust owns for
-//! it; and `Encode` for [`Buffer`], its declaration and JSON form.
+//! `Field`: a field type of a Rust-stored struct, with its conversions from
+//! and to R, and the memory Rust owns for it; and `Encode` for [`Buffer`], its declaration and JSON form. A
+//! Rust-stored type is a field type, whose R value is a value of the type.
 
 use rtemis_r8::derive::{Bytes, Encode};
 use rtemis_r8::ir::FieldType;
@@ -8,13 +8,18 @@ use serde_json::Value;
 
 use crate::api::{self, Error, Result};
 use crate::buffer::{Buffer, Element, Logical};
+use crate::call::{Receiver, rust_value};
 use crate::reader::{Node, Reader};
-use crate::state::{StateReader, StateWriter};
+use crate::rust_stored::RustStored;
 use crate::sys::{self, SEXP};
 
-/// A field type of a Rust-native struct. R8 validates a field and converts
+/// A field type of a Rust-stored struct. R8 validates a field and converts
 /// it to its stored form before `from_r` reads it, so `from_r` checks only
 /// what Rust needs.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a field type of a Rust-stored type",
+    note = "a field is a `bool`, an `i32`, an `f64`, a `String`, a `Buffer`, a Rust-stored type that is `Clone`, a `SubtypeValue`, an `ImplementorValue`, or an `Option` of one"
+)]
 pub trait Field: Clone + Send + Sync + 'static {
     /// The field from its R value in its stored form.
     ///
@@ -28,10 +33,6 @@ pub trait Field: Clone + Send + Sync + 'static {
     /// The field as an R value; `owner` keeps the struct's state alive, for
     /// a view of its memory.
     fn to_r(&self, owner: SEXP) -> Result<SEXP>;
-    /// Writes the field's bytes into the codec's state.
-    fn write(&self, out: &mut StateWriter) -> Result<()>;
-    /// Reads the field's bytes from the codec's state.
-    fn read(input: &mut StateReader) -> Result<Self>;
     /// The memory Rust owns for the field beyond its inline size.
     fn owned_bytes(&self) -> usize {
         0
@@ -65,12 +66,6 @@ impl Field for f64 {
         let v = *self;
         alloc(&|| unsafe { sys::Rf_ScalarReal(v) })
     }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        out.write(&self.to_le_bytes())
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        Ok(f64::from_le_bytes(input.take_array()?))
-    }
 }
 
 impl Field for i32 {
@@ -96,12 +91,6 @@ impl Field for i32 {
         let v = *self;
         alloc(&|| unsafe { sys::Rf_ScalarInteger(v) })
     }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        out.write(&self.to_le_bytes())
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        Ok(i32::from_le_bytes(input.take_array()?))
-    }
 }
 
 impl Field for bool {
@@ -121,12 +110,6 @@ impl Field for bool {
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         let v = i32::from(*self);
         alloc(&|| unsafe { sys::Rf_ScalarLogical(v) })
-    }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        out.write(&[u8::from(*self)])
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        Ok(input.take_array::<1>()?[0] != 0)
     }
 }
 
@@ -160,15 +143,6 @@ impl Field for String {
             v
         })
     }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        out.write(&(self.len() as u64).to_le_bytes())?;
-        out.write(self.as_bytes())
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        let n = u64::from_le_bytes(input.take_array()?) as usize;
-        String::from_utf8(input.take(n)?.to_vec())
-            .map_err(|e| Error::new("bad_state", e.to_string()))
-    }
     fn owned_bytes(&self) -> usize {
         self.capacity()
     }
@@ -193,21 +167,6 @@ impl<T: Field> Field for Option<T> {
             None => Ok(unsafe { sys::R_NilValue }),
         }
     }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        match self {
-            Some(v) => {
-                out.write(&[1])?;
-                v.write(out)
-            }
-            None => out.write(&[0]),
-        }
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        match input.take_array::<1>()?[0] {
-            0 => Ok(None),
-            _ => T::read(input).map(Some),
-        }
-    }
     fn owned_bytes(&self) -> usize {
         self.as_ref().map_or(0, Field::owned_bytes)
     }
@@ -223,21 +182,28 @@ impl<T: Element> Field for Buffer<T> {
     fn to_r(&self, owner: SEXP) -> Result<SEXP> {
         Buffer::to_r(self, owner)
     }
-    fn write(&self, out: &mut StateWriter) -> Result<()> {
-        out.write(&(self.len() as u64).to_le_bytes())?;
-        out.write(self.as_bytes())
-    }
-    fn read(input: &mut StateReader) -> Result<Self> {
-        let n = u64::from_le_bytes(input.take_array()?) as usize;
-        let size = std::mem::size_of::<T>();
-        let bytes = input.take(
-            n.checked_mul(size)
-                .ok_or_else(|| Error::new("bad_state", "the vector's length overflows"))?,
-        )?;
-        Buffer::from_bytes(bytes, n)
-    }
     fn owned_bytes(&self) -> usize {
         Buffer::owned_bytes(self)
+    }
+}
+
+/// A value of a Rust-stored type `T` exactly, which the holding value owns; its
+/// R value is another value of `T`.
+impl<T: RustStored + Clone> Field for T {
+    unsafe fn from_r(x: SEXP) -> Result<Self> {
+        match unsafe { Receiver::<T>::from_named_arg(x, "value") }? {
+            Receiver::Borrowed(t) => Ok(t.clone()),
+            Receiver::Built(t) => Ok(t),
+        }
+    }
+    fn from_node<'a>(r: &Reader<'a>, n: Node<'a>) -> Result<Self> {
+        <T as RustStored>::from_node(r, n)
+    }
+    fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
+        rust_value(self.clone()).map_err(api::Jumped::into_error)
+    }
+    fn owned_bytes(&self) -> usize {
+        self.heap_bytes()
     }
 }
 

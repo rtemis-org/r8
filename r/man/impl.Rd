@@ -4,14 +4,18 @@
 \alias{impl}
 \title{Implement a trait for a type}
 \usage{
-impl(trait, type, methods = list(), tag_value = NULL)
+impl(trait, target, methods = list(), tag_value = NULL)
 }
 \arguments{
 \item{trait}{A trait object.}
 
-\item{type}{An R8 type object.}
+\item{target}{What the trait is implemented for: an R8 type object or a
+class (\code{\link[=host_class]{host_class()}}); for a trait whose methods dispatch on several
+arguments, a list of them, one per dispatched argument the impl
+specializes, by position or by name, as \code{list(A, B)} or \code{list(y = B)}.}
 
-\item{methods}{Named list: One function per method.}
+\item{methods}{Named list: One function per method, or \code{\link[=impl_method]{impl_method()}} for
+a method with its own return type.}
 
 \item{tag_value}{Optional Character: The value of the trait's tag member
 for this type; defaults to the type's name.}
@@ -20,14 +24,16 @@ for this type; defaults to the type's name.}
 \code{NULL}, invisibly.
 }
 \description{
-Defines a trait's methods for a type; a method the impl omits takes the
-trait's default. Rust's orphan rule applies: an impl is declared in the
-namespace of the trait or of the type. Implementing the same trait for the
-same type again replaces the impl.
+Defines a trait's methods for a type, or for a tuple of types when its
+methods dispatch on several arguments; a method the impl omits takes the
+trait's default implementation. Rust's orphan rule applies: an impl outside
+the trait's namespace names a type of its own namespace, with only types
+before it. Implementing the same trait for the same types again replaces the
+impl; an impl that another namespace declares is refused.
 }
 \examples{
 op <- options(r8.namespace = "demo")
-Describe <- new_trait("Describe", methods = list(describe = trait_method(function(x) NULL)))
+Describe <- new_trait("Describe", methods = list(describe = trait_method(params(x))))
 Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 impl(Describe, Point, methods = list(describe = function(x) sprintf("(\%g, \%g)", x$x, x$y)))
 describe <- Describe@describe

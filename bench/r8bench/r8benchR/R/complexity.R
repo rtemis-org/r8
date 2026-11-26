@@ -7,6 +7,6 @@
 
 Complexity <- R8::new_trait(
   "Complexity",
-  methods = list(complexity = R8::trait_method(function(x) NULL))
+  methods = list(complexity = R8::trait_method(R8::params(x)))
 )
 complexity <- Complexity@complexity

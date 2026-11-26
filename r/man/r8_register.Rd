@@ -22,18 +22,32 @@ again and makes its types, traits, and impls available. Registering a
 package again replaces its declarations.
 }
 \details{
-A package with compiled exports (\code{R8.h}) registers them after its R
-declarations. Every type of the exports has an R declaration with the same
+A package with compiled exports, the types and the methods of its Rust code,
+registers them after its R declarations. Every type of the exports has an R declaration with the same
 declaration hash, the type of every codec is declared with
-\code{native = TRUE}, and every type declared with \code{native = TRUE} has a codec;
+\code{storage = "rust"}, and every type declared with \code{storage = "rust"} has a codec;
 otherwise registration signals \code{r8_declaration_error} and lists each
-difference. \code{r8_document_native()} generates the R declarations of types
-declared in Rust. A codec written in C, whose type the exports declare
-only in R, sets the declaration hash of its type (\code{declaration_hash}),
-which registration compares with the hash of the R declaration, since the
-codec reads fields by position. Each impl declaration of the exports is
-built from its impl entries, grouped by trait and type.
+difference. \code{r8_document_rust()} generates the R declarations of types
+declared in Rust. Each impl declaration of the exports is built from its
+impl entries, grouped by trait and positions.
 }
+\section{Types that other packages use}{
+
+The compiled code of a package holds the declarations of the types of other
+packages that it was compiled against. It reads the fields of a value of such
+a type, by name, when every value that the registered declaration admits is
+one that the compiled declaration admits: fields may be added or reordered,
+bounds tightened, and rules added. A field removed or renamed, another type
+or unit, a bound loosened, a rule removed, and another \code{version} are a
+warning of class \code{r8_declaration_warning} when the package loads, and an error
+when its code reads a value. A struct that extends a struct of another
+package is refused at load when the parent's fields or rules differ.
+
+A package does not change a type that other packages use without
+coordinating the change with them: see the section "Changing a type that
+other packages use" of \code{\link[=new_struct]{new_struct()}}.
+}
+
 \examples{
 \dontrun{
 .onLoad <- function(libname, pkgname) {

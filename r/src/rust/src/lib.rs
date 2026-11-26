@@ -15,14 +15,21 @@ mod construct;
 mod declare;
 mod exports;
 mod fieldtype;
+mod interrupt;
 mod irde;
 mod irser;
-mod native;
 #[cfg(feature = "oracle")]
 mod oracle;
+mod pins;
 mod reader;
+mod report;
+mod rust_stored;
 mod rview;
+mod signature;
+mod table;
 mod text;
+mod utf8;
+mod value;
 mod values;
 mod version;
 
@@ -35,9 +42,13 @@ extendr_module! {
     use declare;
     use exports;
     use fieldtype;
-    use native;
+    use rust_stored;
+    use table;
     use reader;
+    use report;
+    use signature;
     use text;
+    use value;
     use values;
     use version;
 }
@@ -50,10 +61,14 @@ extendr_module! {
     use declare;
     use exports;
     use fieldtype;
-    use native;
+    use rust_stored;
+    use table;
     use reader;
+    use report;
     use oracle;
+    use signature;
     use text;
+    use value;
     use values;
     use version;
 }

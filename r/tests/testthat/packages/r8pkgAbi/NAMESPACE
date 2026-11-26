@@ -1,0 +1,2 @@
+useDynLib(r8pkgAbi, .registration = TRUE)
+importFrom(R8, r8_register)

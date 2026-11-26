@@ -20,12 +20,12 @@
               {
                 "name": "Linear",
                 "description": "",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Rbf",
                 "description": "",
-                "shape": "struct",
+                "kind": "struct",
                 "fields": [
                   {
                     "name": "gamma",
@@ -77,8 +77,7 @@
                     }
                   }
                 },
-                "description": "Case weights.",
-                "external": true
+                "description": "Case weights."
               },
               {
                 "name": "mtry",
@@ -87,12 +86,12 @@
                   "inner": {
                     "kind": "integer",
                     "min": 1
-                  },
-                  "resolve": {
-                    "policy": "runtime"
                   }
                 },
-                "description": "Variables per split."
+                "description": "Variables per split.",
+                "resolve": {
+                  "policy": "context"
+                }
               }
             ],
             "rules": [
@@ -152,7 +151,7 @@
           {
             "trait": "rtemis::Fit",
             "target": {
-              "kind": "type",
+              "kind": "named",
               "name": "rtemis::Svm"
             },
             "methods": [
@@ -205,11 +204,11 @@
             "variants": [
               {
                 "name": "None",
-                "shape": "unit"
+                "kind": "unit"
               },
               {
                 "name": "Some",
-                "shape": "unit"
+                "kind": "unit"
               }
             ]
           }

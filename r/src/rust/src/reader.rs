@@ -14,7 +14,7 @@ use extendr_api::prelude::*;
 use extendr_ffi::{SEXP, SEXPTYPE, VECTOR_ELT};
 use rtemis_r8::ir::build::BuildError;
 use rtemis_r8::ir::{
-    EnumDef, FieldDef, FieldType, RuleDef, StructDef, TypeDef, VariantDef, VariantShape,
+    EnumDef, FieldDef, FieldType, RuleDef, StructDef, TableDef, TypeDef, VariantDef,
 };
 use rtemis_r8::name::{Name, NameError, QualifiedName};
 use rtemis_r8::rules::TypeLookup;
@@ -23,15 +23,14 @@ use serde_json::Value;
 
 use crate::fieldtype::field_type;
 use crate::rview::{
-    attr, attr_string, inherits, is_null, sexptype, string_elt, sym_names, sym_r8_name,
-    sym_r8_type, xlen,
+    attr, attr_string, inherits, is_null, sexptype, string_elt, sym_names, sym_r8_name, xlen,
 };
 
 /// A problem of reading a declaration.
 pub(crate) struct Problem {
     code: &'static str,
     path: String,
-    message: String,
+    pub(crate) message: String,
 }
 
 type Read<T> = std::result::Result<T, Problem>;
@@ -48,6 +47,7 @@ fn built(path: &str, e: BuildError) -> Problem {
     let code = match e {
         BuildError::NotFieldType => "field_type",
         BuildError::DefaultNotValue => "field_default",
+        BuildError::ColumnOutsideTable => "column_position",
         BuildError::NotVariant { .. } => "variant_declaration",
         _ => "declaration_argument",
     };
@@ -104,55 +104,73 @@ fn one_string(x: SEXP) -> Option<String> {
         .flatten()
 }
 
-/// The JSON form of a default `x` of a field of type `ty`, as a tree whose
-/// numbers are kept as written. A default of a field of an R8 type is a value
-/// of the type, a struct or an enum variant with its fields, whose normalized
-/// form it takes.
+/// The JSON form of the default `x` of `name`, a field or parameter of type
+/// `ty`: an R value of the type, whose normalized form it takes, as a tree
+/// whose numbers are kept as written. `json_ir()` gives the JSON form itself,
+/// and `int64()` an integer by its digits. `NULL` is the default of a type
+/// that admits an absent value, `option()`.
 fn default_value(
     x: SEXP,
     ty: &FieldType,
     lookup: &(impl TypeLookup + Sized),
     path: &str,
+    name: &str,
 ) -> Read<Tree> {
-    if inherits(x, "r8_json_ir") {
+    if inherits(x, "r8_json_ir") || inherits(x, "r8_int64") {
         return read::<Exact>(x, path).map(|e| e.0);
     }
+    let invalid = |path: &str, why: &str| {
+        problem(
+            "default_invalid",
+            path,
+            format!("the default of `{name}` is invalid: {why}"),
+        )
+    };
     match ty {
-        FieldType::Option { inner, .. } => default_value(x, inner, lookup, path),
+        FieldType::Option { .. } if is_null(x) => Ok(Tree::Null),
+        FieldType::Option { inner, .. } => default_value(x, inner, lookup, path, name),
+        // A list, whose items may be `json_ir()`.
         FieldType::Vec { element, .. } if sexptype(x) == SEXPTYPE::VECSXP => (0..xlen(x))
             .map(|i| {
                 let e = unsafe { VECTOR_ELT(x, i as isize) };
-                if is_null(e) {
-                    Ok(Tree::Null)
-                } else {
-                    default_value(e, element, lookup, &format!("{path}/{i}"))
-                }
+                default_value(e, element, lookup, &format!("{path}/{i}"), name)
             })
             .collect::<Read<Vec<_>>>()
             .map(|v| Tree::Array(v.into_boxed_slice())),
-        FieldType::Vec { .. } => {
-            read::<Vec<Exact>>(x, path).map(|v| Tree::Array(v.into_iter().map(|e| e.0).collect()))
+        FieldType::Named { .. } if !crate::value::is_value(x) => {
+            Err(built(path, BuildError::DefaultNotValue))
         }
-        FieldType::Named { .. } => {
-            if !inherits(x, "r8_value") {
-                return Err(built(path, BuildError::DefaultNotValue));
-            }
-            let q = attr_string(x, sym_r8_type())
-                .and_then(|q| QualifiedName::parse(&q).ok())
-                .ok_or_else(|| built(path, BuildError::DefaultNotValue))?;
+        FieldType::HostClass { .. } => {
+            Err(invalid(path, "a value of a host class has no JSON form"))
+        }
+        _ => {
             let lookup: &dyn TypeLookup = lookup;
-            Ok(rtemis_r8::codec::normalized_tree(
-                crate::rview::RView::Whole(x),
-                &q,
-                lookup,
-            ))
+            let view = crate::rview::RView::Whole(x);
+            let errors = crate::construct::with_cache(|cache| {
+                rtemis_r8::validate::validate_field_access(view, ty, lookup, cache)
+            });
+            match errors.iter().find(|e| e.code != "unknown_type") {
+                Some(e) => Err(invalid(&format!("{path}{}", e.path), &e.message)),
+                None => Ok(rtemis_r8::canonical::normalized_field_tree(
+                    view, ty, lookup,
+                )),
+            }
         }
-        _ => read::<Exact>(x, path).map(|e| e.0),
     }
 }
 
-/// A field from its name and the user's object.
-fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<FieldDef> {
+/// A field from its name and the user's object; `column` admits a
+/// `column()`, whose own members the caller reads.
+fn field_def(
+    n: &str,
+    x: SEXP,
+    lookup: &impl TypeLookup,
+    path: &str,
+    column: bool,
+) -> Read<FieldDef> {
+    if !column && inherits(x, "r8_column") {
+        return Err(built(path, BuildError::ColumnOutsideTable));
+    }
     let n = name(n, &format!("{path}/name"))?;
     let type_path = format!("{path}/type");
     if !inherits(x, "r8_field") {
@@ -163,9 +181,7 @@ fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Fie
             description: "".into(),
             sensitive: false,
             unit: None,
-            external: false,
-            unique: false,
-            optional: false,
+            resolve: None,
             inherited_from: None,
             extensions: None,
         });
@@ -178,6 +194,7 @@ fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Fie
             &ty,
             lookup,
             &format!("{path}/default"),
+            n.as_str(),
         )?))
     } else {
         None
@@ -200,9 +217,17 @@ fn field_def(n: &str, x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Fie
             .into_boxed_str(),
         sensitive: is_true(member(x, "sensitive")),
         unit: one_string(member(x, "unit")).map(String::into_boxed_str),
-        external: is_true(member(x, "external")),
-        unique: is_true(member(x, "unique")),
-        optional: is_true(member(x, "optional")),
+        resolve: {
+            let r = member(x, "resolve");
+            if is_null(r) {
+                None
+            } else {
+                Some(read::<rtemis_r8::ir::Resolve>(
+                    r,
+                    &format!("{path}/resolve"),
+                )?)
+            }
+        },
         inherited_from: None,
         extensions: extensions.filter(|m| !m.is_empty()),
     })
@@ -215,7 +240,38 @@ pub(crate) fn fields(x: SEXP, lookup: &impl TypeLookup, path: &str) -> Read<Vec<
     let items = entries(x);
     let mut out = Vec::with_capacity(items.len());
     for (i, (n, f)) in items.into_iter().enumerate() {
-        out.push(field_def(&n, f, lookup, &format!("{path}/{i}"))?);
+        out.push(field_def(&n, f, lookup, &format!("{path}/{i}"), false)?);
+    }
+    Ok(out)
+}
+
+/// The columns of `type_table(columns)`: each a field type, a `field()`, or
+/// a `column()`, which adds `unique` and `required`.
+pub(crate) fn columns(
+    x: SEXP,
+    lookup: &impl TypeLookup,
+    path: &str,
+) -> Read<Vec<rtemis_r8::ir::ColumnDef>> {
+    let items = entries(x);
+    let mut out = Vec::with_capacity(items.len());
+    for (i, (n, c)) in items.into_iter().enumerate() {
+        let p = format!("{path}/{i}");
+        let column = inherits(c, "r8_column");
+        let field = field_def(&n, c, lookup, &p, column)?;
+        if field.resolve.is_some() {
+            return Err(problem(
+                "resolve_position",
+                &format!("{p}/resolve"),
+                format!(
+                    "column `{n}` has a fill policy, which the fields of a struct or a struct variant take"
+                ),
+            ));
+        }
+        out.push(rtemis_r8::ir::ColumnDef {
+            field,
+            unique: column && is_true(member(c, "unique")),
+            required: !column || is_true(member(c, "required")),
+        });
     }
     Ok(out)
 }
@@ -241,25 +297,25 @@ fn variants(x: SEXP, lookup: &impl TypeLookup) -> Read<Vec<VariantDef>> {
                 return Err(built(&path, BuildError::NotVariant { name: n }));
             }
             let of = member(v, "of");
-            let fs = member(v, "fields");
-            let shape = if !is_null(of) {
-                VariantShape::Newtype {
-                    of: attr_string(of, sym_r8_name())
-                        .and_then(|q| QualifiedName::parse(&q).ok())
-                        .ok_or_else(|| built(&format!("{path}/of"), BuildError::NotFieldType))?,
-                }
-            } else if xlen(fs) == 0 {
-                VariantShape::Unit
+            let of = if is_null(of) {
+                None
             } else {
-                VariantShape::Struct {
-                    fields: fields(fs, lookup, &format!("{path}/fields"))?,
-                    rules: rules(member(v, "rules"), &format!("{path}/rules"))?,
-                }
+                Some(
+                    attr_string(of, sym_r8_name())
+                        .and_then(|q| QualifiedName::parse(&q).ok())
+                        .ok_or_else(|| built(&format!("{path}/of"), BuildError::VariantOf))?,
+                )
             };
+            let kind = rtemis_r8::ir::build::variant_kind(
+                fields(member(v, "fields"), lookup, &format!("{path}/fields"))?,
+                rules(member(v, "rules"), &format!("{path}/rules"))?,
+                of,
+            )
+            .map_err(|e| built(&path, e))?;
             Ok(VariantDef {
                 name: name(&n, &format!("{path}/name"))?,
                 description: one_string(member(v, "description")).unwrap_or_default(),
-                shape,
+                kind,
             })
         })
         .collect::<Read<Vec<_>>>()?;
@@ -290,6 +346,10 @@ fn problems_of(p: Problem) -> List {
 /// @param rules List: A struct's rules.
 /// @param namespace Character: The namespace.
 /// @param package Character: The declaring package, or `""`.
+/// @param parent Character: The qualified name of the struct's parent, or
+///   `""`.
+/// @param defaults List: The child's defaults of inherited fields, by name.
+/// @param parent_formals List: The parent constructor's formals.
 /// @return List: `owner`, the package that owns the namespace when it is not
 ///   `package`, otherwise `""`; `problems`, as character vectors `code`,
 ///   `path`, and `message`; `record`, the record when the declaration
@@ -300,16 +360,26 @@ fn problems_of(p: Problem) -> List {
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn r8_declare(
-    kind: &str,
-    name: &str,
-    description: &str,
+    kind: crate::utf8::Utf8,
+    name: crate::utf8::Utf8,
+    description: crate::utf8::Utf8,
     version: i32,
-    tag: &str,
+    tag: crate::utf8::Utf8,
     members: Robj,
     rules: Robj,
-    namespace: &str,
-    package: &str,
+    namespace: crate::utf8::Utf8,
+    package: crate::utf8::Utf8,
+    parent: crate::utf8::Utf8,
+    defaults: Robj,
+    parent_formals: Robj,
 ) -> extendr_api::Result<List> {
+    let kind: &str = &kind;
+    let name: &str = &name;
+    let description: &str = &description;
+    let tag: &str = &tag;
+    let namespace: &str = &namespace;
+    let package: &str = &package;
+    let parent: &str = &parent;
     let owner = crate::declare::claim_namespace(namespace, package)?;
     let empty = || {
         list!(
@@ -344,6 +414,18 @@ fn r8_declare(
                 aliases: Vec::new(),
                 extensions: BTreeMap::new(),
             })
+        } else if kind == "table" || kind == "open_table" {
+            TypeDef::Table(TableDef {
+                name: n,
+                description: description.to_string(),
+                version,
+                columns: columns(m, lookup, "/columns")?,
+                open: kind == "open_table",
+                rules: self::rules(unsafe { rules.get() }, "/rules")?,
+                migrations: Vec::new(),
+                aliases: Vec::new(),
+                extensions: BTreeMap::new(),
+            })
         } else {
             TypeDef::Struct(StructDef {
                 name: n,
@@ -354,15 +436,28 @@ fn r8_declare(
                 rules: self::rules(unsafe { rules.get() }, "/rules")?,
                 migrations: Vec::new(),
                 aliases: Vec::new(),
-                provenance: false,
-                s4: false,
                 extensions: BTreeMap::new(),
             })
         })
     })();
+    let def = def.and_then(|d| match d {
+        TypeDef::Struct(s) if !parent.is_empty() => {
+            extended(s, parent, unsafe { defaults.get() }, lookup).map(|r| r.map(TypeDef::Struct))
+        }
+        d => Ok(Ok::<_, Vec<rtemis_r8::ir::DeclError>>(d)),
+    });
     drop(snapshot);
     let def = match def {
-        Ok(d) => d,
+        Ok(Ok(d)) => d,
+        Ok(Err(errors)) => {
+            return Ok(list!(
+                owner = "",
+                problems = decl_problems(&errors),
+                record = (),
+                formals = (),
+                required = Vec::<bool>::new()
+            ));
+        }
         Err(p) => {
             return Ok(list!(
                 owner = "",
@@ -374,14 +469,19 @@ fn r8_declare(
         }
     };
     let (formals, required) = match &def {
-        TypeDef::Struct(s) => struct_formals(unsafe { members.get() }, s),
+        TypeDef::Struct(s) => struct_formals(
+            unsafe { members.get() },
+            unsafe { defaults.get() },
+            unsafe { parent_formals.get() },
+            s,
+        ),
         _ => (Robj::from(()), Vec::new()),
     };
     let q = QualifiedName {
         namespace: Name::new(namespace).map_err(|e| extendr_api::Error::Other(e.to_string()))?,
         name: def.name().clone(),
     };
-    let problems = crate::declare::declare_type(def, namespace)?;
+    let (problems, stale) = crate::declare::declare_type(def, namespace)?;
     let failed = problems.index("code").map(|c| c.len() > 0).unwrap_or(false);
     let record = if failed {
         Robj::from(())
@@ -393,26 +493,50 @@ fn r8_declare(
         problems = problems,
         record = record,
         formals = formals,
-        required = required
+        required = required,
+        stale = stale
     ))
 }
 
 /// The constructor formals of a struct, from the fields as given, and which
 /// fields are required. A required field has no default argument; a field
 /// with a default takes it, except a `json_ir()` default, which construction
-/// fills; any other field takes `NULL`.
-fn struct_formals(members: SEXP, def: &StructDef) -> (Robj, Vec<bool>) {
+/// fills; any other field takes `NULL`. An inherited field takes the child's
+/// default from `defaults`, or else the parent constructor's formal.
+fn struct_formals(
+    members: SEXP,
+    defaults: SEXP,
+    parent_formals: SEXP,
+    def: &StructDef,
+) -> (Robj, Vec<bool>) {
     let mut b = crate::irser::Builder::named(def.fields.len());
     let mut required = Vec::with_capacity(def.fields.len());
-    for ((n, x), f) in entries(members).iter().zip(&def.fields) {
+    let own = entries(members);
+    let parent = entries(parent_formals);
+    let given = entries(defaults);
+    for f in &def.fields {
+        let n = f.name.as_str();
         let r = f.is_required();
         required.push(r);
         let value = if r {
             unsafe { extendr_ffi::R_MissingArg }
+        } else if f.inherited_from.is_some() {
+            match given.iter().find(|(k, _)| k == n) {
+                Some((_, d)) if !inherits(*d, "r8_json_ir") => *d,
+                Some(_) => crate::rview::nil(),
+                None => parent
+                    .iter()
+                    .find(|(k, _)| k == n)
+                    .map_or_else(crate::rview::nil, |(_, d)| *d),
+            }
         } else {
-            let d = member(*x, "default");
-            if inherits(*x, "r8_field")
-                && is_true(member(*x, "has_default"))
+            let x = own
+                .iter()
+                .find(|(k, _)| k == n)
+                .map_or_else(crate::rview::nil, |(_, x)| *x);
+            let d = member(x, "default");
+            if inherits(x, "r8_field")
+                && is_true(member(x, "has_default"))
                 && !is_null(d)
                 && !inherits(d, "r8_json_ir")
             {
@@ -426,6 +550,83 @@ fn struct_formals(members: SEXP, def: &StructDef) -> (Robj, Vec<bool>) {
     (b.list(), required)
 }
 
+/// The child `s`, which holds the fields and rules it adds, lowered onto
+/// its registered parent `parent` with the defaults `defaults` of inherited
+/// fields; the problems of the lowering, at paths of the child's declaration.
+fn extended(
+    mut s: StructDef,
+    parent: &str,
+    defaults: SEXP,
+    lookup: &(impl TypeLookup + Sized),
+) -> Read<std::result::Result<StructDef, Vec<rtemis_r8::ir::DeclError>>> {
+    let pq = QualifiedName::parse(parent)
+        .map_err(|e| problem("extends_unknown", "/extends", e.to_string()))?;
+    let p = match lookup.find(&pq) {
+        Some(TypeDef::Struct(p)) => p,
+        Some(TypeDef::Enum(_)) => {
+            return Err(problem(
+                "extends_not_struct",
+                "/extends",
+                format!("`{pq}` is an enum; `extends` names a struct"),
+            ));
+        }
+        Some(TypeDef::Table(_)) => {
+            return Err(problem(
+                "extends_not_struct",
+                "/extends",
+                format!("`{pq}` is a table; `extends` names a struct"),
+            ));
+        }
+        None => {
+            return Err(problem(
+                "extends_unknown",
+                "/extends",
+                format!("`{pq}` is not a registered type"),
+            ));
+        }
+    };
+    let mut changes = Vec::new();
+    for (i, (n, x)) in entries(defaults).into_iter().enumerate() {
+        let path = format!("/defaults/{i}");
+        let n = name(&n, &path)?;
+        let default = match p.fields.iter().find(|f| f.name == n) {
+            // `NULL` removes the default, which the lowering admits for an
+            // `option()` field only.
+            Some(_) if is_null(x) => Some(None),
+            Some(f) => Some(Some(Box::new(default_value(
+                x,
+                &f.ty,
+                lookup,
+                &path,
+                f.name.as_str(),
+            )?))),
+            None => None,
+        };
+        changes.push(rtemis_r8::ir::InheritedChange {
+            name: n,
+            default,
+            sensitive: false,
+            description: None,
+        });
+    }
+    Ok(rtemis_r8::ir::extend(&mut s, &pq, p, &changes).map(|()| s))
+}
+
+/// The problems of a declaration check, as character vectors.
+fn decl_problems(errors: &[rtemis_r8::ir::DeclError]) -> List {
+    list!(
+        code = errors
+            .iter()
+            .map(|e| e.code.to_string())
+            .collect::<Vec<_>>(),
+        path = errors.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+        message = errors
+            .iter()
+            .map(|e| crate::fieldtype::in_r(&e.message))
+            .collect::<Vec<_>>()
+    )
+}
+
 /// `type_table(columns, open, rules)`, its columns as fields.
 /// @keywords internal
 /// @noRd
@@ -434,7 +635,8 @@ fn r8_ft_table(columns: Robj, open: Robj, rules: Robj) -> extendr_api::Result<Ro
     let snapshot = crate::declare::snapshot()?;
     let built = (|| -> Read<FieldType> {
         Ok(FieldType::Table {
-            columns: fields(unsafe { columns.get() }, &*snapshot, "/columns")?.into_boxed_slice(),
+            columns: self::columns(unsafe { columns.get() }, &*snapshot, "/columns")?
+                .into_boxed_slice(),
             open: is_true(unsafe { open.get() }),
             rules: self::rules(unsafe { rules.get() }, "/rules")?.into_boxed_slice(),
         })
@@ -460,13 +662,152 @@ fn r8_default_canonical(x: Robj, r#type: Robj) -> extendr_api::Result<String> {
     let Ok(ty) = crate::irde::from_r::<FieldType>(unsafe { r#type.get() }) else {
         return Ok(String::new());
     };
-    Ok(default_value(unsafe { x.get() }, &ty, &*snapshot, "")
-        .map(|v| rtemis_r8::codec::canonical_text(&v.to_value()))
+    Ok(default_value(unsafe { x.get() }, &ty, &*snapshot, "", "")
+        .map(|v| rtemis_r8::canonical::canonical_text(&v.to_value()))
         .unwrap_or_default())
+}
+
+/// The required fields of `new_trait(required_fields = )`: each a field type,
+/// an R8 type object, or `field(type, description = )`; a default, a fill
+/// policy, `sensitive`, a unit, and extensions belong to a struct's field.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_required_fields(required_fields: Robj) -> extendr_api::Result<Robj> {
+    let snapshot = crate::declare::snapshot()?;
+    let built = (|| -> Read<Vec<rtemis_r8::ir::RequiredField>> {
+        let fs = fields(
+            unsafe { required_fields.get() },
+            &*snapshot,
+            "/required_fields",
+        )?;
+        fs.into_iter()
+            .enumerate()
+            .map(|(i, f)| {
+                if f.default.is_some()
+                    || f.resolve.is_some()
+                    || f.sensitive
+                    || f.unit.is_some()
+                    || f.extensions.is_some()
+                {
+                    return Err(problem(
+                        "required_field_form",
+                        &format!("/required_fields/{i}"),
+                        format!(
+                            "required field `{}` has a type and a description; its default, fill policy, sensitivity, unit, and extensions belong to a struct's field",
+                            f.name
+                        ),
+                    ));
+                }
+                Ok(rtemis_r8::ir::RequiredField {
+                    name: f.name,
+                    ty: f.ty,
+                    description: f.description,
+                })
+            })
+            .collect()
+    })();
+    Ok(match built {
+        Ok(r) => crate::irser::to_r(&r).map_err(|e| extendr_api::Error::Other(e.to_string()))?,
+        Err(p) => Robj::from(format!("{} [{} at {}]", p.message, p.code, p.path)),
+    })
+}
+
+/// Whether a call of R holds a default of type `ty` in its JSON form: a
+/// value of a host class has none.
+fn has_json_form(ty: &FieldType, default: SEXP) -> bool {
+    match ty {
+        FieldType::HostClass { .. } => false,
+        FieldType::Option { inner } => is_null(default) || has_json_form(inner, default),
+        _ => true,
+    }
+}
+
+/// The IR parameters of a generic or trait method, from `params()`.
+///
+/// @param names Character: The parameters' names.
+/// @param types List: Each parameter's type, a field type or an R8 type
+///   object, or `NULL`.
+/// @param constants List: For a default that is a syntactic constant, a list
+///   of its value; otherwise `NULL`.
+/// @param texts Character: Each default's source text, or `""`.
+/// @param dispatch Character: The names of the dispatched parameters.
+/// @return List: The IR parameters, or the message of one that does not
+///   read.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_params_ir(
+    names: crate::utf8::Utf8s,
+    types: Robj,
+    constants: Robj,
+    texts: crate::utf8::Utf8s,
+    dispatch: crate::utf8::Utf8s,
+) -> extendr_api::Result<Robj> {
+    let names: Vec<String> = names.to_vec();
+    let texts: Vec<String> = texts.to_vec();
+    let dispatch: Vec<String> = dispatch.to_vec();
+    use rtemis_r8::ir::{HostDefault, Param, ParamDef};
+    let snapshot = crate::declare::snapshot()?;
+    let lookup = &*snapshot;
+    // A method that dispatches on its first parameter alone carries no mark.
+    let first_only = dispatch.len() == 1 && names.first() == dispatch.first();
+    let (types, constants) = unsafe { (types.get(), constants.get()) };
+    let built = (|| -> Read<Vec<ParamDef>> {
+        let mut out = Vec::with_capacity(names.len());
+        for (i, n) in names.iter().enumerate() {
+            let path = format!("/params/{i}");
+            let t = unsafe { VECTOR_ELT(types, i as isize) };
+            let ty = if is_null(t) {
+                None
+            } else {
+                Some(field_type(t).map_err(|e| built(&format!("{path}/type"), e))?)
+            };
+            let constant = unsafe { VECTOR_ELT(constants, i as isize) };
+            let text = texts.get(i).map(String::as_str).unwrap_or_default();
+            let mut default = None;
+            let mut host_default = None;
+            if !text.is_empty() {
+                let value = (!is_null(constant)).then(|| unsafe { VECTOR_ELT(constant, 0) });
+                match (&ty, value) {
+                    (Some(ty), Some(v)) if has_json_form(ty, v) => {
+                        default = Some(Box::new(default_value(
+                            v,
+                            ty,
+                            lookup,
+                            &format!("{path}/default"),
+                            n,
+                        )?));
+                    }
+                    _ => {
+                        host_default = Some(HostDefault {
+                            host: "r".into(),
+                            text: text.into(),
+                        });
+                    }
+                }
+            }
+            out.push(ParamDef::from(Param {
+                name: n.clone(),
+                dispatch: !first_only && dispatch.contains(n),
+                ty,
+                default,
+                host_default,
+                description: "".into(),
+            }));
+        }
+        Ok(out)
+    })();
+    Ok(match built {
+        Ok(p) => crate::irser::to_r(&p).map_err(|e| extendr_api::Error::Other(e.to_string()))?,
+        Err(p) => Robj::from(format!("{} [{} at {}]", p.message, p.code, p.path)),
+    })
 }
 
 extendr_module! {
     mod reader;
+    fn r8_params_ir;
+    fn r8_required_fields;
     fn r8_declare;
     fn r8_ft_table;
     fn r8_default_canonical;

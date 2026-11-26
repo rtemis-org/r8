@@ -16,7 +16,8 @@ use extendr_api::SEXP;
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use extendr_ffi::{R_xlen_t, SEXPTYPE, VECTOR_ELT};
-use rtemis_r8::ir::{CharacterType, DoubleType, FieldType, IntegerType};
+use rtemis_r8::ir::build::host_class;
+use rtemis_r8::ir::{CharacterType, ClassSystem, DoubleType, FieldType, IntegerType};
 use rtemis_r8::layout::{
     Entry, EntryName, LayoutOptions, Record, count, layout_record, layout_with,
 };
@@ -24,12 +25,12 @@ use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::TypeLookup;
 use rtemis_r8::text::{
     ALL_ROLES, Color, ColorDepth, Facts, HostKind, HtmlStyle, Line, OutputType, Role, Span, Style,
-    Text, Theme, css, encode_ansi, encode_html, encode_markdown, encode_plain, resolve,
+    Text, Theme, css, determine, encode_ansi, encode_html, encode_markdown, encode_plain,
 };
 
 use crate::rview::{
-    RView, attr, attr_string, attributes_checked, attributes_unchecked, inherits, is_null, nil,
-    sexptype, string_elt, strings, sym_class, sym_dim, sym_names, sym_r8_type, table_rows, xlen,
+    RView, attr, attributes_checked, attributes_unchecked, inherits, is_null, nil, sexptype,
+    string_elt, strings, sym_class, sym_dim, sym_names, table_rows, xlen,
 };
 
 fn fail(message: impl Into<String>) -> Error {
@@ -85,7 +86,10 @@ fn int_vec(v: &Robj) -> Option<Vec<i32>> {
 pub(crate) fn str_vec(v: &Robj) -> Option<Vec<String>> {
     match v.rtype() {
         Rtype::Strings if v.len() == 0 => Some(Vec::new()),
-        Rtype::Strings => v.as_string_vector(),
+        // Text to show: a string that is no text shows replacement characters.
+        Rtype::Strings => {
+            crate::utf8::all(v).map(|s| s.into_iter().map(Option::unwrap_or_default).collect())
+        }
         _ => None,
     }
 }
@@ -175,7 +179,8 @@ fn display_set(display_types: &Robj) -> Result<HashSet<String>> {
         .collect())
 }
 
-/// The text of a nested value whose type is in `shown`, the lists of an
+/// The text of a nested value of the registered declaration whose type is in
+/// `shown`, the lists of an
 /// `r8_text` that the R function `display` returns for it; the first error
 /// goes to `failure`, and the layout of every later value is the default.
 fn display_text<'f, 'a>(
@@ -184,7 +189,11 @@ fn display_text<'f, 'a>(
     failure: &'f mut Option<Error>,
 ) -> impl FnMut(RView<'a>, &QualifiedName) -> Option<Text> + 'f {
     move |v: RView<'a>, name: &QualifiedName| {
-        if failure.is_some() || !shown.contains(&name.to_string()) {
+        let current = v
+            .sexp()
+            .and_then(crate::value::id)
+            .is_some_and(crate::value::current);
+        if failure.is_some() || !current || !shown.contains(&name.to_string()) {
             return None;
         }
         let result = v
@@ -231,11 +240,19 @@ fn r8_layout_value(
     display: Function,
     summary: Nullable<String>,
     head: i32,
+    width: i32,
+    unicode: bool,
 ) -> Result<List> {
     let xs = unsafe { x.get() };
-    let type_name = attr_string(xs, sym_r8_type()).ok_or_else(|| fail("`x` is not an R8 value"))?;
+    let type_name = crate::value::type_name(xs).ok_or_else(|| fail("`x` is not an R8 value"))?;
     let q = QualifiedName::parse(&type_name).map_err(|e| fail(e.to_string()))?;
-    let docs = crate::declare::snapshot()?;
+    // A value of another declaration is shown as of its own.
+    let id = crate::value::id(xs).filter(|&id| !crate::value::current(id));
+    let made = id.and_then(crate::value::made_under);
+    let docs = match &made {
+        Some(m) => m.clone(),
+        None => crate::declare::snapshot()?,
+    };
     let lookup: &dyn TypeLookup = &*docs;
     let shown = display_set(&display_types)?;
     let options = LayoutOptions {
@@ -244,16 +261,25 @@ fn r8_layout_value(
             Nullable::NotNull(s) => Some(s),
             Nullable::Null => None,
         },
+        width: width.max(20) as usize,
+        unicode,
         ..LayoutOptions::default()
     };
     let mut failure: Option<Error> = None;
-    let text = layout_with(
-        RView::Whole(xs),
-        &q,
-        lookup,
-        &options,
-        &mut display_text(&shown, &display, &mut failure),
-    );
+    let mut layout = || {
+        layout_with(
+            RView::Whole(xs),
+            &q,
+            lookup,
+            &options,
+            &mut display_text(&shown, &display, &mut failure),
+        )
+    };
+    let text = if id.is_some() {
+        crate::value::looking(layout).ok_or_else(|| fail("the fields of `x` do not read"))?
+    } else {
+        layout()
+    };
     match failure {
         Some(e) => Err(e),
         None => Ok(text_to_r(&text)),
@@ -264,9 +290,7 @@ fn r8_layout_value(
 /// frame when `column`, inferred from its R type, class, length, and
 /// attributes in constant time.
 fn infer_type(x: SEXP, column: bool) -> FieldType {
-    let other = |class: &str| FieldType::R {
-        class: class.into(),
-    };
+    let other = |class: &str, system: ClassSystem| host_class(class, "", system);
     let vector = |element: FieldType| FieldType::Vec {
         element: Box::new(element),
         min_length: None,
@@ -278,11 +302,10 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
     if is_null(x) {
         return FieldType::Json;
     }
-    if inherits(x, "r8_value") {
-        return attr_string(x, sym_r8_type())
-            .and_then(|t| QualifiedName::parse(&t).ok())
+    if let Some(t) = crate::value::type_name(x) {
+        return QualifiedName::parse(&t)
             .map(|name| FieldType::Named { name })
-            .unwrap_or_else(|| other("r8_value"));
+            .unwrap_or_else(|_| other("r8_value", ClassSystem::S3));
     }
     if inherits(x, "factor") {
         return FieldType::Factor {
@@ -321,7 +344,10 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
                 .flatten()
                 .next()
                 .map(|c| c.into_owned());
-            return other(&class.unwrap_or_else(|| implicit_class(t).to_string()));
+            return match class {
+                Some(class) => other(&class, explicit_system(x)),
+                None => other(implicit_class(t), ClassSystem::Implicit),
+            };
         }
     };
     if attr(x, sym_class()) != nil() {
@@ -331,7 +357,7 @@ fn infer_type(x: SEXP, column: bool) -> FieldType {
             .next()
             .map(|c| c.into_owned())
             .unwrap_or_default();
-        return other(&class);
+        return other(&class, explicit_system(x));
     }
     let dim = attr(x, sym_dim());
     if !is_null(dim) {
@@ -368,6 +394,17 @@ fn implicit_class(t: SEXPTYPE) -> &'static str {
         SEXPTYPE::EXTPTRSXP => "externalptr",
         SEXPTYPE::OBJSXP => "S4",
         _ => "object",
+    }
+}
+
+/// The class system of an object with a class attribute: S4 for an S4
+/// object, S3 otherwise.
+fn explicit_system(x: SEXP) -> ClassSystem {
+    // SAFETY: `x` is a live, protected R object.
+    if bool::from(unsafe { extendr_ffi::Rf_isS4(x) }) {
+        ClassSystem::S4
+    } else {
+        ClassSystem::S3
     }
 }
 
@@ -419,9 +456,7 @@ impl<'a> Record<'a, RView<'a>> for ListRecord {
         }
         let mut ty = infer_type(elt, self.columns);
         if self.columns && is_plain_list(elt) {
-            ty = FieldType::R {
-                class: "list".into(),
-            };
+            ty = host_class("list", "", ClassSystem::Implicit);
         }
         Entry::Field {
             name,
@@ -512,9 +547,9 @@ fn style_from_r(role: &str, x: &Robj) -> Result<Style> {
         .dollar("color")
         .ok()
         .filter(|c| !c.is_null() && !c.is_na())
-        .and_then(|c| c.as_str())
+        .and_then(|c| crate::utf8::one(&c))
     {
-        Some(hex) => Some(Color::from_hex(hex).ok_or_else(|| {
+        Some(hex) => Some(Color::from_hex(&hex).ok_or_else(|| {
             fail(format!(
                 "the color of `{role}` is a hex code such as \"#6CA3A0\", not \"{hex}\""
             ))
@@ -596,8 +631,8 @@ fn r8_theme_table(overrides: List) -> Result<List> {
         let mut style = theme.style(role);
         for (member, v) in l.iter() {
             match member {
-                "color" => style.color = match v.as_str().filter(|_| !v.is_na()) {
-                    Some(hex) => Some(Color::from_hex(hex).ok_or_else(|| {
+                "color" => style.color = match crate::utf8::one(&v) {
+                    Some(hex) => Some(Color::from_hex(&hex).ok_or_else(|| {
                         fail(format!(
                             "the color of `{name}` is a hex code such as \"#6CA3A0\", not \"{hex}\""
                         ))
@@ -677,12 +712,14 @@ fn r8_css_text(theme: Nullable<List>, named: Robj) -> Result<String> {
 #[extendr]
 fn r8_text_encode(
     text: List,
-    output_type: &str,
+    output_type: crate::utf8::Utf8,
     theme: Nullable<List>,
-    depth: &str,
+    depth: crate::utf8::Utf8,
     html_classes: bool,
     inline: bool,
 ) -> Result<String> {
+    let output_type: &str = &output_type;
+    let depth: &str = &depth;
     let t = text_from_r(&text)?;
     let theme = match theme {
         Nullable::NotNull(l) => theme_from_r(&l)?,
@@ -719,7 +756,7 @@ fn r8_text_encode(
 
 /// An output type named in a fact, or `None` for `NULL` or `""`.
 fn fact_type(facts: &List, name: &str) -> Result<Option<OutputType>> {
-    match facts.dollar(name).ok().and_then(|v| v.as_str().map(str::to_string)) {
+    match facts.dollar(name).ok().and_then(|v| crate::utf8::one(&v)) {
         None => Ok(None),
         Some(s) if s.is_empty() => Ok(None),
         Some(s) => OutputType::from_name(&s).map(Some).ok_or_else(|| {
@@ -740,7 +777,7 @@ fn fact_type(facts: &List, name: &str) -> Result<Option<OutputType>> {
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_resolve_output(facts: List) -> Result<Vec<String>> {
+fn r8_determine_output(facts: List) -> Result<Vec<String>> {
     let flag = |name: &str| {
         facts
             .dollar(name)
@@ -748,11 +785,7 @@ fn r8_resolve_output(facts: List) -> Result<Vec<String>> {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     };
-    let host = match facts
-        .dollar("host")
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-    {
+    let host = match facts.dollar("host").ok().and_then(|v| crate::utf8::one(&v)) {
         Some(h) if h == "positron" => HostKind::Positron,
         Some(h) if h == "rstudio" => HostKind::RStudio {
             console_color: false,
@@ -773,7 +806,7 @@ fn r8_resolve_output(facts: List) -> Result<Vec<String>> {
         terminal: flag("terminal"),
         truecolor: flag("truecolor"),
     };
-    let (ty, depth) = resolve(&f);
+    let (ty, depth) = determine(&f);
     Ok(vec![
         ty.name().to_string(),
         match depth {
@@ -792,5 +825,5 @@ extendr_module! {
     fn r8_roles;
     fn r8_text_encode;
     fn r8_css_text;
-    fn r8_resolve_output;
+    fn r8_determine_output;
 }

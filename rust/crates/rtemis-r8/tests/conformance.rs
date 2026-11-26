@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rtemis_r8::codec::{canonical, canonical_text, content_hash};
+use rtemis_r8::canonical::{canonical, canonical_text, content_hash};
 use rtemis_r8::ir::{IrDocument, check_document, check_trait, check_type};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::DocumentSet;
@@ -33,7 +33,8 @@ fn suites(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// `(path, code, rule)` triples, sorted, for comparison as multisets.
+/// `(path, code, rule)` triples, sorted, for comparison as multisets; the
+/// rule is its ID, or `#<index>` for a rule without one.
 fn sorted_errors(
     errors: impl Iterator<Item = (String, String, Option<String>)>,
 ) -> Vec<(String, String, Option<String>)> {
@@ -47,7 +48,14 @@ fn expected_errors(expect: &Value) -> Vec<(String, String, Option<String>)> {
         (
             e["path"].as_str().unwrap().to_string(),
             e["code"].as_str().unwrap().to_string(),
-            e.get("rule").and_then(Value::as_str).map(str::to_string),
+            e.get("rule")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    e.get("rule_index")
+                        .and_then(Value::as_u64)
+                        .map(|i| format!("#{i}"))
+                }),
         )
     }))
 }
@@ -62,10 +70,23 @@ fn run_declare(input: &Value, expect: &Value) -> Option<String> {
         (Ok(_), true) => Some("read, but a parse error was expected".to_string()),
         (Ok(doc), false) => {
             let all = check_document(&doc);
-            // The check of one type or trait reports what the check of the
-            // document reports at its path.
+            // The check of one type or trait, with `check_defaults()`, which
+            // a registry runs after `check_type()`, reports what the check of
+            // the document reports at its path.
             let declarations = (0..doc.types.len())
-                .map(|i| (format!("/types/{i}"), check_type(&doc, i)))
+                .map(|i| {
+                    let mut own = check_type(&doc, i);
+                    if own.is_empty()
+                        && let rtemis_r8::ir::TypeDef::Struct(s) = &doc.types[i]
+                    {
+                        let q = rtemis_r8::name::QualifiedName {
+                            namespace: doc.namespace.clone(),
+                            name: s.name.clone(),
+                        };
+                        own = rtemis_r8::ir::check_defaults(s, &q, &format!("/types/{i}"), &doc);
+                    }
+                    (format!("/types/{i}"), own)
+                })
                 .chain(
                     (0..doc.traits.len()).map(|i| (format!("/traits/{i}"), check_trait(&doc, i))),
                 );
@@ -95,6 +116,65 @@ fn run_declare(input: &Value, expect: &Value) -> Option<String> {
     }
 }
 
+/// Runs one `dispatch` case: selects the impl for a call of the trait `type`, whose
+/// arguments' types are `input`, among the impls of the suite's IR.
+fn run_dispatch(
+    ir: Option<&DocumentSet>,
+    trait_name: &Value,
+    input: &Value,
+    expect: &Value,
+) -> Option<String> {
+    use rtemis_r8::ir::dispatch::{Arg, Selection, impls_by_namespace, positions, select};
+    use rtemis_r8::rules::TypeLookup;
+    let Some(docs) = ir else {
+        return Some("a `dispatch` case needs the suite's `ir`".into());
+    };
+    let tr = QualifiedName::parse(trait_name.as_str()?).ok()?;
+    let Some(t) = docs.trait_of(&tr) else {
+        return Some(format!("`{tr}` is not declared in the suite's `ir`"));
+    };
+    let arity = t.dispatch_arity();
+    let args: Vec<Arg> = input
+        .as_array()?
+        .iter()
+        .map(|a| match a {
+            Value::String(s) => Arg::Type(QualifiedName::parse(s).unwrap()),
+            Value::Object(o) => Arg::Classes(
+                o["classes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| c.as_str().unwrap().to_string())
+                    .collect(),
+            ),
+            _ => Arg::Other,
+        })
+        .collect();
+    let found = impls_by_namespace(docs, &tr);
+    let impls: Vec<&rtemis_r8::ir::ImplDef> = found.iter().map(|(_, i)| *i).collect();
+    let tuple = |k: usize| -> Value {
+        positions(impls[k], arity)
+            .iter()
+            .map(|p| Value::String(p.to_string()))
+            .collect()
+    };
+    let got = match select(docs, &impls, arity, &args, None) {
+        Selection::Impl(k) => serde_json::json!({ "impl": tuple(k) }),
+        Selection::Default => serde_json::json!({ "default": true }),
+        Selection::Ambiguous(a, b) => {
+            let mut pair = vec![tuple(a), tuple(b)];
+            pair.sort_by_key(ToString::to_string);
+            serde_json::json!({ "ambiguous": pair })
+        }
+        Selection::Stale(q) => serde_json::json!({ "stale": q.to_string() }),
+    };
+    let mut want = expect.clone();
+    if let Some(Value::Array(pair)) = want.get_mut("ambiguous") {
+        pair.sort_by_key(ToString::to_string);
+    }
+    (got != want).then(|| format!("selected {got}, expected {want}"))
+}
+
 /// Runs one `decode` case against the suite's IR document.
 fn run_decode(
     ir: Option<&DocumentSet>,
@@ -106,11 +186,14 @@ fn run_decode(
         return Some("a decode case needs the suite's `ir`".to_string());
     };
     let ty = QualifiedName::parse(ty.as_str().unwrap()).unwrap();
-    let got = sorted_errors(
-        validate(input, &ty, doc)
-            .into_iter()
-            .map(|e| (e.path, e.code.to_string(), e.rule.map(|r| r.to_string()))),
-    );
+    let got = sorted_errors(validate(input, &ty, doc).into_iter().map(|e| {
+        let rule = match (&e.rule, e.rule_index) {
+            (Some(r), _) => Some(r.to_string()),
+            (None, Some(i)) => Some(format!("#{i}")),
+            (None, None) => None,
+        };
+        (e.path, e.code.to_string(), rule)
+    }));
     let want = if expect.get("valid").is_some() {
         Vec::new()
     } else {
@@ -120,7 +203,7 @@ fn run_decode(
 }
 
 /// Runs one `canonical` or `hash` case.
-fn run_codec(
+fn run_canonical(
     op: &str,
     ir: Option<&DocumentSet>,
     ty: &Value,
@@ -232,7 +315,14 @@ fn conformance_corpus() {
             let outcome = match case["op"].as_str().unwrap() {
                 "declare" => run_declare(&case["input"], &case["expect"]),
                 "decode" => run_decode(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
-                op @ ("canonical" | "hash") => run_codec(
+                "dispatch" => {
+                    run_dispatch(ir.as_ref(), &case["type"], &case["input"], &case["expect"])
+                }
+                "update" => run_update(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
+                "filter" => run_filter(ir.as_ref(), case),
+                "check" => run_check(ir.as_ref(), case),
+                "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
+                op @ ("canonical" | "hash") => run_canonical(
                     op,
                     ir.as_ref(),
                     &case["type"],
@@ -263,6 +353,175 @@ fn conformance_corpus() {
     assert!(passed > 0, "no conformance case ran");
 }
 
+/// Runs one `check` case.
+fn run_check(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
+    use rtemis_r8::ir::{RuleDef, TypeDef};
+    use rtemis_r8::report::{Kind, Of, check_rules, check_table};
+    use rtemis_r8::rules::TypeLookup;
+    let Some(docs) = ir else {
+        return Some("a `check` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(case["type"].as_str()?).ok()?;
+    let Some(TypeDef::Table(def)) = docs.find(&ty) else {
+        return Some(format!("`{ty}` is not a table of the suite's `ir`"));
+    };
+    let table = rtemis_r8::access::Json::new(&case["input"]);
+    let done = match case.get("options").and_then(|o| o.get("rules")) {
+        Some(rules) => {
+            let rules: Vec<RuleDef> = serde_json::from_value(rules.clone()).unwrap();
+            check_rules(table, &rules, docs, 10)
+        }
+        None => check_table(table, &def.columns, def.open, &def.rules, docs, 10),
+    };
+    let (rows, lines) = match done {
+        Ok(found) => found,
+        Err(f) => return Some(f.message),
+    };
+    let lines: Vec<Value> = lines
+        .into_iter()
+        .map(|l| {
+            let mut out = serde_json::json!({
+                "checked": l.checked, "failed": l.failed, "missing": l.missing, "errors": l.errors,
+            });
+            match &l.of {
+                Of::Column(c) => out["column"] = c.as_str().into(),
+                Of::Rule(i) => out["rule"] = (*i).into(),
+            }
+            let problems: Vec<Value> = l
+                .problems
+                .iter()
+                .map(|p| {
+                    let code = match &p.kind {
+                        Kind::Value(e) => e.code,
+                        Kind::Violation(_) => "rule_violation",
+                        Kind::Error(..) => "rule_error",
+                        Kind::Unread(e) => e[0].code,
+                    };
+                    match p.row {
+                        Some(r) => serde_json::json!({ "row": r, "code": code }),
+                        None => serde_json::json!({ "code": code }),
+                    }
+                })
+                .collect();
+            if !problems.is_empty() {
+                out["problems"] = problems.into();
+            }
+            out
+        })
+        .collect();
+    let got = serde_json::json!({ "rows": rows, "lines": lines });
+    (got != case["expect"]).then(|| format!("{got}, expected {}", case["expect"]))
+}
+
+/// Runs one `filter` case.
+fn run_filter(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
+    use rtemis_r8::ir::{Logic, TypeDef};
+    use rtemis_r8::rules::{NotChosen, TypeLookup, choose_rows};
+    let Some(docs) = ir else {
+        return Some("a `filter` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(case["type"].as_str()?).ok()?;
+    let Some(TypeDef::Table(def)) = docs.find(&ty) else {
+        return Some(format!("`{ty}` is not a table of the suite's `ir`"));
+    };
+    let problems = validate(&case["input"], &ty, docs);
+    if !problems.is_empty() {
+        return Some(format!("the input is invalid: {problems:?}"));
+    }
+    let rule = Logic::from_value(&case["options"]["rule"]);
+    let table = rtemis_r8::access::Json::new(&case["input"]);
+    let got = match choose_rows(table, def, &rule, docs) {
+        Ok(rows) => serde_json::json!({ "rows": rows }),
+        Err(NotChosen::Row(e)) => {
+            serde_json::json!({ "row_error": { "row": e.row, "count": e.count } })
+        }
+        Err(NotChosen::Rule(errors)) => {
+            let got = sorted_errors(
+                errors
+                    .into_iter()
+                    .map(|e| (e.path.replacen("/invariant", "", 1), e.code.into(), None)),
+            );
+            if case["expect"].get("errors").is_none() {
+                return Some(format!("errors {got:?}, expected {}", case["expect"]));
+            }
+            let want = expected_errors(&case["expect"]);
+            return (got != want).then(|| format!("errors {got:?}, expected {want:?}"));
+        }
+        Err(NotChosen::Table(m)) => return Some(m),
+    };
+    (got != case["expect"]).then(|| format!("{got}, expected {}", case["expect"]))
+}
+
+fn run_refine(
+    ir: Option<&DocumentSet>,
+    ty: &Value,
+    input: &Value,
+    expect: &Value,
+) -> Option<String> {
+    let Some(compiled) = ir else {
+        return Some("a `refine` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(ty.as_str()?).ok()?;
+    let registered = match IrDocument::from_json(&input.to_string()) {
+        Ok(d) => DocumentSet::from(vec![d]),
+        Err(e) => return Some(format!("the input does not read: {e}")),
+    };
+    let mut got: Vec<Value> = rtemis_r8::refine::differences(&ty, compiled, &registered)
+        .iter()
+        .map(|d| serde_json::json!({"code": d.code, "type": d.type_name}))
+        .collect();
+    let mut want = match expect.get("differences") {
+        Some(Value::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    got.sort_by_key(ToString::to_string);
+    want.sort_by_key(ToString::to_string);
+    (got != want).then(|| format!("expected {want:?}, got {got:?}"))
+}
+
+fn run_update(
+    ir: Option<&DocumentSet>,
+    ty: &Value,
+    input: &Value,
+    expect: &Value,
+) -> Option<String> {
+    use rtemis_r8::update::{Effect, changes, read_declarations};
+    let Some(made) = ir else {
+        return Some("an `update` case needs the suite's `ir`".into());
+    };
+    let ty = QualifiedName::parse(ty.as_str()?).ok()?;
+    let text = rtemis_r8::canonical::declaration_text(&ty, made);
+    let hash = rtemis_r8::canonical::declaration_hash(&ty, made);
+    let Some(read) = read_declarations(&text, &hash) else {
+        return Some("the hashed text of the declarations does not read".into());
+    };
+    if read_declarations(&text, "sha256:other").is_some() {
+        return Some("a text with another hash reads".into());
+    }
+    let registered = match IrDocument::from_json(&input.to_string()) {
+        Ok(d) => DocumentSet::from(vec![d]),
+        Err(e) => return Some(format!("the input does not read: {e}")),
+    };
+    let mut got: Vec<Value> = changes(&ty, &read, &registered)
+        .iter()
+        .map(|c| {
+            let effect = match c.effect {
+                Effect::None => "none",
+                Effect::Form => "form",
+                Effect::Meaning => "meaning",
+            };
+            serde_json::json!({"code": c.code, "type": c.type_name, "effect": effect})
+        })
+        .collect();
+    let mut want = match expect.get("changes") {
+        Some(Value::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    got.sort_by_key(ToString::to_string);
+    want.sort_by_key(ToString::to_string);
+    (got != want).then(|| format!("expected {want:?}, got {got:?}"))
+}
+
 /// The suite's IR as a lookup.
 fn suite_ir(suite: &Value) -> Option<DocumentSet> {
     let v = suite.get("ir")?;
@@ -286,6 +545,7 @@ fn document_value(mut doc: Value) -> Value {
     }
     m.shift_remove("$type");
     m.shift_remove("$types");
+    m.shift_remove("$declarations");
     doc
 }
 
@@ -296,7 +556,7 @@ fn document_value(mut doc: Value) -> Value {
 #[test]
 fn documents_read_to_the_normalized_form() {
     use rtemis_r8::access::Json;
-    use rtemis_r8::codec::{document_access, read_document};
+    use rtemis_r8::canonical::{document_access, read_document};
     let mut checked = 0;
     for path in suites(&corpus_dir()) {
         let suite: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -344,7 +604,7 @@ fn documents_read_to_the_normalized_form() {
 #[test]
 fn tree_reads_match_the_reference_read() {
     use rtemis_r8::access::Json;
-    use rtemis_r8::codec::{document_access, read_document, read_tree_cached};
+    use rtemis_r8::canonical::{document_access, read_document, read_tree_cached};
     use rtemis_r8::equal::equal_access;
     use rtemis_r8::validate::RuleCache;
     let mut checked = 0;

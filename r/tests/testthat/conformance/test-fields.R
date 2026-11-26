@@ -2,15 +2,15 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Fields of a `Conform` value: construction, reading, defaults, problems,
-# replacement, equality, and r8_conform(), for R-native and Rust-native
+# Fields of a `Probe` value: construction, reading, defaults, problems,
+# replacement, equality, and r8_conform(), for R-stored and Rust-stored
 # values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 
 test_that("a value constructs and reads each field", {
   p <- conformance_provider()
   x <- conform_value(p)
-  expect_s3_class(x, c(paste0(p[["namespace"]], "::Conform"), "r8_value"))
+  expect_s3_class(x, c(paste0(p[["namespace"]], "::Probe"), "r8_value"))
   expect_identical(x$ratio, 0.5)
   expect_identical(x$count, 3L)
   expect_identical(x$flag, TRUE)
@@ -51,9 +51,11 @@ test_that("construction reports every problem with its path and rule", {
     conform_value(p, ratio = 2, count = 0L, label = "ABC"),
     class = "r8_value_error"
   )
-  expect_match(conditionMessage(e), "above_max at /ratio")
-  expect_match(conditionMessage(e), "below_min at /count")
-  expect_match(conditionMessage(e), "pattern_mismatch at /label")
+  got <- paste(e$problems$code, e$problems$path)
+  expect_true("above_max /ratio" %in% got)
+  expect_true("below_min /count" %in% got)
+  expect_true("pattern_mismatch /label" %in% got)
+  expect_match(conditionMessage(e), "`ratio` must be", fixed = TRUE)
   expect_error(
     conform_value(p, seed = 5L),
     "seed_below_count",
@@ -118,13 +120,13 @@ test_that("equality and the hash follow the contents", {
 
 test_that("r8_conform() converts what it can and constructs strictly", {
   p <- conformance_provider()
-  input <- conform_args(count = 3, index = c(1, 2), colour = "red")
-  expect_message(x <- r8_conform(input, p[["Conform"]]), "change")
+  input <- probe_args(count = 3, index = c(1, 2), colour = "red")
+  expect_message(x <- r8_conform(input, p[["Probe"]]), "change")
   expect_identical(x$count, 3L)
   expect_identical(x$index, c(1L, 2L))
   expect_true(r8_equal(x, conform_value(p)))
   expect_error(
-    suppressMessages(r8_conform(conform_args(ratio = 2), p[["Conform"]])),
+    suppressMessages(r8_conform(probe_args(ratio = 2), p[["Probe"]])),
     class = "r8_value_error"
   )
 })

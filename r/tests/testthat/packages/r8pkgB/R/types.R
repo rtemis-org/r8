@@ -11,3 +11,11 @@ R8::impl(
   Circle,
   methods = list(area = function(x, ...) pi * x$r^2)
 )
+
+# A child of another package's struct: it holds the parent's fields and
+# rules, then its own.
+Panel <- R8::new_struct(
+  "Panel",
+  fields = list(label = R8::type_character()),
+  extends = r8pkgA::Rect
+)

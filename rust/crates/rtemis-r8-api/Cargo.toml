@@ -1,6 +1,6 @@
 [package]
 name = "rtemis-r8-api"
-description = "R8's C services for an R package's Rust code: Rust-native types, their codecs, and trait impls registered with R8"
+description = "R8's C services for an R package's Rust code: Rust-stored types, their codecs, and trait impls registered with R8"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,6 @@ keywords = ["r8", "r", "rlang", "type-system", "ffi"]
 categories = ["api-bindings", "development-tools::ffi"]
 
 [dependencies]
-rtemis-r8 = { path = "../rtemis-r8", version = "0.4", features = ["macros"] }
-rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.4" }
+rtemis-r8 = { path = "../rtemis-r8", version = "0.5", features = ["macros"] }
+rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.5" }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

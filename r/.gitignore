@@ -29,5 +29,6 @@ CRAN-SUBMISSION
 
 # Rust (extendr)
 src/rust/vendor
+src/vendor
 src/Makevars
 src/Makevars.win

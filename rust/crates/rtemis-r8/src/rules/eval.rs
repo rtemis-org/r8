@@ -11,20 +11,23 @@
 //! when the rule is evaluated.
 //!
 //! A `var` that reaches an absent value (a missing member or `null`) makes
-//! the expression [`Absent`]; the absence propagates through every operator
-//! except `is_null()`, and a rule with an absent operand holds. Conditional
-//! positions take logicals only.
+//! the expression [`Absent`], and so does a comparison with `NaN`. The absence
+//! propagates through every operator except `is_null()`, `is_na()`, and an
+//! `and` or an `or` that another operand decides, and a rule with an absent
+//! result holds. An operand that decides an `and` or an `or` decides it over
+//! an error of another operand too. Conditional positions take logicals only.
 
 use std::cmp::Ordering;
 
 use serde_json::Value;
 
 use super::compile::{Collection, Expr, Op, Root, Step, VariantTag};
+use super::exact::ExactSum;
 use super::ty::TypeLookup;
 use crate::access::{Access, valid_date, valid_posixct};
-use crate::codec::{date_days, date_text, datetime_micros, datetime_text};
+use crate::canonical::{date_days, date_text, datetime_micros, datetime_text};
 use crate::emit::number_text;
-use crate::ir::{FieldDef, FieldType, TypeDef, VariantShape};
+use crate::ir::{FieldDef, FieldType, TypeDef, VariantKind};
 
 /// An expression read an absent value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,20 +152,28 @@ pub(crate) enum Val<'l, A> {
 /// a failure that compilation did not exclude, such as a division by zero.
 pub(crate) type Evaluated<'l, A> = Result<Result<Val<'l, A>, Absent>, String>;
 
-/// The JSON Pointer suffix of an element of a collection, relative to the
-/// collection; an array element's suffix is formatted only when shown.
-pub enum Suffix {
-    /// The element at an index of an array.
+/// An element's place in its collection, borrowed from the host form, so a
+/// passing element allocates nothing.
+pub enum Suffix<'s> {
+    /// The element at an index of a vector.
     Index(usize),
-    /// A suffix written out, such as a map entry's.
-    Text(String),
+    /// The value at a key of a `btree_map()`.
+    Key(std::borrow::Cow<'s, str>),
+    /// The value of the item at an index of an `index_map()`.
+    Item(usize),
 }
 
-impl std::fmt::Display for Suffix {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Suffix<'_> {
+    /// The element's path below its collection.
+    pub fn segments(&self) -> Vec<crate::problem::Segment> {
+        use crate::problem::Segment;
         match self {
-            Suffix::Index(i) => write!(f, "/{i}"),
-            Suffix::Text(s) => f.write_str(s),
+            Suffix::Index(i) => vec![Segment::Element(*i as u64)],
+            Suffix::Key(k) => vec![Segment::Key(k.to_string())],
+            Suffix::Item(i) => vec![
+                Segment::Element(*i as u64),
+                Segment::Form("/value".to_string()),
+            ],
         }
     }
 }
@@ -220,6 +231,11 @@ fn scalar_eq(a: &Scalar, b: &Scalar) -> bool {
         },
         _ => a == b,
     }
+}
+
+/// Whether a scalar is the number `NaN`.
+fn is_nan(v: &Scalar) -> bool {
+    matches!(v, Scalar::Num(x) if x.is_nan())
 }
 
 /// The order of two scalars: numbers, dates, date-times, and strings.
@@ -510,20 +526,16 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 TypeDef::Struct(s) => Some(&s.fields),
                 TypeDef::Enum(e) => {
                     let variant = cur.variant(name, e).ok()?;
-                    match &e
-                        .variants
-                        .iter()
-                        .find(|v| v.name.as_str() == variant)?
-                        .shape
-                    {
-                        VariantShape::Struct { fields, .. } => Some(fields),
-                        VariantShape::Newtype { of } => match lookup.find(of)? {
+                    match &e.variants.iter().find(|v| v.name.as_str() == variant)?.kind {
+                        VariantKind::Struct { fields, .. } => Some(fields),
+                        VariantKind::Newtype { of } => match lookup.find(of)? {
                             TypeDef::Struct(s) => Some(&s.fields),
-                            TypeDef::Enum(_) => None,
+                            TypeDef::Enum(_) | TypeDef::Table(_) => None,
                         },
-                        VariantShape::Unit => None,
+                        VariantKind::Unit => None,
                     }
                 }
+                TypeDef::Table(_) => None,
             },
             _ => None,
         }
@@ -543,9 +555,9 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 return Ok(Err(Absent));
             }
             match s {
-                Step::Member(k) => {
+                Step::Field(k) | Step::Key(k) | Step::Column(k) => {
                     let next_ty = match ty.map(unwrap_option) {
-                        Some(FieldType::Hashmap { value, .. }) => Some(value.as_ref()),
+                        Some(FieldType::BtreeMap { value, .. }) => Some(value.as_ref()),
                         _ if at_root || ty.is_some() => self
                             .fields_of(if at_root { None } else { ty }, cur)
                             .and_then(|f| f.iter().find(|f| f.name.as_str() == k.as_str()))
@@ -553,7 +565,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                         _ => None,
                     };
                     cur = match ty.map(unwrap_option) {
-                        Some(FieldType::Hashmap { .. }) => {
+                        Some(FieldType::BtreeMap { .. }) => {
                             let mut found = None;
                             cur.each_entry(|_, e| {
                                 if let Ok((key, x)) = e
@@ -583,7 +595,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                         }
                     });
                     ty = match ty.map(unwrap_option) {
-                        Some(FieldType::OrderedMap { value, .. }) => Some(value.as_ref()),
+                        Some(FieldType::IndexMap { value, .. }) => Some(value.as_ref()),
                         _ => None,
                     };
                     match found {
@@ -616,22 +628,15 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 }
                 self.eval(&parts[i])
             }
-            Expr::And(parts) => {
-                for p in parts {
-                    if !want_bool(&value!(self, self.eval(p)), "an operand of `and`")? {
-                        return present(Scalar::Bool(false));
-                    }
-                }
-                present(Scalar::Bool(true))
+            Expr::And(parts) => self.decided(parts, false),
+            Expr::Or(parts) => self.decided(parts, true),
+            Expr::Cell(_) | Expr::Aggregate { .. } => {
+                Err("a cell is read by the rows of a table".to_string())
             }
-            Expr::Or(parts) => {
-                for p in parts {
-                    if want_bool(&value!(self, self.eval(p)), "an operand of `or`")? {
-                        return present(Scalar::Bool(true));
-                    }
-                }
-                present(Scalar::Bool(false))
-            }
+            Expr::IsNa(inner) => match self.eval(inner)? {
+                Ok(v) => present(Scalar::Bool(is_nan(&self.scalar(v)))),
+                Err(Absent) => present(Scalar::Bool(true)),
+            },
             Expr::IsNull(inner) => present(Scalar::Bool(self.eval(inner)?.is_err())),
             Expr::IsVariant {
                 value,
@@ -744,23 +749,101 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     }
                     return apply(*op, &[self.scalar(v)]).map(|v| Ok(Val::V(v)));
                 }
+                if let [x, y] = args.as_slice() {
+                    return self.binary(*op, x, y);
+                }
                 let mut vals = Vec::with_capacity(args.len());
+                let mut absent = false;
                 for a in args {
-                    vals.push(val!(self.eval(a)));
+                    match self.eval(a)? {
+                        Ok(v) => vals.push(v),
+                        Err(Absent) => absent = true,
+                    }
+                }
+                if absent {
+                    return Ok(Err(Absent));
                 }
                 if let Some(r) = self.in_place(*op, &vals) {
-                    return r.map(|v| Ok(Val::V(v)));
+                    return r.map(|v| v.map(Val::V));
                 }
                 let scalars: Vec<Scalar> = vals.into_iter().map(|v| self.scalar(v)).collect();
+                // `NaN` is missing, to an operator whose result is no number.
+                if matches!(
+                    op,
+                    Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::In | Op::Cat
+                ) && scalars.iter().any(is_nan)
+                {
+                    return Ok(Err(Absent));
+                }
                 apply(*op, &scalars).map(|v| Ok(Val::V(v)))
             }
+        }
+    }
+
+    /// An operation of two operands, as `Expr::Op` evaluates one of any number,
+    /// without a vector of them.
+    fn binary(&self, op: Op, x: &Expr, y: &Expr) -> Evaluated<'l, A> {
+        let (a, b) = (self.eval(x)?, self.eval(y)?);
+        let (Ok(a), Ok(b)) = (a, b) else {
+            return Ok(Err(Absent));
+        };
+        let vals = [a, b];
+        if let Some(r) = self.in_place(op, &vals) {
+            return r.map(|v| v.map(Val::V));
+        }
+        let [a, b] = vals;
+        let scalars = [self.scalar(a), self.scalar(b)];
+        // `NaN` is missing, to an operator whose result is no number.
+        if matches!(
+            op,
+            Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::In | Op::Cat
+        ) && scalars.iter().any(is_nan)
+        {
+            return Ok(Err(Absent));
+        }
+        apply(op, &scalars).map(|v| Ok(Val::V(v)))
+    }
+
+    /// `and` and `or`: the first operand that is `deciding` decides; otherwise
+    /// an error, then an absent operand, is the result.
+    fn decided(&self, parts: &[Expr], deciding: bool) -> Evaluated<'l, A> {
+        let what = if deciding {
+            "an operand of `or`"
+        } else {
+            "an operand of `and`"
+        };
+        let mut error = None;
+        let mut absent = false;
+        for p in parts {
+            let found = match self.eval(p) {
+                Ok(Ok(v)) => want_bool(&self.scalar(v), what),
+                Ok(Err(Absent)) => {
+                    absent = true;
+                    continue;
+                }
+                Err(e) => Err(e),
+            };
+            match found {
+                Ok(b) if b == deciding => return present(Scalar::Bool(deciding)),
+                Ok(_) => {}
+                Err(e) => error = error.or(Some(e)),
+            }
+        }
+        match (error, absent) {
+            (Some(e), _) => Err(e),
+            (None, true) => Ok(Err(Absent)),
+            (None, false) => present(Scalar::Bool(!deciding)),
         }
     }
 
     /// The operators that read references in place: `==` and `!=` of two
     /// struct or enum values, `in` over a vector, and `non_increasing()` and
     /// `non_decreasing()` of a vector; `None` for the others.
-    fn in_place(&self, op: Op, vals: &[Val<'l, A>]) -> Option<Result<Scalar, String>> {
+    fn in_place(
+        &self,
+        op: Op,
+        vals: &[Val<'l, A>],
+    ) -> Option<Result<Result<Scalar, Absent>, String>> {
         match (op, vals) {
             (Op::Eq | Op::Ne, [Val::R(a, ta), Val::R(b, tb)]) => {
                 let (ta, tb) = (ta.map(unwrap_option), tb.map(unwrap_option));
@@ -783,7 +866,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     }
                     _ => return None,
                 };
-                Some(Ok(Scalar::Bool(eq == (op == Op::Eq))))
+                Some(Ok(Ok(Scalar::Bool(eq == (op == Op::Eq)))))
             }
             (Op::In, [needle, Val::R(a, Some(ft))]) => {
                 let FieldType::Vec { element, .. } = unwrap_option(ft) else {
@@ -793,14 +876,12 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     Val::V(s) => s.clone(),
                     Val::R(x, t) => read_scalar(*x, *t, self.lookup),
                 };
+                if is_nan(&needle) {
+                    return Some(Ok(Err(Absent)));
+                }
                 let n = a.vec(element).ok()?;
-                Some(Ok(Scalar::Bool(contains(
-                    *a,
-                    element,
-                    n,
-                    &needle,
-                    self.lookup,
-                ))))
+                let found = contains(*a, element, n, &needle, self.lookup);
+                Some(Ok(Ok(Scalar::Bool(found))))
             }
             (Op::Subset, [Val::R(a, Some(ft)), set]) => {
                 let FieldType::Vec { element, .. } = unwrap_option(ft) else {
@@ -819,20 +900,26 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     all = set.iter().any(|y| scalar_eq(&x, y));
                     all
                 });
-                Some(Ok(Scalar::Bool(all)))
+                Some(Ok(Ok(Scalar::Bool(all))))
+            }
+            (Op::Sum | Op::Mean | Op::Min | Op::Max, [Val::R(a, Some(ft))]) => {
+                let FieldType::Vec { element, .. } = unwrap_option(ft) else {
+                    return None;
+                };
+                let n = a.vec(element).ok()?;
+                let mut r = Reduce::new(op);
+                Some(match each_number(*a, element, n, r.name(), |x| r.push(x)) {
+                    Ok(true) => r.finish().map(Ok),
+                    Ok(false) => Ok(Err(Absent)),
+                    Err(e) => Err(e),
+                })
             }
             (Op::NonIncreasing | Op::NonDecreasing, [Val::R(a, Some(ft))]) => {
                 let FieldType::Vec { element, .. } = unwrap_option(ft) else {
                     return None;
                 };
                 let n = a.vec(element).ok()?;
-                Some(monotone(
-                    *a,
-                    element,
-                    n,
-                    op == Op::NonIncreasing,
-                    self.lookup,
-                ))
+                Some(monotone(*a, element, n, op == Op::NonIncreasing, self.lookup).map(Ok))
             }
             _ => None,
         }
@@ -904,7 +991,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         &self,
         c: Val<'l, A>,
         kind: Collection,
-        f: &mut dyn FnMut(Suffix, (A, Option<&'l FieldType>)) -> Result<bool, String>,
+        f: &mut dyn FnMut(Suffix<'a>, (A, Option<&'l FieldType>)) -> Result<bool, String>,
     ) -> Result<(), String> {
         let (a, ty) = match c {
             Val::R(a, ty) => (a, ty.map(unwrap_option)),
@@ -912,7 +999,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         };
         let as_array = match (kind, ty) {
             (Collection::Array, _) => true,
-            (Collection::Hashmap | Collection::OrderedMap, _) => false,
+            (Collection::BtreeMap | Collection::IndexMap, _) => false,
             (Collection::Dynamic, Some(FieldType::Vec { .. })) => true,
             (Collection::Dynamic, Some(_)) => false,
             (Collection::Dynamic, None) => a.vec(&UNTYPED).is_ok(),
@@ -933,9 +1020,9 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
             return Ok(());
         }
         let ordered =
-            kind == Collection::OrderedMap || matches!(ty, Some(FieldType::OrderedMap { .. }));
+            kind == Collection::IndexMap || matches!(ty, Some(FieldType::IndexMap { .. }));
         let value_ty = match ty {
-            Some(FieldType::Hashmap { value, .. } | FieldType::OrderedMap { value, .. }) => {
+            Some(FieldType::BtreeMap { value, .. } | FieldType::IndexMap { value, .. }) => {
                 Some(value.as_ref())
             }
             _ => None,
@@ -947,11 +1034,11 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
         a.each_entry(|i, e| {
             if let Ok((k, x)) = e {
                 let suffix = if ordered {
-                    format!("/{i}/value")
+                    Suffix::Item(i)
                 } else {
-                    format!("/{}", k.replace('~', "~0").replace('/', "~1"))
+                    Suffix::Key(k)
                 };
-                entries.push((Suffix::Text(suffix), x));
+                entries.push((suffix, x));
             }
         });
         for (suffix, x) in entries {
@@ -1077,6 +1164,113 @@ fn monotone<'a, A: Access<'a>>(
     }
 }
 
+/// Items `0..n` of a vector of numbers, passed to `f` in order and read in
+/// place; whether none is missing.
+fn each_number<'a, A: Access<'a>>(
+    a: A,
+    element: &FieldType,
+    n: usize,
+    op: &str,
+    mut f: impl FnMut(f64),
+) -> Result<bool, String> {
+    let inner = unwrap_option(element);
+    if matches!(inner, FieldType::Double(_))
+        && let Some(s) = a.f64_slice()
+    {
+        for &x in &s[..n.min(s.len())] {
+            if crate::access::is_na_real(x) {
+                return Ok(false);
+            }
+            f(x);
+        }
+        return Ok(true);
+    }
+    let mut whole = true;
+    match inner {
+        FieldType::Double(_) => a.each_double(n, |_, r| match r.ok().flatten() {
+            Some(x) => f(x),
+            None => whole = false,
+        }),
+        FieldType::Integer(_) => a.each_integer(n, |_, r| match r.ok().flatten() {
+            Some(x) => f(x as f64),
+            None => whole = false,
+        }),
+        _ => return Err(format!("`{op}` takes an array of numbers")),
+    }
+    Ok(whole)
+}
+
+/// `sum()`, `mean()`, `min()`, or `max()` of numbers: the sum is exact,
+/// rounded once, and the mean is that sum over the count; `NaN` is the least
+/// and the greatest of numbers that hold it. All but the sum of no numbers are
+/// errors.
+pub(super) struct Reduce {
+    op: Op,
+    sum: ExactSum,
+    n: u64,
+    extreme: f64,
+}
+
+impl Reduce {
+    pub fn new(op: Op) -> Reduce {
+        Reduce {
+            op,
+            sum: ExactSum::default(),
+            n: 0,
+            extreme: if op == Op::Min {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            },
+        }
+    }
+    pub fn name(&self) -> &'static str {
+        match self.op {
+            Op::Sum => "sum",
+            Op::Mean => "mean",
+            Op::Min => "min",
+            _ => "max",
+        }
+    }
+    pub fn push(&mut self, x: f64) {
+        self.n += 1;
+        match self.op {
+            Op::Sum | Op::Mean => self.sum.add(x),
+            _ if x.is_nan() || self.extreme.is_nan() => self.extreme = f64::NAN,
+            Op::Min => self.extreme = self.extreme.min(x),
+            _ => self.extreme = self.extreme.max(x),
+        }
+    }
+    pub fn finish(self) -> Result<Scalar, String> {
+        if self.n == 0 && self.op != Op::Sum {
+            return Err(format!("`{}` of an empty array has no value", self.name()));
+        }
+        Ok(Scalar::Num(match self.op {
+            Op::Sum => self.sum.value(),
+            Op::Mean => self.sum.value() / self.n as f64,
+            _ => self.extreme,
+        }))
+    }
+}
+
+/// The least or the greatest of numbers, `NaN` where one is.
+pub(super) fn extreme(least: bool, a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if least {
+        a.min(b)
+    } else {
+        a.max(b)
+    }
+}
+
+/// Division by zero.
+pub(super) const ZERO: &str = "division by zero";
+/// The root of a number below 0.
+pub(super) const ROOT: &str = "`sqrt` of a negative number";
+/// The logarithm of a number that is not above 0.
+pub(super) const LOGARITHM: &str = "`log` of a number that is not positive";
+
 fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
     let bool_ = |b: bool| Ok(Scalar::Bool(b));
     match op {
@@ -1094,6 +1288,37 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             })
         }
         Op::Not => bool_(!want_bool(&a[0], "the operand of `!`")?),
+        Op::Sum | Op::Mean | Op::Min | Op::Max
+            if a.len() == 1 && matches!(a[0], Scalar::Array(_)) =>
+        {
+            let Scalar::Array(xs) = &a[0] else {
+                unreachable!()
+            };
+            let mut r = Reduce::new(op);
+            for x in xs {
+                r.push(want_number(x, "an array's element")?);
+            }
+            r.finish()
+        }
+        Op::Sum | Op::Mean => Err(format!(
+            "`{}` takes an array of numbers, found {}",
+            Reduce::new(op).name(),
+            a[0].shown()
+        )),
+        Op::Sqrt => match want_number(&a[0], "sqrt")? {
+            x if x < 0.0 => Err(ROOT.to_string()),
+            x => Ok(Scalar::Num(x.sqrt())),
+        },
+        Op::Log => match want_number(&a[0], "log")? {
+            x if x <= 0.0 => Err(LOGARITHM.to_string()),
+            x => Ok(Scalar::Num(x.ln())),
+        },
+        Op::Exp => Ok(Scalar::Num(want_number(&a[0], "exp")?.exp())),
+        Op::Abs => Ok(Scalar::Num(want_number(&a[0], "abs")?.abs())),
+        Op::Nchar => match &a[0] {
+            Scalar::Str(s) => Ok(Scalar::Num(s.chars().count() as f64)),
+            other => Err(format!("`nchar` takes a string, found {}", other.shown())),
+        },
         Op::Add | Op::Mul | Op::Min | Op::Max => {
             let mut xs = Vec::with_capacity(a.len());
             for v in a {
@@ -1102,8 +1327,10 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             Ok(Scalar::Num(match op {
                 Op::Add => xs.iter().sum(),
                 Op::Mul => xs.iter().product(),
-                Op::Min => xs.iter().copied().fold(f64::INFINITY, f64::min),
-                _ => xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                Op::Min => xs.iter().fold(f64::INFINITY, |m, &x| extreme(true, m, x)),
+                _ => xs
+                    .iter()
+                    .fold(f64::NEG_INFINITY, |m, &x| extreme(false, m, x)),
             }))
         }
         Op::Sub => {
@@ -1115,8 +1342,8 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
         }
         Op::Div | Op::Mod => {
             let (x, y) = (want_number(&a[0], "/")?, want_number(&a[1], "/")?);
-            if y == 0.0 {
-                return Err("division by zero".to_string());
+            if y == 0.0 && !x.is_nan() {
+                return Err(ZERO.to_string());
             }
             Ok(Scalar::Num(if op == Op::Div { x / y } else { x % y }))
         }
@@ -1152,9 +1379,12 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             Ok(Scalar::Str(out))
         }
         Op::Length => match &a[0] {
-            Scalar::Str(s) => Ok(Scalar::Num(s.chars().count() as f64)),
             Scalar::Array(i) => Ok(Scalar::Num(i.len() as f64)),
-            other => Err(format!("`length` takes an array, found {}", other.shown())),
+            Scalar::Str(_) => Err(
+                "`length` counts the elements of an array, found a string; `nchar` counts a string's characters"
+                    .to_string(),
+            ),
+            other => Err(format!("`length` counts the elements of an array, found {}", other.shown())),
         },
         Op::Subset => match (&a[0], &a[1]) {
             (Scalar::Array(x), Scalar::Array(y)) => {

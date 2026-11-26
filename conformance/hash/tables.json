@@ -1,0 +1,819 @@
+{
+  "$corpus": 1,
+  "description": "The canonical form and the content hash of tables: a digest of the cells, the order of the extra columns, and their units.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "table",
+        "name": "Vitals",
+        "description": "",
+        "version": 1,
+        "columns": [
+          {
+            "name": "age",
+            "type": {
+              "kind": "double",
+              "min": 0.0
+            },
+            "description": "Age",
+            "unit": "a"
+          },
+          {
+            "name": "sbp",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double"
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "id",
+            "type": {
+              "kind": "integer"
+            },
+            "description": "",
+            "unique": true,
+            "required": false
+          }
+        ],
+        "open": true,
+        "rules": [
+          {
+            "id": "ADULT",
+            "invariant": {
+              "<": [
+                {
+                  "var": "age"
+                },
+                130
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "table",
+        "name": "Closed",
+        "description": "",
+        "version": 1,
+        "columns": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "integer"
+            },
+            "description": ""
+          },
+          {
+            "name": "f",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "factor",
+                "levels": [
+                  "a",
+                  "b"
+                ]
+              }
+            },
+            "description": ""
+          }
+        ]
+      },
+      {
+        "kind": "table",
+        "name": "Raven",
+        "description": "",
+        "version": 1,
+        "columns": [],
+        "open": true
+      },
+      {
+        "kind": "struct",
+        "name": "Fit",
+        "description": "",
+        "version": 1,
+        "fields": [
+          {
+            "name": "cases",
+            "type": {
+              "kind": "named",
+              "name": "ns::Raven"
+            },
+            "description": ""
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "raven-canonical",
+      "op": "canonical",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "json": "{\"$columns\":{\"Age (years)\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"Sepal.Length\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"if\":{\"inner\":{\"kind\":\"character\"},\"kind\":\"option\"}},\"$facts\":{\"Age (years)\":{\"description\":\"Age\",\"unit\":\"a\"}},\"$length\":2,\"$order\":[\"if\",\"Sepal.Length\",\"Age (years)\"],\"Age (years)\":[40,null],\"Sepal.Length\":[5.1,\"NaN\"],\"if\":[\"a\",null]}"
+      }
+    },
+    {
+      "id": "raven",
+      "op": "hash",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "hash": "sha256:786f434805eb2933951f6adba6ecd6cb79b7cfcc5a60bf454d9878f87db96ac2"
+      }
+    },
+    {
+      "id": "raven-order-canonical",
+      "op": "canonical",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "Sepal.Length",
+          "if",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "json": "{\"$columns\":{\"Age (years)\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"Sepal.Length\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"if\":{\"inner\":{\"kind\":\"character\"},\"kind\":\"option\"}},\"$facts\":{\"Age (years)\":{\"description\":\"Age\",\"unit\":\"a\"}},\"$length\":2,\"$order\":[\"Sepal.Length\",\"if\",\"Age (years)\"],\"Age (years)\":[40,null],\"Sepal.Length\":[5.1,\"NaN\"],\"if\":[\"a\",null]}"
+      }
+    },
+    {
+      "id": "raven-order",
+      "op": "hash",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "Sepal.Length",
+          "if",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "description": "Age",
+            "unit": "a"
+          }
+        }
+      },
+      "expect": {
+        "hash": "sha256:3f27dd9a367ea5da23886534443ea384ca9d15ddde0e21f75e23c4b1af403291"
+      }
+    },
+    {
+      "id": "raven-unit-canonical",
+      "op": "canonical",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "unit": "mo"
+          }
+        }
+      },
+      "expect": {
+        "json": "{\"$columns\":{\"Age (years)\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"Sepal.Length\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"if\":{\"inner\":{\"kind\":\"character\"},\"kind\":\"option\"}},\"$facts\":{\"Age (years)\":{\"unit\":\"mo\"}},\"$length\":2,\"$order\":[\"if\",\"Sepal.Length\",\"Age (years)\"],\"Age (years)\":[40,null],\"Sepal.Length\":[5.1,\"NaN\"],\"if\":[\"a\",null]}"
+      }
+    },
+    {
+      "id": "raven-unit",
+      "op": "hash",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "unit": "mo"
+          }
+        }
+      },
+      "expect": {
+        "hash": "sha256:a7613ba6bed980ec10260859f915bb36c8ff8d9207ec8060c20c17ce575e698a"
+      }
+    },
+    {
+      "id": "raven-described-canonical",
+      "op": "canonical",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "unit": "a",
+            "description": "Age at admission"
+          }
+        }
+      },
+      "expect": {
+        "json": "{\"$columns\":{\"Age (years)\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"Sepal.Length\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"if\":{\"inner\":{\"kind\":\"character\"},\"kind\":\"option\"}},\"$facts\":{\"Age (years)\":{\"description\":\"Age at admission\",\"unit\":\"a\"}},\"$length\":2,\"$order\":[\"if\",\"Sepal.Length\",\"Age (years)\"],\"Age (years)\":[40,null],\"Sepal.Length\":[5.1,\"NaN\"],\"if\":[\"a\",null]}"
+      }
+    },
+    {
+      "id": "raven-described",
+      "op": "hash",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 2,
+        "Sepal.Length": [
+          5.1,
+          "NaN"
+        ],
+        "Age (years)": [
+          40,
+          null
+        ],
+        "if": [
+          "a",
+          null
+        ],
+        "$columns": {
+          "Sepal.Length": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "Age (years)": {
+            "kind": "option",
+            "inner": {
+              "kind": "double",
+              "infinite": true,
+              "nan": true
+            }
+          },
+          "if": {
+            "kind": "option",
+            "inner": {
+              "kind": "character"
+            }
+          }
+        },
+        "$order": [
+          "if",
+          "Sepal.Length",
+          "Age (years)"
+        ],
+        "$facts": {
+          "Age (years)": {
+            "unit": "a",
+            "description": "Age at admission"
+          }
+        }
+      },
+      "expect": {
+        "hash": "sha256:786f434805eb2933951f6adba6ecd6cb79b7cfcc5a60bf454d9878f87db96ac2"
+      }
+    },
+    {
+      "id": "declared-canonical",
+      "op": "canonical",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1,
+          2
+        ],
+        "sbp": [
+          null,
+          3
+        ]
+      },
+      "expect": {
+        "json": "{\"$length\":2,\"age\":[1,2],\"sbp\":[null,3]}"
+      }
+    },
+    {
+      "id": "declared",
+      "op": "hash",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1,
+          2
+        ],
+        "sbp": [
+          null,
+          3
+        ]
+      },
+      "expect": {
+        "hash": "sha256:c6b4b672f62b524ffb446ca09df5daa3f5b24dc8524b1902f089fbdd1612ab11"
+      }
+    },
+    {
+      "id": "declared-and-one-canonical",
+      "op": "canonical",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1,
+          2
+        ],
+        "sbp": [
+          null,
+          3
+        ],
+        "z": [
+          true,
+          null
+        ],
+        "$columns": {
+          "z": {
+            "kind": "option",
+            "inner": {
+              "kind": "logical"
+            }
+          }
+        }
+      },
+      "expect": {
+        "json": "{\"$columns\":{\"z\":{\"inner\":{\"kind\":\"logical\"},\"kind\":\"option\"}},\"$length\":2,\"age\":[1,2],\"sbp\":[null,3],\"z\":[true,null]}"
+      }
+    },
+    {
+      "id": "declared-and-one",
+      "op": "hash",
+      "type": "ns::Vitals",
+      "input": {
+        "$length": 2,
+        "age": [
+          1,
+          2
+        ],
+        "sbp": [
+          null,
+          3
+        ],
+        "z": [
+          true,
+          null
+        ],
+        "$columns": {
+          "z": {
+            "kind": "option",
+            "inner": {
+              "kind": "logical"
+            }
+          }
+        }
+      },
+      "expect": {
+        "hash": "sha256:39222ffa3bcd9872f4a1f75b781e1f7c54732967f7ebacc6a05545e986be4138"
+      }
+    },
+    {
+      "id": "nested-canonical",
+      "op": "canonical",
+      "type": "ns::Fit",
+      "input": {
+        "cases": {
+          "$length": 2,
+          "Sepal.Length": [
+            5.1,
+            "NaN"
+          ],
+          "Age (years)": [
+            40,
+            null
+          ],
+          "if": [
+            "a",
+            null
+          ],
+          "$columns": {
+            "Sepal.Length": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "Age (years)": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "if": {
+              "kind": "option",
+              "inner": {
+                "kind": "character"
+              }
+            }
+          },
+          "$order": [
+            "if",
+            "Sepal.Length",
+            "Age (years)"
+          ],
+          "$facts": {
+            "Age (years)": {
+              "description": "Age",
+              "unit": "a"
+            }
+          }
+        }
+      },
+      "expect": {
+        "json": "{\"cases\":{\"$columns\":{\"Age (years)\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"Sepal.Length\":{\"inner\":{\"infinite\":true,\"kind\":\"double\",\"nan\":true},\"kind\":\"option\"},\"if\":{\"inner\":{\"kind\":\"character\"},\"kind\":\"option\"}},\"$facts\":{\"Age (years)\":{\"description\":\"Age\",\"unit\":\"a\"}},\"$length\":2,\"$order\":[\"if\",\"Sepal.Length\",\"Age (years)\"],\"Age (years)\":[40,null],\"Sepal.Length\":[5.1,\"NaN\"],\"if\":[\"a\",null]}}"
+      }
+    },
+    {
+      "id": "nested",
+      "op": "hash",
+      "type": "ns::Fit",
+      "input": {
+        "cases": {
+          "$length": 2,
+          "Sepal.Length": [
+            5.1,
+            "NaN"
+          ],
+          "Age (years)": [
+            40,
+            null
+          ],
+          "if": [
+            "a",
+            null
+          ],
+          "$columns": {
+            "Sepal.Length": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "Age (years)": {
+              "kind": "option",
+              "inner": {
+                "kind": "double",
+                "infinite": true,
+                "nan": true
+              }
+            },
+            "if": {
+              "kind": "option",
+              "inner": {
+                "kind": "character"
+              }
+            }
+          },
+          "$order": [
+            "if",
+            "Sepal.Length",
+            "Age (years)"
+          ],
+          "$facts": {
+            "Age (years)": {
+              "description": "Age",
+              "unit": "a"
+            }
+          }
+        }
+      },
+      "expect": {
+        "hash": "sha256:a40f94df2d96bffe7656cfb45de3f219f023e51ed1be7ded794d12a0ed297ee0"
+      }
+    },
+    {
+      "id": "empty-canonical",
+      "op": "canonical",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 0
+      },
+      "expect": {
+        "json": "{\"$length\":0}"
+      }
+    },
+    {
+      "id": "empty",
+      "op": "hash",
+      "type": "ns::Raven",
+      "input": {
+        "$length": 0
+      },
+      "expect": {
+        "hash": "sha256:9dc773d8b5703f58f00d279d70bd944107554f07f7d0019999e5fab2b6b5b1d9"
+      }
+    }
+  ]
+}

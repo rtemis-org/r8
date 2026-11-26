@@ -15,17 +15,19 @@
 //!   encoding, and hashing read a value in any host form; [`access::Json`]
 //!   reads the JSON form, and a host binding implements the trait for its own
 //!   values;
-//! - [`codec`]: the canonical form (RFC 8785), documents, and content hashes,
+//! - [`canonical`]: the canonical form (RFC 8785), documents, and content hashes,
 //!   with the canonical binary forms of matrices, tables, and vectors;
+//! - [`refine`]: whether a registered declaration refines the one that code
+//!   was compiled against;
 //! - [`equal`]: equality of two values by their normalized forms;
 //! - [`value_schema`]: the JSON Schema of a type's values;
 //! - [`derive`](mod@derive): the traits behind `#[derive(R8)]`, which the
 //!   `macros` feature re-exports;
-//! - [`abi`]: the Rust mirror of `R8.h`, the C interface between R packages
-//!   and the R8 registry.
+//! - [`abi`]: the types of the interface between R8 and the compiled code of R
+//!   packages, which the crate `rtemis-r8-api` implements.
 //!
 //! The R package `R8` binds the crate through extendr. The [`access`]
-//! module's trait is unstable until the release that adds Rust-native values.
+//! module's trait is unstable until the release that adds Rust-stored values.
 //!
 //! Features: `macros` re-exports the procedural macros of `rtemis-r8-macros`,
 //! `#[derive(R8)]`; `schema`
@@ -35,19 +37,27 @@
 
 pub mod abi;
 pub mod access;
-pub mod codec;
+pub mod canonical;
 pub mod derive;
 mod emit;
 pub mod equal;
 pub mod exports;
+pub mod impl_signature;
 pub mod ir;
 pub mod layout;
 pub mod name;
+mod open;
+pub mod problem;
+pub mod progress;
 pub mod reader;
 pub mod record;
+pub mod refine;
+pub mod registry;
+pub mod report;
 pub mod rules;
 pub mod text;
 pub mod tree;
+pub mod update;
 pub mod validate;
 pub mod value_schema;
 
@@ -55,7 +65,7 @@ pub mod value_schema;
 #[cfg(feature = "macros")]
 pub use rtemis_r8_macros::R8;
 
-/// Version of this crate, as recorded in provenance.
+/// Version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]

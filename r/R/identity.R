@@ -10,7 +10,7 @@
 #' only in member order or in defaults written out hash the same. A matrix,
 #' an array, a sparse matrix, a table, and a `vec()` of logical, integer,
 #' double, date, or date-time values enter through the digest of their
-#' canonical binary form. A runtime-only field's value stays out of the hash;
+#' canonical binary form. A host-only field's value stays out of the hash;
 #' its presence enters it. The hash is computed from the R objects in place.
 #'
 #' @param x An R8 value.
@@ -25,18 +25,12 @@
 #'
 #' @export
 r8_hash <- function(x) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  if (!is_value(x)) {
+    value_required(x)
   }
   res <- r8_value_hash(x)
   if (is.list(res)) {
-    r8_abort(
-      "Invalid `",
-      attr(x, "r8_type"),
-      "`:\n",
-      problems_message(res[["errors"]]),
-      class = "r8_value_error"
-    )
+    value_abort("Invalid", value_type(x), res[["errors"]])
   }
   res
 } # /R8::r8_hash
@@ -46,9 +40,8 @@ r8_hash <- function(x) {
 #' Equality of two R8 values
 #'
 #' `TRUE` when both values have the same type and equal fields: their
-#' normalized forms are the same canonical JSON, and their runtime-only
-#' fields are `identical()`. A provenance record does not enter the
-#' comparison.
+#' normalized forms are the same canonical JSON, and their host-only
+#' fields are `identical()`.
 #'
 #' @param x,y R8 values.
 #'
@@ -62,11 +55,54 @@ r8_hash <- function(x) {
 #'
 #' @export
 r8_equal <- function(x, y) {
-  if (!inherits(x, "r8_value") || !inherits(y, "r8_value")) {
+  if (!is_value(x) || !is_value(y)) {
     r8_abort("`x` and `y` are R8 values.", class = "r8_type_error")
   }
-  r8_values_equal(x, y)
+  res <- r8_values_equal(x, y)
+  if (is.list(res)) {
+    if (!is.null(res[["stale"]])) {
+      stale_abort(value_type(x), res[["stale"]], "r8_value_error")
+    }
+    r8_abort(
+      "A value that is compared was ",
+      res[["message"]],
+      " [declaration_changed].",
+      class = c("r8_other_declaration_error", "r8_value_error")
+    )
+  }
+  res
 } # /R8::r8_equal
+
+
+# %% ordering ----
+#' The result of a `PartialOrd` impl, checked
+#'
+#' @param o The impl's result.
+#' @param type Character: The values' type, for messages.
+#'
+#' @return Integer: `-1L`, `0L`, `1L`, or `NA_integer_`; any other result
+#'   raises `r8_result_error`.
+#'
+#' @keywords internal
+#' @noRd
+ordering <- function(o, type) {
+  if (
+    (is.integer(o) || is.double(o) || is.logical(o) && is.na(o)) &&
+      length(o) == 1L &&
+      is.null(attributes(o)) &&
+      (is.na(o) || o %in% c(-1, 0, 1))
+  ) {
+    return(as.integer(o))
+  }
+  r8_abort(
+    "Invalid result of `r8_partial_cmp()` from the PartialOrd impl of `",
+    type,
+    "`: it returns -1L, 0L, or 1L, or NA when the values are not ordered; found ",
+    paste(utils::capture.output(utils::str(o)), collapse = " "),
+    " [return_type].",
+    class = c("r8_result_error", "r8_type_error")
+  )
+} # /R8::ordering
 
 
 # %% Ops.r8_value ----
@@ -74,7 +110,8 @@ r8_equal <- function(x, y) {
 #'
 #' `x == y` and `x != y` compare two R8 values with `r8_equal()`, the
 #' `PartialEq` standard trait. `<`, `<=`, `>`, and `>=` use the type's
-#' `PartialOrd` impl. Other operators raise an error.
+#' `PartialOrd` impl, and return `FALSE` for values it does not order. Other
+#' operators raise an error.
 #'
 #' @param e1,e2 R8 values.
 #'
@@ -89,7 +126,7 @@ Ops.r8_value <- function(e1, e2) {
     return(if (op == "==") eq else !eq)
   }
   if (op %in% c("<", "<=", ">", ">=")) {
-    if (!identical(attr(e1, "r8_type"), attr(e2, "r8_type"))) {
+    if (!identical(value_type(e1), value_type(e2))) {
       r8_abort(
         "`",
         op,
@@ -97,7 +134,10 @@ Ops.r8_value <- function(e1, e2) {
         class = "r8_dispatch_error"
       )
     }
-    o <- r8_cmp(e1, e2)
+    o <- ordering(r8_partial_cmp(e1, e2), value_type(e1))
+    if (is.na(o)) {
+      return(FALSE)
+    }
     return(switch(
       op,
       "<" = o < 0,
@@ -118,10 +158,10 @@ Ops.r8_value <- function(e1, e2) {
 # %% r8_size ----
 #' Size of an R8 value
 #'
-#' The memory an R8 value holds, in bytes. For a value of a Rust-native type,
+#' The memory an R8 value holds, in bytes. For a value of a Rust-stored type,
 #' the bytes its codec reports for the state, plus the size of each field read
 #' so far that is not a view of the state; a view's memory is the state's. For
-#' an R-native value, `utils::object.size()`.
+#' an R-stored value, `utils::object.size()`.
 #'
 #' @param x An R8 value.
 #'
@@ -135,10 +175,10 @@ Ops.r8_value <- function(e1, e2) {
 #'
 #' @export
 r8_size <- function(x) {
-  if (!inherits(x, "r8_value")) {
-    r8_abort("`x` is an R8 value.", class = "r8_type_error")
+  if (!is_value(x)) {
+    value_required(x)
   }
-  parts <- r8_native_parts(x)
+  parts <- r8_rust_stored_parts(x)
   if (is.null(parts)) {
     return(as.numeric(utils::object.size(x)))
   }

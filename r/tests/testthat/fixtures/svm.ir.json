@@ -40,8 +40,7 @@
               }
             }
           },
-          "description": "Case weights.",
-          "external": true
+          "description": "Case weights."
         },
         {
           "name": "mtry",
@@ -50,12 +49,12 @@
             "inner": {
               "kind": "integer",
               "min": 1
-            },
-            "resolve": {
-              "policy": "runtime"
             }
           },
-          "description": "Variables per split."
+          "description": "Variables per split.",
+          "resolve": {
+            "policy": "context"
+          }
         }
       ],
       "rules": [

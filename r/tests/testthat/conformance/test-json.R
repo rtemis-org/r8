@@ -2,37 +2,34 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Documents and serialization of a `Conform` value, for R-native and
-# Rust-native values alike (helper-conformance.R).
+# Documents and serialization of a `Probe` value, for R-stored and
+# Rust-stored values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 
 test_that("a document round trips to an equal value", {
   p <- conformance_provider()
   x <- conform_value(p)
-  json <- to_json(x)
+  json <- r8_to_json(x)
   expect_match(
     json,
-    sprintf('"$type":"%s::Conform"', p[["namespace"]]),
+    sprintf('"$type":"%s::Probe"', p[["namespace"]]),
     fixed = TRUE
   )
-  y <- r8_from_json(p[["Conform"]], json)
+  y <- r8_from_json(p[["Probe"]], json)
   expect_true(r8_equal(x, y))
-  expect_identical(to_json(y), json)
+  expect_identical(r8_to_json(y), json)
   expect_identical(r8_hash(y), r8_hash(x))
 })
 
 test_that("a document outside the type reports its problems", {
   p <- conformance_provider()
-  json <- to_json(conform_value(p))
+  json <- r8_to_json(conform_value(p))
   bad <- sub('"ratio":0.5', '"ratio":2', json, fixed = TRUE)
-  expect_error(
-    r8_from_json(p[["Conform"]], bad),
-    "above_max at /ratio",
-    class = "r8_value_error"
-  )
+  e <- expect_error(r8_from_json(p[["Probe"]], bad), class = "r8_value_error")
+  expect_identical(paste(e$problems$code, e$problems$path), "above_max /ratio")
   ruled <- sub('"seed":1', '"seed":7', json, fixed = TRUE)
   expect_error(
-    r8_from_json(p[["Conform"]], ruled),
+    r8_from_json(p[["Probe"]], ruled),
     "seed_below_count",
     class = "r8_value_error"
   )
@@ -42,7 +39,13 @@ test_that("serialize() and saveRDS() round trip to an equal value", {
   p <- conformance_provider()
   x <- conform_value(p)
   expect_true(r8_equal(unserialize(serialize(x, NULL)), x))
-  expect_true(r8_equal(unserialize(serialize(x, NULL, version = 2)), x))
+  # Version 2 of R's format, which R has not written by default since 3.6.0,
+  # holds a list of the fields.
+  expect_error(
+    r8_validate(unserialize(serialize(x, NULL, version = 2))),
+    "is not one",
+    class = "r8_type_error"
+  )
   path <- tempfile(fileext = ".rds")
   on.exit(unlink(path))
   saveRDS(x, path)
@@ -63,5 +66,5 @@ test_that("fields of every R8 field type round trip through JSON", {
     map = c(a = 1, b = 2),
     doc = list(k = list(1, "two"))
   )
-  expect_true(r8_equal(r8_from_json(p[["Every"]], to_json(x)), x))
+  expect_true(r8_equal(r8_from_json(p[["Every"]], r8_to_json(x)), x))
 })

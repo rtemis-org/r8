@@ -1,14 +1,14 @@
 //! A safe view of the reader R8 lends a codec (`R8Reader`): the value R8 has
-//! read from a document and validated, from which `Native::from_reader` and
-//! `NativeEnum::from_reader` build a state without JSON text.
+//! read from a document and validated, from which `RustStoredStruct::from_reader` and
+//! `RustStoredEnum::from_reader` build a state without JSON text.
 
-use std::ffi::{CStr, c_char};
+use std::ffi::CStr;
 
 use std::marker::PhantomData;
 
 use rtemis_r8::abi;
 
-use crate::api::{Error, Result};
+use crate::api::{Error, Result, blank};
 
 /// A part of the value a [`Reader`] lends, valid as long as the reader; only
 /// the reader makes one.
@@ -27,22 +27,7 @@ pub struct Reader<'a> {
 
 /// An error that a reader function reported.
 fn reported(e: &abi::Error) -> Error {
-    let text = |b: &[c_char]| {
-        let bytes: Vec<u8> = b
-            .iter()
-            .take_while(|&&c| c != 0)
-            .map(|&c| c as u8)
-            .collect();
-        String::from_utf8_lossy(&bytes).into_owned()
-    };
-    Error::new(text(&e.code), text(&e.message))
-}
-
-fn blank() -> abi::Error {
-    abi::Error {
-        code: [0; 64],
-        message: [0; 1024],
-    }
+    Error::from_abi(e)
 }
 
 fn missing(what: &str) -> Error {
@@ -94,8 +79,8 @@ impl<'a> Reader<'a> {
     }
 
     /// An object's member `name`; absent when the object has none.
-    pub fn field(&self, n: Node<'a>, name: &CStr) -> Node<'a> {
-        self.node(match self.raw.field {
+    pub fn member(&self, n: Node<'a>, name: &CStr) -> Node<'a> {
+        self.node(match self.raw.member {
             Some(f) => unsafe { f(self.raw.context, n.raw, name.as_ptr()) },
             None => std::ptr::null(),
         })
@@ -145,6 +130,27 @@ impl<'a> Reader<'a> {
                 let bytes = unsafe { std::slice::from_raw_parts(p.cast::<u8>(), len) };
                 std::str::from_utf8(bytes).map_err(|e| Error::new("not_utf8", e.to_string()))
             }
+            _ => Err(reported(&e)),
+        }
+    }
+
+    /// The R value of a node, unprotected: of the type, of a subtype of the
+    /// struct, or of an implementor of the trait that `name` names, by `kind`,
+    /// an `abi::VALUE_*` constant.
+    pub(crate) fn value(&self, n: Node<'a>, kind: u32, name: &CStr) -> Result<abi::Sexp> {
+        let f = self.raw.value.ok_or_else(|| missing("value"))?;
+        let (mut out, mut e) = (std::ptr::null_mut(), blank());
+        match unsafe {
+            f(
+                self.raw.context,
+                n.raw,
+                kind,
+                name.as_ptr(),
+                &mut out,
+                &mut e,
+            )
+        } {
+            abi::OK => Ok(out),
             _ => Err(reported(&e)),
         }
     }

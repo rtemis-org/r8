@@ -7,17 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::decl::{FieldDef, RuleDef};
+use super::decl::RuleDef;
 use super::logic::Logic;
 use crate::name::QualifiedName;
-
-fn yes() -> bool {
-    true
-}
-
-fn is_true(b: &bool) -> bool {
-    *b
-}
 
 fn is_false(b: &bool) -> bool {
     !*b
@@ -141,6 +133,15 @@ impl IntegerType {
     pub fn in_range(&self, x: i32) -> bool {
         self.lower.is_none_or(|b| b.admits_above(x)) && self.upper.is_none_or(|b| b.admits_below(x))
     }
+
+    /// Whether the whole number `x` is a value of the type.
+    #[inline(always)]
+    pub fn admits(&self, x: i64) -> bool {
+        (-(i32::MAX as i64)..=i32::MAX as i64).contains(&x) && {
+            let y = x as i32;
+            self.in_range(y) && self.values.as_ref().is_none_or(|v| v.contains(&y))
+        }
+    }
 }
 
 /// Constraints of `type_integer()`, whose domain is −2147483647 to
@@ -163,7 +164,7 @@ struct IntegerTypeJson {
     /// Values are below this.
     exclusive_max: Option<i32>,
     /// The admitted values, when the domain is a closed set.
-    #[serde(default, rename = "enum", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     values: Option<Box<[i32]>>,
 }
 
@@ -216,16 +217,19 @@ impl schemars::JsonSchema for IntegerType {
     }
 }
 
-/// Constraints of `type_double()`. `finite = false` admits `Inf`, `-Inf`,
-/// and `NaN`.
-#[derive(Debug, Clone, PartialEq)]
+/// Constraints of `type_double()`. A number is finite, unless `infinite`
+/// admits the infinities, which the bounds hold for; `NaN` lies outside the
+/// bounds and the admitted values, and `nan` admits it.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct DoubleType {
     /// The lower bound.
     pub lower: Option<Bound<f64>>,
     /// The upper bound.
     pub upper: Option<Bound<f64>>,
-    /// Values are finite: no `Inf`, `-Inf`, or `NaN`.
-    pub finite: bool,
+    /// The infinities within the bounds are values.
+    pub infinite: bool,
+    /// `NaN` is a value.
+    pub nan: bool,
     /// The admitted values.
     pub values: Option<Box<[f64]>>,
 }
@@ -256,21 +260,22 @@ impl DoubleType {
     pub fn in_range(&self, x: f64) -> bool {
         self.lower.is_none_or(|b| b.admits_above(x)) && self.upper.is_none_or(|b| b.admits_below(x))
     }
-}
 
-impl Default for DoubleType {
-    fn default() -> Self {
-        DoubleType {
-            lower: None,
-            upper: None,
-            finite: true,
-            values: None,
+    /// Whether `x`, which is not a missing value, is a value of the type.
+    #[inline(always)]
+    pub fn admits(&self, x: f64) -> bool {
+        if x.is_nan() {
+            return self.nan;
         }
+        (self.infinite || x.is_finite())
+            && self.in_range(x)
+            && self.values.as_ref().is_none_or(|v| v.contains(&x))
     }
 }
 
-/// Constraints of `type_double()`. `finite = false` admits `Inf`, `-Inf`,
-/// and `NaN`.
+/// Constraints of `type_double()`. A number is finite, unless `infinite`
+/// admits the infinities, which the bounds hold for; `NaN` lies outside the
+/// bounds and the admitted values, and `nan` admits it.
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename = "DoubleType"))]
@@ -288,10 +293,13 @@ struct DoubleTypeJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Values are below this.
     exclusive_max: Option<f64>,
-    #[serde(default = "yes", skip_serializing_if = "is_true")]
-    /// Values are finite: no `Inf`, `-Inf`, or `NaN`.
-    finite: bool,
-    #[serde(default, rename = "enum", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "is_false")]
+    /// The infinities within the bounds are values.
+    infinite: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    /// `NaN` is a value.
+    nan: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The admitted values.
     values: Option<Box<[f64]>>,
 }
@@ -302,7 +310,8 @@ impl TryFrom<DoubleTypeJson> for DoubleType {
         Ok(DoubleType {
             lower: side(j.min, j.exclusive_min, ("min", "exclusive_min"))?,
             upper: side(j.max, j.exclusive_max, ("max", "exclusive_max"))?,
-            finite: j.finite,
+            infinite: j.infinite,
+            nan: j.nan,
             values: j.values,
         })
     }
@@ -317,7 +326,8 @@ impl From<DoubleType> for DoubleTypeJson {
             max,
             exclusive_min,
             exclusive_max,
-            finite: t.finite,
+            infinite: t.infinite,
+            nan: t.nan,
             values: t.values,
         }
     }
@@ -347,7 +357,8 @@ impl schemars::JsonSchema for DoubleType {
     }
 }
 
-/// Constraints of `type_character()`, and of the keys of `hashmap()`.
+/// Constraints of `type_character()`, and of the keys of `btree_map()` and
+/// `index_map()`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -355,32 +366,24 @@ pub struct CharacterType {
     /// A regular expression in Rust `regex` syntax, compiled at declaration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<Box<str>>,
-    #[serde(default, rename = "enum", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The admitted values.
     pub values: Option<Box<[Box<str>]>>,
 }
 
-/// What an absent `option()` value means.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// Who fills an absent value of a struct field of type `option()`; a field
+/// without a policy keeps its absent value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "policy", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Resolve {
-    /// Absent is final.
-    #[default]
-    None,
     /// `r8_resolve()` fills the value from an expression over other fields.
     Computed {
         /// The expression over the other fields.
         expr: Logic,
     },
-    /// `r8_resolve(x, context)` fills the value from data or the environment.
-    Runtime,
-}
-
-impl Resolve {
-    fn is_none(&self) -> bool {
-        matches!(self, Resolve::None)
-    }
+    /// `r8_resolve(x, context)` fills the value from its `context`.
+    Context,
 }
 
 /// A field type.
@@ -443,7 +446,7 @@ pub enum FieldType {
         /// The number of columns, when declared.
         ncol: Option<u32>,
     },
-    /// `type_matrix(S)`: a matrix whose columns are the fields of the struct
+    /// `type_matrix(of = S)`: a matrix whose columns are the fields of the struct
     /// `of`, all of one scalar type.
     MatrixOf {
         /// The struct whose fields are the columns.
@@ -456,7 +459,7 @@ pub enum FieldType {
     /// by name.
     Table {
         /// The declared columns.
-        columns: Box<[FieldDef]>,
+        columns: Box<[super::decl::ColumnDef]>,
         #[serde(default, skip_serializing_if = "is_false")]
         /// Columns the declaration does not list are admitted.
         open: bool,
@@ -464,7 +467,7 @@ pub enum FieldType {
         /// The rules every row satisfies.
         rules: Box<[RuleDef]>,
     },
-    /// `type_table(S)`: a data.frame whose columns are the fields of the
+    /// `type_table(of = S)`: a data.frame whose columns are the fields of the
     /// struct `of`.
     TableOf {
         /// The struct whose fields are the columns.
@@ -472,10 +475,21 @@ pub enum FieldType {
     },
     /// `type_json()`: any JSON value.
     Json,
-    /// `type_r(class)`: an R value of a class, runtime-only.
-    R {
-        /// The R class.
+    /// `option(host_class(class))`: a value of a class of another class
+    /// system of the host language, such as R's `lm`, held by the host and
+    /// absent from documents (host-only); the members of
+    /// [`super::decl::TypeRef::HostClass`].
+    HostClass {
+        /// The host language, such as `"r"`.
+        host: Box<str>,
+        /// The package that defines the class, when the declaration names
+        /// one.
+        #[serde(default, skip_serializing_if = "str::is_empty")]
+        package: Box<str>,
+        /// The class name.
         class: Box<str>,
+        /// The class system.
+        system: super::decl::ClassSystem,
     },
     /// `vec(T, min_length, max_length, unique)`.
     Vec {
@@ -491,26 +505,24 @@ pub enum FieldType {
         /// The elements are distinct.
         unique: bool,
     },
-    /// `option(T, resolve)`.
+    /// `option(T)`: the value may be absent, `Option<T>`.
     Option {
         /// The type of a present value.
         inner: Box<FieldType>,
-        #[serde(default, skip_serializing_if = "Resolve::is_none")]
-        /// Who fills an absent value.
-        resolve: Resolve,
     },
-    /// `hashmap(T, keys)`: string keys, sorted at construction.
-    Hashmap {
+    /// `btree_map(T, keys)`: `BTreeMap<String, T>`, string keys in code-point
+    /// order, equal by key.
+    BtreeMap {
         /// The value type.
         value: Box<FieldType>,
         #[serde(default, skip_serializing_if = "is_default_keys")]
         /// The constraints on keys.
         keys: CharacterType,
     },
-    /// `ordered_map(T, keys)`: unique string keys in insertion order; a named
+    /// `index_map(T, keys)`: unique string keys in insertion order; a named
     /// list in R and an array of `{"name", "value"}` pairs in JSON. Order is
     /// part of the value.
-    OrderedMap {
+    IndexMap {
         /// The value type.
         value: Box<FieldType>,
         #[serde(default, skip_serializing_if = "is_default_keys")]
@@ -526,6 +538,12 @@ pub enum FieldType {
     Dyn {
         /// The trait.
         r#trait: QualifiedName,
+    },
+    /// `subtype(Parent)`: the struct `of` or any struct that extends a
+    /// subtype of it.
+    Subtype {
+        /// The struct.
+        of: QualifiedName,
     },
 }
 

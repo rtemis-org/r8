@@ -13,17 +13,18 @@ json_ir(text)
 An \code{r8_json_ir}: the text, of that class.
 }
 \description{
+Declaration vocabulary, without the \code{r8_} prefix of operations on values:
 JSON text that a declaration carries into its IR as written: a rule's
 \code{invariant} or \code{when} as JSONLogic, or a field's \code{default} as the value's
 JSON form. It holds what the R forms do not express, such as an \code{and} of
 three operands, a default that is an enum variant with fields or a struct,
-and a number that a double does not hold exactly. \code{r8_document_native()}
+and a number that a double does not hold exactly. \code{r8_document_rust()}
 writes it where a Rust declaration has no R form.
 }
 \examples{
-rule("COST_RANGE", json_ir('{"and": [{">": [{"var": "cost"}, 0]},
+rule(json_ir('{"and": [{">": [{"var": "cost"}, 0]},
   {"<=": [{"var": "cost"}, 100]}, {"!==": [{"var": "name"}, ""]}]}'),
-  "cost is in (0, 100] and name is not empty.")
+  message = "cost is in (0, 100] and name is not empty.", id = "COST_RANGE")
 field(type_double(), default = json_ir("0.5"))
 
 }
