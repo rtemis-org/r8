@@ -39,6 +39,11 @@ pub const CODEC_MIN_SIZE: usize = through!(Codec, upcast, usize);
 pub const IMPL_ENTRY_MIN_SIZE: usize = through!(ImplEntry, signature_len, usize);
 /// The size of [`Exports`] of ABI version 2.
 pub const EXPORTS_MIN_SIZE: usize = through!(Exports, impl_size, usize);
+/// The size of [`Exports`] through `function_size`, which holds the
+/// function entries.
+pub const EXPORTS_FUNCTIONS_SIZE: usize = through!(Exports, function_size, usize);
+/// The size of [`FunctionEntry`] of ABI version 2.
+pub const FUNCTION_ENTRY_MIN_SIZE: usize = through!(FunctionEntry, declared_in, u32);
 /// The size of [`Api`] of ABI version 2.
 pub const API_MIN_SIZE: usize = through!(Api, value_type, usize);
 
@@ -290,6 +295,29 @@ pub struct ImplEntry {
     pub signature_len: usize,
 }
 
+/// `R8_DECLARED_IN_R`: a function whose declaration is the R package's, and
+/// whose compiled body binds to it by its qualified name. Other values of
+/// [`FunctionEntry::declared_in`] are reserved.
+pub const DECLARED_IN_R: u32 = 0;
+
+/// `R8FunctionEntry`: a typed function whose body is compiled code.
+#[repr(C)]
+pub struct FunctionEntry {
+    /// The function's name in the package's namespace, NUL-terminated.
+    pub name: *const c_char,
+    /// The function's body, called with the arguments in the order of the
+    /// declaration's parameters.
+    pub call: Option<MethodFn>,
+    /// The declaration of the function as the compiled code states it, a
+    /// declaration record ([`crate::record`]) of one function, which
+    /// registration checks against the function's declaration.
+    pub declaration: *const u8,
+    /// The length of `declaration` in bytes.
+    pub declaration_len: usize,
+    /// The language that declares the function: [`DECLARED_IN_R`].
+    pub declared_in: u32,
+}
+
 /// `R8Exports`: what a package registers.
 #[repr(C)]
 pub struct Exports {
@@ -319,6 +347,13 @@ pub struct Exports {
     pub n_impls: usize,
     /// The size of an entry of `impls` in bytes, the stride of the array.
     pub impl_size: usize,
+    /// The package's functions whose bodies are compiled code; appended
+    /// within ABI version 2, so a reader reads them when `size` covers them.
+    pub functions: *const FunctionEntry,
+    /// The number of entries of `functions`.
+    pub n_functions: usize,
+    /// The size of an entry of `functions` in bytes, the stride of the array.
+    pub function_size: usize,
 }
 
 /// `R8Api`: R8's services to compiled code of other packages.
@@ -490,6 +525,26 @@ pub fn struct_offsets() -> Vec<(&'static str, usize)> {
         ("R8Exports.impls", offset_of!(Exports, impls)),
         ("R8Exports.n_impls", offset_of!(Exports, n_impls)),
         ("R8Exports.impl_size", offset_of!(Exports, impl_size)),
+        ("R8Exports.functions", offset_of!(Exports, functions)),
+        ("R8Exports.n_functions", offset_of!(Exports, n_functions)),
+        (
+            "R8Exports.function_size",
+            offset_of!(Exports, function_size),
+        ),
+        ("R8FunctionEntry", size_of::<FunctionEntry>()),
+        ("R8FunctionEntry.call", offset_of!(FunctionEntry, call)),
+        (
+            "R8FunctionEntry.declaration",
+            offset_of!(FunctionEntry, declaration),
+        ),
+        (
+            "R8FunctionEntry.declaration_len",
+            offset_of!(FunctionEntry, declaration_len),
+        ),
+        (
+            "R8FunctionEntry.declared_in",
+            offset_of!(FunctionEntry, declared_in),
+        ),
         ("R8Api", size_of::<Api>()),
         ("R8Api.size", offset_of!(Api, size)),
         ("R8Api.new_value", offset_of!(Api, new_value)),

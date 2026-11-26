@@ -49,6 +49,9 @@ fn minimum_sizes_match() {
             abi::IMPL_ENTRY_MIN_SIZE,
             abi::EXPORTS_MIN_SIZE,
             abi::API_MIN_SIZE,
+            abi::EXPORTS_FUNCTIONS_SIZE,
+            abi::FUNCTION_ENTRY_MIN_SIZE,
         ]
     );
+    assert_eq!(rtemis_r8_abi_check::c_declared_in_r(), abi::DECLARED_IN_R);
 }

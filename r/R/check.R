@@ -199,24 +199,24 @@ self_abort <- function(key, x, out) {
 } # /R8::self_abort
 
 
-# %% method_abort ----
-#' Signal the error that a compiled method returned
+# %% compiled_abort ----
+#' Signal the error that compiled code returned
 #'
 #' @param code Character: The error's code, `"panic"` for a panic.
-#' @param message Character: The method's message.
-#' @param call The generic's call, or `NULL`.
+#' @param message Character: The compiled code's message.
+#' @param call The call of the generic or the function, or `NULL`.
 #'
-#' @return Does not return; signals `r8_method_error`, or `r8_panic` for a
+#' @return Does not return; signals `r8_compiled_error`, or `r8_panic` for a
 #'   panic.
 #'
 #' @keywords internal
 #' @noRd
-method_abort <- function(code, message, call) {
+compiled_abort <- function(code, message, call) {
   panic <- identical(code, "panic")
   r8_abort(
     if (panic) {
       paste0(
-        "the compiled method panicked, which is a defect of its package: ",
+        "the compiled code panicked, which is a defect of its package: ",
         message
       )
     } else {
@@ -225,8 +225,39 @@ method_abort <- function(code, message, call) {
     " [",
     code,
     "]",
-    class = c(if (panic) "r8_panic", "r8_method_error"),
+    class = c(if (panic) "r8_panic", "r8_compiled_error"),
     call = call,
     data = list(code = code)
   )
-} # /R8::method_abort
+} # /R8::compiled_abort
+
+
+# %% native_abort ----
+#' Signal that no package registered the compiled body of a function
+#'
+#' @param key Character: The function's qualified name.
+#' @param ... Not used.
+#'
+#' @return Does not return; signals `r8_dispatch_error`.
+#'
+#' @keywords internal
+#' @noRd
+native_abort <- function(key, ...) {
+  pkg <- r8_namespace_owner(sub("::.*$", "", key))
+  r8_abort(
+    "The body of `",
+    key,
+    "()` is in Rust, and ",
+    if (nzchar(pkg)) {
+      paste0(
+        "package '",
+        pkg,
+        "' has not registered it; load the package again"
+      )
+    } else {
+      "no loaded package registers it; load the package that declares it"
+    },
+    ".",
+    class = "r8_dispatch_error"
+  )
+} # /R8::native_abort

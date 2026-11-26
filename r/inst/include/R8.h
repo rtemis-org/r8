@@ -258,9 +258,31 @@ typedef struct R8ImplEntry {
   size_t signature_len;
 } R8ImplEntry;
 
+/* A function whose declaration is the R package's, `new_function()` with the
+ * body `rust()`, and whose body is compiled code bound to it by its qualified
+ * name. Other values of `R8FunctionEntry.declared_in` are reserved. */
+#define R8_DECLARED_IN_R 0
+
+/* A typed function whose body is compiled code. */
+typedef struct R8FunctionEntry {
+  /* The function's name in the package's namespace. */
+  const char *name;
+  /* The function's body, called with the arguments in the order of the
+   * declaration's parameters. */
+  R8MethodFn call;
+  /* The declaration of the function as the compiled code states it, a
+   * declaration record of one function, which rtemis-r8-api writes and
+   * registration checks against the function's declaration. */
+  const uint8_t *declaration;
+  size_t declaration_len;
+  /* The language that declares the function: R8_DECLARED_IN_R. */
+  uint32_t declared_in;
+} R8FunctionEntry;
+
 /* What a package registers: the declarations of its types in Rust, the
- * codecs of its Rust-stored types, and its impl functions. R8 builds each
- * impl declaration from the impl entries, grouped by trait and positions. */
+ * codecs of its Rust-stored types, its impl functions, and its functions. R8
+ * builds each impl declaration from the impl entries, grouped by trait and
+ * positions. */
 typedef struct R8Exports {
   uint32_t abi_version;
   uint32_t size;
@@ -280,6 +302,12 @@ typedef struct R8Exports {
   size_t n_impls;
   /* sizeof(R8ImplEntry), the stride of `impls`. */
   size_t impl_size;
+  /* Appended within ABI version 2, read when `size` covers them: the
+   * package's functions whose bodies are compiled code. */
+  const R8FunctionEntry *functions;
+  size_t n_functions;
+  /* sizeof(R8FunctionEntry), the stride of `functions`. */
+  size_t function_size;
 } R8Exports;
 
 /* The function a package registers as "r8_exports". */
@@ -378,6 +406,10 @@ static inline const R8Api *R8_api(void) {
 #define R8_CODEC_MIN_SIZE R8_SIZE_THROUGH(R8Codec, upcast)
 #define R8_IMPL_ENTRY_MIN_SIZE R8_SIZE_THROUGH(R8ImplEntry, signature_len)
 #define R8_EXPORTS_MIN_SIZE R8_SIZE_THROUGH(R8Exports, impl_size)
+/* The size of R8Exports through its function entries, and the size of an
+ * R8FunctionEntry of ABI version 2. */
+#define R8_EXPORTS_FUNCTIONS_SIZE R8_SIZE_THROUGH(R8Exports, function_size)
+#define R8_FUNCTION_ENTRY_MIN_SIZE R8_SIZE_THROUGH(R8FunctionEntry, declared_in)
 #define R8_API_MIN_SIZE R8_SIZE_THROUGH(R8Api, value_type)
 
 #ifdef __cplusplus

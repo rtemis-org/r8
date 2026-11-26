@@ -335,7 +335,7 @@ pub(crate) fn int_elt(x: SEXP, i: usize) -> i32 {
 /// The elements of a vector as one array, where R holds them as one: an
 /// ordinary vector, or an ALTREP vector whose data are materialized, after
 /// unwrapping (`payload()`).
-fn data<'a, T>(x: SEXP) -> Option<&'a [T]> {
+pub(crate) fn data<'a, T>(x: SEXP) -> Option<&'a [T]> {
     let x = payload(x)?;
     let p = unsafe { DATAPTR_OR_NULL(x) };
     (!p.is_null()).then(|| unsafe { std::slice::from_raw_parts(p.cast::<T>(), xlen(x)) })

@@ -56,6 +56,7 @@ pub mod refine;
 pub mod registry;
 pub mod report;
 pub mod rules;
+pub mod rust_signature;
 pub mod text;
 pub mod tree;
 pub mod update;

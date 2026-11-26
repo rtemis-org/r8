@@ -244,6 +244,74 @@ test_that("R8 types, subtype(), and dyn() are checked exactly", {
   expect_identical(f(a, NULL, NULL, NULL), "ok")
 })
 
+test_that("a vector argument passes the test of its elements as a field does", {
+  # The test of a call admits a vector of logicals, integers, or doubles
+  # without the validator; each argument has the outcome of the same value in
+  # a field of the same type.
+  types <- list(
+    d = vec(type_double()),
+    d_min = vec(type_double(min = 0)),
+    d_open = vec(type_double(exclusive_min = 0, exclusive_max = 1)),
+    d_inf = vec(type_double(infinite = TRUE)),
+    d_nan = vec(type_double(nan = TRUE)),
+    d_set = vec(type_double(values = c(0.5, 1))),
+    i = vec(type_integer()),
+    i_range = vec(type_integer(exclusive_min = 0L, max = 3L)),
+    l = vec(type_logical()),
+    d_len = vec(type_double(), min_length = 2L, max_length = 3L),
+    d_unique = vec(type_double(), unique = TRUE)
+  )
+  values <- list(
+    numeric(),
+    c(0.5, 1),
+    c(0, 1),
+    c(-1, 2),
+    c(1, NA),
+    c(1, NaN),
+    c(1, Inf),
+    c(1, -Inf),
+    c(a = 1),
+    c(1, 1),
+    c(1, 2, 3, 4),
+    1:3,
+    c(0L, 3L, 4L),
+    c(1L, NA),
+    c(TRUE, FALSE),
+    c(TRUE, NA),
+    seq_len(5L)
+  )
+  fns <- declare_in("ty_vec", {
+    lapply(names(types), function(n) {
+      fn <- function(x) x
+      formals(fn)$x <- call("arg", types[[n]])
+      list(
+        f = new_function(paste0("f_", n), fn),
+        S = new_struct(paste0("S_", n), fields = list(x = types[[n]]))
+      )
+    })
+  })
+  for (k in seq_along(types)) {
+    f <- fns[[k]][["f"]]
+    S <- fns[[k]][["S"]]
+    for (v in values) {
+      field <- tryCatch(S(x = v)$x, error = function(e) e)
+      arg <- tryCatch(f(v), error = function(e) e)
+      label <- paste(names(types)[[k]], deparse(v))
+      if (inherits(field, "error")) {
+        expect_s3_class(arg, "r8_argument_error")
+        expect_gt(length(field[["problems"]][["code"]]), 0L)
+        expect_identical(
+          arg[["problems"]][["code"]],
+          field[["problems"]][["code"]],
+          label = label
+        )
+      } else {
+        expect_identical(arg, field, label = label)
+      }
+    }
+  }
+})
+
 test_that("containers, matrices, tables, and host classes go to the validator", {
   t <- declare_in("ty7", {
     A <- new_struct("A")

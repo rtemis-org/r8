@@ -12,7 +12,9 @@
 //! `extern "C"` tests here, which read R objects and neither allocate R
 //! memory nor raise an R error, so no borrow of the signatures is held where
 //! R can jump. A test passes a value that is visibly one of its type: an
-//! unclassed scalar within its bounds, a value whose `r8_type` is the
+//! unclassed scalar within its bounds, a vector of logicals, integers, or
+//! doubles without attributes whose elements are all values of its element
+//! type (`VectorTest`), a value whose `r8_type` is the
 //! declared type or one that the validator has admitted under the declared
 //! `subtype()` or `dyn()`, or an object of a declared S3 class. Every other
 //! value goes to the validator (`r8_check_args`, `r8_check_result`).
@@ -68,6 +70,8 @@ enum Test {
     Admitted(RefCell<Vec<Box<str>>>),
     /// An object whose class attribute holds the class.
     Class(Box<str>),
+    /// A vector of logicals, integers, or doubles.
+    Vector(VectorTest),
     Option(Box<Test>),
     /// Every value goes to the validator.
     Check,
@@ -88,6 +92,22 @@ impl Test {
                 Test::Class(class.clone())
             }
             FieldType::Option { inner } => Test::Option(Box::new(Test::of(inner))),
+            FieldType::Vec {
+                element,
+                min_length,
+                max_length,
+                unique,
+            } => {
+                let Some(element) = Element::of(element) else {
+                    return Test::Check;
+                };
+                Test::Vector(VectorTest {
+                    element,
+                    min_length: *min_length,
+                    max_length: *max_length,
+                    unique: *unique,
+                })
+            }
             _ => Test::Check,
         }
     }
@@ -154,6 +174,7 @@ impl Test {
                 outcome(ok, PASS)
             }
             Test::Class(class) => outcome(inherits(x, class), PASS),
+            Test::Vector(v) => outcome(v.admits(x), PASS),
             Test::Check => CHECK,
         }
     }
@@ -177,6 +198,168 @@ impl Test {
 
 fn outcome(ok: bool, pass: c_int) -> c_int {
     if ok { pass } else { CHECK }
+}
+
+/// The element type of a [`VectorTest`], with the scan of its elements.
+enum Element {
+    Logical,
+    /// Integers from `lo` to `hi`, both included, within the integer domain.
+    IntegerRange {
+        lo: i32,
+        hi: i32,
+    },
+    /// Doubles within bounds, each included or excluded, finite unless
+    /// `infinite`; an absent bound is an infinity, included.
+    DoubleRange {
+        lo: f64,
+        hi: f64,
+        lo_excluded: bool,
+        hi_excluded: bool,
+        infinite: bool,
+    },
+    /// Integers of a set of admitted values, read element by element.
+    Integer(IntegerType),
+    /// Doubles of a set of admitted values, or with `NaN` admitted, read
+    /// element by element.
+    Double(DoubleType),
+}
+
+impl Element {
+    fn of(ty: &FieldType) -> Option<Element> {
+        Some(match ty {
+            FieldType::Logical => Element::Logical,
+            FieldType::Integer(t) if t.values.is_none() => {
+                // The domain is -2147483647 to 2147483647; an excluded bound
+                // is the included one next to it.
+                let lo = t.lower.map_or(-i64::from(i32::MAX), |b| {
+                    i64::from(b.value) + i64::from(b.exclusive)
+                });
+                let hi = t.upper.map_or(i64::from(i32::MAX), |b| {
+                    i64::from(b.value) - i64::from(b.exclusive)
+                });
+                let lo = lo.max(-i64::from(i32::MAX));
+                let hi = hi.min(i64::from(i32::MAX));
+                if lo > hi {
+                    // No integer is admitted.
+                    Element::IntegerRange { lo: 1, hi: 0 }
+                } else {
+                    Element::IntegerRange {
+                        lo: lo as i32,
+                        hi: hi as i32,
+                    }
+                }
+            }
+            FieldType::Integer(t) => Element::Integer(t.clone()),
+            FieldType::Double(t) if t.values.is_none() && !t.nan => Element::DoubleRange {
+                lo: t.lower.map_or(f64::NEG_INFINITY, |b| b.value),
+                hi: t.upper.map_or(f64::INFINITY, |b| b.value),
+                lo_excluded: t.lower.is_some_and(|b| b.exclusive),
+                hi_excluded: t.upper.is_some_and(|b| b.exclusive),
+                infinite: t.infinite,
+            },
+            FieldType::Double(t) => Element::Double(t.clone()),
+            _ => return None,
+        })
+    }
+}
+
+/// The test of `vec(T)` of a logical, integer, or double `T`: a vector of
+/// `T`'s type without attributes, whose elements R holds as one array, of the
+/// declared lengths, each element a value of `T`. A vector of distinct
+/// elements of more than one element, a vector that needs a conversion (an
+/// integer vector for doubles, or a negative zero), and an ALTREP vector
+/// without an array go to the validator.
+struct VectorTest {
+    element: Element,
+    min_length: Option<u64>,
+    max_length: Option<u64>,
+    unique: bool,
+}
+
+/// The bits of a negative zero.
+const NEGATIVE_ZERO: u64 = 0x8000_0000_0000_0000;
+
+/// The elements a scan reads between its tests of the answer so far, so that
+/// the loop within a block has no branch.
+const BLOCK: usize = 1024;
+
+impl VectorTest {
+    fn admits(&self, x: SEXP) -> bool {
+        let kind = match self.element {
+            Element::Logical => SEXPTYPE::LGLSXP,
+            Element::IntegerRange { .. } | Element::Integer(_) => SEXPTYPE::INTSXP,
+            Element::DoubleRange { .. } | Element::Double(_) => SEXPTYPE::REALSXP,
+        };
+        if sexptype(x) != kind || attrib_count(x) != 0 {
+            return false;
+        }
+        let n = xlen(x);
+        let len = n as u64;
+        if self.min_length.is_some_and(|m| len < m)
+            || self.max_length.is_some_and(|m| len > m)
+            || (self.unique && n > 1)
+        {
+            return false;
+        }
+        // An empty vector has no array to read.
+        if n == 0 {
+            return true;
+        }
+        match &self.element {
+            Element::Logical => data::<i32>(x).is_some_and(|s| all_in(s, |v| v != i32::MIN)),
+            &Element::IntegerRange { lo, hi } => {
+                data::<i32>(x).is_some_and(|s| all_in(s, |v| (v >= lo) & (v <= hi)))
+            }
+            &Element::DoubleRange {
+                lo,
+                hi,
+                lo_excluded,
+                hi_excluded,
+                infinite,
+            } => data::<f64>(x).is_some_and(|s| match (lo_excluded, hi_excluded, infinite) {
+                (false, false, false) => doubles_in::<false, false, false>(s, lo, hi),
+                (false, false, true) => doubles_in::<false, false, true>(s, lo, hi),
+                (false, true, false) => doubles_in::<false, true, false>(s, lo, hi),
+                (false, true, true) => doubles_in::<false, true, true>(s, lo, hi),
+                (true, false, false) => doubles_in::<true, false, false>(s, lo, hi),
+                (true, false, true) => doubles_in::<true, false, true>(s, lo, hi),
+                (true, true, false) => doubles_in::<true, true, false>(s, lo, hi),
+                (true, true, true) => doubles_in::<true, true, true>(s, lo, hi),
+            }),
+            Element::Integer(t) => {
+                data::<i32>(x).is_some_and(|s| s.iter().all(|&v| t.admits(i64::from(v))))
+            }
+            Element::Double(t) => data::<f64>(x).is_some_and(|s| {
+                s.iter().all(|&v| {
+                    !rtemis_r8::access::is_na_real(v) && v.to_bits() != NEGATIVE_ZERO && t.admits(v)
+                })
+            }),
+        }
+    }
+}
+
+/// Whether `ok` holds for every element of `s`: a block at a time, each
+/// block without a branch, so that the compiler can read it in vector
+/// registers.
+#[inline(always)]
+fn all_in<T: Copy>(s: &[T], ok: impl Fn(T) -> bool) -> bool {
+    s.chunks(BLOCK)
+        .all(|b| b.iter().fold(true, |all, &v| all & ok(v)))
+}
+
+/// Whether every element of `s` lies within `lo` and `hi`, each excluded by
+/// its flag, is finite unless `INFINITE`, and is no negative zero. A `NaN`,
+/// `NA` among them, fails every comparison.
+fn doubles_in<const LO_EXCLUDED: bool, const HI_EXCLUDED: bool, const INFINITE: bool>(
+    s: &[f64],
+    lo: f64,
+    hi: f64,
+) -> bool {
+    all_in(s, |v| {
+        let above = if LO_EXCLUDED { v > lo } else { v >= lo };
+        let below = if HI_EXCLUDED { v < hi } else { v <= hi };
+        above & below & (INFINITE | v.is_finite()) & (v.to_bits() != NEGATIVE_ZERO)
+    })
 }
 
 /// A vector of `kind` of one element, without attributes, held in memory.

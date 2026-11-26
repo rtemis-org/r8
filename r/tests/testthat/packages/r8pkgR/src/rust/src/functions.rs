@@ -1,0 +1,62 @@
+//! The bodies of the typed functions that `R/functions.R` declares with
+//! `rust()`: `clip()` and `level()`, which call `levels`, a module without
+//! R8; `tally()`, of each borrowed parameter type, an R value, a default
+//! written in R, and `...`; and `fraction()`, which returns an error, panics,
+//! and returns a result that its return type refuses.
+
+use rtemis_r8_api as r8;
+
+/// Holds each element between `lo` and `hi`.
+#[r8::function]
+pub fn clip(x: &[f64], lo: f64, hi: f64) -> Vec<f64> {
+    crate::levels::clip(x, lo, hi)
+}
+
+/// Holds a running sum between `lo` and `hi`.
+#[r8::function]
+pub fn level(x: &[f64], lo: f64, hi: f64) -> Vec<f64> {
+    crate::levels::level(x, lo, hi)
+}
+
+/// The arguments as text.
+#[r8::function]
+#[allow(clippy::too_many_arguments)]
+pub fn tally(
+    x: &[i32],
+    label: &str,
+    flags: Option<&[bool]>,
+    bytes: &[u8],
+    #[r8(name = "na.rm")] na_rm: bool,
+    data: r8::Sexp,
+    k: i32,
+    dots: r8::Dots,
+) -> String {
+    let sum: i64 = x.iter().map(|v| i64::from(*v)).sum();
+    let flags = flags.map_or_else(
+        || "none".to_string(),
+        |f| f.iter().filter(|b| **b).count().to_string(),
+    );
+    let data = if data.0 == unsafe { r8::sys::R_NilValue } {
+        "NULL"
+    } else {
+        "an R value"
+    };
+    format!(
+        "{label}: sum {sum}, flags {flags}, bytes {}, na.rm {na_rm}, k {k}, {} more, data {data}",
+        bytes.len(),
+        dots.len()
+    )
+}
+
+/// `part / whole`; an error for a `whole` of 0, and a panic for a negative
+/// `part`.
+#[r8::function]
+pub fn fraction(part: f64, whole: f64) -> r8::Result<f64> {
+    if part < 0.0 {
+        panic!("a negative part");
+    }
+    if whole == 0.0 {
+        return Err(r8::Error::new("zero_whole", "`whole` is not 0"));
+    }
+    Ok(part / whole)
+}

@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 42 files of 382 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 43 files of 391 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -27,11 +27,11 @@ What each feature does, in 42 files of 382 tests. The runtime has its own tests 
 | `test-123-dispatch-extends.R` | Methods of a parent called on a child, the method that comes next, and the ancestor that a value holds. | 5 |
 | `test-124-generic.R` | Generics and methods in the style of R: generic(), implement() <-, and r8_method(). | 12 |
 | `test-125-params.R` | The parameters of generics and trait methods, with their types and defaults: params(), arg() and its shorthands, return types, and impl_method(). | 20 |
-| `test-126-typed.R` | Generics whose arguments and results have types, which each call checks. | 21 |
+| `test-126-typed.R` | Generics whose arguments and results have types, which each call checks. | 22 |
 | `test-127-replacement.R` | Generics that replace a part of a value, such as label(x) <- "a". | 10 |
 | `test-128-host.R` | Methods for classes of R, such as data.frame, matrix, and lm. | 16 |
 | `test-129-standard.R` | The standard traits: the text of a value (Display, Debug, and Print), order (PartialOrd), dimensions (Shape), and conversion (From). | 9 |
-| `test-130-functions.R` | Typed functions: new_function(), the check of arguments and results in the function's own frame, rules over parameters, and the declaration. | 12 |
+| `test-130-functions.R` | Typed functions: new_function(), the check of arguments and results in the function's own frame, rules over parameters, and the declaration. | 15 |
 | `test-131-format.R` | How types, fields, rules, and the other objects of a declaration print. | 6 |
 | `test-132-text.R` | The text of values at the console: the layout of a value without a method of its own, colors, and the output types. | 11 |
 | `test-133-integrate.R` | The text of values in documents and notebooks: knitr, repr, and pillar. | 5 |
@@ -47,13 +47,14 @@ What each feature does, in 42 files of 382 tests. The runtime has its own tests 
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
 | `test-144-scenarios.R` | The written list of the scenarios is that of the test files. | 3 |
 | `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8_check_call(), r8_call_from_json(), and r8_call_to_json(). | 7 |
-| `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 3 |
+| `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 4 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
 | `test-153-documentation.R` | The documentation of packages that declare R8 types: help pages from roxygen2, and the R declarations of types declared in Rust. | 3 |
+| `test-154-rust-functions.R` | Typed functions whose bodies are in Rust: the functions of r8pkgR that R/functions.R declares with rust(), and src/rust/src/functions.rs holds. | 4 |
 
 ## Scenarios
 
-What happens to a user: 66 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
+What happens to a user: 67 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
 
 ### A. One session: a user declares a type again at the console
 
@@ -80,6 +81,7 @@ What happens to a user: 66 scenarios, of which 1 are open, since what R8 is to d
 | B5 | a package that fails to load leaves the session as it was | A package declares a type, and then a method for a generic that does not exist. A user tries to load it, installs a corrected version, and loads that. | The types of the failed load stay registered, and the corrected package is refused, or meets the types of the first. | The first load is an error and registers nothing. The corrected package loads. | installed packages |
 | B6 | a package that is unloaded and loaded again works | A user unloads a package and loads it again, as after an update in the same session. | The second load is refused as a duplicate, or the methods of the first answer. | The package loads again, and its methods are those of the second load. | installed packages |
 | B7 | the types and methods of an unloaded package are not used | A user unloads a package, and calls a generic of another package for a value of its type. | Code of a package that is not loaded answers. | The call is an error that names the package to load. | open: R8 keeps the declarations and the methods in R of an unloaded package. |
+| B8 | a developer moves the body of a typed function to Rust | A package declares a typed function in R. Its loop is slow on long vectors, so its developer writes the body in the package's Rust code and replaces the R body with rust(). | Callers, the help page, the schema of the arguments, or calls from documents change with the body; or the Rust function takes other parameters than the declaration, and computes from the wrong arguments. | The declaration stays the function's: the same parameters, schema, and record, with the arguments checked before the Rust function runs and its result after. The results equal those of the R body. A Rust function whose parameters differ from the declaration is refused when the package loads, with the signature to write. | installed packages |
 
 ### C. Values that travel: to workers, files, and other sessions
 

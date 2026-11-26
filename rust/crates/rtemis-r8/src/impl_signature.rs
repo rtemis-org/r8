@@ -1,19 +1,22 @@
 //! The signatures of a compiled impl's methods, against the declaration of
-//! their trait.
+//! their trait, and of a function's compiled body, against the function's
+//! declaration.
 //!
-//! Compiled code states a signature as the methods of a [`TraitDef`], whose
-//! types are those of its parameters and results: a parameter without a type
-//! is one that the code receives as a value of the host. [`check`] compares
-//! it with the registered trait, and [`own_return_type`] gives the result type
-//! of a method that returns a narrower type than its trait declares.
-//! [`trait_hash`] identifies a trait's declaration.
+//! Compiled code states a signature as the methods of a [`TraitDef`], or as a
+//! [`FunctionDef`], whose types are those of its parameters and results: a
+//! parameter without a type is one that the code receives as a value of the
+//! host. [`check_method`] compares a method with the registered trait's,
+//! [`check_function`] a function's body with the registered function, and
+//! [`own_return_type`] gives the result type of a method that returns a
+//! narrower type than its trait declares. [`trait_hash`] identifies a trait's
+//! declaration.
 //! spec: R8/class-system#signatures-of-impls-in-rust
 
 use crate::canonical;
 use crate::ir::notation::notation;
 use crate::ir::{
-    CharacterType, DoubleType, FieldType, IntegerType, MethodDef, ParamDef, RequiredField,
-    ReturnType, TraitDef, TypeRef,
+    CharacterType, DoubleType, FieldType, FunctionDef, IntegerType, MethodDef, ParamDef,
+    RequiredField, ReturnType, TraitDef, TypeRef,
 };
 use crate::rules::TypeLookup;
 
@@ -79,17 +82,33 @@ fn type_text(t: Option<&FieldType>) -> String {
 }
 
 fn check_params(have: &MethodDef, want: &MethodDef, out: &mut Vec<String>) {
-    // The receiver of compiled code has a name only when the code states it.
-    let named = have.params.len() == want.params.len()
+    check_param_list(
+        &have.params,
+        &want.params,
+        (&have.dispatched(), &want.dispatched()),
+        out,
+    );
+}
+
+/// The differences of the parameters `have` from `want`, whose dispatched
+/// positions are `dispatched`. The first parameter of `have` may have no name,
+/// the receiver of compiled code, which has a name only when the code states
+/// it.
+fn check_param_list(
+    have: &[ParamDef],
+    want: &[ParamDef],
+    dispatched: (&[usize], &[usize]),
+    out: &mut Vec<String>,
+) {
+    let named = have.len() == want.len()
         && have
-            .params
             .iter()
-            .zip(&want.params)
+            .zip(want)
             .enumerate()
             .all(|(i, (h, w))| h.name() == w.name() || (i == 0 && h.name().is_empty()));
     if !named {
-        let mut stated = have.params.clone();
-        if let (Some(h), Some(w)) = (stated.first_mut(), want.params.first())
+        let mut stated = have.to_vec();
+        if let (Some(h), Some(w)) = (stated.first_mut(), want.first())
             && h.name().is_empty()
         {
             *h = ParamDef::Name(w.name().to_string());
@@ -97,12 +116,12 @@ fn check_params(have: &MethodDef, want: &MethodDef, out: &mut Vec<String>) {
         out.push(format!(
             "it takes the parameters {}, and the declaration {}",
             names(&stated),
-            names(&want.params)
+            names(want)
         ));
         return;
     }
-    let (hd, wd) = (have.dispatched(), want.dispatched());
-    for (i, (h, w)) in have.params.iter().zip(&want.params).enumerate() {
+    let (hd, wd) = dispatched;
+    for (i, (h, w)) in have.iter().zip(want).enumerate() {
         let name = w.name();
         match (hd.contains(&i), wd.contains(&i)) {
             (true, true) => continue,
@@ -218,6 +237,35 @@ pub fn check_method(
             message,
         })
         .collect()
+}
+
+/// The differences of `have`, the declaration of a function as its compiled
+/// body states it, from `want`, the function's declaration.
+///
+/// The parameters have the names of the declaration, in order, each of the
+/// declared type without its constraints, or with them, as for a method
+/// ([`check_method()`]); a parameter without a declared type has none, and
+/// neither may one of a declared type that compiled code receives as a value
+/// of the host. A stated default is the declared one. The result fits the
+/// declared return type without its constraints.
+pub fn check_function(
+    have: &FunctionDef,
+    want: &FunctionDef,
+    lookup: &dyn TypeLookup,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    check_param_list(&have.params, &want.params, (&[], &[]), &mut lines);
+    if let (Some(ReturnType::Type(h)), Some(ReturnType::Type(w))) =
+        (&have.return_type, &want.return_type)
+        && !crate::ir::fits(lookup, h, &bare(w))
+    {
+        lines.push(format!(
+            "it returns {}, and the declaration {}",
+            notation(h),
+            notation(w)
+        ));
+    }
+    lines
 }
 
 /// The differences of the tag member and the accessors of required fields of
@@ -523,5 +571,75 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(trait_hash(&described), trait_hash(&plain));
+    }
+
+    fn function(v: serde_json::Value) -> FunctionDef {
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn function_found(have: serde_json::Value, want: serde_json::Value) -> Vec<String> {
+        check_function(&function(have), &function(want), &doc())
+    }
+
+    #[test]
+    fn a_function_body_has_the_declared_parameters_and_result() {
+        let doubles = json!({"kind": "vec", "element": {"kind": "double"}});
+        let bounded = json!({"kind": "vec", "element": {"kind": "double", "min": 0}});
+        let have = json!({
+            "name": "level",
+            "params": [{"name": "x", "type": doubles}, {"name": "lo", "type": {"kind": "double"}}],
+            "return_type": doubles,
+        });
+        // A declared constraint, a rule, and a description are the declaration's.
+        let want = json!({
+            "name": "level",
+            "description": "A level.",
+            "params": [
+                {"name": "x", "type": bounded, "description": "Inflows."},
+                {"name": "lo", "type": {"kind": "double"}},
+            ],
+            "return_type": bounded,
+            "rules": [{"invariant": {">=": [{"var": "lo"}, 0]}}],
+        });
+        assert!(function_found(have.clone(), want).is_empty());
+        let renamed = json!({
+            "name": "level",
+            "params": [{"name": "x", "type": doubles}, {"name": "low", "type": {"kind": "double"}}],
+        });
+        assert_eq!(
+            function_found(have.clone(), renamed),
+            ["it takes the parameters (x, lo), and the declaration (x, low)"]
+        );
+        let integers = json!({
+            "name": "level",
+            "params": [
+                {"name": "x", "type": {"kind": "vec", "element": {"kind": "integer"}}},
+                {"name": "lo", "type": {"kind": "double"}},
+            ],
+            "return_type": {"kind": "integer"},
+        });
+        assert_eq!(
+            function_found(have, integers),
+            [
+                "its parameter `x` is vector of double, and in the declaration vector of integer",
+                "it returns vector of double, and the declaration integer",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_function_body_receives_an_r_value_for_a_type_without_a_rust_form() {
+        let have = json!({"name": "f", "params": ["data", "..."]});
+        let want = json!({
+            "name": "f",
+            "params": [{"name": "data", "type": {"kind": "date"}}, "..."],
+        });
+        assert!(function_found(have, want).is_empty());
+        let have = json!({"name": "f", "params": ["x"]});
+        let want = json!({"name": "f", "params": [{"name": "x", "type": {"kind": "double"}}]});
+        assert_eq!(
+            function_found(have, want),
+            ["its parameter `x` is without a type, and in the declaration double"]
+        );
     }
 }

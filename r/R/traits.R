@@ -43,11 +43,14 @@
 .r8_c_find3 <- NULL
 
 # The native symbols of the C routines `call`, which checks the arguments of
-# a typed generic's call and finds the impl, and `result`, which checks its
-# result, bound when the package loads.
+# a typed generic's call and finds the impl, `result`, which checks its
+# result, `check`, which checks the arguments of a typed function's call, and
+# `native`, which checks them and calls the function's compiled body, bound
+# when the package loads.
 .r8_c_call <- NULL
 .r8_c_result <- NULL
 .r8_c_check <- NULL
+.r8_c_native <- NULL
 
 # Trait objects by qualified name, for the impls of compiled code.
 .r8_traits <- new.env(parent = emptyenv())

@@ -137,6 +137,48 @@ test_that("a return type checks each return() and the last value", {
   expect_error(none(1), class = "r8_result_error")
 })
 
+test_that("the check of a result wraps the value, and the body runs as written", {
+  run <- declare_in("fn_value", {
+    new_function(
+      "run",
+      function(x = arg_vec(type_double())) {
+        y <- numeric(length(x))
+        for (i in seq_along(x)) {
+          y[[i]] <- 2 * x[[i]]
+        }
+        y
+      },
+      return_type = vec(type_double())
+    )
+  })
+  expect_identical(run(c(1, 2)), c(2, 4))
+  # After the check of the arguments, the body's statements, then the check of
+  # its last value alone.
+  b <- body(run)[[3L]]
+  expect_identical(b[[1L]], as.name("{"))
+  expect_identical(b[[2L]], quote(y <- numeric(length(x))))
+  expect_identical(b[[3L]][[1L]], as.name("for"))
+  expect_identical(b[[4L]][[2L]], quote(.r8_v <- withVisible(y)))
+  branch <- declare_in("fn_value", {
+    new_function(
+      "branch",
+      function(x = arg_double()) {
+        if (x > 0) {
+          invisible(x)
+        } else if (x < -5) {
+          "low"
+        } else {
+          x * 2
+        }
+      },
+      return_type = type_double()
+    )
+  })
+  expect_identical(withVisible(branch(1)), list(value = 1, visible = FALSE))
+  expect_identical(withVisible(branch(-1)), list(value = -2, visible = TRUE))
+  expect_error(branch(-6), class = "r8_result_error")
+})
+
 test_that("rules hold over the typed parameters", {
   span <- declare_in("fn4", {
     new_function(
@@ -368,4 +410,78 @@ test_that("a default that its type converts is not missing in the body", {
     new_function("g", function(n = arg_integer(default = 3L)) missing(n))
   })
   expect_true(g())
+})
+
+test_that("a body of rust() is the whole body, in a package", {
+  # Outside a package, no Rust code holds the body.
+  expect_error(
+    declare_in("fn_rust", {
+      new_function("f", function(x = arg_double()) rust())
+    }),
+    "is declared outside a package",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    declare_in("fn_rust", {
+      new_function("g", function(x = arg_double()) {
+        y <- x + 1
+        R8::rust()
+      })
+    }),
+    "rust() is the whole body",
+    fixed = TRUE,
+    class = "r8_declaration_error"
+  )
+  expect_error(rust(), "called by itself", class = "r8_declaration_error")
+  expect_false(rust_body(function(x) x))
+  expect_true(rust_body(function(x) rust()))
+  expect_true(rust_body(function(x) {
+    R8::rust()
+  }))
+})
+
+test_that("r8_rust_signature() writes the Rust function of a declaration", {
+  level <- declare_in("fn_signature", {
+    new_function(
+      "level",
+      function(
+        x = arg_vec(type_double()),
+        lo = arg_double(default = 0),
+        hi = arg_double(),
+        na.rm = arg_logical(default = FALSE),
+        data = NULL,
+        ...
+      ) {
+        x
+      },
+      rules = list(rule(lo <= hi)),
+      return_type = vec(type_double()),
+      description = "Holds a running sum between `lo` and `hi`."
+    )
+  })
+  text <- r8_rust_signature(level)
+  expect_s3_class(text, "r8_rust_text")
+  lines <- strsplit(text, "\n", fixed = TRUE)[[1L]]
+  expect_identical(lines[[1L]], "/// Holds a running sum between `lo` and `hi`.")
+  expect_true("/// - lo <= hi" %in% lines)
+  expect_true(
+    "/// `data` and `...` are R values, so this body runs in R alone." %in% lines
+  )
+  expect_identical(
+    lines[match("#[r8::function]", lines) + 0:9],
+    c(
+      "#[r8::function]",
+      "fn level(",
+      "    x: &[f64],",
+      "    lo: f64,",
+      "    hi: f64,",
+      "    #[r8(name = \"na.rm\")] na_rm: bool,",
+      "    data: r8::Sexp,",
+      "    dots: r8::Dots,",
+      ") -> Vec<f64> {",
+      "    todo!()"
+    )
+  )
+  expect_output(print(text), "fn level(", fixed = TRUE)
+  expect_error(r8_rust_signature(sum), class = "r8_type_error")
 })

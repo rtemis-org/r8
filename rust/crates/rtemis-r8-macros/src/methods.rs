@@ -448,7 +448,7 @@ fn position_of(elem: &Type, of: &Trait) -> Option<usize> {
 }
 
 /// `&T` of a type `Option<&T>`.
-fn optional_reference(ty: &Type) -> Option<&syn::TypeReference> {
+pub(crate) fn optional_reference(ty: &Type) -> Option<&syn::TypeReference> {
     let Type::Path(p) = ty else { return None };
     let last = p.path.segments.last().filter(|s| s.ident == "Option")?;
     let syn::PathArguments::AngleBracketed(a) = &last.arguments else {
@@ -458,6 +458,79 @@ fn optional_reference(ty: &Type) -> Option<&syn::TypeReference> {
         (1, Some(syn::GenericArgument::Type(Type::Reference(r)))) => Some(r),
         _ => None,
     }
+}
+
+/// The type `X` of a parameter `&X` that a call borrows from its R value: a
+/// slice, `&[T]`, or a string, `&str`.
+pub(crate) fn borrowed(ty: &Type) -> Option<&Type> {
+    let Type::Reference(r) = ty else { return None };
+    if r.mutability.is_some() {
+        return None;
+    }
+    match &*r.elem {
+        Type::Slice(_) => Some(&r.elem),
+        Type::Path(p) if p.qself.is_none() && p.path.is_ident("str") => Some(&r.elem),
+        _ => None,
+    }
+}
+
+/// The type `X` of a parameter `Option<&X>` of a borrowed `&X`.
+pub(crate) fn optional_borrowed(ty: &Type) -> Option<&Type> {
+    let r = optional_reference(ty).filter(|r| r.mutability.is_none())?;
+    match &*r.elem {
+        Type::Slice(_) => Some(&r.elem),
+        Type::Path(p) if p.qself.is_none() && p.path.is_ident("str") => Some(&r.elem),
+        _ => None,
+    }
+}
+
+/// The conversion of a borrowed parameter of type `ty` from the argument
+/// `__r8_args[index]` into the holder `hold`, the expression that lends it, and
+/// its R8 type; `None` for a parameter of another type.
+pub(crate) fn borrowed_param(
+    ty: &Type,
+    hold: &Ident,
+    index: usize,
+    name: &str,
+) -> Option<(Tokens, Tokens, Tokens)> {
+    let api = quote! { ::rtemis_r8_api };
+    if let Some(x) = borrowed(ty) {
+        return Some((
+            quote! {
+                let #hold = unsafe { <#x as #api::Borrowed>::hold(__r8_args[#index], #name) }?;
+            },
+            quote! { <#x as #api::Borrowed>::lend(&#hold) },
+            quote! { <#x as #api::Borrowed>::param_type() },
+        ));
+    }
+    let x = optional_borrowed(ty)?;
+    Some((
+        quote! {
+            let #hold = unsafe { #api::borrowed::optional_hold::<#x>(__r8_args[#index], #name) }?;
+        },
+        quote! { #hold.as_ref().map(|h| <#x as #api::Borrowed>::lend(h)) },
+        quote! { #api::borrowed::optional_type::<#x>() },
+    ))
+}
+
+/// The R name of a parameter: `#[r8(name = "...")]`, or its identifier.
+pub(crate) fn param_name(p: &syn::PatType, ident: &Ident) -> Result<String> {
+    let mut name = None;
+    for a in p.attrs.iter().filter(|a| a.path().is_ident("r8")) {
+        a.parse_nested_meta(|meta| {
+            if meta.path.is_ident("name") {
+                let s: syn::LitStr = meta.value()?.parse()?;
+                if s.value().is_empty() {
+                    return Err(Error::new_spanned(&s, "a parameter's name is not empty"));
+                }
+                name = Some(s.value());
+            } else if meta.input.peek(Token![=]) {
+                let _: syn::Expr = meta.value()?.parse()?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(name.unwrap_or_else(|| field_name(ident)))
 }
 
 /// Whether `tokens` name `Self`.
@@ -490,7 +563,7 @@ fn is_self(ty: &Type) -> bool {
 
 /// `tokens` with each lifetime but `'static` as `'_`, for a type that is named
 /// outside the function whose lifetimes it has.
-fn unbound(tokens: Tokens) -> Tokens {
+pub(crate) fn unbound(tokens: Tokens) -> Tokens {
     let mut quoted = false;
     tokens
         .into_iter()
@@ -516,24 +589,29 @@ fn unbound(tokens: Tokens) -> Tokens {
 
 /// The construction of the `Facts` of a parameter: its constraints, its
 /// default, and its description.
-fn facts(p: &syn::PatType) -> Result<(Tokens, bool)> {
+pub(crate) fn facts(p: &syn::PatType) -> Result<(Tokens, bool)> {
     let api = quote! { ::rtemis_r8_api };
     let mut constraints = Vec::new();
     let mut default = quote! { ::std::option::Option::None };
     let mut stated = false;
     for a in p.attrs.iter().filter(|a| a.path().is_ident("r8")) {
         a.parse_nested_meta(|meta| {
-            stated = true;
             let key = meta
                 .path
                 .get_ident()
                 .map(|i| i.to_string())
                 .unwrap_or_default();
+            // The name is read by `param_name()`.
+            if key == "name" {
+                let _: syn::LitStr = meta.value()?.parse()?;
+                return Ok(());
+            }
+            stated = true;
             if constraint(&meta, &key, &mut constraints)? {
                 return Ok(());
             }
             if key != "default" {
-                return Err(meta.error("a parameter takes a constraint or `default`"));
+                return Err(meta.error("a parameter takes a constraint, `default`, or `name`"));
             }
             let s: syn::LitStr = meta.value()?.parse()?;
             let tree =
@@ -608,7 +686,7 @@ fn method(of: &Trait, f: &syn::TraitItemFn, attrs: &MethodAttrs) -> Result<Metho
                 "an R8 method's parameter is a name",
             ));
         };
-        let name = field_name(&name.ident);
+        let name = param_name(p, &name.ident)?;
         let arg = format_ident!("__r8_arg_{}", k);
         let index = k + 1;
         let (facts, stated) = facts(p)?;
@@ -643,6 +721,15 @@ fn method(of: &Trait, f: &syn::TraitItemFn, attrs: &MethodAttrs) -> Result<Metho
                 params.push(quote! { #sign::dispatched(#name, true, #desc) });
                 named_type = quote! {};
             }
+            // `&[T]`, `&str`, and an `Option` of one: borrowed from the R
+            // value for the call.
+            ty if borrowed(ty).is_some() || optional_borrowed(ty).is_some() => {
+                let (hold, lend, param_type) =
+                    borrowed_param(ty, &arg, index, &name).expect("a borrowed parameter");
+                convert.push(hold);
+                args.push(lend);
+                params.push(quote! { #sign::param(#name, #param_type, #facts) });
+            }
             // `&T` and `Option<&T>`: a value of a Rust-stored type, borrowed
             // from its state, or built from its fields.
             ty if matches!(ty, Type::Reference(_)) || optional_reference(ty).is_some() => {
@@ -650,11 +737,10 @@ fn method(of: &Trait, f: &syn::TraitItemFn, attrs: &MethodAttrs) -> Result<Metho
                     Type::Reference(r) => (r, false),
                     ty => (optional_reference(ty).expect("a reference"), true),
                 };
-                let is_str = matches!(&*r.elem, Type::Path(p) if p.path.is_ident("str"));
-                if r.mutability.is_some() || is_str {
+                if r.mutability.is_some() {
                     return Err(Error::new_spanned(
                         &p.ty,
-                        "a reference parameter is `&T` of a Rust-stored type `T`; a string is `String`",
+                        "a reference parameter is `&T` of a Rust-stored type `T`, `&[T]`, or `&str`",
                     ));
                 }
                 let elem = &r.elem;

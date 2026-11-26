@@ -42,9 +42,10 @@
 #' - `r8_other_declaration_error`, beside `r8_value_error` or
 #'   `r8_dispatch_error`: a value made under another declaration of its type
 #'   than the registered one, which [r8_update()] converts or refuses.
-#' - `r8_method_error`: an error that a package's compiled method returned,
-#'   with its code in the field `code` and the generic's call; its subclass
-#'   `r8_panic` is a panic of the method.
+#' - `r8_compiled_error`: an error that a package's compiled code returned, a
+#'   compiled method or the body of a function whose body is [rust()], with its
+#'   code in the field `code` and the call of the generic or the function; its
+#'   subclass `r8_panic` is a panic of the compiled code.
 #' - `r8_file_error`: a damaged file ([r8_read_rds()]).
 #' - `r8_text_error`: text output given invalid arguments.
 #'

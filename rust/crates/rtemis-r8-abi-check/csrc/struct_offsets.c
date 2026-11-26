@@ -28,7 +28,10 @@ static const size_t struct_offsets[] = {
   SIZE(R8Exports), OFFSET(R8Exports, size), OFFSET(R8Exports, package),
   OFFSET(R8Exports, module), OFFSET(R8Exports, ir_record), OFFSET(R8Exports, ir_record_len), OFFSET(R8Exports, types),
   OFFSET(R8Exports, n_types), OFFSET(R8Exports, impls), OFFSET(R8Exports, n_impls),
-  OFFSET(R8Exports, impl_size),
+  OFFSET(R8Exports, impl_size), OFFSET(R8Exports, functions), OFFSET(R8Exports, n_functions),
+  OFFSET(R8Exports, function_size),
+  SIZE(R8FunctionEntry), OFFSET(R8FunctionEntry, call), OFFSET(R8FunctionEntry, declaration),
+  OFFSET(R8FunctionEntry, declaration_len), OFFSET(R8FunctionEntry, declared_in),
   SIZE(R8Api), OFFSET(R8Api, size), OFFSET(R8Api, new_value), OFFSET(R8Api, value_state),
   OFFSET(R8Api, upcast_state),
   OFFSET(R8Api, view_doubles), OFFSET(R8Api, view_integers), OFFSET(R8Api, view_logicals),
@@ -76,4 +79,9 @@ void r8_abi_min_sizes(size_t *out) {
   out[3] = R8_IMPL_ENTRY_MIN_SIZE;
   out[4] = R8_EXPORTS_MIN_SIZE;
   out[5] = R8_API_MIN_SIZE;
+  out[6] = R8_EXPORTS_FUNCTIONS_SIZE;
+  out[7] = R8_FUNCTION_ENTRY_MIN_SIZE;
 }
+
+/* R8_DECLARED_IN_R. */
+unsigned r8_abi_declared_in_r(void) { return R8_DECLARED_IN_R; }

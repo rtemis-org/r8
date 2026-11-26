@@ -1,5 +1,5 @@
 //! The exports of compiled code: an `R8Exports` table from a package, its
-//! registration, and calls of its impl functions.
+//! registration, and calls of its impl functions and function bodies.
 //!
 //! A package whose declarations are compiled registers a function returning
 //! its static `R8Exports` with `R_RegisterCCallable(pkg, "r8_exports", fn)`
@@ -9,7 +9,11 @@
 //! declarations ([`r8_exports_compare`]), and passes it to
 //! [`r8_register_exports`], which declares the impls of its impl entries and
 //! keeps its function pointers. An impl's R method passes the pointer that
-//! [`r8_impl_fn`] returns to R8's C routine `invoke`, which calls it.
+//! [`r8_impl_fn`] returns to R8's C routine `invoke`, which calls it. The
+//! bodies of functions declared with `rust()` are compared with their
+//! declarations ([`r8_exports_functions`]) and kept by the symbol of the
+//! function's qualified name ([`r8_register_functions`]), which R8's C routine
+//! `native` finds ([`r8_native_function`]).
 //!
 //! Everything a table points to is static while the package's shared object
 //! is loaded, so the registry keeps the pointers themselves.
@@ -22,8 +26,8 @@ use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
 use extendr_ffi::{R_ExternalPtrAddr, R_ExternalPtrTag, Rf_install};
 use rtemis_r8::abi::{
-    ABI_VERSION, Codec, Exports, ImplEntry, MethodFn, POSITION_ANY, POSITION_CLASS, POSITION_TYPE,
-    Position,
+    ABI_VERSION, Codec, Exports, FunctionEntry, ImplEntry, MethodFn, POSITION_ANY, POSITION_CLASS,
+    POSITION_TYPE, Position,
 };
 use rtemis_r8::exports::ImplRow;
 use rtemis_r8::ir::{IrDocument, TraitDef, TypeDef, TypeRef};
@@ -809,8 +813,261 @@ fn r8_clear_external_ptrs(ptrs: List) {
     }
 }
 
+/// The function entries of an exports table, whose array has the stride
+/// `function_size`; none in a table of fewer bytes than the members of the
+/// entries need.
+fn function_entries(e: &Exports) -> Result<Vec<&FunctionEntry>> {
+    if (e.size as usize) < rtemis_r8::abi::EXPORTS_FUNCTIONS_SIZE
+        || e.functions.is_null()
+        || e.n_functions == 0
+    {
+        return Ok(Vec::new());
+    }
+    let size = rtemis_r8::abi::FUNCTION_ENTRY_MIN_SIZE;
+    if e.function_size < size {
+        return Err(fail(format!(
+            "the function entries have size {}; ABI version {ABI_VERSION} requires at least {size}",
+            e.function_size
+        )));
+    }
+    let base = e.functions.cast::<u8>();
+    Ok((0..e.n_functions)
+        .map(|i| unsafe { &*base.add(i * e.function_size).cast::<FunctionEntry>() })
+        .collect())
+}
+
+/// The name and the declaration that a function entry states, in the
+/// namespace `ns`.
+fn entry_function(entry: &FunctionEntry, ns: &str) -> Result<(String, rtemis_r8::ir::FunctionDef)> {
+    use rtemis_r8::record::{self, Declaration};
+    let name = text(entry.name, "function name")?;
+    if entry.declared_in != rtemis_r8::abi::DECLARED_IN_R {
+        return Err(fail(format!(
+            "the function entry `{name}` is declared in the language {}; this R8 reads functions declared in R ({})",
+            entry.declared_in,
+            rtemis_r8::abi::DECLARED_IN_R
+        )));
+    }
+    if entry.declaration.is_null() {
+        return Err(fail(format!(
+            "the function entry `{name}` states no declaration"
+        )));
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(entry.declaration, entry.declaration_len) };
+    let f = record::decode(bytes)
+        .map_err(|e| {
+            fail(format!(
+                "the declaration of the function entry `{name}` does not read: {e}"
+            ))
+        })?
+        .into_iter()
+        .find_map(|e| match e.declaration {
+            Declaration::Function(f) if e.namespace.as_str() == ns => Some(f),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            fail(format!(
+                "the declaration of the function entry `{name}` holds no function of `{ns}`"
+            ))
+        })?;
+    if f.name.as_str() != name {
+        return Err(fail(format!(
+            "the function entry `{name}` declares the function `{}`",
+            f.name
+        )));
+    }
+    Ok((name, f))
+}
+
+/// The functions of an exports table, each with the differences of its
+/// compiled body's signature from its registered declaration.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @param ns Character: The package's namespace.
+/// @return List: `name`, the qualified names; `declared`, whether the registry
+///   declares each; and `messages`, a list of the differences of each.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_exports_functions(ptr: Robj, ns: crate::utf8::Utf8) -> Result<List> {
+    let ns: &str = &ns;
+    let e = exports_of(&ptr)?;
+    let reg = crate::declare::snapshot()?;
+    let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
+    let mut names = Vec::new();
+    let mut declared = Vec::new();
+    let mut messages: Vec<Robj> = Vec::new();
+    for entry in function_entries(e)? {
+        let (name, have) = entry_function(entry, ns)?;
+        let q = format!("{ns}::{name}");
+        let want = QualifiedName::parse(&q)
+            .ok()
+            .and_then(|q| lookup.function_of(&q));
+        declared.push(want.is_some());
+        messages.push(
+            want.map(|w| rtemis_r8::impl_signature::check_function(&have, w, lookup))
+                .unwrap_or_default()
+                .into(),
+        );
+        names.push(q);
+    }
+    Ok(list!(
+        name = names,
+        declared = declared,
+        messages = List::from_values(messages)
+    ))
+}
+
+/// A registered function body: the compiled function, and the symbols of the
+/// declaration's parameters in order, `...` included.
+struct Native {
+    call: MethodFn,
+    params: Vec<extendr_ffi::SEXP>,
+    package: String,
+}
+
+thread_local! {
+    // R calls the functions on one thread; the key is the address of the
+    // symbol of the function's qualified name, which lives for the session.
+    static NATIVE: std::cell::RefCell<HashMap<usize, Native>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Removes the function bodies of `package`.
+fn clear_native(package: &str) {
+    NATIVE.with(|n| n.borrow_mut().retain(|_, v| v.package != package));
+}
+
+/// Registers the function bodies of an exports table, in place of those the
+/// package registered before. Each function is declared, which
+/// `r8_exports_functions()` reports otherwise.
+///
+/// @param ptr The external pointer that `r8_exports` returned.
+/// @param package Character: The registering package.
+/// @param ns Character: The package's namespace.
+/// @return Character: The qualified names of the functions.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_register_functions(
+    ptr: Robj,
+    package: crate::utf8::Utf8,
+    ns: crate::utf8::Utf8,
+) -> Result<Vec<String>> {
+    let package: &str = &package;
+    let ns: &str = &ns;
+    let e = exports_of(&ptr)?;
+    let reg = crate::declare::snapshot()?;
+    let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
+    let mut rows = Vec::new();
+    for entry in function_entries(e)? {
+        let (name, _) = entry_function(entry, ns)?;
+        let q = format!("{ns}::{name}");
+        let Some(want) = QualifiedName::parse(&q)
+            .ok()
+            .and_then(|qn| lookup.function_of(&qn))
+        else {
+            return Err(fail(format!("`{q}()` is not declared")));
+        };
+        let call = entry
+            .call
+            .ok_or_else(|| fail(format!("the compiled body of `{q}()` is NULL")))?;
+        let key = std::ffi::CString::new(q.clone()).map_err(|e| fail(e.to_string()))?;
+        let symbol = unsafe { Rf_install(key.as_ptr()) };
+        let params: Vec<extendr_ffi::SEXP> = want
+            .params
+            .iter()
+            .map(|p| {
+                let n = std::ffi::CString::new(p.name()).unwrap_or_default();
+                unsafe { Rf_install(n.as_ptr()) }
+            })
+            .collect();
+        rows.push((symbol as usize, q, call, params));
+    }
+    clear_native(package);
+    NATIVE.with(|n| {
+        let mut n = n.borrow_mut();
+        for (symbol, _, call, params) in &rows {
+            n.insert(
+                *symbol,
+                Native {
+                    call: *call,
+                    params: params.clone(),
+                    package: package.to_string(),
+                },
+            );
+        }
+    });
+    Ok(rows.into_iter().map(|(_, q, _, _)| q).collect())
+}
+
+/// Removes the function bodies that `package` registered, whose library
+/// unloads.
+///
+/// @param package Character: The package.
+/// @return `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_clear_functions(package: crate::utf8::Utf8) {
+    clear_native(&package);
+}
+
+/// The compiled body of the function whose key is the symbol `key`, its
+/// qualified name, and the symbols of its parameters: the number of
+/// parameters, with `*params` pointing at them, or -1 when no package
+/// registered a body of the function. Allocates no R memory and raises no R
+/// error.
+///
+/// # Safety
+///
+/// `key` is a symbol; `call` and `params` are writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_native_function(
+    key: extendr_ffi::SEXP,
+    call: *mut Option<MethodFn>,
+    params: *mut *const extendr_ffi::SEXP,
+) -> std::os::raw::c_int {
+    NATIVE.with(|n| match n.try_borrow() {
+        Ok(n) => match n.get(&(key as usize)) {
+            Some(v) => {
+                unsafe {
+                    *call = Some(v.call);
+                    *params = v.params.as_ptr();
+                }
+                v.params.len() as std::os::raw::c_int
+            }
+            None => -1,
+        },
+        Err(_) => -1,
+    })
+}
+
+/// The text of the `#[r8::function]` signature of the registered function
+/// `qname` (`rtemis_r8::rust_signature`).
+///
+/// @param qname Character: The qualified name.
+/// @return Character: The Rust text.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_rust_signature_text(qname: crate::utf8::Utf8) -> Result<String> {
+    let qname: &str = &qname;
+    let reg = crate::declare::snapshot()?;
+    let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
+    let f = QualifiedName::parse(qname)
+        .ok()
+        .and_then(|q| lookup.function_of(&q))
+        .ok_or_else(|| fail(format!("`{qname}()` is not registered")))?;
+    Ok(rtemis_r8::rust_signature::function_signature(f))
+}
+
 extendr_module! {
     mod exports;
+    fn r8_clear_functions;
+    fn r8_exports_functions;
+    fn r8_register_functions;
+    fn r8_rust_signature_text;
     fn r8_clear_external_ptrs;
     fn r8_exports_document;
     fn r8_exports_compare;

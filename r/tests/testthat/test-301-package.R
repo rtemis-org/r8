@@ -305,3 +305,41 @@ scenario(
   how = "installed",
   open = "R8 keeps the declarations and the methods in R of an unloaded package."
 )
+
+scenario(
+  "B8",
+  "a developer moves the body of a typed function to Rust",
+  situation = "A package declares a typed function in R. Its loop is slow on long vectors, so its developer writes the body in the package's Rust code and replaces the R body with rust().",
+  risk = "Callers, the help page, the schema of the arguments, or calls from documents change with the body; or the Rust function takes other parameters than the declaration, and computes from the wrong arguments.",
+  result = "The declaration stays the function's: the same parameters, schema, and record, with the arguments checked before the Rust function runs and its result after. The results equal those of the R body. A Rust function whose parameters differ from the declaration is refused when the package loads, with the signature to write.",
+  how = "installed",
+  code = {
+    lib <- install_test_packages()
+    out <- run_r(
+      lib,
+      c(
+        "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
+        "say <- function(...) cat(..., '\\n')",
+        "level_r <- function(x, lo = 0, hi) { y <- numeric(length(x)); s <- 0; for (i in seq_along(x)) { s <- min(max(s + x[[i]], lo), hi); y[[i]] <- s }; y }",
+        "x <- c(2, 3, -9, 4, 1)",
+        "say('same', identical(level(x, hi = 4), level_r(x, hi = 4)))",
+        "say('formals', paste(names(formals(level)), collapse = ','))",
+        "s <- jsonlite::fromJSON(r8_schema(level), simplifyVector = FALSE)",
+        "say('schema', s$title, paste(names(s$properties), collapse = ','), s$properties$x$description)",
+        "e <- tryCatch(level(x, lo = 5, hi = 4), error = identity)",
+        "say('refused', class(e)[1], e$problems$code)",
+        "say('document', identical(r8_call_from_json(level, '{\"$function\": \"pkgr::level\", \"arguments\": {\"x\": [2, 3, -9, 4, 1], \"hi\": 4}}'), level_r(x, hi = 4)))"
+      )
+    )
+    info <- paste(out, collapse = "\n")
+    for (line in c(
+      "same TRUE ",
+      "formals x,lo,hi ",
+      "schema pkgr::level x,lo,hi Inflows, in order. ",
+      "refused r8_argument_error rule_violation ",
+      "document TRUE "
+    )) {
+      expect_true(line %in% out, info = paste(line, info, sep = "\n"))
+    }
+  }
+)

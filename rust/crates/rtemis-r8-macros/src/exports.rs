@@ -16,6 +16,7 @@ pub struct Args {
     types: Vec<syn::Path>,
     traits: Vec<syn::Path>,
     impls: Vec<Row>,
+    functions: Vec<syn::Path>,
 }
 
 /// A row of `impls`, `Type: Trait` or `Type: Trait<Y>`.
@@ -51,6 +52,7 @@ impl Parse for Args {
         let mut types = Vec::new();
         let mut traits = Vec::new();
         let mut impls = Vec::new();
+        let mut functions = Vec::new();
         while !input.is_empty() {
             let key: syn::Ident = input.parse()?;
             input.parse::<Token![=]>()?;
@@ -60,10 +62,11 @@ impl Parse for Args {
                 "types" => types = bracketed(input)?,
                 "traits" => traits = bracketed(input)?,
                 "impls" => impls = bracketed(input)?,
+                "functions" => functions = bracketed(input)?,
                 _ => {
                     return Err(Error::new_spanned(
                         key,
-                        "expected package, namespace, types, traits, or impls",
+                        "expected package, namespace, types, traits, impls, or functions",
                     ));
                 }
             }
@@ -78,6 +81,7 @@ impl Parse for Args {
             types,
             traits,
             impls,
+            functions,
         })
     }
 }
@@ -121,6 +125,11 @@ pub fn expand(a: &Args) -> Result<Tokens> {
         quote_spanned! { of.span() => <#ty as #of>::__r8_methods }
     });
     let n_impls = a.impls.len();
+    // The hidden module of the function's name that `#[r8::function]` writes.
+    let function_rows = a.functions.iter().map(|f| {
+        quote_spanned! { f.span() => #f::__r8_function }
+    });
+    let n_functions = a.functions.len();
     let traits = &a.traits;
     // The constant of a trait of `#[r8::methods]` has the trait's path.
     let checks = traits.iter().map(|t| {
@@ -140,6 +149,7 @@ pub fn expand(a: &Args) -> Result<Tokens> {
         static __R8_CODECS: #api::Shared<[#api::rtemis_r8::abi::Codec; #n_types]> =
             #api::Shared([#(<#types as #api::RustStored>::TABLE.0),*]);
         static __R8_IMPLS: [fn() -> #api::ImplSet; #n_impls] = [#(#sets),*];
+        static __R8_FUNCTIONS: [fn() -> #api::FunctionRow; #n_functions] = [#(#function_rows),*];
         static __R8_TABLE: ::std::sync::OnceLock<usize> = ::std::sync::OnceLock::new();
 
         unsafe extern "C" fn __r8_exports() -> *const #api::rtemis_r8::abi::Exports {
@@ -156,6 +166,7 @@ pub fn expand(a: &Args) -> Result<Tokens> {
                 },
                 &[#(#traits.def),*],
                 &__R8_IMPLS,
+                &__R8_FUNCTIONS,
             )
         }
 

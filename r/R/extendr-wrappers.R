@@ -434,6 +434,47 @@ r8_type_schema <- function(name, closed) .Call(wrap__r8_type_schema, name, close
 #' @noRd
 r8_type_document <- function(name) .Call(wrap__r8_type_document, name)
 
+#' Removes the function bodies that `package` registered, whose library
+#' unloads.
+#'
+#' @param package Character: The package.
+#' @return `NULL`.
+#' @keywords internal
+#' @noRd
+r8_clear_functions <- function(package) .Call(wrap__r8_clear_functions, package)
+
+#' The functions of an exports table, each with the differences of its
+#' compiled body's signature from its registered declaration.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @param ns Character: The package's namespace.
+#' @return List: `name`, the qualified names; `declared`, whether the registry
+#'   declares each; and `messages`, a list of the differences of each.
+#' @keywords internal
+#' @noRd
+r8_exports_functions <- function(ptr, ns) .Call(wrap__r8_exports_functions, ptr, ns)
+
+#' Registers the function bodies of an exports table, in place of those the
+#' package registered before. Each function is declared, which
+#' `r8_exports_functions()` reports otherwise.
+#'
+#' @param ptr The external pointer that `r8_exports` returned.
+#' @param package Character: The registering package.
+#' @param ns Character: The package's namespace.
+#' @return Character: The qualified names of the functions.
+#' @keywords internal
+#' @noRd
+r8_register_functions <- function(ptr, package, ns) .Call(wrap__r8_register_functions, ptr, package, ns)
+
+#' The text of the `#[r8::function]` signature of the registered function
+#' `qname` (`rtemis_r8::rust_signature`).
+#'
+#' @param qname Character: The qualified name.
+#' @return Character: The Rust text.
+#' @keywords internal
+#' @noRd
+r8_rust_signature_text <- function(qname) .Call(wrap__r8_rust_signature_text, qname)
+
 #' Clears external pointers to compiled functions, whose package's library
 #' unloads or registers again, so a closure that still holds one raises an
 #' error in `invoke` rather than calling freed code.

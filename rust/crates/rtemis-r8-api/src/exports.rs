@@ -5,7 +5,7 @@ use std::ffi::{CStr, c_void};
 use std::sync::OnceLock;
 
 use rtemis_r8::abi::{self, ABI_VERSION, MethodFn};
-use rtemis_r8::ir::{MethodDef, RequiredField, TraitDef, TypeDef};
+use rtemis_r8::ir::{FunctionDef, MethodDef, RequiredField, TraitDef, TypeDef};
 use rtemis_r8::name::Name;
 use rtemis_r8::rules::DocumentSet;
 
@@ -43,6 +43,20 @@ pub struct ImplSet {
     pub register: fn(&mut DocumentSet),
 }
 
+/// A function whose body is compiled code, which the hidden module that
+/// `#[r8::function]` writes beside the function gives.
+pub struct FunctionRow {
+    /// The function's name in the package's namespace.
+    pub name: &'static CStr,
+    /// The generated function, which calls the body.
+    pub call: MethodFn,
+    /// The declaration as the body's signature states it: the parameters'
+    /// types and the result's.
+    pub declaration: FunctionDef,
+    /// Adds the declarations of the types of the parameters and the result.
+    pub register: fn(&mut DocumentSet),
+}
+
 /// The declaration record of the signatures of an impl's methods.
 fn signature(set: &mut ImplSet, ns: &Name) -> &'static [u8] {
     use rtemis_r8::record::{self, DeclarationRef};
@@ -76,15 +90,17 @@ fn position(p: &PositionEntry) -> abi::Position {
 
 /// The package's exports table, built on first use: the declaration record
 /// of the types that `types` adds and of `traits`, the traits declared in Rust,
-/// with the types of other namespaces that they and the impls reach; the codec
-/// tables `codecs`; and the entries of the impls that `impls` give, from which
-/// R8 builds the impl declarations.
+/// with the types of other namespaces that they, the impls, and the functions
+/// reach; the codec tables `codecs`; the entries of the impls that `impls`
+/// give, from which R8 builds the impl declarations; and the entries of the
+/// functions that `functions` give.
 ///
 /// # Panics
 ///
 /// When the namespace is not a valid R8 name, which the macros check at
 /// compile time.
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 pub fn table(
     cell: &'static OnceLock<usize>,
     package: &'static CStr,
@@ -93,12 +109,15 @@ pub fn table(
     types: impl FnOnce(&mut DocumentSet),
     traits: &[fn() -> TraitDef],
     impls: &'static [fn() -> ImplSet],
+    functions: &'static [fn() -> FunctionRow],
 ) -> *const abi::Exports {
     // A declaration that panics, such as a field type that its constraints do
     // not fit, unwinds to here, not across `extern "C"`; R8 refuses the NULL
     // table and names the message written to the console.
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        build(cell, package, namespace, codecs, types, traits, impls)
+        build(
+            cell, package, namespace, codecs, types, traits, impls, functions,
+        )
     }));
     match built {
         Ok(p) => p,
@@ -121,6 +140,7 @@ pub fn table(
 }
 
 /// The table of [`table()`], built once.
+#[allow(clippy::too_many_arguments)]
 fn build(
     cell: &'static OnceLock<usize>,
     package: &'static CStr,
@@ -129,6 +149,7 @@ fn build(
     types: impl FnOnce(&mut DocumentSet),
     traits: &[fn() -> TraitDef],
     impls: &'static [fn() -> ImplSet],
+    functions: &'static [fn() -> FunctionRow],
 ) -> *const abi::Exports {
     *cell.get_or_init(|| {
         use rtemis_r8::record::{self, DeclarationRef};
@@ -145,6 +166,10 @@ fn build(
         let sets: Vec<ImplSet> = impls.iter().map(|f| f()).collect();
         for s in &sets {
             (s.register)(&mut set);
+        }
+        let rows: Vec<FunctionRow> = functions.iter().map(|f| f()).collect();
+        for r in &rows {
+            (r.register)(&mut set);
         }
         let foreign = set.into_documents();
         let bytes = record::encode(
@@ -177,6 +202,24 @@ fn build(
             })
             .collect();
         let entries: &'static [abi::ImplEntry] = Box::leak(entries.into_boxed_slice());
+        let function_entries: Vec<abi::FunctionEntry> = rows
+            .iter()
+            .map(|r| {
+                let declaration: &'static [u8] = Box::leak(
+                    record::encode([(&ns, DeclarationRef::Function(&r.declaration))])
+                        .into_boxed_slice(),
+                );
+                abi::FunctionEntry {
+                    name: r.name.as_ptr(),
+                    call: Some(r.call),
+                    declaration: declaration.as_ptr(),
+                    declaration_len: declaration.len(),
+                    declared_in: abi::DECLARED_IN_R,
+                }
+            })
+            .collect();
+        let function_entries: &'static [abi::FunctionEntry] =
+            Box::leak(function_entries.into_boxed_slice());
         let e = Box::leak(Box::new(abi::Exports {
             abi_version: ABI_VERSION,
             size: std::mem::size_of::<abi::Exports>() as u32,
@@ -189,6 +232,9 @@ fn build(
             impls: entries.as_ptr(),
             n_impls: entries.len(),
             impl_size: std::mem::size_of::<abi::ImplEntry>(),
+            functions: function_entries.as_ptr(),
+            n_functions: function_entries.len(),
+            function_size: std::mem::size_of::<abi::FunctionEntry>(),
         }));
         std::ptr::from_ref(e) as usize
     }) as *const abi::Exports

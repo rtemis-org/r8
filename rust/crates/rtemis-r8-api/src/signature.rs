@@ -1,11 +1,13 @@
-//! The signatures of the methods of `#[r8::methods]`: the R8 types of their
-//! parameters and results, which registration checks against the trait's
-//! declaration, and [`TraitDecl`], the declaration of a trait in Rust.
+//! The signatures of the methods of `#[r8::methods]` and of the functions of
+//! `#[r8::function]`: the R8 types of their parameters and results, which
+//! registration checks against the declaration of the trait or the function,
+//! and [`TraitDecl`], the declaration of a trait in Rust.
 //! spec: R8/class-system#signatures-of-impls-in-rust
 
 use rtemis_r8::derive::{Constraints, Encode, constrain};
 use rtemis_r8::ir::{
-    FieldType, MethodDef, Param, ParamDef, RequiredField, ReturnType, SelfMarker, TraitDef,
+    FieldType, FunctionDef, MethodDef, Param, ParamDef, RequiredField, ReturnType, SelfMarker,
+    TraitDef,
 };
 use rtemis_r8::name::{MethodName, Name};
 use rtemis_r8::rules::DocumentSet;
@@ -123,6 +125,30 @@ pub fn method(
         stochastic: false,
         has_default_impl: false,
         rules: Vec::new(),
+    }
+}
+
+/// A function, as the signature of its compiled body states it.
+///
+/// # Panics
+///
+/// When `name` is not an R8 name, which the macro checks.
+#[doc(hidden)]
+pub fn function(
+    name: &str,
+    description: &str,
+    params: Vec<ParamDef>,
+    return_type: Option<ReturnType>,
+) -> FunctionDef {
+    FunctionDef {
+        name: Name::new(name).expect("the macro checks the name"),
+        description: description.to_string(),
+        params,
+        return_type,
+        rules: Vec::new(),
+        typed: Default::default(),
+        stochastic: false,
+        on: None,
     }
 }
 

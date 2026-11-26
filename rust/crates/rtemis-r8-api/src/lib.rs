@@ -167,6 +167,43 @@
 //! # fn main() {}
 //! ```
 //!
+//! A typed function that R declares with `new_function(name, function(...)
+//! rust())` has its body in Rust: `#[r8::function]` marks the function, and
+//! `functions` of `r8::exports!` lists it. Its parameters have the names of the
+//! declaration's, in order; a slice and a string are borrowed from the R value
+//! for the call, and a `Vec` result becomes an R vector.
+//!
+//! ```no_run,standalone_crate
+//! use rtemis_r8_api as r8;
+//!
+//! /// Holds a running level between `lo` and `hi`.
+//! #[r8::function]
+//! fn level(x: &[f64], lo: f64, hi: f64) -> Vec<f64> {
+//!     let mut s = 0.0;
+//!     x.iter()
+//!         .map(|v| {
+//!             s = (s + v).clamp(lo, hi);
+//!             s
+//!         })
+//!         .collect()
+//! }
+//!
+//! /// A summary of a vector, with a parameter whose R name is no Rust
+//! /// identifier.
+//! #[r8::function]
+//! fn total(x: &[f64], #[r8(name = "na.rm")] na_rm: bool, label: Option<&str>) -> String {
+//!     let s: f64 = x.iter().filter(|v| !(na_rm && v.is_nan())).sum();
+//!     format!("{}: {s}", label.unwrap_or("total"))
+//! }
+//!
+//! r8::exports! {
+//!     package = "demo",
+//!     namespace = "demo",
+//!     functions = [level, total],
+//! }
+//! # fn main() {}
+//! ```
+//!
 //! A field of a Rust-stored type is a number, a logical, a string, a
 //! [`Buffer`], another Rust-stored type, or an `Option` of one
 //! ([`Field`]); a field of any struct that extends another is a
@@ -188,6 +225,7 @@
 extern crate self as rtemis_r8_api;
 
 pub mod api;
+pub mod borrowed;
 pub mod buffer;
 pub mod call;
 pub mod dispatch;
@@ -202,10 +240,11 @@ pub mod sys;
 pub mod traits;
 
 pub use api::{Error, Jumped, Result};
+pub use borrowed::Borrowed;
 pub use buffer::{Buffer, Element, Logical};
 pub use call::{Dots, FromR, IntoR, Receiver, Sexp};
 pub use dispatch::{Any, Position, PositionEntry};
-pub use exports::{ImplSet, MethodRow};
+pub use exports::{FunctionRow, ImplSet, MethodRow};
 pub use field::Field;
 pub use open::{ImplementorValue, SubtypeValue};
 pub use reader::{Node, Reader};
@@ -217,7 +256,7 @@ pub use traits::{Debug, Display, From, PartialOrd, Shape};
 
 #[doc(hidden)]
 pub use rtemis_r8;
-pub use rtemis_r8_macros::{exports, methods};
+pub use rtemis_r8_macros::{exports, function, methods};
 
 /// Code that the macros refuse when the crate compiles.
 ///
@@ -481,6 +520,49 @@ pub use rtemis_r8_macros::{exports, methods};
 /// use rtemis_r8_api as r8;
 /// #[r8::methods(trait = "demo::Shifted", dyn)]
 /// trait Shifted { fn shifted(&self) -> Self; }
+/// ```
+///
+/// `#[r8::function]` with a key reserved for a function declared in Rust,
+/// with another key, on a method, on a function of a type parameter, and on an
+/// `async` function:
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::function(declare)]
+/// fn level(x: &[f64]) -> Vec<f64> { x.to_vec() }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::function(rule = "lo <= hi")]
+/// fn span(lo: f64, hi: f64) -> f64 { hi - lo }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::function(namespace = "demo")]
+/// fn span(lo: f64, hi: f64) -> f64 { hi - lo }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// struct S;
+/// impl S {
+///     #[r8::function]
+///     fn width(&self) -> f64 { 1.0 }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::function]
+/// fn first<T: Copy>(x: &[f64]) -> f64 { x[0] }
+/// ```
+///
+/// ```compile_fail
+/// use rtemis_r8_api as r8;
+/// #[r8::function]
+/// async fn span(lo: f64, hi: f64) -> f64 { hi - lo }
 /// ```
 #[cfg(doctest)]
 struct RefusedByTheMacros;

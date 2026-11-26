@@ -1,5 +1,9 @@
 # R8 0.6.0
 
+- A typed function whose body is `rust()` has its body in its package's Rust code: a function marked `#[r8::function]` and listed in `functions` of `r8::exports!`. The declaration in R stays the function's, its schema included; each call checks the arguments, calls the Rust function, and checks the result, and loading the package compares the Rust function's signature with the declaration.
+- `r8_rust_signature(f)` writes the Rust signature of a typed function, for its body in Rust.
+- Compiled methods and function bodies take `&[f64]`, `&[i32]`, `&[u8]`, `&[bool]`, and `&str`, borrowed from the R value for the call, and `#[r8(name = "...")]` gives a parameter an R name; a `Vec` result is a plain R vector.
+- A typed call checks a vector of logicals, integers, or doubles in place, and a typed function with a return type runs its body in its own frame as written.
 - `arg()` and its shorthands take `description`, which the declaration keeps; `arg(description = )` alone describes a parameter without a type. The roclet `r8_rd()` writes a described parameter's `@param` from it, and refuses a block that also documents that parameter.
 - `r8_schema(x)` writes the JSON Schema of the arguments of a typed function, for a tool's input schema; its first argument is `x`, a type or a typed function.
 - `r8_check_call()`, `r8_call_from_json()`, and `r8_call_to_json()` check, run, and write documents of a call of a typed function, `{"$function": "ns::f", "arguments": {...}}`, among the functions that the caller names.
@@ -15,7 +19,7 @@
 - `host_class(class, package, system = "s7")`, and an S7 class object, declare an argument, a result, a field, or a dispatched position of an S7 class.
 - `r8_is_variant()` of a value whose package is not loaded refuses a name that is no variant, as with the package loaded, by the declaration that the value carries.
 - A package with Rust code built against an earlier R8 of the same ABI version loads after R8 appends members to its C tables, which a reader finds absent.
-- An error that a package's compiled method returns is an `r8_method_error`, with its code in the field `code`, and a panic an `r8_panic`.
+- An error that a package's compiled code returns, from a compiled method or the Rust body of a typed function, is an `r8_compiled_error`, with its code in the field `code`, and a panic an `r8_panic`.
 - A value that a package's Rust code makes is validated when its type has rules, constraints, or `subtype()` or `dyn()` fields, and the method that made it raises the error.
 
 # R8 0.5.0

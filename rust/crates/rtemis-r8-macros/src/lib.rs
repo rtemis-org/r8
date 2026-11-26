@@ -46,6 +46,7 @@
 
 mod exports;
 mod extends;
+mod function;
 mod methods;
 
 use proc_macro::TokenStream;
@@ -1322,13 +1323,44 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
+/// `#[r8::function]` on a free function: the body of the typed function that
+/// R declares with `new_function(name, function(...) rust())` in the package's
+/// namespace, bound to it by its name, the function's identifier or
+/// `name = "..."`. `r8::exports!` lists it in `functions`.
+///
+/// Each parameter has the name of the declaration's parameter in its place, the
+/// identifier or `#[r8(name = "...")]`, and a Rust type of the declared type, as
+/// for a method of `#[r8::methods]`; a slice, `&[f64]`, `&[i32]`, `&[u8]`, or
+/// `&[bool]`, and `&str` are borrowed from the R value for the call. R8 checks
+/// the arguments and the rules of the declaration before the body runs, and the
+/// result after it. When the package loads, R8 compares the signature with the
+/// declaration.
+///
+/// ```text
+/// #[r8::function]
+/// fn level(x: &[f64], lo: f64, hi: f64) -> Vec<f64> {
+///     let mut s = 0.0;
+///     x.iter().map(|v| { s = (s + v).clamp(lo, hi); s }).collect()
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn function(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as syn::ItemFn);
+    function::args(attr.into())
+        .and_then(|args| function::expand(&args, item))
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
 fn valid_qualified(s: &str) -> bool {
     matches!(s.split_once("::"), Some((a, b)) if valid_name(a) && valid_name(b))
 }
 
 /// `r8::exports! { package = "pkg", namespace = "ns", types = [T, ...],
-/// traits = [Trait, ...], impls = [T: Trait, T: Trait<Y>, ...] }`, where
-/// `traits` lists the traits declared in Rust: the package's exports table, built on first
+/// traits = [Trait, ...], impls = [T: Trait, T: Trait<Y>, ...], functions =
+/// [f, ...] }`, where `traits` lists the traits declared in Rust and
+/// `functions` the functions of `#[r8::function]`, by path: the package's
+/// exports table, built on first
 /// use, and `r8_init_<package>(dll)`, with an underscore for a period of the
 /// package's name, which the package's initialization routine calls to
 /// register it with `R_RegisterCCallable(pkg, "r8_exports", ...)`. It is

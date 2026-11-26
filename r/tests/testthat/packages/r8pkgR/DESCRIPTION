@@ -15,4 +15,5 @@ Collate:
     'r8-types.R'
     'interval.R'
     'norm.R'
+    'functions.R'
     'zzz.R'

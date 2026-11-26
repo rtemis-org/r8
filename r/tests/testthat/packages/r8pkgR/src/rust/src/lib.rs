@@ -3,9 +3,13 @@
 //! Rust-stored enum, `pkgr::Resampler`, of every variant shape, with an impl
 //! of `R8::Display`; `pkgr::Probe`, a field of every Rust field type,
 //! against which the conformance tests of `tests/testthat/conformance` run;
-//! structs that extend one another (`interval`); and open fields (`open`).
+//! structs that extend one another (`interval`); open fields (`open`); and
+//! the bodies of typed functions declared in R (`functions`), over a module
+//! without R8 (`levels`).
 
+pub mod functions;
 pub mod interval;
+pub mod levels;
 pub mod open;
 
 use interval::*;
@@ -212,5 +216,11 @@ r8::exports! {
         Panel: Banded,
         Panel: HeldRange,
         Panel: Refit,
+    ],
+    functions = [
+        functions::clip,
+        functions::level,
+        functions::tally,
+        functions::fraction,
     ],
 }

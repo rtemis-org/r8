@@ -34,6 +34,19 @@
 #' `...`; a call checks the parameters that have types. With `typed = "strict"`,
 #' every parameter has a type and there is no `...`, which the declaration checks.
 #'
+#' @section A body in Rust:
+#' A function of a package whose body is exactly [rust()] has its body in the
+#' package's Rust code: a function marked `#[r8::function]` of the same name,
+#' listed in `functions` of the package's `r8::exports!`. The declaration stays
+#' the function's: its parameters, types, defaults, descriptions, rules, return
+#' type, help page, and [r8_schema()]. Each call checks and converts the
+#' arguments, evaluates every parameter, a default written in R included, and
+#' passes the values to the Rust function in the order of the parameters, `...`
+#' as a list; the result is checked as an R body's is. An error that the Rust
+#' function returns is an `r8_compiled_error`. When the package loads, R8
+#' compares the Rust function's signature with the declaration
+#' ([r8_rust_signature()] writes it).
+#'
 #' @section Outside R8:
 #' The function given is plain R: `arg()` gives its default, or R's error for a
 #' missing argument, and checks nothing.
@@ -135,8 +148,17 @@ new_function <- function(
     )
     declaration_failed(qname, problems, list(rules = ir[["rules"]]))
   }
+  in_rust <- rust_body(fn)
+  if (in_rust && !nzchar(declaring_package(env))) {
+    r8_abort(
+      "A function whose body is rust() is declared in a package, whose Rust code holds the body; `",
+      qname,
+      "()` is declared outside a package.",
+      class = "r8_declaration_error"
+    )
+  }
   check_base_names(environment(fn), name)
-  f <- make_function(qname, fn, stored_defaults(p), ir)
+  f <- make_function(qname, fn, stored_defaults(p), ir, rust = in_rust)
   record <- r8_function_record(qname)
   recorded <- record_declaration(
     env,
@@ -144,7 +166,8 @@ new_function <- function(
       kind = "function",
       record = record,
       namespace = namespace,
-      name = qname
+      name = qname,
+      rust = in_rust
     )
   )
   if (!recorded) {
@@ -193,21 +216,49 @@ function_params <- function(fn) {
 #' The closure has the formals of `fn`, with constant defaults in their stored
 #' form, and its body: before it, the C routine `check`, which forces, checks, and
 #' converts the typed arguments in the frame; with a return type, each `return()`
-#' and the last value pass through the C routine `result`.
+#' and the expression that gives the body's value pass through the C routine
+#' `result` (`value_checked()`).
+#'
+#' A function whose body is in Rust has the body of the C routine `native`
+#' alone, which checks the arguments, calls the compiled body, and checks the
+#' result; the closure's attribute `r8_body` is `"rust"`.
 #'
 #' @param qname Character: The qualified name.
 #' @param fn Function: The function given.
 #' @param p An `r8_params`: Its parameters.
 #' @param ir List: The declaration.
+#' @param rust Logical: Whether the body is in Rust.
 #'
 #' @return The closure, of class `r8_function`.
 #'
 #' @keywords internal
 #' @noRd
-make_function <- function(qname, fn, p, ir) {
+make_function <- function(qname, fn, p, ir, rust = FALSE) {
   ns <- asNamespace("R8")
   at <- function(name) call("$", ns, as.name(name))
   key <- call("quote", as.name(qname))
+  if (rust) {
+    out <- as.function(
+      c(
+        p[["formals"]],
+        as.call(list(
+          quote(.Call),
+          at(".r8_c_native"),
+          quote(environment()),
+          key,
+          at(".r8_dispatch")
+        ))
+      ),
+      envir = environment(fn)
+    )
+    return(structure(
+      out,
+      class = c("r8_function", "function"),
+      r8_function = qname,
+      r8_source = fn,
+      r8_body = "rust"
+    ))
+  }
   typed <- !all(vapply(p[["types"]], is.null, NA)) || length(ir[["rules"]]) > 0L
   body <- body(fn)
   if (!is.null(ir[["return_type"]])) {
@@ -231,7 +282,7 @@ make_function <- function(qname, fn, p, ir) {
         )
       )
     }
-    body <- checked(returns_checked(body, checked))
+    body <- value_checked(returns_checked(body, checked), checked)
   }
   if (typed) {
     check <- as.call(list(
@@ -296,6 +347,188 @@ returns_checked <- function(e, check) {
 } # /R8::returns_checked
 
 
+# %% rust ----
+#' The body of a typed function written in Rust
+#'
+#' `rust()` is the whole body of a function given to [new_function()] whose body
+#' is in the declaring package's Rust code: a Rust function of the same name,
+#' marked `#[r8::function]` and listed in `functions` of the package's
+#' `r8::exports!`. The declaration in R holds the parameters, their types,
+#' defaults, and descriptions, the rules, and the return type; the Rust function
+#' computes the result. [r8_rust_signature()] writes the Rust function's
+#' signature from the declaration.
+#'
+#' @return Does not return: called outside a typed function, it signals
+#'   `r8_declaration_error`.
+#'
+#' @examples
+#' # In a package whose Rust code holds `fn level(x: &[f64], lo: f64, hi: f64)`:
+#' # level <- new_function(
+#' #   "level",
+#' #   function(x = arg_vec(type_double()), lo = arg_double(), hi = arg_double()) rust(),
+#' #   rules = list(rule(lo <= hi)),
+#' #   return_type = vec(type_double())
+#' # )
+#' try(rust())
+#'
+#' @export
+rust <- function() {
+  r8_abort(
+    "rust() is the body of a function given to new_function() in a package, whose Rust code holds the function's body; called by itself, it computes nothing.",
+    class = "r8_declaration_error"
+  )
+} # /R8::rust
+
+
+# %% rust_body ----
+#' Whether a function's body is `rust()`
+#'
+#' The body is `rust()` or `R8::rust()`, alone or in braces. A call of `rust`
+#' anywhere else in the body is a declaration error.
+#'
+#' @param fn Function: The function given to `new_function()`.
+#'
+#' @return Logical.
+#'
+#' @keywords internal
+#' @noRd
+rust_body <- function(fn) {
+  heads <- list(
+    quote(rust),
+    quote(R8::rust),
+    call(":::", as.name("R8"), as.name("rust"))
+  )
+  is_rust <- function(e) {
+    is.call(e) && any(vapply(heads, identical, NA, e[[1L]]))
+  }
+  b <- body(fn)
+  if (is.call(b) && identical(b[[1L]], as.name("{")) && length(b) == 2L) {
+    b <- b[[2L]]
+  }
+  if (is_rust(b) && length(b) == 1L) {
+    return(TRUE)
+  }
+  calls_rust <- function(e) {
+    if (!is.call(e)) {
+      return(FALSE)
+    }
+    if (is_rust(e)) {
+      return(TRUE)
+    }
+    any(vapply(as.list(e), calls_rust, NA))
+  }
+  if (calls_rust(body(fn))) {
+    r8_abort(
+      "rust() is the whole body of a function whose body is in Rust, such as function(x = arg_double()) rust(); R code around a Rust body is a function of its own that calls the function whose body is rust().",
+      class = "r8_declaration_error"
+    )
+  }
+  FALSE
+} # /R8::rust_body
+
+
+# %% r8_rust_signature ----
+#' The Rust signature of a typed function
+#'
+#' `r8_rust_signature()` writes the Rust function that the body of a typed
+#' function moves into: `#[r8::function]`, the function's name, each parameter
+#' with the Rust type of its declared type, the result's type, the description
+#' as a doc comment, the checks that R8 makes before and after the body as a
+#' comment, and the body `todo!()`. A vector of doubles, integers, logicals, or
+#' bytes is a slice borrowed for the call, `&[f64]`, and a `Vec` as a result; a
+#' string is `&str`, and `String` as a result; a parameter without a type, or of
+#' a type without a Rust form here, is `r8::Sexp`, and `...` is `r8::Dots`. The
+#' function then takes the body `rust()` ([new_function()]).
+#'
+#' @param f A typed function, of [new_function()].
+#'
+#' @return Character: The Rust text, of class `r8_rust_text`, which prints as
+#'   the text.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' level <- new_function(
+#'   "level",
+#'   function(x = arg_vec(type_double()), lo = arg_double(), hi = arg_double()) {
+#'     y <- numeric(length(x))
+#'     s <- 0
+#'     for (i in seq_along(x)) {
+#'       s <- min(max(s + x[[i]], lo), hi)
+#'       y[[i]] <- s
+#'     }
+#'     y
+#'   },
+#'   rules = list(rule(lo <= hi)),
+#'   return_type = vec(type_double()),
+#'   description = "Holds a running level between `lo` and `hi`."
+#' )
+#' r8_rust_signature(level)
+#' options(op)
+#'
+#' @export
+r8_rust_signature <- function(f) {
+  if (!inherits(f, "r8_function")) {
+    r8_abort(
+      "`f` is a typed function of new_function().",
+      class = "r8_type_error"
+    )
+  }
+  qname <- attr(f, "r8_function")
+  if (is.null(r8_function_ir(qname)) && !is.null(attr(f, "r8_record"))) {
+    register_records(list(attr(f, "r8_record")))
+  }
+  structure(r8_rust_signature_text(qname), class = "r8_rust_text")
+} # /R8::r8_rust_signature
+
+
+# %% print.r8_rust_text ----
+#' @rdname r8_rust_signature
+#' @param x Character: Rust text.
+#' @param ... Not used.
+#' @export
+print.r8_rust_text <- function(x, ...) {
+  cat(x)
+  invisible(x)
+} # /R8::print.r8_rust_text
+
+
+# %% value_checked ----
+#' A body whose value passes a check
+#'
+#' Applies `check()` to the expression that gives the value of `e`: the last
+#' expression of a block, and each branch of an `if` with an `else`. The rest of
+#' the body runs in the function's frame as written: an expression given to
+#' `withVisible()` is a promise, whose loops run slower than the frame's own code.
+#' A `return()` stays as `returns_checked()` wrote it.
+#'
+#' @param e Language object: The body, or a part of it.
+#' @param check Function: The check of a value's expression.
+#'
+#' @return The expression.
+#'
+#' @keywords internal
+#' @noRd
+value_checked <- function(e, check) {
+  if (is.call(e) && is.name(e[[1L]])) {
+    head <- as.character(e[[1L]])
+    if (identical(head, "{") && length(e) > 1L) {
+      n <- length(e)
+      e[[n]] <- value_checked(e[[n]], check)
+      return(e)
+    }
+    if (identical(head, "if") && length(e) == 4L) {
+      e[[3L]] <- value_checked(e[[3L]], check)
+      e[[4L]] <- value_checked(e[[4L]], check)
+      return(e)
+    }
+    if (identical(head, "return")) {
+      return(e)
+    }
+  }
+  check(e)
+} # /R8::value_checked
+
+
 # %% function_unregistered ----
 #' Register the declaration that a typed function carries
 #'
@@ -320,8 +553,14 @@ function_unregistered <- function(key, env, ...) {
   f <- if (!is.na(frame)) sys.function(frame)
   record <- attr(f, "r8_record")
   if (is.null(record)) {
-    ns <- sub("::.*$", "", key)
-    if (requireNamespace(ns, quietly = TRUE)) {
+    # The package that declares the function: the namespace of its closure,
+    # or the owner of its R8 namespace, whose name may differ from the
+    # package's (`Config/R8/namespace`).
+    pkg <- if (is.function(f)) declaring_package(environment(f)) else ""
+    if (!nzchar(pkg)) {
+      pkg <- r8_namespace_owner(sub("::.*$", "", key))
+    }
+    if (nzchar(pkg) && requireNamespace(pkg, quietly = TRUE)) {
       return(invisible(NULL))
     }
     r8_abort(
@@ -347,6 +586,14 @@ print.r8_function <- function(x, ...) {
   ir <- r8_function_ir(qname)
   cat("<r8 function ", qname, ">\n", sep = "")
   cat(usage_line(name, names(formals(x))), "\n", sep = "")
+  if (identical(attr(x, "r8_body"), "rust")) {
+    cat(
+      "  body in Rust, package '",
+      declaring_package(environment(x)),
+      "'\n",
+      sep = ""
+    )
+  }
   if (!is.null(ir)) {
     lines <- signature_lines(ir, x, "  ")
     if (length(lines) > 0L) {

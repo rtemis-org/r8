@@ -242,6 +242,13 @@ register_exports <- function(pkg, entries = list()) {
       e[["name"]]
     }
   }))
+  functions <- Filter(function(e) identical(e[["kind"]], "function"), entries)
+  in_rust <- as.character(unlist(lapply(functions, function(e) {
+    if (isTRUE(e[["rust"]])) e[["name"]]
+  })))
+  in_r <- as.character(unlist(lapply(functions, function(e) {
+    if (!isTRUE(e[["rust"]])) e[["name"]]
+  })))
   # R_GetCCallable() raises an error for a package that registered no
   # exports.
   ptr <- tryCatch(
@@ -250,6 +257,7 @@ register_exports <- function(pkg, entries = list()) {
   )
   if (is.null(ptr)) {
     check_exports(pkg, NULL, rust_stored)
+    check_functions(pkg, NULL, in_rust, in_r)
     return(list(n = 0L))
   }
   namespace <- declaring_namespace(asNamespace(pkg))
@@ -260,6 +268,7 @@ register_exports <- function(pkg, entries = list()) {
     check_trait_registered(name, pkg)
   }
   check_signatures(r8_exports_signatures(ptr, pkg), pkg)
+  check_functions(pkg, r8_exports_functions(ptr, namespace), in_rust, in_r)
   fns <- r8_register_exports(ptr, pkg, namespace)
   assign(
     pkg,
@@ -279,6 +288,9 @@ register_exports <- function(pkg, entries = list()) {
     assign(n, pkg, envir = .r8_codecs)
   }
   clear_compiled(pkg)
+  # The function bodies replace those of an earlier registration, which
+  # clear_compiled() removed.
+  r8_register_functions(ptr, pkg, namespace)
   if (is.null(.r8_unload_hooks[[pkg]])) {
     setHook(
       packageEvent(pkg, "onUnload"),
@@ -494,7 +506,8 @@ import_directive <- function(pkg, name) {
 #' Clear the pointers to a package's compiled functions
 #'
 #' A closure that still holds one, after the package's library unloads or
-#' the package registers again, raises an error when called.
+#' the package registers again, raises an error when called, and so does a
+#' function whose body is in Rust.
 #'
 #' @param pkg Character: The package.
 #'
@@ -504,6 +517,7 @@ import_directive <- function(pkg, name) {
 #' @noRd
 clear_compiled <- function(pkg) {
   clear_dispatch()
+  r8_clear_functions(pkg)
   ptrs <- .r8_compiled_ptrs[[pkg]]
   if (!is.null(ptrs)) {
     r8_clear_external_ptrs(ptrs)
@@ -511,6 +525,99 @@ clear_compiled <- function(pkg) {
   }
   invisible(NULL)
 } # /R8::clear_compiled
+
+
+# %% check_functions ----
+#' Check a package's functions with a body in Rust against its compiled exports
+#'
+#' A function whose body is `rust()` has a Rust function of its name in the
+#' package's exports, a Rust function of the exports is the body of a function
+#' whose body is `rust()`, and the Rust function's signature is the
+#' declaration's (`impl_signature::check_function()`).
+#'
+#' @param pkg Character: The package.
+#' @param exported Optional list: `r8_exports_functions()` of the package's
+#'   exports, or `NULL` for a package without exports.
+#' @param in_rust,in_r Character: The qualified names of the package's
+#'   functions whose body is `rust()`, and of those whose body is R code.
+#'
+#' @return `NULL`, invisibly; signals `r8_declaration_error` listing each
+#'   difference, with the Rust signature of each declaration.
+#'
+#' @keywords internal
+#' @noRd
+check_functions <- function(pkg, exported, in_rust, in_r) {
+  names <- as.character(exported[["name"]])
+  signature <- function(q) {
+    text <- tryCatch(r8_rust_signature_text(q), error = function(e) NULL)
+    if (is.null(text)) {
+      return("")
+    }
+    paste0(
+      " Its Rust signature, from r8_rust_signature():\n",
+      paste0("    ", strsplit(text, "\n", fixed = TRUE)[[1L]], collapse = "\n")
+    )
+  }
+  problems <- character()
+  for (q in setdiff(in_rust, names)) {
+    problems <- c(
+      problems,
+      paste0(
+        "`",
+        q,
+        "()` has the body rust(), and the package's Rust code exports no function `",
+        sub("^.*::", "", q),
+        "`; `#[r8::function]` marks it, and `functions` of `r8::exports!` lists it.",
+        signature(q)
+      )
+    )
+  }
+  for (i in seq_along(names)) {
+    q <- names[[i]]
+    if (q %in% in_r) {
+      problems <- c(
+        problems,
+        paste0(
+          "`",
+          q,
+          "()` has a body in R, and the package's Rust code exports a body of it; the body of a function whose body is in Rust is rust()."
+        )
+      )
+    } else if (!q %in% in_rust) {
+      problems <- c(
+        problems,
+        paste0(
+          "The package's Rust code exports the function `",
+          sub("^.*::", "", q),
+          "`, which no new_function() of the package declares."
+        )
+      )
+    } else if (length(exported[["messages"]][[i]]) > 0L) {
+      problems <- c(
+        problems,
+        paste0(
+          "`",
+          q,
+          "()` in Rust: ",
+          paste(exported[["messages"]][[i]], collapse = "; "),
+          ".",
+          signature(q)
+        )
+      )
+    }
+  }
+  if (length(problems) > 0L) {
+    r8_abort(
+      "The functions of package '",
+      pkg,
+      "' whose bodies are in Rust do not match its compiled exports:\n",
+      paste0("- ", problems, collapse = "\n"),
+      "\nThe Rust function or the declaration in R changes [function_signature].",
+      class = "r8_declaration_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::check_functions
 
 
 # %% check_exports ----

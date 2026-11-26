@@ -535,10 +535,32 @@ impl<T: ElementType> IntoR for Vec<T> {
     fn return_type() -> Option<FieldType> {
         Some(T::buffer_type())
     }
-    /// The vector as an owned [`Buffer`], which R reads as a view: the
-    /// result of `R8::Shape`'s `dim()`, among others.
+    /// An R vector of the elements, copied once: the result of
+    /// `R8::Shape`'s `dim()`, among others.
     fn into_r(self) -> std::result::Result<SEXP, Jumped> {
-        Buffer::from(self).into_r()
+        let n = sys::R_xlen_t::try_from(self.len()).map_err(|_| {
+            Jumped::Error(Error::new("too_long", "the vector is longer than R allows"))
+        })?;
+        alloc(&|| unsafe {
+            let v = sys::Rf_allocVector(T::SEXPTYPE, n);
+            if n > 0 {
+                std::ptr::copy_nonoverlapping(self.as_ptr(), T::data_mut(v), self.len());
+            }
+            v
+        })
+    }
+}
+
+/// An R logical vector of the elements.
+impl IntoR for Vec<bool> {
+    fn return_type() -> Option<FieldType> {
+        Some(<crate::buffer::Logical as ElementType>::buffer_type())
+    }
+    fn into_r(self) -> std::result::Result<SEXP, Jumped> {
+        self.into_iter()
+            .map(crate::buffer::Logical::from)
+            .collect::<Vec<_>>()
+            .into_r()
     }
 }
 
@@ -735,11 +757,43 @@ pub unsafe fn method(
     err: *mut abi::Error,
     body: impl FnOnce(&[SEXP]) -> std::result::Result<SEXP, Jumped>,
 ) -> Status {
+    unsafe { called("method", args, nargs, n_params, result, err, body) }
+}
+
+/// The call of a function's compiled body that `#[r8::function]` generates,
+/// as [`method()`] calls an impl function.
+///
+/// # Safety
+///
+/// As [`method()`].
+#[doc(hidden)]
+pub unsafe fn function(
+    args: *const abi::Sexp,
+    nargs: usize,
+    n_params: usize,
+    result: *mut abi::Sexp,
+    err: *mut abi::Error,
+    body: impl FnOnce(&[SEXP]) -> std::result::Result<SEXP, Jumped>,
+) -> Status {
+    unsafe { called("function", args, nargs, n_params, result, err, body) }
+}
+
+/// The body of [`method()`] and [`function()`]; `what` names the callee in an
+/// error.
+unsafe fn called(
+    what: &str,
+    args: *const abi::Sexp,
+    nargs: usize,
+    n_params: usize,
+    result: *mut abi::Sexp,
+    err: *mut abi::Error,
+    body: impl FnOnce(&[SEXP]) -> std::result::Result<SEXP, Jumped>,
+) -> Status {
     keep::drain();
     if nargs != n_params {
         Error::new(
             "arity",
-            format!("the method takes {n_params} arguments, and received {nargs}"),
+            format!("the {what} takes {n_params} arguments, and received {nargs}"),
         )
         .fill(err);
         return ERROR;

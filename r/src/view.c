@@ -534,14 +534,14 @@ static SEXP r8_invoke(SEXP fn, SEXP args) {
     // A callee may leave the buffers without an end.
     err.code[sizeof(err.code) - 1] = '\0';
     err.message[sizeof(err.message) - 1] = '\0';
-    // R8's `method_abort()` raises the classed condition, r8_method_error or
-    // r8_panic, from the generic's call.
+    // R8's `compiled_abort()` raises the classed condition, r8_compiled_error
+    // or r8_panic, from the generic's call.
     SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
     SEXP code = PROTECT(Rf_mkString(err.code[0] == '\0' ? "no_code" : err.code));
     SEXP message = PROTECT(Rf_mkString(
         err.message[0] == '\0' ? "the compiled method returned an error without a message"
                                 : err.message));
-    r8_abort3("method_abort", code, message, PROTECT(generic_call()), ns);
+    r8_abort3("compiled_abort", code, message, PROTECT(generic_call()), ns);
     UNPROTECT(5);
   }
   Rf_error("the impl function returned the status %d, none of R8_OK, R8_ERROR, and R8_UNWIND",
@@ -983,6 +983,98 @@ static SEXP r8_check_call(SEXP env, SEXP key, SEXP dispatch) {
   return checked_call(env, key, dispatch, 0);
 }
 
+int r8_native_function(SEXP key, R8MethodFn *call, const SEXP **params);
+
+// The result `value` of the typed function `key`, checked against its return
+// type, in its stored form; R8's `result_abort()` raises the error.
+static SEXP function_result(SEXP value, SEXP key, SEXP dispatch) {
+  int outcome = r8_signature_result(key, R_BlankString, value);
+  if (outcome == R8_TO_INTEGER || outcome == R8_TO_DOUBLE) {
+    return converted(value, outcome);
+  }
+  if (outcome == R8_CHECK) {
+    PROTECT(value);
+    SEXP text = PROTECT(Rf_mkString(""));
+    SEXP checked = PROTECT(wrap__r8_check_result(key, text, value));
+    if (is_problems(checked)) {
+      r8_abort3("result_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), text, checked,
+                r8_namespace(dispatch));
+    }
+    SEXP out = TYPEOF(checked) == VECSXP && XLENGTH(checked) == 1 ? VECTOR_ELT(checked, 0)
+                                                                    : value;
+    UNPROTECT(3);
+    return out;
+  }
+  if (outcome < 0) {
+    r8_abort3("signature_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), R_NilValue,
+              R_NilValue, r8_namespace(dispatch));
+  }
+  return value;
+}
+
+// Calls the typed function `key` whose body is compiled code, from its frame
+// `env`: checks and converts the arguments as `check` does, passes the value of
+// each parameter in the declaration's order, `...` as a list, to the body that
+// the function's package registered (`r8_native_function()`), and checks the
+// result. R8_ERROR raises R8's `compiled_abort()` from the function's call, and
+// R8_UNWIND continues the jump that R8Api.protect caught.
+// spec: R8/class-system#typed-functions
+static SEXP r8_native(SEXP env, SEXP key, SEXP dispatch) {
+  checked_call(env, key, dispatch, 0);
+  R8MethodFn call = NULL;
+  const SEXP *params = NULL;
+  int n = r8_native_function(key, &call, &params);
+  if (n < 0 || call == NULL) {
+    r8_abort3("native_abort", PROTECT(Rf_ScalarString(PRINTNAME(key))), R_NilValue,
+              R_NilValue, r8_namespace(dispatch));
+  }
+  SEXP args = PROTECT(Rf_allocVector(VECSXP, n));
+  for (int i = 0; i < n; i++) {
+    SEXP v;
+    if (params[i] == R_DotsSymbol) {
+      SEXP dots = PROTECT(Rf_lang2(Rf_install("list"), R_DotsSymbol));
+      v = Rf_eval(dots, env);
+      UNPROTECT(1);
+    } else {
+      // A missing argument without a default raises R's own error here.
+      v = Rf_eval(params[i], env);
+    }
+    SET_VECTOR_ELT(args, i, v);
+  }
+  const SEXP *argv = n > 0 ? (const SEXP *) R_alloc((size_t) n, sizeof(SEXP)) : NULL;
+  for (int i = 0; i < n; i++) {
+    ((SEXP *) argv)[i] = VECTOR_ELT(args, i);
+  }
+  R8CallInputs inputs = {sizeof(R8CallInputs), 0, 0};
+  SEXP result = R_NilValue;
+  R8Error err = {{0}, {0}};
+  R8Status status = call(&inputs, argv, (size_t) n, &result, &err);
+  if (status == R8_UNWIND) {
+    R_ContinueUnwind(continuation);
+  }
+  if (status == R8_ERROR) {
+    err.code[sizeof(err.code) - 1] = '\0';
+    err.message[sizeof(err.message) - 1] = '\0';
+    SEXP ns = r8_namespace(dispatch);
+    SEXP code = PROTECT(Rf_mkString(err.code[0] == '\0' ? "no_code" : err.code));
+    SEXP message = PROTECT(Rf_mkString(
+        err.message[0] == '\0' ? "the compiled body returned an error without a message"
+                                : err.message));
+    SEXP sys_call = PROTECT(Rf_lang1(Rf_install("sys.call")));
+    SEXP fcall = PROTECT(Rf_eval(sys_call, env));
+    r8_abort3("compiled_abort", code, message, fcall, ns);
+    UNPROTECT(4);
+  }
+  if (status != R8_OK) {
+    Rf_error("the compiled body returned the status %d, none of R8_OK, R8_ERROR, and R8_UNWIND",
+             (int) status);
+  }
+  PROTECT(result);
+  SEXP out = function_result(result, key, dispatch);
+  UNPROTECT(2);
+  return out;
+}
+
 // Whether `out` is a value of the type of `x`: the same type for a value of
 // R8, and an identical class vector for any other object, implicit class
 // included.
@@ -1146,11 +1238,11 @@ static SEXP r8_require(SEXP x) {
 // The C routines that R calls through `.Call()` on a native symbol:
 // list(invoke, exports, construct, find, replaced, find2, find3, call,
 // result, upcast, variant, is_variant, type, variant_of, is_value, names,
-// require, get, fields). R8's `.Call` routines
+// require, get, fields, check, native). R8's `.Call` routines
 // are the Rust code's, registered by extendr; these continue a jump, call R_GetCCallable(), evaluate R code, or
 // read the fields of Rust-stored values from C frames.
 SEXP r8_native_symbols(void) {
-  SEXP out = PROTECT(Rf_allocVector(VECSXP, 20));
+  SEXP out = PROTECT(Rf_allocVector(VECSXP, 21));
   SET_VECTOR_ELT(out, 0, native_symbol((DL_FUNC) r8_invoke));
   SET_VECTOR_ELT(out, 1, native_symbol((DL_FUNC) r8_package_exports));
   SET_VECTOR_ELT(out, 2, native_symbol((DL_FUNC) r8_construct_frame));
@@ -1171,7 +1263,8 @@ SEXP r8_native_symbols(void) {
   SET_VECTOR_ELT(out, 17, native_symbol((DL_FUNC) r8_c_get));
   SET_VECTOR_ELT(out, 18, native_symbol((DL_FUNC) r8_c_fields));
   SET_VECTOR_ELT(out, 19, native_symbol((DL_FUNC) r8_check_call));
-  SEXP names = PROTECT(Rf_allocVector(STRSXP, 20));
+  SET_VECTOR_ELT(out, 20, native_symbol((DL_FUNC) r8_native));
+  SEXP names = PROTECT(Rf_allocVector(STRSXP, 21));
   SET_STRING_ELT(names, 0, Rf_mkChar("invoke"));
   SET_STRING_ELT(names, 1, Rf_mkChar("exports"));
   SET_STRING_ELT(names, 2, Rf_mkChar("construct"));
@@ -1192,6 +1285,7 @@ SEXP r8_native_symbols(void) {
   SET_STRING_ELT(names, 17, Rf_mkChar("get"));
   SET_STRING_ELT(names, 18, Rf_mkChar("fields"));
   SET_STRING_ELT(names, 19, Rf_mkChar("check"));
+  SET_STRING_ELT(names, 20, Rf_mkChar("native"));
   Rf_setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;

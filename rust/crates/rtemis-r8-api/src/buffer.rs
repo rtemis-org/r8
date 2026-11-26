@@ -46,6 +46,13 @@ pub trait Element: Copy + Send + Sync + 'static {
     /// `x` is a vector of `SEXPTYPE`, `buf` holds `n` elements, on R's main
     /// thread.
     unsafe fn region(x: SEXP, i: R_xlen_t, n: R_xlen_t, buf: *mut Self) -> R_xlen_t;
+    /// The array of the R vector `x`, which R allocated.
+    ///
+    /// # Safety
+    ///
+    /// `x` is a vector of `SEXPTYPE` that R allocated, not ALTREP, on R's main
+    /// thread.
+    unsafe fn data_mut(x: SEXP) -> *mut Self;
     /// A view of `n` elements at `data`, which `owner` keeps alive.
     ///
     /// # Safety
@@ -82,11 +89,14 @@ fn block<T: Copy, U>(len: usize, fill: impl FnOnce(&mut [U]) -> Result<()>) -> R
 }
 
 macro_rules! element {
-    ($t:ty, $sexptype:expr, $region:ident, $view:ident, $vt:ty, $from_node:expr) => {
+    ($t:ty, $sexptype:expr, $region:ident, $data:ident, $view:ident, $vt:ty, $from_node:expr) => {
         impl Element for $t {
             const SEXPTYPE: c_int = $sexptype;
             unsafe fn region(x: SEXP, i: R_xlen_t, n: R_xlen_t, buf: *mut Self) -> R_xlen_t {
                 unsafe { sys::$region(x, i, n, buf.cast()) }
+            }
+            unsafe fn data_mut(x: SEXP) -> *mut Self {
+                unsafe { sys::$data(x) }.cast()
             }
             unsafe fn view(
                 api: &abi::Api,
@@ -115,6 +125,7 @@ element!(
     f64,
     sys::REALSXP,
     REAL_GET_REGION,
+    REAL,
     view_doubles,
     f64,
     |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {
@@ -125,6 +136,7 @@ element!(
     i32,
     sys::INTSXP,
     INTEGER_GET_REGION,
+    INTEGER,
     view_integers,
     i32,
     |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {
@@ -135,6 +147,7 @@ element!(
     Logical,
     sys::LGLSXP,
     LOGICAL_GET_REGION,
+    LOGICAL,
     view_logicals,
     i32,
     |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {
@@ -145,6 +158,7 @@ element!(
     u8,
     sys::RAWSXP,
     RAW_GET_REGION,
+    RAW,
     view_bytes,
     u8,
     |r: &crate::reader::Reader<'a>, n: crate::reader::Node<'a>| {

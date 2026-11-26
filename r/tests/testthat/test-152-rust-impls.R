@@ -24,7 +24,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "cat('magnitude', magnitude(s), '\\n')",
       "cat('ratio', ratio(s, 2), '\\n')",
       "e <- tryCatch(ratio(s, 0), error = identity)",
-      "cat('error', inherits(e, 'r8_method_error') && inherits(e, 'r8_error'), e$code, deparse1(conditionCall(e)), '\\n')",
+      "cat('error', inherits(e, 'r8_compiled_error') && inherits(e, 'r8_error'), e$code, deparse1(conditionCall(e)), '\\n')",
       "e <- tryCatch(sapply(list(s), ratio, by = 0), error = identity)",
       "cat('call', deparse1(conditionCall(e)), '\\n')",
       "cat('display', format(s), '\\n')",

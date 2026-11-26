@@ -66,6 +66,21 @@ With \code{typed = "mixed"}, a parameter may have no type, and the function may 
 every parameter has a type and there is no \code{...}, which the declaration checks.
 }
 
+\section{A body in Rust}{
+
+A function of a package whose body is exactly \code{\link[=rust]{rust()}} has its body in the
+package's Rust code: a function marked \verb{#[r8::function]} of the same name,
+listed in \code{functions} of the package's \verb{r8::exports!}. The declaration stays
+the function's: its parameters, types, defaults, descriptions, rules, return
+type, help page, and \code{\link[=r8_schema]{r8_schema()}}. Each call checks and converts the
+arguments, evaluates every parameter, a default written in R included, and
+passes the values to the Rust function in the order of the parameters, \code{...}
+as a list; the result is checked as an R body's is. An error that the Rust
+function returns is an \code{r8_compiled_error}. When the package loads, R8
+compares the Rust function's signature with the declaration
+(\code{\link[=r8_rust_signature]{r8_rust_signature()}} writes it).
+}
+
 \section{Outside R8}{
 
 The function given is plain R: \code{arg()} gives its default, or R's error for a

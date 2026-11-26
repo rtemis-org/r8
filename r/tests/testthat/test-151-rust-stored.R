@@ -213,6 +213,46 @@ test_that("Rust-stored enums construct, read, change, persist, and cross workers
   expect_true("future 1 2 " %in% out, info = info)
 })
 
+test_that("a kept vector stays as it was, and a value outlives its package's unload", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  skip_if_not_installed("pkgload")
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages(library(r8pkgR))",
+      "say <- function(...) cat(..., '\\n')",
+      # The value keeps the caller's vector, which R's replacement copies.
+      "x <- c(3, 4)",
+      "s <- Signal(name = 'a', values = x)",
+      "x[[1]] <- 10",
+      "v <- s$values",
+      "v[[2]] <- 0",
+      "say('kept', identical(s$values, c(3, 4)), identical(x, c(10, 4)), identical(v, c(3, 0)))",
+      # The package's code stays mapped after its library unloads, so the
+      # value's fields read and its state is freed by its own code.
+      "b <- Band(lo = 0, hi = 4, label = 'b', weights = c(1, 2))",
+      "pkgload::unload('r8pkgR')",
+      "invisible(gc())",
+      "say('unloaded', identical(s$values, c(3, 4)), s$name, b$label, identical(b$weights, c(1, 2)))",
+      "rm(s, b)",
+      "invisible(gc())",
+      "say('collected')"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  for (line in c(
+    "kept TRUE TRUE TRUE ",
+    "unloaded TRUE a b TRUE ",
+    "collected "
+  )) {
+    expect_true(line %in% out, info = paste(line, info, sep = "\n"))
+  }
+})
+
 test_that("the conformance tests pass against the Rust-stored pkgr::Probe", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),

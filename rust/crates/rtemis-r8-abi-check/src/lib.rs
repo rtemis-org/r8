@@ -11,6 +11,7 @@ unsafe extern "C" {
     fn r8_abi_positions() -> u32;
     fn r8_abi_values() -> u32;
     fn r8_abi_min_sizes(out: *mut usize);
+    fn r8_abi_declared_in_r() -> u32;
 }
 
 /// The sizes and offsets of `R8.h`, in the order of `rtemis_r8::abi::struct_offsets()`.
@@ -44,10 +45,17 @@ pub fn c_constants() -> (u32, u32, u32, u32, u32) {
 
 /// The minimum sizes of the header, `R8_CALL_INPUTS_MIN_SIZE`,
 /// `R8_READER_MIN_SIZE`, `R8_CODEC_MIN_SIZE`, `R8_IMPL_ENTRY_MIN_SIZE`,
-/// `R8_EXPORTS_MIN_SIZE`, and `R8_API_MIN_SIZE`, in that order.
-pub fn c_min_sizes() -> [usize; 6] {
-    let mut out = [0usize; 6];
-    // SAFETY: `out` holds the six entries that the function writes.
+/// `R8_EXPORTS_MIN_SIZE`, `R8_API_MIN_SIZE`, `R8_EXPORTS_FUNCTIONS_SIZE`, and
+/// `R8_FUNCTION_ENTRY_MIN_SIZE`, in that order.
+pub fn c_min_sizes() -> [usize; 8] {
+    let mut out = [0usize; 8];
+    // SAFETY: `out` holds the eight entries that the function writes.
     unsafe { r8_abi_min_sizes(out.as_mut_ptr()) };
     out
+}
+
+/// `R8_DECLARED_IN_R` as the header defines it.
+pub fn c_declared_in_r() -> u32 {
+    // SAFETY: the function takes no arguments and returns a constant.
+    unsafe { r8_abi_declared_in_r() }
 }
