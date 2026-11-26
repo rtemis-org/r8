@@ -426,9 +426,15 @@ test_that("a symbol or a call dispatches as a value and is not evaluated", {
 })
 
 test_that("an S7 class is a host class of the system s7", {
+  # S7 is not among R8's dependencies: the test runs where it is installed,
+  # and reaches its functions by name.
   skip_if_not_installed("S7")
-  Metrics <- S7::new_class("Metrics", properties = list(a = S7::class_double))
-  Classif <- S7::new_class("Classif", parent = Metrics)
+  s7 <- function(name) getExportedValue("S7", name)
+  Metrics <- s7("new_class")(
+    "Metrics",
+    properties = list(a = s7("class_double"))
+  )
+  Classif <- s7("new_class")("Classif", parent = Metrics)
   m <- Classif(a = 1)
   h <- unclass(host_class(Classif))
   expect_identical(h[["system"]], "s7")
@@ -448,7 +454,7 @@ test_that("an S7 class is a host class of the system s7", {
     class = "r8_declaration_error"
   )
   expect_error(
-    host_class(S7::class_double),
+    host_class(s7("class_double")),
     "no S7 classes",
     class = "r8_declaration_error"
   )
