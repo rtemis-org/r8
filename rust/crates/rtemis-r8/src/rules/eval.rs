@@ -749,6 +749,9 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                     }
                     return apply(*op, &[self.scalar(v)]).map(|v| Ok(Val::V(v)));
                 }
+                if let [x, y] = args.as_slice() {
+                    return self.binary(*op, x, y);
+                }
                 let mut vals = Vec::with_capacity(args.len());
                 let mut absent = false;
                 for a in args {
@@ -775,6 +778,30 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 apply(*op, &scalars).map(|v| Ok(Val::V(v)))
             }
         }
+    }
+
+    /// An operation of two operands, as `Expr::Op` evaluates one of any number,
+    /// without a vector of them.
+    fn binary(&self, op: Op, x: &Expr, y: &Expr) -> Evaluated<'l, A> {
+        let (a, b) = (self.eval(x)?, self.eval(y)?);
+        let (Ok(a), Ok(b)) = (a, b) else {
+            return Ok(Err(Absent));
+        };
+        let vals = [a, b];
+        if let Some(r) = self.in_place(op, &vals) {
+            return r.map(|v| v.map(Val::V));
+        }
+        let [a, b] = vals;
+        let scalars = [self.scalar(a), self.scalar(b)];
+        // `NaN` is missing, to an operator whose result is no number.
+        if matches!(
+            op,
+            Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::In | Op::Cat
+        ) && scalars.iter().any(is_nan)
+        {
+            return Ok(Err(Absent));
+        }
+        apply(op, &scalars).map(|v| Ok(Val::V(v)))
     }
 
     /// `and` and `or`: the first operand that is `deciding` decides; otherwise

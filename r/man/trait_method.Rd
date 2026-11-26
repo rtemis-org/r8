@@ -10,7 +10,8 @@ trait_method(
   default_impl = NULL,
   stochastic = FALSE,
   dispatch = NULL,
-  return_type = NULL
+  return_type = NULL,
+  rules = list()
 )
 }
 \arguments{
@@ -34,6 +35,9 @@ method returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type 
 the first dispatched argument. An impl may declare a type that fits it
 (\code{\link[=impl_method]{impl_method()}}). A replacement method returns a value of its
 argument's type and declares none.}
+
+\item{rules}{A \code{\link[=rule]{rule()}}, or a list of rules, over the typed parameters, which
+every call satisfies once each argument satisfies its type.}
 }
 \value{
 An \code{r8_trait_method}.

@@ -1695,6 +1695,13 @@
         "has_default_impl": {
           "type": "boolean",
           "description": "The trait supplies a default implementation."
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuleDef"
+          },
+          "description": "The rules over the typed parameters, which every call satisfies after\neach argument satisfies its type."
         }
       },
       "required": [

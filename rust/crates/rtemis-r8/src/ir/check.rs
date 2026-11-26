@@ -678,6 +678,10 @@ impl Checker<'_> {
         if let Some(ReturnType::Type(t)) = &m.return_type {
             self.value_type(t, &format!("{path}/return_type"));
         }
+        if !m.rules.is_empty() {
+            let scope = m.rule_scope();
+            self.rules(&m.rules, &scope, false, &format!("{path}/rules"));
+        }
     }
 
     /// The type of a parameter or a return value, which a call holds in the

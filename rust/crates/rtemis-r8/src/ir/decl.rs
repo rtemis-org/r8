@@ -665,9 +665,18 @@ pub struct MethodDef {
     /// The trait supplies a default implementation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub has_default_impl: bool,
+    /// The rules over the typed parameters, which every call satisfies after
+    /// each argument satisfies its type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<RuleDef>,
 }
 
 impl MethodDef {
+    /// The typed parameters as the fields that the rules read.
+    pub fn rule_scope(&self) -> Vec<FieldDef> {
+        params_scope(&self.params)
+    }
+
     /// The positions of the parameters the method dispatches on: those
     /// marked, or else the first parameter.
     pub fn dispatched(&self) -> Vec<usize> {
@@ -785,25 +794,30 @@ pub struct FunctionDef {
 impl FunctionDef {
     /// The typed parameters as the fields that the rules read.
     pub fn rule_scope(&self) -> Vec<FieldDef> {
-        self.params
-            .iter()
-            .filter_map(|p| {
-                let ty = p.ty()?.clone();
-                let name = Name::new(p.name()).ok()?;
-                Some(FieldDef {
-                    name,
-                    ty,
-                    default: None,
-                    description: Box::from(""),
-                    sensitive: false,
-                    unit: None,
-                    resolve: None,
-                    inherited_from: None,
-                    extensions: None,
-                })
-            })
-            .collect()
+        params_scope(&self.params)
     }
+}
+
+/// Typed parameters as fields, for the rules that read them.
+fn params_scope(params: &[ParamDef]) -> Vec<FieldDef> {
+    params
+        .iter()
+        .filter_map(|p| {
+            let ty = p.ty()?.clone();
+            let name = Name::new(p.name()).ok()?;
+            Some(FieldDef {
+                name,
+                ty,
+                default: None,
+                description: Box::from(""),
+                sensitive: false,
+                unit: None,
+                resolve: None,
+                inherited_from: None,
+                extensions: None,
+            })
+        })
+        .collect()
 }
 
 /// The class system of a host class.

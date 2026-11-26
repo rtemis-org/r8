@@ -75,6 +75,8 @@ BASE_PACKAGES <- c("base", "stats", "utils", "methods", "graphics", "grDevices")
 #'   the first dispatched argument. An impl may declare a type that fits it
 #'   ([impl_method()]). A replacement method returns a value of its
 #'   argument's type and declares none.
+#' @param rules A [rule()], or a list of rules, over the typed parameters, which
+#'   every call satisfies once each argument satisfies its type.
 #'
 #' @return An `r8_trait_method`.
 #'
@@ -95,7 +97,8 @@ trait_method <- function(
   default_impl = NULL,
   stochastic = FALSE,
   dispatch = NULL,
-  return_type = NULL
+  return_type = NULL,
+  rules = list()
 ) {
   p <- as_params(params, "trait_method()")
   if (!is.null(default_impl)) {
@@ -112,7 +115,8 @@ trait_method <- function(
       default_impl = default_impl,
       stochastic = check_flag(stochastic, "stochastic"),
       dispatch = dispatch,
-      return_type = return_type_ir(return_type, self = TRUE)
+      return_type = return_type_ir(return_type, self = TRUE),
+      rules = as_rules(rules)
     ),
     class = "r8_trait_method"
   )
@@ -245,13 +249,22 @@ RESERVED_METHODS <- c(
 #' @param p An `r8_params`: The parameters.
 #' @param dispatch Character: The dispatched arguments, in formal order.
 #' @param return_type The return type's IR, or `NULL`.
+#' @param rules Logical: The method has rules over its parameters, which the
+#'   routine `call` checks.
 #'
 #' @return The generic, with its dispatched arguments as the attribute
 #'   `r8_dispatch`.
 #'
 #' @keywords internal
 #' @noRd
-make_generic <- function(trait_name, method, p, dispatch, return_type = NULL) {
+make_generic <- function(
+  trait_name,
+  method,
+  p,
+  dispatch,
+  return_type = NULL,
+  rules = FALSE
+) {
   args <- p[["names"]]
   first <- as.name(args[[1L]])
   call_args <- lapply(args, function(a) {
@@ -266,7 +279,7 @@ make_generic <- function(trait_name, method, p, dispatch, return_type = NULL) {
   # worker's impls.
   ns <- asNamespace("R8")
   at <- function(name) call("$", ns, as.name(name))
-  typed <- !all(vapply(p[["types"]], is.null, logical(1)))
+  typed <- !all(vapply(p[["types"]], is.null, logical(1))) || rules
   find <- as.call(c(
     list(quote(.Call)),
     if (typed) {
@@ -1121,13 +1134,15 @@ build_trait <- function(
       params = params_ir(p, dispatch)
     )
     method_ir[["return_type"]] <- tm[["return_type"]]
+    method_ir[["rules"]] <- tm[["rules"]]
     if (is.null(existing)) {
       generics[[m]] <- make_generic(
         qname,
         m,
         stored_defaults(p),
         dispatch,
-        tm[["return_type"]]
+        tm[["return_type"]],
+        rules = length(tm[["rules"]]) > 0L
       )
     }
     if (tm[["stochastic"]]) {

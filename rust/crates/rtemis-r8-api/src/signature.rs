@@ -120,6 +120,7 @@ pub fn method(
         return_type,
         stochastic: false,
         has_default_impl: false,
+        rules: Vec::new(),
     }
 }
 

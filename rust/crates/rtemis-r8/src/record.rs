@@ -948,10 +948,12 @@ fn w_trait(w: &mut W, t: &TraitDef) {
             return_type,
             stochastic,
             has_default_impl,
+            rules,
         } = m;
         w.str(name.as_str());
         w.str(description);
         w.seq(params, w_param);
+        w.seq(rules, w_rule);
         w.u8(u8::from(*stochastic)
             | u8::from(*has_default_impl) << 1
             | u8::from(return_type.is_some()) << 2);
@@ -1789,6 +1791,7 @@ fn r_trait(r: &mut R) -> Res<TraitDef> {
             let name = r_method_name(r)?;
             let description = r.str()?.to_owned();
             let params = r.seq(2, r_param)?;
+            let rules = r.seq(5, r_rule)?;
             let f = r.flags(0b111, "method")?;
             let return_type = if f & 4 != 0 {
                 Some(match r.u8()? {
@@ -1806,6 +1809,7 @@ fn r_trait(r: &mut R) -> Res<TraitDef> {
                 return_type,
                 stochastic: f & 1 != 0,
                 has_default_impl: f & 2 != 0,
+                rules,
             })
         })?,
         required_fields: r.seq(3, |r| {

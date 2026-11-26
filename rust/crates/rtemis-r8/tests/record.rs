@@ -499,6 +499,13 @@ fn sample_trait() -> TraitDef {
                 )))),
                 stochastic: true,
                 has_default_impl: true,
+                rules: vec![
+                    serde_json::from_value(serde_json::json!({
+                        "invariant": {">": [{"var": "scale"}, 0]},
+                        "id": "SCALE"
+                    }))
+                    .unwrap(),
+                ],
             },
             MethodDef {
                 name: MethodName::new("[").unwrap(),
@@ -507,6 +514,7 @@ fn sample_trait() -> TraitDef {
                 return_type: Some(ReturnType::SelfType(SelfMarker::SelfType)),
                 stochastic: false,
                 has_default_impl: false,
+                rules: Vec::new(),
             },
         ],
         required_fields: vec![RequiredField {

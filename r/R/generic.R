@@ -282,6 +282,9 @@ check_method_formals <- function(fn, gen_args, label) {
 #'   first dispatched argument. A method may declare a type that fits it
 #'   ([implement<-]). A replacement generic returns a value of its argument's
 #'   type and declares none.
+#' @param rules A [rule()], or a list of rules, over the typed parameters, which
+#'   every call satisfies once each argument satisfies its type, before the method
+#'   is chosen.
 #'
 #' @return `generic()`: The generic, a function of class `r8_generic`. `print()`: `x`, invisibly.
 #'
@@ -317,7 +320,8 @@ generic <- function(
   params,
   description = "",
   dispatch = NULL,
-  return_type = NULL
+  return_type = NULL,
+  rules = list()
 ) {
   replacement <- is.character(name) &&
     length(name) == 1L &&
@@ -396,12 +400,14 @@ generic <- function(
     params = params_ir(p, dispatch)
   )
   method[["return_type"]] <- return_type_ir(return_type, self = TRUE)
+  method[["rules"]] <- as_rules(rules)
   g <- make_generic(
     qname,
     name,
     stored_defaults(p),
     dispatch,
-    method[["return_type"]]
+    method[["return_type"]],
+    rules = length(method[["rules"]]) > 0L
   )
   ir <- list(
     name = trait_name,

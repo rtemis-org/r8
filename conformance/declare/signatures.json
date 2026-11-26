@@ -1578,6 +1578,156 @@
           }
         ]
       }
+    },
+    {
+      "id": "method-rule",
+      "description": "A rule of a generic over its typed parameters.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "clip",
+            "description": "",
+            "generic": true,
+            "methods": [
+              {
+                "name": "clip",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "lo",
+                    "type": {
+                      "kind": "double"
+                    }
+                  },
+                  {
+                    "name": "hi",
+                    "type": {
+                      "kind": "double"
+                    }
+                  },
+                  "n"
+                ],
+                "rules": [
+                  {
+                    "invariant": {
+                      "<=": [
+                        {
+                          "var": "lo"
+                        },
+                        {
+                          "var": "hi"
+                        }
+                      ]
+                    },
+                    "id": "ORDER"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "method-rule-untyped",
+      "description": "A rule of a generic that reads an untyped parameter.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "S",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "clip",
+            "description": "",
+            "generic": true,
+            "methods": [
+              {
+                "name": "clip",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "lo",
+                    "type": {
+                      "kind": "double"
+                    }
+                  },
+                  {
+                    "name": "hi",
+                    "type": {
+                      "kind": "double"
+                    }
+                  },
+                  "n"
+                ],
+                "rules": [
+                  {
+                    "invariant": {
+                      "<=": [
+                        {
+                          "var": "lo"
+                        },
+                        {
+                          "var": "n"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_field",
+            "path": "/traits/0/methods/0/rules/0/invariant/<=/1/var"
+          }
+        ]
+      }
     }
   ]
 }

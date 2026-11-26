@@ -274,3 +274,40 @@ test_that("a typed function registers its record in another process", {
     info = paste(out, collapse = "\n")
   )
 })
+
+
+test_that("a generic and a trait method check rules over their parameters", {
+  out <- declare_in("fn8", {
+    S <- new_struct("S", fields = list(a = type_double()))
+    span <- generic(
+      "span",
+      params(x, lo = arg_double(), hi = arg_double()),
+      rules = list(order = rule(lo <= hi, message = "lo is at most hi."))
+    )
+    implement(span, S) <- function(x, lo, hi) x$a * (hi - lo)
+    Fit <- new_trait(
+      "Fit",
+      methods = list(
+        fit = trait_method(
+          params(x, n = arg_integer(), most = arg_integer()),
+          rules = rule(n <= most)
+        )
+      )
+    )
+    impl(Fit, S, methods = list(fit = function(x, n, most) n))
+    list(S = S, span = span, fit = Fit@fit)
+  })
+  s <- out$S(a = 2)
+  expect_identical(out$span(s, 1, 3), 4)
+  e <- expect_error(out$span(s, 3, 1), class = "r8_argument_error")
+  expect_match(conditionMessage(e), "lo is at most hi.", fixed = TRUE)
+  expect_identical(out$fit(s, 1L, 2L), 1L)
+  expect_error(out$fit(s, 3L, 2L), "n <= most", class = "r8_argument_error")
+  expect_error(
+    declare_in("fn8", {
+      generic("bad", params(x, lo = arg_double(), hi), rules = rule(lo < hi))
+    }),
+    "rule_field",
+    class = "r8_declaration_error"
+  )
+})

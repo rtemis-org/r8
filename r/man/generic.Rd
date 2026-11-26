@@ -5,7 +5,14 @@
 \alias{print.r8_generic}
 \title{Declare a generic}
 \usage{
-generic(name, params, description = "", dispatch = NULL, return_type = NULL)
+generic(
+  name,
+  params,
+  description = "",
+  dispatch = NULL,
+  return_type = NULL,
+  rules = list()
+)
 
 \method{print}{r8_generic}(x, ...)
 }
@@ -41,6 +48,10 @@ returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of the
 first dispatched argument. A method may declare a type that fits it
 (\link{implement<-}). A replacement generic returns a value of its argument's
 type and declares none.}
+
+\item{rules}{A \code{\link[=rule]{rule()}}, or a list of rules, over the typed parameters, which
+every call satisfies once each argument satisfies its type, before the method
+is chosen.}
 
 \item{x}{A generic of class \code{r8_generic}.}
 

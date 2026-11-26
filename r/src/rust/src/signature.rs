@@ -232,6 +232,46 @@ struct Signature {
     /// parameters as fields.
     rules: Vec<RuleDef>,
     scope: Vec<FieldDef>,
+    /// The rules compiled, with the registry they were compiled against, and a
+    /// list of the typed parameters, preserved, which holds a call's values while
+    /// the rules read them.
+    compiled: Vec<std::sync::Arc<rtemis_r8::rules::CompiledRule>>,
+    docs: Option<std::sync::Arc<DocumentSet>>,
+    held: SEXP,
+}
+
+impl Drop for Signature {
+    fn drop(&mut self) {
+        if !is_null(self.held) {
+            unsafe { extendr_ffi::R_ReleaseObject(self.held) };
+        }
+    }
+}
+
+impl Signature {
+    /// Whether the values `values` of the forced parameters satisfy every rule,
+    /// read in place; `false` also where a rule has no answer, which the validator
+    /// then gives. Allocates no R memory and raises no R error.
+    fn rules_hold(&self, values: &[SEXP]) -> bool {
+        let Some(docs) = &self.docs else { return false };
+        if self.compiled.len() != self.rules.len() {
+            return false;
+        }
+        for (k, s) in self.slots.iter().enumerate() {
+            unsafe { extendr_ffi::SET_VECTOR_ELT(self.held, k as isize, values[s.at]) };
+        }
+        let view = RView::Draft(self.held, "");
+        let holds = self.compiled.iter().all(|r| {
+            matches!(
+                r.check_access(view, &self.scope, &**docs),
+                Ok(rtemis_r8::rules::Outcome::Holds)
+            )
+        });
+        for k in 0..self.slots.len() {
+            unsafe { extendr_ffi::SET_VECTOR_ELT(self.held, k as isize, extendr_ffi::R_NilValue) };
+        }
+        holds
+    }
 }
 
 /// A hash of an address: one multiplication.
@@ -312,21 +352,43 @@ fn build(key: SEXP, generation: u64) -> Option<Signature> {
     if let Some(q) = function_key(key) {
         let f = docs.function_of(&q)?;
         let mut sig = build_params(&f.params, &[], &f.return_type, generation)?;
-        if !f.rules.is_empty() {
-            sig.rules = f.rules.clone();
-            sig.scope = f.rule_scope();
-        }
+        with_rules(&mut sig, &f.rules, f.rule_scope(), &docs);
         return Some(sig);
     }
     let (q, method) = key_parts(key)?;
     let tr = docs.trait_of(&q)?;
     let m = tr.methods.iter().find(|m| m.name.as_str() == method)?;
     let mut sig = build_params(&m.params, &m.dispatched(), &m.return_type, generation)?;
+    with_rules(&mut sig, &m.rules, m.rule_scope(), &docs);
     sig.narrowed = narrowed(&docs, &q, method)
         .into_iter()
         .map(|(k, t)| (k.into(), t.clone(), Test::of(t)))
         .collect();
     Some(sig)
+}
+
+/// Gives a signature the rules over its typed parameters, compiled against `docs`.
+fn with_rules(
+    sig: &mut Signature,
+    rules: &[RuleDef],
+    scope: Vec<FieldDef>,
+    docs: &std::sync::Arc<DocumentSet>,
+) {
+    if rules.is_empty() {
+        return;
+    }
+    sig.compiled = rules
+        .iter()
+        .filter_map(|r| {
+            rtemis_r8::rules::CompiledRule::compile(r, &scope, &**docs)
+                .ok()
+                .map(std::sync::Arc::new)
+        })
+        .collect();
+    sig.rules = rules.to_vec();
+    sig.scope = scope;
+    sig.held = held_list(&sig.slots);
+    sig.docs = Some(docs.clone());
 }
 
 /// The signature of parameters, of which those at `dispatched` dispatch, and of
@@ -374,7 +436,20 @@ fn build_params(
         narrowed: Vec::new(),
         rules: Vec::new(),
         scope: Vec::new(),
+        compiled: Vec::new(),
+        docs: None,
+        held: unsafe { extendr_ffi::R_NilValue },
     })
+}
+
+/// A named list of the typed parameters, preserved for the signature's life.
+fn held_list(slots: &[Slot]) -> SEXP {
+    let names: Vec<&str> = slots.iter().map(|s| &*s.name).collect();
+    let mut list: Robj = List::from_values(names.iter().map(|_| Robj::from(()))).into();
+    let _ = list.set_names(names);
+    let x = unsafe { list.get() };
+    unsafe { extendr_ffi::R_PreserveObject(x) };
+    x
 }
 
 /// The signature of `key` for the registry as it stands. A signature is
@@ -465,14 +540,19 @@ pub unsafe extern "C" fn r8_signature_test(
         }
         *n_dispatched = sig.dispatched.len().min(3) as c_int;
     }
-    // The rules of a function are evaluated with the validator.
-    let mut check = !sig.rules.is_empty();
+    let mut check = false;
     let mut convert = PASS;
     for slot in &sig.slots {
         let o = slot.test.run(unsafe { *values.add(slot.at) });
         unsafe { *outcomes.add(slot.at) = o };
         check |= o == CHECK;
         convert = convert.max(o);
+    }
+    // The rules of a function read the values in place; one that fails, or has
+    // no answer, goes to the validator, which reports it.
+    if !check && !sig.rules.is_empty() {
+        let given = unsafe { std::slice::from_raw_parts(values, n) };
+        check = !sig.rules_hold(given);
     }
     if check { CHECK } else { convert }
 }
