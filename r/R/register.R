@@ -433,9 +433,11 @@ check_trait_registered <- function(name, pkg) {
   owner <- r8_namespace_owner(namespace)
   provider <- r8_namespace_providers()[[namespace]]
   r8_abort(
-    "Package '",
-    pkg,
-    "' implements `",
+    if (nzchar(pkg)) {
+      paste0("Package '", pkg, "' implements `")
+    } else {
+      "An impl of `"
+    },
     name,
     "`, which is not registered: ",
     if (nzchar(owner)) {

@@ -360,6 +360,16 @@ calls_arg <- function(e, env) {
 #' @noRd
 is_visible_type <- function(e, env, params) {
   x <- e
+  # `pkg::name` names an object as a bare name does.
+  if (
+    is.call(e) &&
+      length(e) == 3L &&
+      (identical(e[[1L]], quote(`::`)) || identical(e[[1L]], quote(`:::`))) &&
+      is.name(e[[3L]])
+  ) {
+    x <- tryCatch(eval(e, baseenv()), error = function(cond) NULL)
+    return(inherits(x, c("r8_type", "r8_field_type", "r8_trait")))
+  }
   if (is.call(e)) {
     f <- called_function(e[[1L]], env)
     if (!is.function(f) || !identical(environment(f), topenv())) {
@@ -425,6 +435,24 @@ constant_value <- function(e, env) {
         logical(1)
       ))
   ) {
+    # A constant vector is of one kind: c(1L, TRUE) is an expression, which a
+    # call evaluates, not a value that c() coerces.
+    # NA, a logical constant, is a missing element of any kind.
+    elements <- Filter(
+      function(x) !identical(x, NA),
+      lapply(as.list(e)[-1L], eval, baseenv())
+    )
+    kinds <- unique(vapply(elements, typeof, character(1)))
+    if (length(kinds) > 1L && !all(kinds %in% c("integer", "double"))) {
+      r8_abort(
+        "The default `",
+        deparse1(e),
+        "` mixes ",
+        paste(kinds, collapse = " and "),
+        " elements, which c() coerces; write every element of one kind.",
+        class = "r8_declaration_error"
+      )
+    }
     return(list(eval(e, baseenv())))
   }
   NULL
@@ -627,6 +655,19 @@ param_name <- function(given, exprs, i, env) {
         class = "r8_declaration_error"
       )
     }
+    if (given %in% GENERIC_BODY_CALLS) {
+      # The check that R8 writes at the top of the body calls these functions
+      # by name, and R finds a parameter of the name first, forcing it.
+      r8_abort(
+        "`",
+        given,
+        "` is reserved: the body of a typed generic or function calls `",
+        given,
+        "()` before its own code, and a parameter of that name would take ",
+        "its place.",
+        class = "r8_declaration_error"
+      )
+    }
     if (empty) {
       param_abort(
         given,
@@ -721,6 +762,31 @@ read_param <- function(name, e, env, params) {
     logical(1)
   )
   matched <- matched[given]
+  # `default` and `description` follow the type's arguments, whose number
+  # differs by shorthand, so they are named: arg_integer(1L) is min = 1L.
+  # arg(type, default) takes its default by position.
+  named <- names(e) %||% character(length(e))
+  by_name <- setdiff(names(matched), named[nzchar(named)])
+  positional <- intersect(
+    by_name,
+    if (identical(constructor, "arg")) {
+      "description"
+    } else {
+      c("default", "description")
+    }
+  )
+  if (length(positional) > 0L) {
+    param_abort(
+      name,
+      "`",
+      positional[[1L]],
+      "` follows the type's arguments, by name: ",
+      positional[[1L]],
+      " = ",
+      deparse1(matched[[positional[[1L]]]]),
+      "."
+    )
+  }
   default <- if ("default" %in% names(matched)) {
     matched["default"]
   } else if (!identical(formals(f)[["default"]], quote(expr = ))) {
@@ -779,6 +845,9 @@ read_param <- function(name, e, env, params) {
     },
     error = function(cond) param_abort(name, conditionMessage(cond))
   )
+  if (inherits(type, S7_KINDS)) {
+    type <- s7_host_class(type)
+  }
   check_param_type(name, type)
   list(type = type, default = default, description = description)
 } # /R8::read_param
@@ -918,6 +987,9 @@ return_type_ir <- function(x, self) {
   if (inherits(x, "r8_type")) {
     ensure_registered(x)
     return(list(kind = "named", name = attr(x, "r8_name")))
+  }
+  if (inherits(x, S7_KINDS)) {
+    x <- s7_host_class(x)
   }
   if (inherits(x, "r8_field_type")) {
     return(unclass(x))

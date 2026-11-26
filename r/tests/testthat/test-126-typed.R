@@ -52,7 +52,7 @@ test_that("a typed argument is checked and converted as in construction", {
   refused(f(a, n = -1), "below_min")
   refused(f(a, n = 1.5), "`n`")
   refused(f(a, n = NA), "`n`")
-  refused(f(a, n = NULL), "`n` must be a value; found NULL")
+  refused(f(a, n = NULL), "`n` must be a value of type integer")
   refused(f(a, n = 1:2), "r_length")
   refused(f(a, n = c(a = 1L)), "r_attributes")
   refused(f(a, n = "1"), "r_type")
@@ -417,7 +417,7 @@ test_that("a result is checked, converted, and keeps its visibility", {
   )
   expect_error(
     f(a, NULL),
-    "The value must be a value; found NULL",
+    "The value must be a value of type .*; found NULL",
     class = "r8_result_error"
   )
   expect_error(f(a, stop("in the method")), "in the method")

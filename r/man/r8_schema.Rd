@@ -4,10 +4,10 @@
 \alias{r8_schema}
 \title{The JSON Schema of a type's values, or of a function's arguments}
 \usage{
-r8_schema(type, closed = FALSE)
+r8_schema(x, closed = FALSE)
 }
 \arguments{
-\item{type}{An R8 type object, or a typed function of \code{\link[=new_function]{new_function()}}.}
+\item{x}{An R8 type object, or a typed function of \code{\link[=new_function]{new_function()}}.}
 
 \item{closed}{Logical: Write each \code{dyn()} field as the closed list of the
 implementors registered in the session, each with its tag value as a
@@ -20,7 +20,7 @@ that names its type. The annotation \code{x-r8.closed} is then
 Character: The schema as JSON text.
 }
 \description{
-Writes the JSON Schema (draft 2020-12) that the documents of \code{type}
+Writes the JSON Schema (draft 2020-12) that the documents of a type
 satisfy, for tools outside R8: each named type it reaches is in \verb{$defs},
 and the root admits the document envelope. R8's facts that JSON Schema
 cannot state, such as rules and units, are annotations under \code{x-r8}.

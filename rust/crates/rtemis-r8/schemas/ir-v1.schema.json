@@ -1110,6 +1110,11 @@
           "type": "string",
           "const": "implicit",
           "description": "An implicit class: a name that `.class2()` derives from an object's\ntype and `dim` attribute, such as `\"matrix\"` or `\"NULL\"`."
+        },
+        {
+          "type": "string",
+          "const": "s7",
+          "description": "An S7 class: its name in an object's `class` attribute, qualified by\nits package, `pkg::Class`, as S7 writes it."
         }
       ],
       "description": "The class system of a host class."

@@ -101,12 +101,58 @@ assert_eq!(read.range.type_name().to_string(), "demo::Window");
 ```
 "##
 )]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct SubtypeOf<P: Extensible> {
     name: QualifiedName,
     base: P,
     /// The members of the value that `P` does not declare.
     rest: Map<String, Value>,
+    /// The declaration hash of the value's type in the declarations that a
+    /// document was read with, which [`SubtypeOf::downcast`] compares with
+    /// the type's own; `None` for a holder made in Rust.
+    declaration: Option<Box<str>>,
+}
+
+impl<P: Extensible + PartialEq> PartialEq for SubtypeOf<P> {
+    /// The same type and members; the declaration that a document was read
+    /// with is not a part of the value.
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.base == other.base && self.rest == other.rest
+    }
+}
+
+thread_local! {
+    /// The declarations that the current read of a document validated the
+    /// value with ([`reading`]).
+    static READING: std::cell::Cell<Option<*const (dyn TypeLookup + 'static)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f`, the decoding of a document that `types` validated, so that a
+/// [`SubtypeOf`] records the declaration of its value's type in `types`.
+pub(crate) fn reading<T>(types: &dyn TypeLookup, f: impl FnOnce() -> T) -> T {
+    // The pointer lives for the call of `f`, and the cell is restored after.
+    let p: *const (dyn TypeLookup + '_) = types;
+    let p: *const (dyn TypeLookup + 'static) = unsafe { std::mem::transmute(p) };
+    let before = READING.with(|c| c.replace(Some(p)));
+    struct Restore(Option<*const (dyn TypeLookup + 'static)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            READING.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(before);
+    f()
+}
+
+/// The declaration hash of `name` in the declarations of the current read.
+fn read_declaration(name: &QualifiedName) -> Option<Box<str>> {
+    let p = READING.with(|c| c.get())?;
+    // SAFETY: `reading()` keeps the lookup alive while the cell holds it.
+    let types = unsafe { &*p };
+    types
+        .find(name)
+        .map(|_| crate::canonical::declaration_hash(name, types).into())
 }
 
 impl<P: Extensible> SubtypeOf<P> {
@@ -128,6 +174,7 @@ impl<P: Extensible> SubtypeOf<P> {
             name,
             base,
             rest: members,
+            declaration: None,
         })
     }
 
@@ -149,6 +196,17 @@ impl<P: Extensible> SubtypeOf<P> {
         if self.name.to_string() != T::NAME {
             return Ok(None);
         }
+        // A value read under another declaration of its type than the one
+        // `T` was compiled with decodes by the wrong fields.
+        if let Some(read) = &self.declaration {
+            let own = crate::canonical::declaration_hash(&self.name, &T::declarations());
+            if **read != *own {
+                return Err(format!(
+                    "`{}` was read under another declaration than the one this code was compiled with [declaration_changed]",
+                    self.name
+                ));
+            }
+        }
         T::decode(&Value::Object(self.members()?)).map(Some)
     }
 }
@@ -162,6 +220,7 @@ impl<P: Extensible + Subtype<Q>, Q> Subtype<Q> for SubtypeOf<P> {
             name: self.name.clone(),
             base: self.base.with_upcast(value),
             rest: self.rest.clone(),
+            declaration: self.declaration.clone(),
         }
     }
 }
@@ -177,7 +236,9 @@ impl<P: Extensible> Encode for SubtypeOf<P> {
     }
     fn decode(v: &Value) -> Result<Self, String> {
         let (name, members) = split(v)?;
-        Self::of(name, P::decode(v)?, members)
+        let mut out = Self::of(name, P::decode(v)?, members)?;
+        out.declaration = read_declaration(&out.name);
+        Ok(out)
     }
     fn register(set: &mut DocumentSet) {
         P::register(set);

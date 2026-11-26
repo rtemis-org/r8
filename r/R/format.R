@@ -47,8 +47,113 @@ default_text <- function(x) {
   if (inherits(x, "r8_json_ir")) {
     x <- unclass(x)
   }
-  cut_text(deparse1(x))
+  cut_text(r_source_text(x))
 } # /R8::default_text
+
+
+# %% r_source_text ----
+#' An R value as R source, with exact numbers
+#'
+#' A double is written with the fewest digits that identify it, as R8's JSON
+#' writer writes it (ECMAScript's shortest form); a date as `as.Date()`, a
+#' date-time as `as.POSIXct(tz = "UTC")`, an integer with `L`, and a named
+#' vector with its names. R's own reader takes a few such texts for the
+#' neighboring double; the text is for reading, and the code that R8 generates
+#' checks its numbers by reading them back (`render_default()`).
+#'
+#' @param x An R value.
+#'
+#' @return Character: One line.
+#'
+#' @keywords internal
+#' @noRd
+r_source_text <- function(x) {
+  plain <- function(v) {
+    is.null(attributes(v)) ||
+      identical(names(attributes(v)), "names")
+  }
+  vector_text <- function(items, nms) {
+    if (!is.null(nms)) {
+      items <- paste0(
+        ifelse(make.names(nms) == nms, nms, paste0("`", nms, "`")),
+        " = ",
+        items
+      )
+    }
+    if (length(items) == 1L && is.null(nms)) {
+      items
+    } else {
+      paste0("c(", paste(items, collapse = ", "), ")")
+    }
+  }
+  if (inherits(x, "Date") && length(x) > 0L) {
+    items <- ifelse(is.na(x), "NA", paste0("\"", format(x), "\""))
+    return(paste0("as.Date(", vector_text(items, NULL), ")"))
+  }
+  if (inherits(x, "POSIXct") && length(x) > 0L) {
+    items <- ifelse(
+      is.na(x),
+      "NA",
+      paste0(
+        "\"",
+        datetime_text(format(x, "%Y-%m-%d %H:%M:%OS6", tz = "UTC")),
+        "\""
+      )
+    )
+    return(paste0("as.POSIXct(", vector_text(items, NULL), ", tz = \"UTC\")"))
+  }
+  if (is.double(x) && plain(x) && length(x) > 0L) {
+    return(vector_text(number_texts(x), names(x)))
+  }
+  if (is.integer(x) && plain(x) && length(x) > 0L) {
+    return(vector_text(
+      ifelse(is.na(x), "NA_integer_", paste0(x, "L")),
+      names(x)
+    ))
+  }
+  deparse1(x)
+} # /R8::r_source_text
+
+
+# %% datetime_text ----
+#' A date-time in UTC as `as.POSIXct()` reads it
+#'
+#' @param x Character: `YYYY-MM-DD HH:MM:SS.ffffff`, or R8's canonical form
+#'   `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
+#'
+#' @return Character: `YYYY-MM-DD HH:MM:SS`, with the fraction of a second
+#'   when it is not zero.
+#'
+#' @keywords internal
+#' @noRd
+datetime_text <- function(x) {
+  x <- sub("Z$", "", sub("T", " ", x, fixed = TRUE))
+  sub("(\\.[0-9]*[1-9])0+$", "\\1", sub("\\.0+$", "", x))
+} # /R8::datetime_text
+
+
+# %% number_texts ----
+#' Doubles as the fewest digits that identify each
+#'
+#' @param x Double.
+#'
+#' @return Character: ECMAScript's shortest form of each finite number, as
+#'   R8's JSON writer writes it, and `NA`, `NaN`, `Inf`, or `-Inf`.
+#'
+#' @keywords internal
+#' @noRd
+number_texts <- function(x) {
+  out <- ifelse(
+    is.nan(x),
+    "NaN",
+    ifelse(is.na(x), "NA", ifelse(x > 0, "Inf", "-Inf"))
+  )
+  finite <- is.finite(x)
+  if (any(finite)) {
+    out[finite] <- r8_number_texts(as.numeric(unname(x[finite])))
+  }
+  out
+} # /R8::number_texts
 
 
 # %% cut_text ----
@@ -93,8 +198,16 @@ declared_default_text <- function(f) {
     # A non-finite number, which JSON writes as a string.
     return(switch(x, Infinity = "Inf", `-Infinity` = "-Inf", x))
   }
+  element <- if (identical(base[["kind"]], "vec")) base[["element"]][["kind"]]
+  doubles <- identical(base[["kind"]], "double") ||
+    (identical(element, "double") && is.list(x) && length(x) > 0L)
   text <- if (is.character(x) && identical(base[["kind"]], "date")) {
     paste0("as.Date(", deparse1(x), ")")
+  } else if (is.character(x) && identical(base[["kind"]], "posixct")) {
+    paste0("as.POSIXct(\"", datetime_text(x), "\", tz = \"UTC\")")
+  } else if (doubles && all(vapply(as.list(x), is.numeric, NA))) {
+    # Numbers as the JSON writer writes them, in R's syntax.
+    r_source_text(as.numeric(unlist(x)))
   } else {
     render_default(x, type, "")
   }
@@ -188,7 +301,11 @@ field_lines <- function(fields, indent) {
 #' @keywords internal
 #' @noRd
 described <- function(text) {
-  if (is.null(text) || !nzchar(text)) character() else paste0("  ", text)
+  if (is.null(text) || !nzchar(text)) {
+    return(character())
+  }
+  # Each line of a description of several lines is indented.
+  paste0("  ", strsplit(text, "\n", fixed = TRUE)[[1L]])
 } # /R8::described
 
 

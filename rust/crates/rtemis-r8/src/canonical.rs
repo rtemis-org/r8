@@ -826,6 +826,18 @@ pub fn read_document_cached(
         any_declaration: false,
         hash: &hash,
     };
+    read_document_with(text, ty, lookup, cache, options)
+}
+
+/// [`read_document_cached`] with options, such as the hashes of the
+/// declarations that a host keeps.
+pub fn read_document_with(
+    text: &str,
+    ty: &QualifiedName,
+    lookup: &dyn TypeLookup,
+    cache: &mut crate::validate::RuleCache,
+    options: ReadOptions<'_>,
+) -> Result<Value, Vec<ValueError>> {
     // The tree refuses a member that repeats, of which a `Value` keeps the last.
     let read: crate::tree::Exact = serde_json::from_str(text).map_err(|e| {
         vec![document_error(

@@ -1065,29 +1065,33 @@ pub(crate) fn with_fields(
         .collect();
     match replaced(&own(value), &changes).map_err(|e| ("invalid_argument", e.to_string()))? {
         Replaced::Value(v) => Ok(unsafe { v.get() }),
-        Replaced::Problems(errors) => {
-            let lines: Vec<String> = errors
-                .iter()
-                .map(|e| {
-                    let rule = match (&e.rule, e.rule_index) {
-                        (Some(id), _) => format!("the rule `{id}` is violated"),
-                        (None, Some(i)) => format!("rule {} is violated", i + 1),
-                        (None, None) => return e.message.clone(),
-                    };
-                    if e.message.is_empty() {
-                        rule
-                    } else {
-                        format!("{rule}: {}", e.message)
-                    }
-                })
-                .collect();
-            Err(("invalid_value", lines.join("; ")))
-        }
+        Replaced::Problems(errors) => Err(("invalid_value", problems_text(&errors))),
         Replaced::NotField => Err((
             "unknown_field",
             format!("the value has none of the fields {}", names.join(", ")),
         )),
     }
+}
+
+/// The problems of a value as one text for an error of the C interface: each
+/// problem's message, a rule's by its ID or position.
+pub(crate) fn problems_text(errors: &[ValueError]) -> String {
+    let lines: Vec<String> = errors
+        .iter()
+        .map(|e| {
+            let rule = match (&e.rule, e.rule_index) {
+                (Some(id), _) => format!("the rule `{id}` is violated"),
+                (None, Some(i)) => format!("rule {} is violated", i + 1),
+                (None, None) => return e.message.clone(),
+            };
+            if e.message.is_empty() {
+                rule
+            } else {
+                format!("{rule}: {}", e.message)
+            }
+        })
+        .collect();
+    lines.join("; ")
 }
 
 /// [`replace_fields`], its outcome as Rust values.

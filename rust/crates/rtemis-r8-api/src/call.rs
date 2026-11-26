@@ -575,6 +575,9 @@ pub(crate) fn rust_value<T: RustStored>(value: T) -> std::result::Result<SEXP, J
             "R8's API has no `new_value`",
         )));
     };
+    // A replaced field reports its problem here, from the code that made the
+    // value, not at a later read of the field.
+    value.settle_fields().map_err(Jumped::Error)?;
     let mut out: SEXP = unsafe { sys::R_NilValue };
     let mut err = api::blank();
     let state = Box::into_raw(Box::new(value));
@@ -753,7 +756,11 @@ pub unsafe fn method(
         }
         Ok(Err(Jumped::Error(e))) => {
             e.fill(err);
-            ERROR
+            if e.code == crate::api::UNWIND_CODE {
+                UNWIND
+            } else {
+                ERROR
+            }
         }
         Ok(Err(Jumped::Unwind(e))) => {
             e.fill(err);

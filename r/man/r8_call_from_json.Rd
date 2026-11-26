@@ -23,7 +23,10 @@ The function's result.
 Checks a document of a call as \code{\link[=r8_check_call]{r8_check_call()}} does, raises every problem in
 one \code{r8_argument_error}, and otherwise calls the function that \code{"$function"}
 names with the arguments in their stored form. An argument that the document
-omits takes its default, and \code{null} is \code{NULL}.
+omits takes its default, and \code{null} is \code{NULL}. The call is evaluated in an
+environment that binds the arguments by name, whose parent is the frame of the
+caller of \code{r8_call_from_json()}: \code{sys.call()} in the function's body shows the
+arguments' names, and \code{parent.frame()} is that environment.
 }
 \examples{
 op <- options(r8.namespace = "demo")

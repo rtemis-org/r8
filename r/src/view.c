@@ -488,6 +488,8 @@ static SEXP r8_upcast(SEXP x, SEXP type) {
   return out;
 }
 
+static void r8_abort3(const char *name, SEXP a, SEXP b, SEXP c, SEXP ns);
+
 // The call of the generic whose method's frame is running: R's
 // `sys.call(sys.parent())` in that frame.
 static SEXP generic_call(void) {
@@ -532,15 +534,15 @@ static SEXP r8_invoke(SEXP fn, SEXP args) {
     // A callee may leave the buffers without an end.
     err.code[sizeof(err.code) - 1] = '\0';
     err.message[sizeof(err.message) - 1] = '\0';
-    if (strcmp(err.code, "panic") == 0) {
-      Rf_errorcall(PROTECT(generic_call()),
-                   "the compiled method panicked, which is a defect of its package: %s [panic]",
-                   err.message);
-    }
-    Rf_errorcall(PROTECT(generic_call()), "%s [%s]",
-                 err.message[0] == '\0' ? "the compiled method returned an error without a message"
-                                        : err.message,
-                 err.code[0] == '\0' ? "no_code" : err.code);
+    // R8's `method_abort()` raises the classed condition, r8_method_error or
+    // r8_panic, from the generic's call.
+    SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
+    SEXP code = PROTECT(Rf_mkString(err.code[0] == '\0' ? "no_code" : err.code));
+    SEXP message = PROTECT(Rf_mkString(
+        err.message[0] == '\0' ? "the compiled method returned an error without a message"
+                                : err.message));
+    r8_abort3("method_abort", code, message, PROTECT(generic_call()), ns);
+    UNPROTECT(5);
   }
   Rf_error("the impl function returned the status %d, none of R8_OK, R8_ERROR, and R8_UNWIND",
            (int) status);
@@ -577,12 +579,17 @@ static SEXP native_symbol(DL_FUNC f) {
   return p;
 }
 
-// The value of `sym` in the frame of `env`, its promise forced; R 4.5.0
-// adds R_getVarEx() to the API, and on earlier R evaluating the symbol in
-// `env` forces the promise the same way. `absent` is returned for a symbol
-// the frame does not bind (R 4.5.0 and later; earlier R raises R's error).
+// The value of `sym` in the frame of `env`, its promise forced, or `absent`
+// for a symbol the frame does not bind. R 4.5.0 adds R_getVarEx() to the API;
+// on earlier R, and in webR builds, evaluating the symbol in `env` after a
+// test of the frame forces the promise the same way. webR builds take the
+// second path because extendr-ffi 0.9.0 declares R_getVarEx() and R_getVar()
+// with two arguments, and wasm-ld rejects a C object that declares either
+// with R's signature ("function signature mismatch").
 SEXP r8_get_var(SEXP sym, SEXP env, SEXP absent) {
-#if R_VERSION >= R_Version(4, 5, 0)
+#if defined(__EMSCRIPTEN__) && R_VERSION >= R_Version(4, 5, 0)
+  return R_existsVarInFrame(env, sym) ? Rf_eval(sym, env) : absent;
+#elif R_VERSION >= R_Version(4, 5, 0)
   return R_getVarEx(sym, env, FALSE, absent);
 #else
   return Rf_findVarInFrame(env, sym) == R_UnboundValue ? absent : Rf_eval(sym, env);

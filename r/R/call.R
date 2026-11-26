@@ -49,8 +49,8 @@ call_functions <- function(f) {
         q,
         "()` has parameters that a document cannot hold: ",
         paste0("`", undocumented, "`", collapse = ", "),
-        ". A parameter of a document has a type, and is not `...`; ",
-        "new_function(typed = \"strict\") keeps it so.",
+        ". A parameter of a document has a type with a JSON form: not `...`, ",
+        "and not host_class() outside option().",
         class = "r8_type_error"
       )
     }
@@ -119,7 +119,8 @@ read_call <- function(fs, json, load) {
 #' of `"$types"` when the document holds it, and, when every argument holds, the
 #' function's rules, with the defaults written as constants of the arguments it
 #' omits. A rule that reads an omitted argument whose default is written in R,
-#' which the function evaluates when it runs, is reported as `rule_unchecked`.
+#' which the function evaluates when it runs, is listed in the attribute
+#' `unchecked`, as `rule_unchecked`.
 #'
 #' @param f A typed function of [new_function()], or a list of them: the
 #'   functions that the document may call. The document never selects other
@@ -131,7 +132,9 @@ read_call <- function(fs, json, load) {
 #' @return A data frame of the problems, as the condition of
 #'   [r8_call_from_json()] holds them (`code`, `path`, `rule`, `message`, and
 #'   others), with no rows for a call that holds. Paths are JSON Pointers into
-#'   the document, such as `/arguments/lo`.
+#'   the document, such as `/arguments/lo`. The attribute `unchecked` holds, in
+#'   the same form, the rules that read an omitted argument whose default is
+#'   written in R, which the function checks when it runs.
 #'
 #' @seealso [r8_call_from_json()], [r8_call_to_json()], and [r8_schema()].
 #'
@@ -151,9 +154,18 @@ read_call <- function(fs, json, load) {
 r8_check_call <- function(f, json, load = NULL) {
   fs <- call_functions(f)
   res <- read_call(fs, json, load)
-  errors <- res[["errors"]] %||% res[["unchecked"]]
+  errors <- res[["errors"]]
   undocumented_abort(errors, fs)
-  problems_data(errors)
+  unchecked <- res[["unchecked"]]
+  if (!is.null(errors)) {
+    at <- errors[["code"]] == "rule_unchecked"
+    unchecked <- lapply(errors, `[`, at)
+    errors <- lapply(errors, `[`, !at)
+  }
+  structure(
+    problems_data(errors),
+    unchecked = problems_data(unchecked)
+  )
 } # /R8::r8_check_call
 
 
@@ -163,7 +175,10 @@ r8_check_call <- function(f, json, load = NULL) {
 #' Checks a document of a call as [r8_check_call()] does, raises every problem in
 #' one `r8_argument_error`, and otherwise calls the function that `"$function"`
 #' names with the arguments in their stored form. An argument that the document
-#' omits takes its default, and `null` is `NULL`.
+#' omits takes its default, and `null` is `NULL`. The call is evaluated in an
+#' environment that binds the arguments by name, whose parent is the frame of the
+#' caller of `r8_call_from_json()`: `sys.call()` in the function's body shows the
+#' arguments' names, and `parent.frame()` is that environment.
 #'
 #' @inheritParams r8_check_call
 #'
@@ -215,8 +230,8 @@ r8_call_from_json <- function(f, json, load = NULL) {
 #' each named type that the arguments contain. The arguments are matched to the
 #' parameters as R matches a call, and only the arguments given are written.
 #'
-#' @param f A typed function of [new_function()].
-#' @param ... The arguments, as the call of `f` takes them.
+#' @param ... The typed function of [new_function()], unnamed and first, then the
+#'   arguments, as the call of the function takes them.
 #'
 #' @return Character: The document, of class `json`; an invalid argument raises
 #'   `r8_argument_error`.
@@ -235,18 +250,38 @@ r8_call_from_json <- function(f, json, load = NULL) {
 #' options(op)
 #'
 #' @export
-r8_call_to_json <- function(f, ...) {
+r8_call_to_json <- function(...) {
+  # The function is the first argument, without a name, so that a parameter
+  # of any name, `f` included, is given by name.
+  nms <- ...names()
+  f <- if (...length() > 0L && (is.null(nms) || !nzchar(nms[[1L]]))) ..1
   if (!inherits(f, "r8_function")) {
     r8_abort(
-      "`f` is a typed function of new_function().",
+      "The first argument, without a name, is a typed function of ",
+      "new_function(): r8_call_to_json(f, x = 1).",
       class = "r8_type_error"
     )
   }
   fs <- call_functions(f)
   q <- names(fs)
+  given <- list(...)[-1L]
   # The arguments, named by their parameters as R matches a call.
   proto <- as.function(c(formals(f), list(NULL)))
-  args <- as.list(match.call(proto, as.call(c(list(quote(f)), list(...)))))[-1L]
+  args <- tryCatch(
+    as.list(match.call(proto, as.call(c(list(quote(f)), given))))[-1L],
+    error = function(cond) {
+      r8_abort(
+        "Invalid arguments of `",
+        sub("^.*::", "", q),
+        "()`: ",
+        conditionMessage(cond),
+        "; its parameters are ",
+        paste0("`", names(formals(f)), "`", collapse = ", "),
+        ".",
+        class = c("r8_argument_error", "r8_value_error")
+      )
+    }
+  )
   res <- r8_write_call(q, args)
   if (!is.null(res[["errors"]])) {
     value_abort(

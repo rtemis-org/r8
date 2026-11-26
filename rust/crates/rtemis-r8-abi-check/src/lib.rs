@@ -10,6 +10,7 @@ unsafe extern "C" {
     fn r8_abi_statuses() -> u32;
     fn r8_abi_positions() -> u32;
     fn r8_abi_values() -> u32;
+    fn r8_abi_min_sizes(out: *mut usize);
 }
 
 /// The sizes and offsets of `R8.h`, in the order of `rtemis_r8::abi::struct_offsets()`.
@@ -39,4 +40,14 @@ pub fn c_constants() -> (u32, u32, u32, u32, u32) {
             r8_abi_values(),
         )
     }
+}
+
+/// The minimum sizes of the header, `R8_CALL_INPUTS_MIN_SIZE`,
+/// `R8_READER_MIN_SIZE`, `R8_CODEC_MIN_SIZE`, `R8_IMPL_ENTRY_MIN_SIZE`,
+/// `R8_EXPORTS_MIN_SIZE`, and `R8_API_MIN_SIZE`, in that order.
+pub fn c_min_sizes() -> [usize; 6] {
+    let mut out = [0usize; 6];
+    // SAFETY: `out` holds the six entries that the function writes.
+    unsafe { r8_abi_min_sizes(out.as_mut_ptr()) };
+    out
 }

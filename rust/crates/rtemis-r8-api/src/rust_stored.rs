@@ -7,7 +7,7 @@ use crate::reader::{Node, Reader};
 use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rtemis_r8::abi::{self, ERROR, OK, Status};
+use rtemis_r8::abi::{self, ERROR, OK, Status, UNWIND};
 
 use crate::api::{Error, Result};
 use crate::keep;
@@ -52,6 +52,13 @@ pub trait RustStoredStruct: rtemis_r8::derive::R8 + Send + Sync + Sized + 'stati
 
     /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
+
+    /// Builds the R value of each field that holds another value than the
+    /// one it was read with, such as a replaced `subtype()` field, so that its
+    /// problem is the error of the code that made the value.
+    fn settle(&self) -> Result<()> {
+        Ok(())
+    }
 
     /// Calls `f` with each field's name and R value, unprotected, in
     /// declaration order; `owner` keeps the state alive, for a view of its
@@ -115,6 +122,11 @@ pub trait RustStoredEnum: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static 
     /// The memory Rust owns for the value beyond its inline size.
     fn owned_bytes(&self) -> usize;
 
+    /// [`RustStoredStruct::settle()`] of the fields of the value's variant.
+    fn settle(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// The number of the fields of the value's variant.
     fn n_fields(&self) -> usize;
 
@@ -160,6 +172,11 @@ pub trait RustStored: rtemis_r8::derive::R8 + Send + Sync + Sized + 'static {
 
     /// The memory Rust owns for the value beyond its inline size.
     fn heap_bytes(&self) -> usize;
+
+    /// [`RustStoredStruct::settle()`] or [`RustStoredEnum::settle()`].
+    fn settle_fields(&self) -> Result<()> {
+        Ok(())
+    }
 
     /// The name of an enum value's variant; `None` for a struct.
     fn variant_name(&self) -> Option<&'static CStr>;
@@ -239,15 +256,20 @@ pub(crate) fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
 }
 
 /// Runs `f` for R8: on the main thread, after the queued releases; an
-/// `Err` fills `err` and returns `R8_ERROR`, and a panic does the same with
-/// the code `panic`.
+/// `Err` fills `err` and returns `R8_ERROR`, or `R8_UNWIND` for a jump of R
+/// that `R8Api.protect` caught, which R8 continues; a panic returns
+/// `R8_ERROR` with the code `panic`.
 pub(crate) fn guard(err: *mut abi::Error, f: impl FnOnce() -> Result<()>) -> Status {
     keep::drain();
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(())) => OK,
         Ok(Err(e)) => {
             e.fill(err);
-            ERROR
+            if e.code == crate::api::UNWIND_CODE {
+                UNWIND
+            } else {
+                ERROR
+            }
         }
         Err(p) => {
             Error::new("panic", panic_text(&*p)).fill(err);

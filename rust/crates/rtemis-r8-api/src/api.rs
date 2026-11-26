@@ -86,7 +86,7 @@ pub(crate) fn blank() -> abi::Error {
 
 static API: AtomicPtr<abi::Api> = AtomicPtr::new(std::ptr::null_mut());
 
-/// R8's API table of ABI version 1, fetched with
+/// R8's API table of ABI version `ABI_VERSION`, fetched with
 /// `R_GetCCallable("R8", "r8_api")` on first use. A package using the crate
 /// imports R8, so R8 is loaded first.
 pub(crate) fn api() -> Result<&'static abi::Api> {
@@ -107,7 +107,7 @@ pub(crate) fn api() -> Result<&'static abi::Api> {
         ));
     }
     // A table of this ABI version holds at least the fields read here.
-    if (unsafe { (*a).size } as usize) < std::mem::size_of::<abi::Api>() {
+    if (unsafe { (*a).size } as usize) < abi::API_MIN_SIZE {
         return Err(Error::new(
             "abi_size",
             "R8's API table is older than this crate; update R8",
@@ -127,12 +127,20 @@ pub enum Jumped {
     Error(Error),
 }
 
+/// The code of an [`Error`] that stands for a jump of R that `R8Api.protect`
+/// caught: a codec function or an impl that returns it reports `R8_UNWIND`,
+/// and R8 continues the jump from a C frame.
+pub(crate) const UNWIND_CODE: &str = "unwind";
+
 impl Jumped {
-    /// The error, for a caller that cannot continue the jump: R8's codec
-    /// functions return `R8_ERROR`.
+    /// The error, for code that carries a [`crate::Result`]: a jump keeps the
+    /// code [`UNWIND_CODE`], which the function R8 called reports as
+    /// `R8_UNWIND`.
     pub(crate) fn into_error(self) -> Error {
         match self {
-            Jumped::Unwind(_) => Error::new("r_error", "R raised an error inside R8Api.protect"),
+            Jumped::Unwind(_) => {
+                Error::new(UNWIND_CODE, "R raised a condition inside R8Api.protect")
+            }
             Jumped::Error(e) => e,
         }
     }

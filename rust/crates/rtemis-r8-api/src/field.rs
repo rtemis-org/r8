@@ -37,6 +37,11 @@ pub trait Field: Clone + Send + Sync + 'static {
     fn owned_bytes(&self) -> usize {
         0
     }
+    /// Builds the field's R value when it holds another value than the one
+    /// it was read with ([`crate::RustStoredStruct::settle()`]).
+    fn settle(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// An R object allocated through `R8Api.protect`.
@@ -170,6 +175,9 @@ impl<T: Field> Field for Option<T> {
     fn owned_bytes(&self) -> usize {
         self.as_ref().map_or(0, Field::owned_bytes)
     }
+    fn settle(&self) -> Result<()> {
+        self.as_ref().map_or(Ok(()), Field::settle)
+    }
 }
 
 impl<T: Element> Field for Buffer<T> {
@@ -204,6 +212,9 @@ impl<T: RustStored + Clone> Field for T {
     }
     fn owned_bytes(&self) -> usize {
         self.heap_bytes()
+    }
+    fn settle(&self) -> Result<()> {
+        self.settle_fields()
     }
 }
 

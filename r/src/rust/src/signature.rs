@@ -309,7 +309,7 @@ fn key_parts<'a>(key: SEXP) -> Option<(QualifiedName, &'a str)> {
 }
 
 /// The key of an impl's tuple of positions, as R's `tuple_key()` writes it.
-fn tuple_key<'a>(positions: impl Iterator<Item = &'a TypeRef>) -> String {
+pub(crate) fn tuple_key<'a>(positions: impl Iterator<Item = &'a TypeRef>) -> String {
     positions
         .map(|p| match p {
             TypeRef::HostClass { class, .. } => format!("\"{class}\""),
@@ -491,13 +491,22 @@ fn signature(key: SEXP) -> Option<Rc<Signature>> {
 /// `key` is a symbol and `out` points at `capacity` slots.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_signature_forced(key: SEXP, out: *mut SEXP, capacity: c_int) -> c_int {
-    let Some(sig) = signature(key) else {
-        return ABSENT;
-    };
-    for (i, s) in sig.forced.iter().take(capacity.max(0) as usize).enumerate() {
-        unsafe { *out.add(i) = *s };
-    }
-    sig.forced.len() as c_int
+    unwound(ABSENT, || {
+        let Some(sig) = signature(key) else {
+            return ABSENT;
+        };
+        for (i, s) in sig.forced.iter().take(capacity.max(0) as usize).enumerate() {
+            unsafe { *out.add(i) = *s };
+        }
+        sig.forced.len() as c_int
+    })
+}
+
+/// The value of `f`, or `fallback` when `f` panics: a panic does not unwind
+/// across the C routines of a call, and the call takes the validator's path,
+/// whose functions report it as an error.
+fn unwound(fallback: c_int, f: impl FnOnce() -> c_int) -> c_int {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(fallback)
 }
 
 /// Tests the values of the parameters `symbols`, which
@@ -515,6 +524,21 @@ pub unsafe extern "C" fn r8_signature_forced(key: SEXP, out: *mut SEXP, capacity
 /// and `dispatched` at three.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_signature_test(
+    key: SEXP,
+    symbols: *const SEXP,
+    values: *const SEXP,
+    n: c_int,
+    outcomes: *mut c_int,
+    dispatched: *mut c_int,
+    n_dispatched: *mut c_int,
+) -> c_int {
+    unwound(CHECK, || unsafe {
+        signature_test(key, symbols, values, n, outcomes, dispatched, n_dispatched)
+    })
+}
+
+/// The body of [`r8_signature_test()`].
+unsafe fn signature_test(
     key: SEXP,
     symbols: *const SEXP,
     values: *const SEXP,
@@ -566,20 +590,22 @@ pub unsafe extern "C" fn r8_signature_test(
 /// `key` is a symbol and `tuple` a CHARSXP.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_signature_result(key: SEXP, tuple: SEXP, value: SEXP) -> c_int {
-    let Some(sig) = signature(key) else {
-        return ABSENT;
-    };
-    if !sig.narrowed.is_empty() {
-        let t = char_bytes(tuple);
-        if let Some((_, _, test)) = sig.narrowed.iter().find(|(k, _, _)| k.as_bytes() == t) {
-            return test.run(value);
+    unwound(CHECK, || {
+        let Some(sig) = signature(key) else {
+            return ABSENT;
+        };
+        if !sig.narrowed.is_empty() {
+            let t = char_bytes(tuple);
+            if let Some((_, _, test)) = sig.narrowed.iter().find(|(k, _, _)| k.as_bytes() == t) {
+                return test.run(value);
+            }
         }
-    }
-    match &sig.returned {
-        Returned::Any => PASS,
-        Returned::SelfType => SELF,
-        Returned::Type(_, test) => test.run(value),
-    }
+        match &sig.returned {
+            Returned::Any => PASS,
+            Returned::SelfType => SELF,
+            Returned::Type(_, test) => test.run(value),
+        }
+    })
 }
 
 fn no_signature() -> Error {
@@ -588,7 +614,12 @@ fn no_signature() -> Error {
 
 /// The errors of `x` against `ty`, at the parameter `name` or at the value
 /// itself.
-fn errors_of(x: SEXP, ty: &FieldType, docs: &DocumentSet, name: Option<&str>) -> Vec<ValueError> {
+pub(crate) fn errors_of(
+    x: SEXP,
+    ty: &FieldType,
+    docs: &DocumentSet,
+    name: Option<&str>,
+) -> Vec<ValueError> {
     let mut errors = with_cache(|cache| validate_field_access(RView::Whole(x), ty, docs, cache));
     if is_null(x) {
         // An absent value, which the message names.

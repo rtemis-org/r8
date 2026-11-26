@@ -70,7 +70,9 @@ extern "C" {
 typedef int32_t R8Status;
 #define R8_OK 0
 #define R8_ERROR 1
-/* R jumped (an error or an interrupt) inside `R8Api.protect`. */
+/* R jumped (an error or an interrupt) inside `R8Api.protect`. An impl or a
+ * codec function that returns it leaves the jump to R8, which continues it
+ * from a C frame. */
 #define R8_UNWIND 2
 
 /* An error report, filled by the callee that returns R8_ERROR. `code` is a
@@ -217,8 +219,9 @@ typedef struct R8Codec {
 typedef R8Status (*R8MethodFn)(const R8CallInputs *inputs, const SEXP *args, size_t nargs,
                                SEXP *result, R8Error *err);
 
-/* What a position of an impl names: an R8 type, a class of R, or any value.
- * Registration refuses a class of R, whose methods are written in R. */
+/* What a position of an impl names: an R8 type, or any value.
+ * R8_POSITION_CLASS, a class of R, is reserved: registration refuses it, since
+ * the methods of a class of R are written in R. */
 #define R8_POSITION_TYPE 0
 #define R8_POSITION_CLASS 1
 #define R8_POSITION_ANY 2
@@ -226,12 +229,11 @@ typedef R8Status (*R8MethodFn)(const R8CallInputs *inputs, const SEXP *args, siz
 /* A position of an impl. */
 typedef struct R8Position {
   uint32_t kind;
-  /* The qualified name of a type, or the name of a class; NULL for any. */
+  /* The qualified name of a type; NULL for any. */
   const char *name;
-  /* Of a class: the package that defines it, which is NULL or empty when the
-   * declaration names none. */
+  /* Reserved for a position of a class: NULL. */
   const char *package;
-  /* Of a class: its class system, "s3", "s4", or "implicit". */
+  /* Reserved for a position of a class: NULL. */
   const char *system;
 } R8Position;
 
@@ -364,6 +366,19 @@ static inline const R8Api *R8_api(void) {
   R8ApiFn fn = (R8ApiFn) (void (*)(void)) R_GetCCallable("R8", "r8_api");
   return fn == NULL ? NULL : fn(R8_ABI_VERSION);
 }
+
+/* The size of each table when R8_ABI_VERSION became 2, up to the end of its
+ * last member of that version. A reader accepts a table of at least this size;
+ * a member appended later is absent from a smaller table, and its reader checks
+ * `size` before reading it. */
+#define R8_SIZE_THROUGH(type, member) \
+  (offsetof(type, member) + sizeof(((type *) 0)->member))
+#define R8_CALL_INPUTS_MIN_SIZE R8_SIZE_THROUGH(R8CallInputs, seed)
+#define R8_READER_MIN_SIZE R8_SIZE_THROUGH(R8Reader, value)
+#define R8_CODEC_MIN_SIZE R8_SIZE_THROUGH(R8Codec, upcast)
+#define R8_IMPL_ENTRY_MIN_SIZE R8_SIZE_THROUGH(R8ImplEntry, signature_len)
+#define R8_EXPORTS_MIN_SIZE R8_SIZE_THROUGH(R8Exports, impl_size)
+#define R8_API_MIN_SIZE R8_SIZE_THROUGH(R8Api, value_type)
 
 #ifdef __cplusplus
 }

@@ -24,7 +24,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "cat('magnitude', magnitude(s), '\\n')",
       "cat('ratio', ratio(s, 2), '\\n')",
       "e <- tryCatch(ratio(s, 0), error = identity)",
-      "cat('error', grepl('[zero_divisor]', conditionMessage(e), fixed = TRUE), deparse1(conditionCall(e)), '\\n')",
+      "cat('error', inherits(e, 'r8_method_error') && inherits(e, 'r8_error'), e$code, deparse1(conditionCall(e)), '\\n')",
       "e <- tryCatch(sapply(list(s), ratio, by = 0), error = identity)",
       "cat('call', deparse1(conditionCall(e)), '\\n')",
       "cat('display', format(s), '\\n')",
@@ -56,7 +56,8 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   expect_true("magnitude 5 " %in% out, info = info)
   expect_true("ratio 1.5 " %in% out, info = info)
   # The error of a compiled method reports the generic's call.
-  expect_true("error TRUE ratio(s, 0) " %in% out, info = info)
+  # An error of a compiled method is classed, with its code.
+  expect_true("error TRUE zero_divisor ratio(s, 0) " %in% out, info = info)
   expect_true("call FUN(X[[i]], ...) " %in% out, info = info)
   expect_true("display Signal a (2 values) " %in% out, info = info)
   # The fields of a Rust-stored value, as an ordinary list.
@@ -148,6 +149,7 @@ test_that("Rust-stored structs extend one another, and compiled impls apply to d
       "x <- shifted(s, 1); y <- shifted(b, 1); z <- shifted(Interval(lo = 1, hi = 3), 1)",
       "say('shifted', class(x)[1], x$lo, x$hi, x$label, x$weights, x$number, class(y)[1], y$lo, y$label, class(z)[1], z$lo)",
       "say('stored', stored(x, 'Strip'), stored(y, 'Band'), stored(z, 'Interval'), grepl('[not_finite]', msg(shifted(s, Inf)), fixed = TRUE))",
+      "say('made', grepl('must be finite', msg(shifted(Interval(lo = 1e308, hi = 1.5e308), 1.5e308)), fixed = TRUE))",
       "no <- function(y) grepl('Invalid arguments of `overlap()`: 1 problem\\n- `y` must be a value', msg(overlap(s, y)), fixed = TRUE)",
       "say('argument', overlap(s, Interval(lo = 1, hi = 9)), no(s), no(1), no(NULL))",
       "say('format', format(s))",
@@ -199,6 +201,9 @@ test_that("Rust-stored structs extend one another, and compiled impls apply to d
     info = info
   )
   expect_true("stored TRUE TRUE TRUE TRUE " %in% out, info = info)
+  # A value that Rust code makes is validated by its type: here a sum that
+  # overflows to Inf, which a double field does not admit.
+  expect_true("made TRUE " %in% out, info = info)
   expect_true("argument 3 TRUE TRUE TRUE " %in% out, info = info)
   expect_true("format [0, 4] " %in% out, info = info)
   expect_true("other TRUE " %in% out, info = info)

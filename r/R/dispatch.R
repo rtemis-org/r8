@@ -275,7 +275,7 @@ IMPLICIT_CLASSES <- c(
 #' A class of another class system
 #'
 #' Names a class that R8 did not declare: an S3 class, an implicit class
-#' such as `"matrix"` or `"NULL"`, or an S4 class. It is a dispatched
+#' such as `"matrix"` or `"NULL"`, an S4 class, or an S7 class. It is a dispatched
 #' position of an impl of an R8 generic or trait, and a field type inside
 #' `option()`. A dispatched position matches an object whose class vector,
 #' as [.class2()] reports it, contains the class; the nearer the class is to
@@ -287,7 +287,7 @@ IMPLICIT_CLASSES <- c(
 #' An impl on a host class is declared by the package of the generic or
 #' trait, or by the package that `package` names.
 #'
-#' @param class Character: The class name.
+#' @param class Character: The class name; or an S7 class object.
 #' @param package Character: The package that defines the class; `""` for an
 #'   S3 class of no package named and for an implicit class.
 #' @param system Character: The class system. `"s3"`: a name in an object's
@@ -298,7 +298,10 @@ IMPLICIT_CLASSES <- c(
 #'   `environment`, `name`, or `call`; a string naming one of these is
 #'   implicit. `"s4"`: a class defined with `methods::setClass()`, which
 #'   requires `package`; `r8_register()` checks at load that the package
-#'   defines an S4 class of that name.
+#'   defines an S4 class of that name. `"s7"`: a class of `S7::new_class()`,
+#'   with `package` the package that defines it, or `""` for a class defined
+#'   outside a package; an S7 class object given as `class` names its own
+#'   name and package.
 #'
 #' @return An object of class `r8_host_class`, which is also a field type:
 #'   `option(host_class("lm"))` declares a field that holds an object whose
@@ -321,8 +324,11 @@ IMPLICIT_CLASSES <- c(
 host_class <- function(
   class,
   package = "",
-  system = c("s3", "s4", "implicit")
+  system = c("s3", "s4", "implicit", "s7")
 ) {
+  if (inherits(class, S7_KINDS)) {
+    return(s7_host_class(class))
+  }
   given <- !missing(system)
   system <- match.arg(system)
   if (
@@ -343,11 +349,17 @@ host_class <- function(
     )
   }
   if (grepl("::", class, fixed = TRUE)) {
+    parts <- strsplit(class, "::", fixed = TRUE)[[1L]]
     r8_abort(
       "`",
       class,
       "` is written as an R8 type's qualified name; a position or source ",
-      "names an R8 type by its type object, and a class name has no `::`.",
+      "names an R8 type by its type object, and a class name has no `::`. ",
+      "An S7 class is host_class(\"",
+      parts[[length(parts)]],
+      "\", package = \"",
+      parts[[1L]],
+      "\", system = \"s7\"), or its class object.",
       class = "r8_declaration_error"
     )
   }
@@ -405,6 +417,10 @@ host_class <- function(
       class = "r8_declaration_error"
     )
   }
+  if (identical(system, "s7") && nzchar(package)) {
+    # S7 writes a class of a package as `pkg::Class` in the class vector.
+    class <- paste0(package, "::", class)
+  }
   structure(
     list(
       kind = "host_class",
@@ -416,6 +432,42 @@ host_class <- function(
     class = c("r8_host_class", "r8_field_type")
   )
 } # /R8::host_class
+
+
+# The classes of the objects that S7 declares types with: a class, a union, a
+# base class, and an S3 class.
+S7_KINDS <- c("S7_class", "S7_union", "S7_base_class", "S7_S3_class")
+
+
+# %% s7_host_class ----
+#' The host class of an S7 class object
+#'
+#' Reads the attributes `name` and `package` of an object that
+#' `S7::new_class()` returned, without a call of S7.
+#'
+#' @param x An S7 class object.
+#'
+#' @return An `r8_host_class` of the system `"s7"`.
+#'
+#' @keywords internal
+#' @noRd
+s7_host_class <- function(x) {
+  name <- attr(x, "name", exact = TRUE)
+  if (
+    !inherits(x, "S7_class") ||
+      !is.character(name) ||
+      length(name) != 1L ||
+      !nzchar(name)
+  ) {
+    r8_abort(
+      "An S7 type is a class of S7::new_class(); a union, a base class such ",
+      "as class_double, and a class of new_S3_class() are no S7 classes.",
+      class = "r8_declaration_error"
+    )
+  }
+  package <- attr(x, "package", exact = TRUE) %||% ""
+  host_class(name, package = package, system = "s7")
+} # /R8::s7_host_class
 
 
 # %% as_host_class ----
@@ -443,6 +495,9 @@ as_host_class <- function(x) {
       )
     }
     return(host_class(x@className, x@package, "s4"))
+  }
+  if (inherits(x, S7_KINDS)) {
+    return(s7_host_class(x))
   }
   if (is.character(x) && length(x) == 1L && !is.na(x)) {
     return(host_class(x))

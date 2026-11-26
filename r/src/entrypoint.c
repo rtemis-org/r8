@@ -44,13 +44,15 @@ SEXP r8_rust_stored_wrap(const R8Codec *vt, void *state, SEXP id, SEXP from,
                     R_xlen_t skip);
 SEXP r8_rust_stored_fields_read(SEXP x);
 void r8_rust_stored_give(SEXP x, const R8Codec *vt, void *state);
+void r8_rust_stored_take(SEXP x);
 const void *r8_rust_stored_state(SEXP x, const R8Codec **vt);
 SEXP r8_rust_stored_parts(SEXP x);
 SEXP r8_rust_stored_memory(void);
 R8Status r8_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err);
 SEXP r8_native_symbols(void);
 void r8_set_rust_stored_functions(void *wrap, void *fields_read, void *give, void *state,
-                                  void *parts, void *memory, void *protect, void *symbols);
+                                  void *parts, void *memory, void *protect, void *symbols,
+                                  void *take);
 
 void R_init_R8(DllInfo *dll) {
     register_extendr_panic_hook();
@@ -60,7 +62,7 @@ void R_init_R8(DllInfo *dll) {
                                  (void *) r8_rust_stored_fields_read, (void *) r8_rust_stored_give,
                                  (void *) r8_rust_stored_state, (void *) r8_rust_stored_parts,
                                  (void *) r8_rust_stored_memory, (void *) r8_protect,
-                                 (void *) r8_native_symbols);
+                                 (void *) r8_native_symbols, (void *) r8_rust_stored_take);
     r8_set_value_functions((void *) r8_identity, (void *) r8_held_identity,
                            (void *) r8_value_id, (void *) r8_value_fields,
                            (void *) r8_value_new, (void *) r8_fields_fit,

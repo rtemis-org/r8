@@ -90,6 +90,85 @@ pub trait R8: Encode {
         same_declarations::<Self>(types)?;
         read(text, types)
     }
+
+    /// The declarations of `types`, checked once against the type's own as
+    /// [`to_document_in`](R8::to_document_in) checks them on each call, for
+    /// writing and reading many documents: the check compares a declaration
+    /// hash per type, which costs more than a small document's write.
+    fn checked_in(types: &dyn TypeLookup) -> Result<Checked<'_, Self>, Vec<ValueError>>
+    where
+        Self: Sized,
+    {
+        same_declarations::<Self>(types)?;
+        Ok(Checked {
+            types,
+            hashes: std::cell::RefCell::new(HashMap::new()),
+            rules: std::cell::RefCell::new(crate::validate::RuleCache::new()),
+            of: std::marker::PhantomData,
+        })
+    }
+}
+
+/// Declarations that hold a type `T` and each named type it reaches as `T`
+/// declares them ([`R8::checked_in`]); the borrow keeps them unchanged while
+/// the handle lives, so it keeps their declaration hashes and compiled rules
+/// between documents.
+pub struct Checked<'a, T> {
+    types: &'a dyn TypeLookup,
+    hashes: std::cell::RefCell<HashMap<QualifiedName, std::sync::Arc<str>>>,
+    rules: std::cell::RefCell<crate::validate::RuleCache>,
+    of: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T: R8> Checked<'_, T> {
+    /// The declaration hash of `q` in the declarations, computed once.
+    fn hash(&self, q: &QualifiedName) -> std::sync::Arc<str> {
+        if let Some(h) = self.hashes.borrow().get(q) {
+            return h.clone();
+        }
+        let h: std::sync::Arc<str> = crate::canonical::value_declaration_hash(q, self.types).into();
+        self.hashes.borrow_mut().insert(q.clone(), h.clone());
+        h
+    }
+
+    /// [`R8::to_document_in`] without the check of the declarations.
+    pub fn to_document(&self, value: &T) -> Result<String, Vec<ValueError>> {
+        let mut v = value.encode().map_err(|e| vec![encode_error(e)])?;
+        let name = T::qualified_name();
+        crate::open::name_tags(&mut v, &name, self.types);
+        let errors =
+            crate::validate::validate_cached(&v, &name, self.types, &mut self.rules.borrow_mut());
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        let hash = |q: &QualifiedName| self.hash(q);
+        Ok(crate::canonical::document_with(
+            crate::access::Json::new(&v),
+            &name,
+            self.types,
+            false,
+            &hash,
+        ))
+    }
+
+    /// [`R8::from_document_in`] without the check of the declarations.
+    pub fn from_document(&self, text: &str) -> Result<T, Vec<ValueError>> {
+        let name = T::qualified_name();
+        let hash = |q: &QualifiedName| self.hash(q);
+        let options = crate::canonical::ReadOptions {
+            any_declaration: false,
+            hash: &hash,
+        };
+        let mut v = crate::canonical::read_document_with(
+            text,
+            &name,
+            self.types,
+            &mut self.rules.borrow_mut(),
+            options,
+        )?;
+        crate::open::name_types(&mut v, &name, self.types);
+        crate::open::reading(self.types, || T::decode(&v)).map_err(|e| vec![encode_error(e)])
+    }
 }
 
 fn write<T: R8>(value: &T, types: &dyn TypeLookup) -> Result<String, Vec<ValueError>> {
@@ -103,7 +182,7 @@ fn read<T: R8>(text: &str, types: &dyn TypeLookup) -> Result<T, Vec<ValueError>>
     let name = T::qualified_name();
     let mut v = read_document(text, &name, types)?;
     crate::open::name_types(&mut v, &name, types);
-    T::decode(&v).map_err(|e| vec![encode_error(e)])
+    crate::open::reading(types, || T::decode(&v)).map_err(|e| vec![encode_error(e)])
 }
 
 /// Checks that `types` declares `T` and the named types it reaches as `T`

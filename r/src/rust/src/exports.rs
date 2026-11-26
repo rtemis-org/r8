@@ -33,8 +33,9 @@ fn fail(message: impl Into<String>) -> Error {
     Error::Other(message.into())
 }
 
-/// The size of `R8Exports`, which every exports table holds.
-const EXPORTS_SIZE: u32 = std::mem::size_of::<Exports>() as u32;
+/// The size of `R8Exports` of this ABI version, which every exports table
+/// holds; a table of a later R8 is larger.
+const EXPORTS_SIZE: u32 = rtemis_r8::abi::EXPORTS_MIN_SIZE as u32;
 
 /// A registered impl function.
 #[derive(Clone, Copy)]
@@ -55,7 +56,7 @@ struct CodecPtr {
 // thread only.
 unsafe impl Send for CodecPtr {}
 
-/// An impl function's trait, the key of its positions ([`tuple_key`]), and its
+/// An impl function's trait, the key of its positions (`signature::tuple_key()`), and its
 /// method.
 type ImplKey = (String, String, String);
 
@@ -129,8 +130,8 @@ fn r8_compiled_types() -> Result<List> {
     Ok(list!(type_name = type_name, complete = complete))
 }
 
-/// The size of `R8Codec`, which every codec table holds.
-const CODEC_SIZE: u32 = std::mem::size_of::<Codec>() as u32;
+/// The size of `R8Codec` of this ABI version, which every codec table holds.
+const CODEC_SIZE: u32 = rtemis_r8::abi::CODEC_MIN_SIZE as u32;
 
 /// The codec tables of an exports table. The array's stride is the `size` of
 /// its entries, so a package built against a later header, whose entries
@@ -167,7 +168,7 @@ fn impl_entries(e: &Exports) -> Result<Vec<&ImplEntry>> {
     if e.impls.is_null() || e.n_impls == 0 {
         return Ok(Vec::new());
     }
-    let size = std::mem::size_of::<ImplEntry>();
+    let size = rtemis_r8::abi::IMPL_ENTRY_MIN_SIZE;
     if e.impl_size < size {
         return Err(fail(format!(
             "the impl entries have size {}; ABI version {ABI_VERSION} requires at least {size}",
@@ -221,21 +222,6 @@ fn positions(entry: &ImplEntry, package: &str) -> Result<Vec<TypeRef>> {
         .collect()
 }
 
-/// The key of an impl's positions, as R's `tuple_key()` writes it: each
-/// position's qualified type name, class name in double quotes, or `any`,
-/// joined by commas.
-fn tuple_key(positions: &[TypeRef]) -> String {
-    positions
-        .iter()
-        .map(|p| match p {
-            TypeRef::Named { name } => name.to_string(),
-            TypeRef::HostClass { class, .. } => format!("\"{class}\""),
-            TypeRef::Any => "any".to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 /// The `R8Exports` an external pointer holds, checked: the tag, the ABI
 /// version, and the size.
 fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
@@ -254,7 +240,9 @@ fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
     }
     let p = unsafe { R_ExternalPtrAddr(x) } as *const Exports;
     if p.is_null() {
-        return Err(fail("the external pointer of `r8_exports` is NULL"));
+        return Err(fail(
+            "the package's compiled code built no table of R8 exports; the console holds the message of its declarations",
+        ));
     }
     let e = unsafe { &*p };
     if e.abi_version != ABI_VERSION {
@@ -411,7 +399,7 @@ fn read_rows(
                 "the impl function `{}` of `{}` for `{}` is NULL",
                 row.method,
                 row.trait_name,
-                tuple_key(&row.positions)
+                crate::signature::tuple_key(row.positions.iter())
             ))
         })?;
         out.rows.push(row);
@@ -688,7 +676,7 @@ fn r8_register_exports(
         .map(|r| {
             (
                 r.trait_name.clone(),
-                tuple_key(&r.positions),
+                crate::signature::tuple_key(r.positions.iter()),
                 r.method.clone(),
             )
         })

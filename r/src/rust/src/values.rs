@@ -1669,18 +1669,15 @@ fn diagnosis_r(d: &rtemis_r8::rules::Diagnosis) -> Robj {
         .iter()
         .filter_map(|(p, s)| shown_text(s, &r_path(p)))
         .collect();
-    let mut operands = Robj::from(
-        d.operands
-            .iter()
-            .map(|(_, s)| shown_value(s).unwrap_or_default())
-            .collect::<Vec<_>>(),
-    );
-    let _ = operands.set_names(
-        d.operands
-            .iter()
-            .map(|(p, _)| p.as_str())
-            .collect::<Vec<_>>(),
-    );
+    // An operand that a value does not show, such as the levels of a factor,
+    // which `shown_value()` writes as a length, is left out.
+    let shown: Vec<(&str, String)> = d
+        .operands
+        .iter()
+        .filter_map(|(p, s)| shown_value(s).map(|v| (p.as_str(), v)))
+        .collect();
+    let mut operands = Robj::from(shown.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>());
+    let _ = operands.set_names(shown.iter().map(|(p, _)| *p).collect::<Vec<_>>());
     let element = d
         .element
         .as_ref()

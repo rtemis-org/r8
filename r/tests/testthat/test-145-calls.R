@@ -130,8 +130,25 @@ test_that("r8_check_call() reports every problem of a document", {
     clip,
     doc_of("call3", '{"x": [1], "hi": -1, "w": null}')
   )
-  expect_identical(rules[["code"]], c("rule_violation", "rule_unchecked"))
-  expect_identical(rules[["rule"]], c("order", "count"))
+  expect_identical(rules[["code"]], "rule_violation")
+  expect_identical(rules[["rule"]], "order")
+  expect_identical(attr(rules, "unchecked")[["rule"]], "count")
+  # A call that holds has no rows, and its unchecked rules apart.
+  held <- r8_check_call(clip, doc_of("call3", '{"x": [1], "hi": 1, "w": null}'))
+  expect_identical(nrow(held), 0L)
+  expect_identical(attr(held, "unchecked")[["code"]], "rule_unchecked")
+  # A name from the document is written with its control characters escaped
+  # and cut.
+  long <- r8_check_call(
+    clip,
+    paste0(
+      '{"$function": "call3::',
+      strrep("a", 5000),
+      '\\u001b", "arguments": {}}'
+    )
+  )
+  expect_lt(nchar(long[["message"]]), 300L)
+  expect_false(grepl("\033", long[["message"]], fixed = TRUE))
   # A function that the call does not admit.
   other <- r8_check_call(clip, '{"$function": "call3::other", "arguments": {}}')
   expect_identical(other[["code"]], "unknown_function")
@@ -201,10 +218,19 @@ test_that("r8_call_to_json() writes a document that reads back", {
     "order",
     class = "r8_argument_error"
   )
-  expect_error(
+  e <- expect_error(
     r8_call_to_json(clip, "a", hi = 1, w = NULL),
     class = "r8_argument_error"
   )
+  expect_identical(e[["problems"]][["path"]], "/arguments/x")
+  expect_error(
+    r8_call_to_json(clip, 1, zz = 2),
+    "unused argument",
+    class = "r8_argument_error"
+  )
+  # A parameter named `f` is given by name.
+  g <- declare_in("call5", new_function("g", function(f = arg_double()) f))
+  expect_match(r8_call_to_json(g, f = 1), '"arguments":{"f":1}', fixed = TRUE)
 })
 
 test_that("the roclet writes a described parameter's @param", {
@@ -234,4 +260,35 @@ test_that("the roclet writes a described parameter's @param", {
     "described parameter takes no @param",
     class = "r8_declaration_error"
   )
+})
+
+test_that("the schema writes each rule's text, as R writes the rule", {
+  f <- declare_in("call7", {
+    new_function(
+      "f",
+      function(
+        lo = arg_double(),
+        hi = arg_double(),
+        v = arg_vec(type_double())
+      ) {
+        1
+      },
+      rules = list(
+        order = rule(lo <= hi, message = "lo is at most hi."),
+        rule(length(v) >= 1L && (lo + 1) * 2 <= hi),
+        rule(all(v, .x > 0) || !is.null(v))
+      )
+    )
+  })
+  s <- gsub("[[:space:]]+", " ", r8_schema(f))
+  expect_match(s, '"text": "lo <= hi"', fixed = TRUE)
+  expect_match(s, '"message": "lo is at most hi."', fixed = TRUE)
+  # The text in Rust is the text that R writes of the same rule, but for the
+  # integer suffix: the IR holds a number, which every host reads alike.
+  for (r in r8_function_ir("call7::f")[["rules"]]) {
+    expect_identical(
+      r8_rule_text(r[["invariant"]]),
+      gsub("([0-9])L\\b", "\\1", logic_text(r[["invariant"]]))
+    )
+  }
 })

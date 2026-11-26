@@ -77,6 +77,8 @@ static void rust_stored_finalize(SEXP data1) {
   R_ClearExternalPtr(data1);
 }
 
+void r8_continue_unwind(void);
+
 // The fields of a value without a state, which a stream gave, or NULL.
 static SEXP fields_read(SEXP x) {
   SEXP data1 = R_altrep_data1(x);
@@ -102,7 +104,13 @@ static SEXP read_field(SEXP x, R_xlen_t i) {
   SEXP names = VECTOR_ELT(R_ExternalPtrTag(data1), ID_NAMES);
   R8Error err = {{0}, {0}};
   SEXP value = R_NilValue;
-  if (vt->get_field(state, data1, CHAR(STRING_ELT(names, i)), &value, &err) != R8_OK) {
+  R8Status status = vt->get_field(state, data1, CHAR(STRING_ELT(names, i)), &value, &err);
+  if (status == R8_UNWIND) {
+    // A jump of R that the codec's R8Api.protect caught: an interrupt stays
+    // an interrupt, and an error's message is written once.
+    r8_continue_unwind();
+  }
+  if (status != R8_OK) {
     Rf_error("%s [%s]", err.message, err.code);
   }
   return value;
@@ -280,6 +288,15 @@ void r8_rust_stored_give(SEXP x, const R8Codec *vt, void *state) {
   R_SetExternalPtrAddr(codec, (void *) vt);
   R_SetExternalPtrAddr(data1, state);
   UNPROTECT(1);
+}
+
+// Takes the state back from a value that wrapped it, so that the value's
+// finalizer leaves it to the caller, which drops it: a value that Rust code
+// made and that fails its type's validation.
+void r8_rust_stored_take(SEXP x) {
+  SEXP data1 = R_altrep_data1(x);
+  rust_stored_live -= counted(data1);
+  R_ClearExternalPtr(data1);
 }
 
 int r8_is_view(SEXP x);

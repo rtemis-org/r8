@@ -816,8 +816,40 @@ fn r8_sha256(x: Raw) -> Raw {
     Raw::from_bytes(&rtemis_r8::canonical::sha256(x.as_slice()))
 }
 
+/// The variants of the enum of the value `x` under the declaration that `x`
+/// carries, for a type that is not registered.
+///
+/// @param x An R8 value.
+/// @return Character: The variants' names, or `NULL` when the value carries no
+///   declaration that this R8 reads.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_value_variants(x: Robj) -> Robj {
+    let xs = unsafe { x.get() };
+    let (Some(id), Some(name)) = (id(xs), type_name(xs)) else {
+        return ().into();
+    };
+    let Ok(q) = QualifiedName::parse(&name) else {
+        return ().into();
+    };
+    let Some(docs) = made_under(id) else {
+        return ().into();
+    };
+    match rtemis_r8::rules::TypeLookup::find(&*docs, &q) {
+        Some(rtemis_r8::ir::TypeDef::Enum(e)) => Robj::from(
+            e.variants
+                .iter()
+                .map(|v| v.name.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        _ => ().into(),
+    }
+}
+
 extendr_module! {
     mod value;
+    fn r8_value_variants;
     fn r8_sha256;
     fn r8_value_other;
     fn r8_updated_value;

@@ -24,15 +24,18 @@ static PARTS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static MEMORY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static PROTECT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static SYMBOLS: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static TAKE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Receives the functions of `rust_stored.c` from `R_init_R8()`.
 ///
 /// # Safety
 ///
-/// `wrap`, `fields_read`, `give`, `state`, `parts`, `memory`, `protect`, and
-/// `symbols` are `r8_rust_stored_wrap()`, `r8_rust_stored_fields_read()`,
-/// `r8_rust_stored_give()`, `r8_rust_stored_state()`, `r8_rust_stored_parts()`,
-/// `r8_rust_stored_memory()`, `r8_protect()`, and `r8_native_symbols()`.
+/// `wrap`, `fields_read`, `give`, `state`, `parts`, `memory`, `protect`,
+/// `symbols`, and `take` are `r8_rust_stored_wrap()`,
+/// `r8_rust_stored_fields_read()`, `r8_rust_stored_give()`,
+/// `r8_rust_stored_state()`, `r8_rust_stored_parts()`,
+/// `r8_rust_stored_memory()`, `r8_protect()`, `r8_native_symbols()`, and
+/// `r8_rust_stored_take()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn r8_set_rust_stored_functions(
     wrap: *mut (),
@@ -43,6 +46,7 @@ pub unsafe extern "C" fn r8_set_rust_stored_functions(
     memory: *mut (),
     protect: *mut (),
     symbols: *mut (),
+    take: *mut (),
 ) {
     WRAP.store(wrap, Ordering::Release);
     FIELDS_READ.store(fields_read, Ordering::Release);
@@ -52,6 +56,16 @@ pub unsafe extern "C" fn r8_set_rust_stored_functions(
     MEMORY.store(memory, Ordering::Release);
     PROTECT.store(protect, Ordering::Release);
     SYMBOLS.store(symbols, Ordering::Release);
+    TAKE.store(take, Ordering::Release);
+}
+
+/// Takes the state back from `x`, a value that [`wrap()`] made
+/// (`r8_rust_stored_take()`).
+fn take(x: SEXP) {
+    let f = TAKE.load(Ordering::Acquire);
+    assert!(!f.is_null(), "R8 is loaded through R_init_R8()");
+    let f: unsafe extern "C" fn(SEXP) = unsafe { std::mem::transmute(f) };
+    unsafe { f(x) }
 }
 
 /// The parts of a Rust-stored value that `r8_size()` adds up: the bytes of
@@ -492,6 +506,12 @@ fn new_value(
         })?;
     // The value takes the state only when the wrapper returns.
     let out = guarded(|| wrap(vt, state, id)).ok_or_else(jumped)?;
+    // The caller drops the state of a value that fails, so the value gives
+    // it back.
+    if let Err(e) = checked(out, &q, lookup) {
+        take(out);
+        return Err(e);
+    }
     unsafe { *value = out.cast() };
     Ok(())
 }
@@ -546,7 +566,12 @@ pub unsafe extern "C" fn r8_api_pin(
 /// The outcome of `f`, which may call R functions that jump, run by
 /// `R8Api.protect`: `None` when R jumped out of it, which leaks what `f`
 /// allocated in Rust. A panic in `f` continues in the caller.
-pub(crate) fn guarded<T>(mut f: impl FnMut() -> T) -> Option<T> {
+pub(crate) fn guarded<T>(f: impl FnMut() -> T) -> Option<T> {
+    guarded_report(f).ok()
+}
+
+/// [`guarded()`], with the message of the R error that ended `f`.
+pub(crate) fn guarded_report<T>(mut f: impl FnMut() -> T) -> Result<T, String> {
     struct Run<'a, T> {
         f: &'a mut dyn FnMut() -> T,
         out: Option<std::thread::Result<T>>,
@@ -561,16 +586,79 @@ pub(crate) fn guarded<T>(mut f: impl FnMut() -> T) -> Option<T> {
         out: None,
     };
     let mut value: SEXP = unsafe { extendr_ffi::R_NilValue };
+    let mut err = blank();
     let status = protect(
         run::<T>,
         std::ptr::from_mut(&mut r).cast(),
         &mut value,
-        &mut blank(),
+        &mut err,
     );
-    match r.out.filter(|_| status == OK)? {
-        Ok(v) => Some(v),
-        Err(p) => std::panic::resume_unwind(p),
+    match r.out.filter(|_| status == OK) {
+        Some(Ok(v)) => Ok(v),
+        Some(Err(p)) => std::panic::resume_unwind(p),
+        None => Err(report_text(&err.message)),
     }
+}
+
+/// Whether values of the type `q` are validated when Rust code makes them
+/// (`rtemis_r8::validate::constrains()`), kept per registry generation.
+fn constrained(q: &QualifiedName, lookup: &dyn TypeLookup) -> bool {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static KEPT: Mutex<Option<(u64, HashMap<String, bool>)>> = Mutex::new(None);
+    let now = crate::construct::GENERATION.load(Ordering::Relaxed);
+    let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    if kept.as_ref().is_none_or(|(g, _)| *g != now) {
+        *kept = Some((now, HashMap::new()));
+    }
+    let (_, by_name) = kept.as_mut().expect("set above");
+    *by_name
+        .entry(q.to_string())
+        .or_insert_with(|| rtemis_r8::validate::constrains(q, lookup))
+}
+
+/// Validates `x`, a value of the type `q` that Rust code made, when its type
+/// constrains it: every problem, as `invalid_value` with their text, or an R
+/// error raised while a field was read, such as the build of a replaced
+/// `subtype()` field.
+fn checked(
+    x: SEXP,
+    q: &QualifiedName,
+    lookup: &dyn TypeLookup,
+) -> Result<(), (&'static str, String)> {
+    if !constrained(q, lookup) {
+        return Ok(());
+    }
+    let errors = guarded_report(|| unsafe {
+        extendr_ffi::Rf_protect(x);
+        let found = crate::construct::with_cache(|cache| {
+            rtemis_r8::validate::validate_access(crate::rview::RView::Whole(x), q, lookup, cache)
+        });
+        extendr_ffi::Rf_unprotect(1);
+        found
+    })
+    .map_err(|m| ("invalid_value", m))?;
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let mut errors = errors;
+    for e in &mut errors {
+        if let Some(p) = &e.problem {
+            e.message = p.sentence(
+                &e.segments,
+                e.found.as_ref(),
+                e.suggestion.as_deref(),
+                &rtemis_r8::problem::Neutral,
+            );
+        }
+    }
+    Err((
+        "invalid_value",
+        format!(
+            "the value of `{q}` is invalid: {}",
+            crate::construct::problems_text(&errors)
+        ),
+    ))
 }
 
 /// `R8Api.value_of_fields`: builds a value of a registered struct, or of a
@@ -618,6 +706,7 @@ pub unsafe extern "C" fn r8_api_value_of_fields(
                 ));
             }
             let x = value_of_fields(&q, c_text(variant).as_deref(), fields.cast(), &*docs, true)?;
+            checked(x, &q, &*docs)?;
             unsafe { *value = x.cast() };
             Ok(())
         }),

@@ -1,9 +1,22 @@
 # R8 0.6.0
 
 - `arg()` and its shorthands take `description`, which the declaration keeps; `arg(description = )` alone describes a parameter without a type. The roclet `r8_rd()` writes a described parameter's `@param` from it, and refuses a block that also documents that parameter.
-- `r8_schema(f)` writes the JSON Schema of the arguments of a typed function, for a tool's input schema.
+- `r8_schema(x)` writes the JSON Schema of the arguments of a typed function, for a tool's input schema; its first argument is `x`, a type or a typed function.
 - `r8_check_call()`, `r8_call_from_json()`, and `r8_call_to_json()` check, run, and write documents of a call of a typed function, `{"$function": "ns::f", "arguments": {...}}`, among the functions that the caller names.
 - The declaration record has format 10; a package installed with an earlier R8 is reinstalled.
+- A shorthand of `arg()` takes `default` and `description` by name, and a parameter is not named `.Call`, `quote`, `environment`, `withVisible`, or `invisible`. A constant default of `c()` mixes no kinds of element, and `pkg::Type` as a default is refused as `Type` is.
+- A `return()` inside `local()` or `evalq()` in the body of a typed function returns from that call, unchecked.
+- A rule's error writes each value it found once, and leaves out a value that it does not show, such as `levels(x)`.
+- A package whose Rust declarations panic raises an error at `library()`. A package's Rust code stays loaded after `pkgload::unload()`, so its values remain valid, and an R object that Rust code keeps is copied, not changed, by R's replacement functions.
+- A description of several lines prints each line indented.
+- A missing value names the type it lacks: "`n` must be a value of type integer [1, Inf); found NULL."
+- A Rust-stored value whose buffer Rust owns writes a field without starting a collection of R's garbage: each value that shares the buffer counts a share of its bytes.
+- A default prints in one R form in a field object, a parameter, and a type: a date as `as.Date()`, a date-time as `as.POSIXct()`, and each double with the fewest digits that identify it.
+- `host_class(class, package, system = "s7")`, and an S7 class object, declare an argument, a result, a field, or a dispatched position of an S7 class.
+- `r8_is_variant()` of a value whose package is not loaded refuses a name that is no variant, as with the package loaded, by the declaration that the value carries.
+- A package with Rust code built against an earlier R8 of the same ABI version loads after R8 appends members to its C tables, which a reader finds absent.
+- An error that a package's compiled method returns is an `r8_method_error`, with its code in the field `code`, and a panic an `r8_panic`.
+- A value that a package's Rust code makes is validated when its type has rules, constraints, or `subtype()` or `dyn()` fields, and the method that made it raises the error.
 
 # R8 0.5.0
 

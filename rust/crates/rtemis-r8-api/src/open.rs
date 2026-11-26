@@ -325,6 +325,9 @@ impl<P: RustStored + Extensible> Field for SubtypeValue<P> {
     fn to_r(&self, _owner: SEXP) -> Result<SEXP> {
         Ok(self.current()?.token.get())
     }
+    fn settle(&self) -> Result<()> {
+        self.current().map(|_| ())
+    }
     fn owned_bytes(&self) -> usize {
         let base: &P = match &self.base {
             // The R value accounts for its state.

@@ -1107,7 +1107,16 @@ signature_lines <- function(m, g, indent) {
         if (!is.null(p[["type"]])) {
           paste0(": ", plain_notation(r8_type_notation(p[["type"]])))
         },
-        if (has_default) paste0(" = ", deparse1(fmls[[n]]))
+        if (has_default) {
+          paste0(
+            " = ",
+            if (is.language(fmls[[n]])) {
+              deparse1(fmls[[n]])
+            } else {
+              default_text(fmls[[n]])
+            }
+          )
+        }
       ),
       if (nzchar(description)) paste0(indent, "  ", description)
     )

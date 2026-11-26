@@ -14,6 +14,15 @@ NULL
 #' @noRd
 r8_alloc_stats <- function() .Call(wrap__r8_alloc_stats)
 
+#' The text of a rule's expression in the syntax that rules are written in
+#' (`rtemis_r8::rules::text::text()`).
+#'
+#' @param x List: The expression, as `rule()` builds it.
+#' @return Character.
+#' @keywords internal
+#' @noRd
+r8_rule_text <- function(x) .Call(wrap__r8_rule_text, x)
+
 #' The JSON Schema (draft 2020-12) of the arguments object of a registered
 #' function (`rtemis_r8::call::arguments_schema()`).
 #'
@@ -350,6 +359,15 @@ r8_declare_impl <- function(ir, namespace) .Call(wrap__r8_declare_impl, ir, name
 #' @keywords internal
 #' @noRd
 r8_ir_json <- function(x) .Call(wrap__r8_ir_json, x)
+
+#' Each double as the fewest digits that identify it, in the form of R8's
+#' canonical JSON (ECMAScript's `Number.prototype.toString`).
+#'
+#' @param x Double: Finite numbers.
+#' @return Character.
+#' @keywords internal
+#' @noRd
+r8_number_texts <- function(x) .Call(wrap__r8_number_texts, x)
 
 #' The RFC 8785 canonical text of JSON text.
 #'
@@ -917,6 +935,16 @@ r8_css_text <- function(theme, named) .Call(wrap__r8_css_text, theme, named)
 #' @keywords internal
 #' @noRd
 r8_determine_output <- function(facts) .Call(wrap__r8_determine_output, facts)
+
+#' The variants of the enum of the value `x` under the declaration that `x`
+#' carries, for a type that is not registered.
+#'
+#' @param x An R8 value.
+#' @return Character: The variants' names, or `NULL` when the value carries no
+#'   declaration that this R8 reads.
+#' @keywords internal
+#' @noRd
+r8_value_variants <- function(x) .Call(wrap__r8_value_variants, x)
 
 #' The SHA-256 of a raw vector.
 #'

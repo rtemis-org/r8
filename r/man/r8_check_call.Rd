@@ -20,7 +20,9 @@ code.}
 A data frame of the problems, as the condition of
 \code{\link[=r8_call_from_json]{r8_call_from_json()}} holds them (\code{code}, \code{path}, \code{rule}, \code{message}, and
 others), with no rows for a call that holds. Paths are JSON Pointers into
-the document, such as \verb{/arguments/lo}.
+the document, such as \verb{/arguments/lo}. The attribute \code{unchecked} holds, in
+the same form, the rules that read an omitted argument whose default is
+written in R, which the function checks when it runs.
 }
 \description{
 Reads a document of a call, \verb{\{"$function": "ns::f", "arguments": \{...\}\}}, and
@@ -29,7 +31,8 @@ of the functions \code{f}, each argument against its parameter's type, the versi
 of \code{"$types"} when the document holds it, and, when every argument holds, the
 function's rules, with the defaults written as constants of the arguments it
 omits. A rule that reads an omitted argument whose default is written in R,
-which the function evaluates when it runs, is reported as \code{rule_unchecked}.
+which the function evaluates when it runs, is listed in the attribute
+\code{unchecked}, as \code{rule_unchecked}.
 }
 \examples{
 op <- options(r8.namespace = "demo")

@@ -96,6 +96,10 @@ impl Token {
     ///
     /// Called on R's main thread with a valid `x`.
     pub(crate) unsafe fn keep(x: SEXP) -> crate::Result<Token> {
+        // The keep cell is the object's one reference, which R's replacement
+        // functions read as a license to write it in place; a kept object is
+        // read by Rust as immutable.
+        unsafe { sys::MARK_NOT_MUTABLE(x) };
         let h = crate::api::protect(&|| head()).map_err(crate::api::Jumped::into_error)?;
         let cell = crate::api::protect(&|| unsafe { sys::Rf_cons(x, sys::R_NilValue) })
             .map_err(crate::api::Jumped::into_error)?;

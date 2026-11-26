@@ -226,6 +226,21 @@ fn classes(x: SEXP) -> String {
 /// implicit classes of an object without a class attribute are read from its
 /// type and `dim` attribute; R gives those of an S4 object and of a language
 /// object.
+/// `base::.class2`, looked up once and kept for the session.
+fn class2() -> Option<extendr_api::Robj> {
+    use extendr_api::prelude::*;
+    static F: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *F.get_or_init(|| match R!("base::.class2") {
+        Ok(f) => {
+            let x = unsafe { f.get() };
+            unsafe { extendr_ffi::R_PreserveObject(x) };
+            x as usize
+        }
+        Err(_) => 0,
+    });
+    (p != 0).then(|| unsafe { Robj::from_sexp(p as SEXP) })
+}
+
 pub(crate) fn is_host_class(x: SEXP, class: &str) -> bool {
     if inherits(x, class) {
         return true;
@@ -237,8 +252,7 @@ pub(crate) fn is_host_class(x: SEXP, class: &str) -> bool {
         let x = unsafe { Robj::from_sexp(x) };
         // The call evaluates its argument, which quotes a language object.
         let x = lang!("quote", x);
-        return R!("base::.class2")
-            .ok()
+        return class2()
             .and_then(|f| f.as_function())
             .and_then(|f| f.call(pairlist!(x)).ok())
             .is_some_and(|c| {

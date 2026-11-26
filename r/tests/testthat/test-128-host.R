@@ -424,3 +424,54 @@ test_that("a symbol or a call dispatches as a value and is not evaluated", {
     )
   })
 })
+
+test_that("an S7 class is a host class of the system s7", {
+  skip_if_not_installed("S7")
+  Metrics <- S7::new_class("Metrics", properties = list(a = S7::class_double))
+  Classif <- S7::new_class("Classif", parent = Metrics)
+  m <- Classif(a = 1)
+  h <- unclass(host_class(Classif))
+  expect_identical(h[["system"]], "s7")
+  # S7 names a class by the package of the environment it is defined in, as
+  # its instances' class vector does.
+  expect_identical(h[["class"]], class(m)[[1L]])
+  q <- unclass(host_class(
+    "ClassificationMetrics",
+    package = "rtemis",
+    system = "s7"
+  ))
+  expect_identical(q[["class"]], "rtemis::ClassificationMetrics")
+  expect_identical(q[["package"]], "rtemis")
+  expect_error(
+    host_class("rtemis::ClassificationMetrics"),
+    "system = \"s7\"",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    host_class(S7::class_double),
+    "no S7 classes",
+    class = "r8_declaration_error"
+  )
+  f <- declare_in("host_s7", {
+    new_function("f", function(x = arg(Metrics)) x, return_type = Classif)
+  })
+  # An instance of a subclass passes, as for S3.
+  expect_identical(class(f(m)), class(m))
+  expect_error(f(1), "Metrics\"", class = "r8_argument_error")
+  expect_error(
+    f(Metrics(a = 1)),
+    "Classif\"",
+    class = "r8_result_error"
+  )
+  d <- declare_in("host_s7", generic("d", params(x)))
+  declare_in(
+    "host_s7",
+    implement(d, host_class(Metrics)) <- function(x) "metrics"
+  )
+  declare_in(
+    "host_s7",
+    implement(d, host_class(Classif)) <- function(x) "classif"
+  )
+  expect_identical(d(m), "classif")
+  expect_identical(d(Metrics(a = 1)), "metrics")
+})

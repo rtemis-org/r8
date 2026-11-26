@@ -327,6 +327,10 @@ method_block <- function(block, blocks, env) {
     in_type_file <- !is.null(topic)
   }
   documented <- length(block$tags) > 0L
+  # A block whose @param entries join the generic's Rd file.
+  if (!in_type_file && !is.null(topic)) {
+    refuse_described(block, generic_descriptions(generic))
+  }
   if (is.null(topic)) {
     if (!documented) {
       return(NULL)
@@ -660,29 +664,13 @@ generic_block <- function(block, blocks, env) {
       descriptions[[p[["name"]]]] <- p[["description"]]
     }
   }
+  refuse_described(block, descriptions)
   block$tags <- lapply(block$tags, function(tag) {
     if (!identical(tag$tag, "param")) {
       return(tag)
     }
     # A tag of several parameters takes their type when they share one.
     names <- trimws(strsplit(tag$val$name, ",", fixed = TRUE)[[1L]])
-    described <- intersect(names, names(descriptions))
-    if (length(described) > 0L) {
-      n <- described[[1L]]
-      r8_abort(
-        block$file,
-        ":",
-        block$line,
-        ": parameter `",
-        n,
-        "` has its description in its declaration, \"",
-        descriptions[[n]],
-        "\", and in @param, \"",
-        tag$val$description,
-        "\"; a described parameter takes no @param.",
-        class = "r8_declaration_error"
-      )
-    }
     text <- unique(types[names])
     if (
       length(text) == 1L &&
@@ -723,6 +711,74 @@ generic_block <- function(block, blocks, env) {
   }
   block
 } # /R8::generic_block
+
+
+# %% refuse_described ----
+#' Refuse an `@param` of a parameter that its declaration describes
+#'
+#' @param block A roxygen2 block of a generic, a function, or a method, whose
+#'   `@param` entries join the generic's Rd file.
+#' @param descriptions Named character: The declared descriptions, by
+#'   parameter.
+#'
+#' @return `NULL`, invisibly; raises `r8_declaration_error`.
+#'
+#' @keywords internal
+#' @noRd
+refuse_described <- function(block, descriptions) {
+  for (tag in block$tags) {
+    if (!identical(tag$tag, "param")) {
+      next
+    }
+    names <- trimws(strsplit(tag$val$name, ",", fixed = TRUE)[[1L]])
+    described <- intersect(names, names(descriptions))
+    if (length(described) > 0L) {
+      n <- described[[1L]]
+      r8_abort(
+        block$file,
+        ":",
+        block$line,
+        ": parameter `",
+        n,
+        "` has its description in its declaration, \"",
+        descriptions[[n]],
+        "\", and in @param, \"",
+        tag$val$description,
+        "\"; a described parameter takes no @param.",
+        class = "r8_declaration_error"
+      )
+    }
+  }
+  invisible(NULL)
+} # /R8::refuse_described
+
+
+# %% generic_descriptions ----
+#' The declared descriptions of the parameters of an R8 generic
+#'
+#' @param g A generic.
+#'
+#' @return Named character: The descriptions, by parameter.
+#'
+#' @keywords internal
+#' @noRd
+generic_descriptions <- function(g) {
+  trait <- if (inherits(g, "r8_generic")) .r8_traits[[attr(g, "r8_trait")]]
+  if (is.null(trait)) {
+    return(character())
+  }
+  m <- Filter(
+    function(m) identical(m[["name"]], attr(g, "r8_method")),
+    trait_ir(trait)[["methods"]]
+  )
+  out <- character()
+  for (p in if (length(m) > 0L) m[[1L]][["params"]]) {
+    if (is.list(p) && nzchar(p[["description"]] %||% "")) {
+      out[[p[["name"]]]] <- p[["description"]]
+    }
+  }
+  out
+} # /R8::generic_descriptions
 
 
 # %% roclet_process.roclet_r8_rd ----

@@ -305,12 +305,15 @@ impl<T: Element> Buffer<T> {
         }
     }
 
-    /// The memory Rust owns for the buffer; a borrowed vector is R's, which
-    /// R accounts for.
+    /// The memory Rust owns for the buffer, as this holder's share of it: a
+    /// buffer that `n` clones share counts `1/n` of its bytes in each, as
+    /// the clones are counted when R8 wraps a value, so that values that
+    /// share one buffer, such as a value and the value with a field replaced,
+    /// count it about once. A borrowed vector is R's, which R accounts for.
     pub fn owned_bytes(&self) -> usize {
         match &self.backing {
             Backing::R { .. } => 0,
-            Backing::Owned(a) => std::mem::size_of_val::<[T]>(a),
+            Backing::Owned(a) => std::mem::size_of_val::<[T]>(a) / Arc::strong_count(a).max(1),
         }
     }
 }

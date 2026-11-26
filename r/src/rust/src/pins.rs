@@ -73,6 +73,7 @@ pub(crate) fn add(module: *const c_void, bytes: &[u8]) -> Result<(), (&'static s
             "R8 does not hold the exports of the calling code; its package is unloaded, or was registered again".to_string(),
         ));
     };
+    let mut added = false;
     for e in entries {
         let Declaration::Type(t) = e.declaration else {
             return Err(("bad_record", "the record declares no type".to_string()));
@@ -83,7 +84,13 @@ pub(crate) fn add(module: *const c_void, bytes: &[u8]) -> Result<(), (&'static s
         };
         if m.compiled.find(&q).is_none() {
             m.compiled.put_type(&e.namespace, t);
+            added = true;
         }
+    }
+    // A verdict compared the declarations that the module held then; a type
+    // that reaches a newly pinned one is compared again.
+    if added {
+        m.verdicts.clear();
     }
     Ok(())
 }
@@ -154,17 +161,18 @@ pub(crate) fn check(module: *const c_void, type_name: &str) -> Result<(), (&'sta
 }
 
 /// Whether the registered declaration of the type `name` is the one that
-/// `module` was compiled against; `true` for a type that `module` does not hold.
+/// `module` was compiled against; `false` for a type that `module` does not
+/// hold, since a codec's module holds the declaration of its type.
 pub(crate) fn is_current(module: *const c_void, name: &str) -> bool {
     let Ok(q) = QualifiedName::parse(name) else {
-        return true;
+        return false;
     };
     let held = modules();
     let Some(compiled) = held
         .get(&(module as usize))
         .and_then(|m| m.compiled.find(&q))
     else {
-        return true;
+        return false;
     };
     registry()
         .snapshot()

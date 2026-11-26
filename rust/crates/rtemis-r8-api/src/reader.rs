@@ -42,13 +42,13 @@ impl<'a> Reader<'a> {
     /// `raw` is a reader R8 lends for the current call.
     pub(crate) unsafe fn new(raw: *const abi::Reader) -> Result<Self> {
         let raw = unsafe { raw.as_ref() }.ok_or_else(|| missing("table"))?;
-        if (raw.size as usize) < std::mem::size_of::<abi::Reader>() {
+        if (raw.size as usize) < abi::READER_MIN_SIZE {
             return Err(Error::new(
                 "reader",
                 format!(
                     "the reader has size {}; this codec reads {}",
                     raw.size,
-                    std::mem::size_of::<abi::Reader>()
+                    abi::READER_MIN_SIZE
                 ),
             ));
         }

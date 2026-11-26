@@ -838,6 +838,9 @@ pub enum ClassSystem {
     /// An implicit class: a name that `.class2()` derives from an object's
     /// type and `dim` attribute, such as `"matrix"` or `"NULL"`.
     Implicit,
+    /// An S7 class: its name in an object's `class` attribute, qualified by
+    /// its package, `pkg::Class`, as S7 writes it.
+    S7,
 }
 
 /// A type an impl names: its target, or one of its type arguments.

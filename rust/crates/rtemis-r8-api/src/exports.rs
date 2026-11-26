@@ -94,6 +94,42 @@ pub fn table(
     traits: &[fn() -> TraitDef],
     impls: &'static [fn() -> ImplSet],
 ) -> *const abi::Exports {
+    // A declaration that panics, such as a field type that its constraints do
+    // not fit, unwinds to here, not across `extern "C"`; R8 refuses the NULL
+    // table and names the message written to the console.
+    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        build(cell, package, namespace, codecs, types, traits, impls)
+    }));
+    match built {
+        Ok(p) => p,
+        Err(payload) => {
+            let why = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "a panic without a message".to_string());
+            let line = std::ffi::CString::new(format!(
+                "The R8 declarations of package '{}' do not build: {}\n",
+                package.to_string_lossy(),
+                why.replace('\0', " ")
+            ))
+            .unwrap_or_default();
+            unsafe { sys::REprintf(c"%s".as_ptr(), line.as_ptr()) };
+            std::ptr::null()
+        }
+    }
+}
+
+/// The table of [`table()`], built once.
+fn build(
+    cell: &'static OnceLock<usize>,
+    package: &'static CStr,
+    namespace: &str,
+    codecs: &'static [abi::Codec],
+    types: impl FnOnce(&mut DocumentSet),
+    traits: &[fn() -> TraitDef],
+    impls: &'static [fn() -> ImplSet],
+) -> *const abi::Exports {
     *cell.get_or_init(|| {
         use rtemis_r8::record::{self, DeclarationRef};
         let ns = Name::new(namespace).expect("the macro checks the namespace");
@@ -168,7 +204,66 @@ pub fn table(
 #[doc(hidden)]
 pub unsafe fn register(package: &'static CStr, f: unsafe extern "C" fn() -> *const abi::Exports) {
     keep::init();
+    pin::pin(module());
     unsafe {
         sys::R_RegisterCCallable(package.as_ptr(), c"r8_exports".as_ptr(), f as *const c_void)
     };
+}
+
+/// The package's shared object, kept loaded for the session: a value of a
+/// Rust-stored type holds the address of its codec and its state, which an
+/// unload, such as `pkgload::unload()`, would leave pointing into unmapped
+/// memory when the value's finalizer runs.
+mod pin {
+    use std::ffi::{c_char, c_int, c_void};
+
+    /// Adds a reference to the shared object that holds `addr`, which R's
+    /// unload does not remove.
+    #[cfg(all(unix, not(target_family = "wasm")))]
+    pub(super) fn pin(addr: *const c_void) {
+        #[repr(C)]
+        struct DlInfo {
+            fname: *const c_char,
+            fbase: *mut c_void,
+            sname: *const c_char,
+            saddr: *mut c_void,
+        }
+        unsafe extern "C" {
+            fn dladdr(addr: *const c_void, info: *mut DlInfo) -> c_int;
+            fn dlopen(file: *const c_char, mode: c_int) -> *mut c_void;
+        }
+        // `RTLD_NOW` is 2 on Linux, macOS, the BSDs, and Solaris.
+        const RTLD_NOW: c_int = 2;
+        let mut info = DlInfo {
+            fname: std::ptr::null(),
+            fbase: std::ptr::null_mut(),
+            sname: std::ptr::null(),
+            saddr: std::ptr::null_mut(),
+        };
+        unsafe {
+            if dladdr(addr, &mut info) != 0 && !info.fname.is_null() {
+                // The object is loaded, so this adds a reference and loads
+                // nothing; the handle is not closed.
+                let _ = dlopen(info.fname, RTLD_NOW);
+            }
+        }
+    }
+
+    /// Pins the module that holds `addr` (`GET_MODULE_HANDLE_EX_FLAG_PIN`).
+    #[cfg(windows)]
+    pub(super) fn pin(addr: *const c_void) {
+        unsafe extern "system" {
+            fn GetModuleHandleExW(flags: u32, name: *const u16, module: *mut *mut c_void) -> c_int;
+        }
+        const FROM_ADDRESS: u32 = 0x4;
+        const PIN: u32 = 0x1;
+        let mut module = std::ptr::null_mut();
+        unsafe {
+            let _ = GetModuleHandleExW(FROM_ADDRESS | PIN, addr.cast(), &mut module);
+        }
+    }
+
+    /// webR loads a package's code once and does not unload it.
+    #[cfg(target_family = "wasm")]
+    pub(super) fn pin(_addr: *const c_void) {}
 }

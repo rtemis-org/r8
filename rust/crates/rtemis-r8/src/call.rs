@@ -95,10 +95,21 @@ pub fn arguments_schema(
     let mut annotations = Map::new();
     annotations.insert("function".into(), json!(f.to_string()));
     if !def.rules.is_empty() {
-        annotations.insert(
-            "rules".into(),
-            serde_json::to_value(&def.rules).expect("rules serialize"),
-        );
+        // Each rule with its text in the syntax that rules are written in, for
+        // a reader of the schema, beside the expression.
+        let rules: Vec<Value> = def
+            .rules
+            .iter()
+            .map(|r| {
+                let mut v = serde_json::to_value(r).expect("rules serialize");
+                v["text"] = json!(crate::rules::text::text(&r.invariant));
+                if let Some(w) = &r.when {
+                    v["when_text"] = json!(crate::rules::text::text(w));
+                }
+                v
+            })
+            .collect();
+        annotations.insert("rules".into(), Value::Array(rules));
     }
     if let Some(ReturnType::Type(t)) = &def.return_type {
         annotations.insert("return_type".into(), w.ty(t));
@@ -141,6 +152,31 @@ pub struct Call {
     pub unchecked: Vec<ValueError>,
 }
 
+/// The longest name of a document that a message writes, in characters.
+const SHOWN_NAME: usize = 64;
+
+/// The most `unknown_argument` problems of one document.
+const UNKNOWN_ARGUMENTS: usize = 10;
+
+/// A name that a document gave, as a message writes it: control characters
+/// escaped, and cut at [`SHOWN_NAME`] characters, since a document comes from
+/// outside the program.
+fn shown(name: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in name.chars().enumerate() {
+        if i == SHOWN_NAME {
+            out.push_str("...");
+            break;
+        }
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn form_error(path: &str, message: impl Into<String>) -> ValueError {
     document_error("call_form", path, message.into())
 }
@@ -153,7 +189,8 @@ fn pointer_token(name: &str) -> String {
 /// the call, or every problem it has: of the document's form (`document_json`,
 /// `call_form`), an unknown or inadmissible function (`unknown_function`), a
 /// function without a document form (`function_undocumented`), an argument
-/// that names no parameter (`unknown_argument`) or that is missing
+/// that names no parameter (`unknown_argument`, the first ten, then one for
+/// the rest) or that is missing
 /// (`missing_argument`), each argument against its parameter's type, with
 /// paths under `/arguments`, the versions of `"$types"` when present, and,
 /// when every argument holds, the function's rules over the typed
@@ -191,7 +228,8 @@ pub fn read_call(
             other => errors.push(form_error(
                 &format!("/{}", pointer_token(other)),
                 format!(
-                    "`{other}` is not a member of a document of a call, which holds `$function`, `arguments`, and `$types`"
+                    "`{}` is not a member of a document of a call, which holds `$function`, `arguments`, and `$types`",
+                    shown(other)
                 ),
             )),
         }
@@ -204,7 +242,8 @@ pub fn read_call(
                     "unknown_function",
                     "/$function",
                     format!(
-                        "`{s}` is not a function that this call admits; it admits {}",
+                        "`{}` is not a function that this call admits; it admits {}",
+                        shown(s),
                         admitted_list(admitted)
                     ),
                 ));
@@ -229,6 +268,20 @@ pub fn read_call(
             None
         }
     };
+    if let Some(Tree::Object(m)) = &versions {
+        for (k, v) in m.iter() {
+            let whole = matches!(v, Tree::Num(n) if n.as_u64().is_some_and(|x| x >= 1));
+            if !whole {
+                errors.push(form_error(
+                    &format!("/$types/{}", pointer_token(k)),
+                    format!(
+                        "the version of `{}` is a whole number of at least 1",
+                        shown(k)
+                    ),
+                ));
+            }
+        }
+    }
     let envelope = match &versions {
         None => None,
         Some(Tree::Object(m)) => Some(Envelope {
@@ -279,15 +332,21 @@ pub fn read_call(
     }
     let mut args: Vec<(String, Tree)> = Vec::with_capacity(given.len());
     let names: Vec<&str> = def.params.iter().map(ParamDef::name).collect();
+    let mut unknown = 0;
     for (k, v) in given {
         if names.contains(&&*k) {
             args.push((k.into(), v));
         } else {
+            unknown += 1;
+            if unknown > UNKNOWN_ARGUMENTS {
+                continue;
+            }
             errors.push(ValueError {
                 code: "unknown_argument",
                 path: format!("/arguments/{}", pointer_token(&k)),
                 message: format!(
-                    "`{k}` is not a parameter of `{name}()`, whose parameters are {}",
+                    "`{}` is not a parameter of `{name}()`, whose parameters are {}",
+                    shown(&k),
                     names
                         .iter()
                         .map(|n| format!("`{n}`"))
@@ -298,6 +357,17 @@ pub fn read_call(
                 ..Default::default()
             });
         }
+    }
+    if unknown > UNKNOWN_ARGUMENTS {
+        errors.push(ValueError {
+            code: "unknown_argument",
+            path: "/arguments".to_string(),
+            message: format!(
+                "{} more arguments name no parameter of `{name}()`",
+                unknown - UNKNOWN_ARGUMENTS
+            ),
+            ..Default::default()
+        });
     }
     let mut ordered = Vec::with_capacity(args.len());
     for p in &def.params {

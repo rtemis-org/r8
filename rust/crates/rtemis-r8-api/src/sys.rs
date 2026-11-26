@@ -71,4 +71,6 @@ unsafe extern "C" {
     pub fn R_RegisterCFinalizerEx(x: SEXP, f: unsafe extern "C" fn(SEXP), onexit: c_int);
     pub fn R_GetCCallable(package: *const c_char, name: *const c_char) -> *const c_void;
     pub fn R_RegisterCCallable(package: *const c_char, name: *const c_char, f: *const c_void);
+    pub fn REprintf(format: *const c_char, ...);
+    pub fn MARK_NOT_MUTABLE(x: SEXP);
 }

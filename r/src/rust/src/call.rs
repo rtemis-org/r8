@@ -202,6 +202,16 @@ fn r8_write_call(name: crate::utf8::Utf8, values: List) -> Result<List> {
             .and_then(|p| p.ty())
         {
             Some(ty) => {
+                // The R value is validated first, so that a problem names its
+                // parameter as a call's would; the encoder reads valid values.
+                let found = crate::signature::errors_of(unsafe { x.get() }, ty, &docs, Some(k));
+                if !found.is_empty() {
+                    errors.extend(found.into_iter().map(|mut e| {
+                        e.path = format!("/arguments{}", e.path);
+                        e
+                    }));
+                    continue;
+                }
                 let mut enc = crate::values::Encoder {
                     lookup: &*docs,
                     errors: Vec::new(),
@@ -227,8 +237,23 @@ fn r8_write_call(name: crate::utf8::Utf8, values: List) -> Result<List> {
     })
 }
 
+/// The text of a rule's expression in the syntax that rules are written in
+/// (`rtemis_r8::rules::text::text()`).
+///
+/// @param x List: The expression, as `rule()` builds it.
+/// @return Character.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_rule_text(x: Robj) -> Result<String> {
+    let e: rtemis_r8::ir::Logic =
+        crate::irde::from_r(unsafe { x.get() }).map_err(|e| fail(e.to_string()))?;
+    Ok(rtemis_r8::rules::text::text(&e))
+}
+
 extendr_module! {
     mod call;
+    fn r8_rule_text;
     fn r8_function_schema;
     fn r8_function_undocumented;
     fn r8_read_call;

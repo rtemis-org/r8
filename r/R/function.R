@@ -257,8 +257,8 @@ make_function <- function(qname, fn, p, ir) {
 #' A body whose `return()` calls pass a check
 #'
 #' Each call of `return` in `e` takes `check()` of its value, except one in a
-#' function that the body defines, in `quote()`, `bquote()`, or `substitute()`, or in
-#' a formula.
+#' function that the body defines, in `quote()`, `bquote()`, `substitute()`,
+#' `local()`, or `evalq()`, or in a formula.
 #'
 #' @param e Language object: The body, or a part of it.
 #' @param check Function: The check of a value's expression.
@@ -274,7 +274,12 @@ returns_checked <- function(e, check) {
   head <- e[[1L]]
   if (is.name(head)) {
     fn <- as.character(head)
-    if (fn %in% c("function", "quote", "bquote", "substitute", "~")) {
+    # local() and evalq() evaluate their expression in a frame of their own,
+    # whose return() returns from that frame.
+    if (
+      fn %in%
+        c("function", "quote", "bquote", "substitute", "~", "local", "evalq")
+    ) {
       return(e)
     }
     if (identical(fn, "return")) {

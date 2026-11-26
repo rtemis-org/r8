@@ -331,3 +331,42 @@ fn a_type_that_implements_no_trait_is_refused_in_the_document() {
         ["not_implementor"]
     );
 }
+
+/// `other::Pane` as another crate compiled it: without the rule `wide` that
+/// the declarations of the test give it.
+#[derive(R8, Debug, Clone, PartialEq)]
+#[r8(namespace = "other", version = 3)]
+pub struct Pane {
+    #[r8(extends)]
+    pub base: Window,
+    pub number: i32,
+}
+
+#[test]
+fn a_held_value_read_under_another_declaration_does_not_downcast() {
+    let types = types::<Axis>();
+    let x = Axis::from_document_in(&axis_text(), &types).unwrap();
+    // `demo::Window` is declared as this crate compiled it.
+    assert!(
+        x.inset
+            .as_ref()
+            .unwrap()
+            .downcast::<Window>()
+            .unwrap()
+            .is_some()
+    );
+    let e = x.range.downcast::<Pane>().unwrap_err();
+    assert!(e.contains("[declaration_changed]"), "{e}");
+}
+
+#[test]
+fn declarations_checked_once_write_and_read_documents() {
+    let types = types::<Axis>();
+    let x = Axis::from_document_in(&axis_text(), &types).unwrap();
+    let checked = Axis::checked_in(&types).unwrap();
+    let text = checked.to_document(&x).unwrap();
+    assert_eq!(text, x.to_document_in(&types).unwrap());
+    assert_eq!(checked.from_document(&text).unwrap(), x);
+    // Declarations that do not hold the type's own are refused once.
+    assert!(Axis::checked_in(&DocumentSet::default()).is_err());
+}

@@ -177,6 +177,15 @@ test_that("params() refuses what declares no parameter", {
   refused(params(x, ... = arg_double()), "takes no type and no default")
   refused(params(x, `a b` = 1), "a syntactic R name")
   refused(params(x, n = arg()), "a type, a default, or a description")
+  refused(params(x, n = arg_double(0, 1, , , , , , 5)), "`default` follows")
+  refused(params(x, n = arg(type_double(), 1, "d")), "`description` follows")
+  refused(params(x, quote), "`quote` is reserved")
+  refused(params(x, environment = 1), "`environment` is reserved")
+  refused(params(x, a = R8::Raven), "is a type")
+  refused(
+    params(x, v = arg_vec(type_integer(), default = c(1L, TRUE))),
+    "mixes integer and logical"
+  )
   f <- function(...) params(x, ...)
   refused(f(1), "`...` as the string")
 })

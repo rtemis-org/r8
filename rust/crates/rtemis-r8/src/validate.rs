@@ -520,7 +520,17 @@ impl<'l> Validator<'l, '_> {
                     self.value(inner, v, path);
                 }
             }
-            _ if v.is_absent() => self.missing(path),
+            // An absent value names the type it lacks.
+            _ if v.is_absent() => self.report(
+                "missing_value",
+                path,
+                Problem::Kind(format!(
+                    "a value of type {}",
+                    crate::ir::notation::notation(ft)
+                )),
+                None,
+                None,
+            ),
             FieldType::Logical => {
                 if let Err(f) = v.logical() {
                     self.form(f, path);
@@ -1920,4 +1930,90 @@ pub fn compiled_pattern(pattern: &str) -> Option<Regex> {
     let r = Regex::new(pattern).ok();
     map.insert(pattern.into(), r.clone());
     r
+}
+
+/// Whether a value of the named type `ty` can break a declaration that the
+/// shape of its fields does not state: the type, or a type that its fields
+/// reach, has rules, a bound, a set of values, a pattern, a length, unique
+/// elements, declared levels, or a `subtype()` or `dyn()` field. A host
+/// validates a value of such a type that code it does not check made, such
+/// as a value built in Rust; a value of any other type is valid when its
+/// fields have their types.
+pub fn constrains(ty: &QualifiedName, lookup: &dyn TypeLookup) -> bool {
+    fn field_type(
+        ft: &FieldType,
+        lookup: &dyn TypeLookup,
+        seen: &mut HashSet<QualifiedName>,
+    ) -> bool {
+        match ft {
+            FieldType::Logical
+            | FieldType::Raw
+            | FieldType::Date
+            | FieldType::Posixct
+            | FieldType::Json
+            | FieldType::HostClass { .. } => false,
+            FieldType::Integer(c) => c.lower.is_some() || c.upper.is_some() || c.values.is_some(),
+            FieldType::Double(c) => c.lower.is_some() || c.upper.is_some() || c.values.is_some(),
+            FieldType::Character(c) => c.pattern.is_some() || c.values.is_some(),
+            FieldType::Factor { levels, .. } => levels.is_some(),
+            FieldType::Matrix {
+                element,
+                nrow,
+                ncol,
+                ..
+            } => nrow.is_some() || ncol.is_some() || field_type(element, lookup, seen),
+            FieldType::Array { element, dim } => dim.is_some() || field_type(element, lookup, seen),
+            FieldType::SparseMatrix {
+                element,
+                nrow,
+                ncol,
+                ..
+            } => nrow.is_some() || ncol.is_some() || field_type(element, lookup, seen),
+            FieldType::Vec {
+                element,
+                min_length,
+                max_length,
+                unique,
+            } => {
+                min_length.is_some()
+                    || max_length.is_some()
+                    || *unique
+                    || field_type(element, lookup, seen)
+            }
+            FieldType::Option { inner, .. } => field_type(inner, lookup, seen),
+            FieldType::BtreeMap { value, keys } | FieldType::IndexMap { value, keys } => {
+                keys.pattern.is_some() || keys.values.is_some() || field_type(value, lookup, seen)
+            }
+            FieldType::Table { .. } | FieldType::TableOf { .. } | FieldType::MatrixOf { .. } => {
+                true
+            }
+            FieldType::Dyn { .. } | FieldType::Subtype { .. } => true,
+            FieldType::Named { name } => named(name, lookup, seen),
+        }
+    }
+    fn fields(fs: &[FieldDef], lookup: &dyn TypeLookup, seen: &mut HashSet<QualifiedName>) -> bool {
+        fs.iter().any(|f| field_type(&f.ty, lookup, seen))
+    }
+    fn named(
+        q: &QualifiedName,
+        lookup: &dyn TypeLookup,
+        seen: &mut HashSet<QualifiedName>,
+    ) -> bool {
+        if !seen.insert(q.clone()) {
+            return false;
+        }
+        match lookup.find(q) {
+            None => true,
+            Some(TypeDef::Struct(s)) => !s.rules.is_empty() || fields(&s.fields, lookup, seen),
+            Some(TypeDef::Table(_)) => true,
+            Some(TypeDef::Enum(e)) => e.variants.iter().any(|v| match &v.kind {
+                VariantKind::Unit => false,
+                VariantKind::Struct { fields: fs, rules } => {
+                    !rules.is_empty() || fields(fs, lookup, seen)
+                }
+                VariantKind::Newtype { of } => named(of, lookup, seen),
+            }),
+        }
+    }
+    named(ty, lookup, &mut HashSet::new())
 }

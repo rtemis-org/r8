@@ -66,3 +66,14 @@ unsigned r8_abi_values(void) {
 
 /* The status codes R8_OK, R8_ERROR, and R8_UNWIND, as one number in base 16. */
 unsigned r8_abi_statuses(void) { return R8_OK | R8_ERROR << 4 | R8_UNWIND << 8; }
+
+/* The minimum size of each table, R8_*_MIN_SIZE, in the order of
+ * `rtemis_r8_abi_check::c_min_sizes()`. */
+void r8_abi_min_sizes(size_t *out) {
+  out[0] = R8_CALL_INPUTS_MIN_SIZE;
+  out[1] = R8_READER_MIN_SIZE;
+  out[2] = R8_CODEC_MIN_SIZE;
+  out[3] = R8_IMPL_ENTRY_MIN_SIZE;
+  out[4] = R8_EXPORTS_MIN_SIZE;
+  out[5] = R8_API_MIN_SIZE;
+}

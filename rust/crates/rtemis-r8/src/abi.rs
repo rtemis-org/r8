@@ -16,6 +16,32 @@ use std::ffi::{c_char, c_void};
 /// The ABI major version, `R8_ABI_VERSION` in the header.
 pub const ABI_VERSION: u32 = 2;
 
+/// The bytes of a table through `member`, its last member of ABI version 2.
+macro_rules! through {
+    ($t:ty, $member:ident, $m:ty) => {
+        std::mem::offset_of!($t, $member) + std::mem::size_of::<$m>()
+    };
+}
+
+// The sizes of the tables when `ABI_VERSION` became 2 (`R8_*_MIN_SIZE` in the
+// header). A reader accepts a table of at least this size. A member appended
+// after these is absent from a smaller table, so its reader checks `size`
+// before it reads the member: a reference to the whole struct over a smaller
+// table reads past its end.
+
+/// The size of [`CallInputs`] of ABI version 2.
+pub const CALL_INPUTS_MIN_SIZE: usize = through!(CallInputs, seed, u64);
+/// The size of [`Reader`] of ABI version 2.
+pub const READER_MIN_SIZE: usize = through!(Reader, value, usize);
+/// The size of [`Codec`] of ABI version 2.
+pub const CODEC_MIN_SIZE: usize = through!(Codec, upcast, usize);
+/// The size of [`ImplEntry`] of ABI version 2.
+pub const IMPL_ENTRY_MIN_SIZE: usize = through!(ImplEntry, signature_len, usize);
+/// The size of [`Exports`] of ABI version 2.
+pub const EXPORTS_MIN_SIZE: usize = through!(Exports, impl_size, usize);
+/// The size of [`Api`] of ABI version 2.
+pub const API_MIN_SIZE: usize = through!(Api, value_type, usize);
+
 /// An R value, `SEXP` in the header.
 pub type Sexp = *mut c_void;
 
@@ -219,7 +245,9 @@ pub type MethodFn =
 
 /// `R8_POSITION_TYPE`: a position that names an R8 type.
 pub const POSITION_TYPE: u32 = 0;
-/// `R8_POSITION_CLASS`: a position that names a class of the host.
+/// `R8_POSITION_CLASS`: reserved for a position that names a class of the
+/// host, which registration refuses, since its methods are written in the
+/// host's language.
 pub const POSITION_CLASS: u32 = 1;
 /// `R8_POSITION_ANY`: a position of any value.
 pub const POSITION_ANY: u32 = 2;
@@ -229,14 +257,11 @@ pub const POSITION_ANY: u32 = 2;
 pub struct Position {
     /// [`POSITION_TYPE`], [`POSITION_CLASS`], or [`POSITION_ANY`].
     pub kind: u32,
-    /// The qualified name of a type, or the name of a class, NUL-terminated;
-    /// NULL for any.
+    /// The qualified name of a type, NUL-terminated; NULL for any.
     pub name: *const c_char,
-    /// The package that defines a class, NUL-terminated; NULL or empty when
-    /// the declaration names none.
+    /// Reserved for a position of a class ([`POSITION_CLASS`]): NULL.
     pub package: *const c_char,
-    /// The class system of a class, NUL-terminated: `s3`, `s4`, or
-    /// `implicit`.
+    /// Reserved for a position of a class ([`POSITION_CLASS`]): NULL.
     pub system: *const c_char,
 }
 

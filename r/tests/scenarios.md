@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 42 files of 376 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 42 files of 382 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -29,10 +29,10 @@ What each feature does, in 42 files of 376 tests. The runtime has its own tests 
 | `test-125-params.R` | The parameters of generics and trait methods, with their types and defaults: params(), arg() and its shorthands, return types, and impl_method(). | 20 |
 | `test-126-typed.R` | Generics whose arguments and results have types, which each call checks. | 21 |
 | `test-127-replacement.R` | Generics that replace a part of a value, such as label(x) <- "a". | 10 |
-| `test-128-host.R` | Methods for classes of R, such as data.frame, matrix, and lm. | 15 |
+| `test-128-host.R` | Methods for classes of R, such as data.frame, matrix, and lm. | 16 |
 | `test-129-standard.R` | The standard traits: the text of a value (Display, Debug, and Print), order (PartialOrd), dimensions (Shape), and conversion (From). | 9 |
-| `test-130-functions.R` | Typed functions: new_function(), the check of arguments and results in the function's own frame, rules over parameters, and the declaration. | 9 |
-| `test-131-format.R` | How types, fields, rules, and the other objects of a declaration print. | 5 |
+| `test-130-functions.R` | Typed functions: new_function(), the check of arguments and results in the function's own frame, rules over parameters, and the declaration. | 12 |
+| `test-131-format.R` | How types, fields, rules, and the other objects of a declaration print. | 6 |
 | `test-132-text.R` | The text of values at the console: the layout of a value without a method of its own, colors, and the output types. | 11 |
 | `test-133-integrate.R` | The text of values in documents and notebooks: knitr, repr, and pillar. | 5 |
 | `test-134-conformance.R` | The same behavior of a type with fields of every kind, stored by R and by Rust. | 1 |
@@ -46,7 +46,7 @@ What each feature does, in 42 files of 376 tests. The runtime has its own tests 
 | `test-142-public.R` | The examples of the help pages and the test packages use R8's functions, and none of its internals. | 2 |
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
 | `test-144-scenarios.R` | The written list of the scenarios is that of the test files. | 3 |
-| `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8_check_call(), r8_call_from_json(), and r8_call_to_json(). | 6 |
+| `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8_check_call(), r8_call_from_json(), and r8_call_to_json(). | 7 |
 | `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 3 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
 | `test-153-documentation.R` | The documentation of packages that declare R8 types: help pages from roxygen2, and the R declarations of types declared in Rust. | 3 |

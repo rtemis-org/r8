@@ -197,3 +197,36 @@ self_abort <- function(key, x, out) {
     )
   )
 } # /R8::self_abort
+
+
+# %% method_abort ----
+#' Signal the error that a compiled method returned
+#'
+#' @param code Character: The error's code, `"panic"` for a panic.
+#' @param message Character: The method's message.
+#' @param call The generic's call, or `NULL`.
+#'
+#' @return Does not return; signals `r8_method_error`, or `r8_panic` for a
+#'   panic.
+#'
+#' @keywords internal
+#' @noRd
+method_abort <- function(code, message, call) {
+  panic <- identical(code, "panic")
+  r8_abort(
+    if (panic) {
+      paste0(
+        "the compiled method panicked, which is a defect of its package: ",
+        message
+      )
+    } else {
+      message
+    },
+    " [",
+    code,
+    "]",
+    class = c(if (panic) "r8_panic", "r8_method_error"),
+    call = call,
+    data = list(code = code)
+  )
+} # /R8::method_abort

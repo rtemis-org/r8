@@ -28,6 +28,7 @@ mod diagnose;
 mod eval;
 mod exact;
 mod rows;
+pub mod text;
 mod ty;
 
 use serde_json::Value;

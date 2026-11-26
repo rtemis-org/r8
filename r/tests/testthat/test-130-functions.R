@@ -311,3 +311,61 @@ test_that("a generic and a trait method check rules over their parameters", {
     class = "r8_declaration_error"
   )
 })
+
+test_that("a rule's diagnosis writes each value once, and no empty value", {
+  f <- declare_in("fn_diag", {
+    new_function(
+      "f",
+      function(a = arg_vec(type_double()), b = arg_vec(type_double())) 1,
+      rules = list(r1 = rule(length(a) == length(b)))
+    )
+  })
+  e <- expect_error(f(c(1, 2), 1), class = "r8_argument_error")
+  expect_match(
+    conditionMessage(e),
+    "found length(a) = 2, length(b) = 1. [rule_violation]",
+    fixed = TRUE
+  )
+  g <- declare_in("fn_diag", {
+    new_function(
+      "g",
+      function(a = arg_factor(), b = arg_factor()) 1,
+      rules = list(lv = rule(levels(a) == levels(b)))
+    )
+  })
+  e <- expect_error(g(factor("x"), factor("y")), class = "r8_argument_error")
+  expect_false(grepl("= ,", conditionMessage(e), fixed = TRUE))
+})
+
+
+test_that("a return() inside local() or evalq() returns from that call", {
+  f <- declare_in("fn_local", {
+    new_function(
+      "f",
+      function(x = arg_double()) {
+        y <- local({
+          return("a")
+        })
+        z <- evalq(return(2), new.env())
+        x + z
+      },
+      return_type = type_double()
+    )
+  })
+  expect_identical(f(1), 3)
+})
+
+test_that("a default that its type converts is not missing in the body", {
+  # Binding the converted value clears R's missing flag of the parameter.
+  f <- declare_in("fn_missing", {
+    new_function(
+      "f",
+      function(n = arg_integer(default = length(letters) / 2)) missing(n)
+    )
+  })
+  expect_false(f())
+  g <- declare_in("fn_missing", {
+    new_function("g", function(n = arg_integer(default = 3L)) missing(n))
+  })
+  expect_true(g())
+})

@@ -566,6 +566,111 @@
           }
         ]
       }
+    },
+    {
+      "id": "types-not-whole",
+      "description": "An entry of `$types` that is not a whole number of at least 1, of a type the arguments do not contain.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "$types": {
+          "x::Y": "a"
+        },
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hi": 1,
+          "n": 1,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "call_form",
+            "path": "/$types/x::Y"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-many",
+      "description": "The first ten arguments that name no parameter, then one problem for the rest.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hi": 1,
+          "n": 1,
+          "w": null,
+          "extra00": 0,
+          "extra01": 1,
+          "extra02": 2,
+          "extra03": 3,
+          "extra04": 4,
+          "extra05": 5,
+          "extra06": 6,
+          "extra07": 7,
+          "extra08": 8,
+          "extra09": 9,
+          "extra10": 10,
+          "extra11": 11
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra00"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra01"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra02"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra03"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra04"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra05"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra06"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra07"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra08"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/extra09"
+          },
+          {
+            "code": "unknown_argument",
+            "path": "/arguments"
+          }
+        ]
+      }
     }
   ]
 }

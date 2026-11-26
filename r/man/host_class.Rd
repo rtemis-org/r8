@@ -4,10 +4,10 @@
 \alias{host_class}
 \title{A class of another class system}
 \usage{
-host_class(class, package = "", system = c("s3", "s4", "implicit"))
+host_class(class, package = "", system = c("s3", "s4", "implicit", "s7"))
 }
 \arguments{
-\item{class}{Character: The class name.}
+\item{class}{Character: The class name; or an S7 class object.}
 
 \item{package}{Character: The package that defines the class; \code{""} for an
 S3 class of no package named and for an implicit class.}
@@ -20,7 +20,10 @@ an object without a class attribute, from its type and \code{dim} attribute:
 \code{environment}, \code{name}, or \code{call}; a string naming one of these is
 implicit. \code{"s4"}: a class defined with \code{methods::setClass()}, which
 requires \code{package}; \code{r8_register()} checks at load that the package
-defines an S4 class of that name.}
+defines an S4 class of that name. \code{"s7"}: a class of \code{S7::new_class()},
+with \code{package} the package that defines it, or \code{""} for a class defined
+outside a package; an S7 class object given as \code{class} names its own
+name and package.}
 }
 \value{
 An object of class \code{r8_host_class}, which is also a field type:
@@ -30,7 +33,7 @@ the content hash.
 }
 \description{
 Names a class that R8 did not declare: an S3 class, an implicit class
-such as \code{"matrix"} or \code{"NULL"}, or an S4 class. It is a dispatched
+such as \code{"matrix"} or \code{"NULL"}, an S4 class, or an S7 class. It is a dispatched
 position of an impl of an R8 generic or trait, and a field type inside
 \code{option()}. A dispatched position matches an object whose class vector,
 as \code{\link[=.class2]{.class2()}} reports it, contains the class; the nearer the class is to

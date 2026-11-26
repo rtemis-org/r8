@@ -979,6 +979,24 @@ fn r8_name_problem(x: Robj) -> String {
     }
 }
 
+/// Each double as the fewest digits that identify it, in the form of R8's
+/// canonical JSON (ECMAScript's `Number.prototype.toString`).
+///
+/// @param x Double: Finite numbers.
+/// @return Character.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_number_texts(x: &[f64]) -> Vec<String> {
+    x.iter()
+        .map(|&v| {
+            serde_json::Number::from_f64(v)
+                .map(|n| canonical_text(&Value::Number(n)))
+                .unwrap_or_else(|| "NA".to_string())
+        })
+        .collect()
+}
+
 extendr_module! {
     mod declare;
     fn r8_registry_save;
@@ -1005,6 +1023,7 @@ extendr_module! {
     fn r8_function_ir;
     fn r8_declare_impl;
     fn r8_ir_json;
+    fn r8_number_texts;
     fn r8_canonical_json;
     fn r8_json_parse;
     fn r8_declare_type;

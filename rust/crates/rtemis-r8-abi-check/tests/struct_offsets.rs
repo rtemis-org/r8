@@ -37,3 +37,18 @@ fn constants_match() {
         )
     );
 }
+
+#[test]
+fn minimum_sizes_match() {
+    assert_eq!(
+        rtemis_r8_abi_check::c_min_sizes(),
+        [
+            abi::CALL_INPUTS_MIN_SIZE,
+            abi::READER_MIN_SIZE,
+            abi::CODEC_MIN_SIZE,
+            abi::IMPL_ENTRY_MIN_SIZE,
+            abi::EXPORTS_MIN_SIZE,
+            abi::API_MIN_SIZE,
+        ]
+    );
+}

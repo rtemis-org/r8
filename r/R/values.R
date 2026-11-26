@@ -393,7 +393,8 @@ diagnosis_line <- function(d, paths, show) {
   if (length(elements) == 0L && length(d) > 1L && nzchar(paths[[1L]])) {
     values <- c(values, paste0("at ", paths[[1L]]))
   }
-  values <- c(values, elements)
+  # An operand such as length(a) is also the line of the vector field a.
+  values <- unique(c(values, elements))
   paste0(
     expr,
     if (length(values) > 0L) paste0("; found ", paste(values, collapse = ", "))
@@ -991,11 +992,12 @@ new_dgc <- function(i, p, x, dim) {
   if (missing(i) || !is.character(i) || ...length() > 0L) {
     not_by_name(x, if (!missing(i) && ...length() == 0L) i, substitute(x), "[")
   }
-  unknown <- is.na(match(i, attr(x, "names", exact = TRUE)))
+  at <- match(i, attr(x, "names", exact = TRUE))
+  unknown <- is.na(at)
   if (any(unknown)) {
     unknown_field(x, i[unknown][[1L]])
   }
-  .Call(.r8_c_fields, x, match(i, attr(x, "names", exact = TRUE)))
+  .Call(.r8_c_fields, x, at)
 } # /R8::[.r8_value
 
 
@@ -1322,7 +1324,10 @@ fields_refused <- function(x, fields, values, res = NULL) {
       "The names of the list are the fields it replaces, in their order: ",
       paste(fields, collapse = ", "),
       "; found ",
-      paste(names(values), collapse = ", "),
+      paste(
+        ifelse(nzchar(names(values)), names(values), "<unnamed>"),
+        collapse = ", "
+      ),
       "."
     )
   }
@@ -1719,7 +1724,11 @@ r8_namespace_providers <- function() {
         next
       }
       ns <- f[1L, "Config/R8/namespace"]
-      uses_r8 <- any(grepl("\\bR8\\b", c(f[1L, "Imports"], f[1L, "Depends"])))
+      # The package R8 by its name, not R8.io.
+      uses_r8 <- any(grepl(
+        "(^|[,[:space:]])R8([[:space:]]*\\(|[[:space:]]*,|[[:space:]]*$)",
+        c(f[1L, "Imports"], f[1L, "Depends"])
+      ))
       if (is.na(ns)) {
         if (!uses_r8) {
           next
@@ -1737,7 +1746,7 @@ r8_namespace_providers <- function() {
 # %% r8_schema ----
 #' The JSON Schema of a type's values, or of a function's arguments
 #'
-#' Writes the JSON Schema (draft 2020-12) that the documents of `type`
+#' Writes the JSON Schema (draft 2020-12) that the documents of a type
 #' satisfy, for tools outside R8: each named type it reaches is in `$defs`,
 #' and the root admits the document envelope. R8's facts that JSON Schema
 #' cannot state, such as rules and units, are annotations under `x-r8`.
@@ -1754,7 +1763,7 @@ r8_namespace_providers <- function() {
 #' parameter of type `host_class()` has no schema, and raises
 #' `r8_type_error`, which names them.
 #'
-#' @param type An R8 type object, or a typed function of [new_function()].
+#' @param x An R8 type object, or a typed function of [new_function()].
 #' @param closed Logical: Write each `dyn()` field as the closed list of the
 #'   implementors registered in the session, each with its tag value as a
 #'   constant, and each `subtype()` field as the struct and its registered
@@ -1781,18 +1790,18 @@ r8_namespace_providers <- function() {
 #' options(op)
 #'
 #' @export
-r8_schema <- function(type, closed = FALSE) {
+r8_schema <- function(x, closed = FALSE) {
   check_flag(closed, "closed", "r8_type_error")
-  if (inherits(type, "r8_function")) {
-    fs <- call_functions(type)
+  if (inherits(x, "r8_function")) {
+    fs <- call_functions(x)
     return(r8_function_schema(names(fs), closed)[["schema"]])
   }
-  if (!inherits(type, "r8_type")) {
+  if (!inherits(x, "r8_type")) {
     r8_abort(
-      "`type` is an R8 type object, or a typed function of new_function().",
+      "`x` is an R8 type object, or a typed function of new_function().",
       class = "r8_type_error"
     )
   }
-  ensure_registered(type)
-  r8_type_schema(attr(type, "r8_name"), closed)
+  ensure_registered(x)
+  r8_type_schema(attr(x, "r8_name"), closed)
 } # /R8::r8_schema

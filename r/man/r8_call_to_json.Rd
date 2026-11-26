@@ -4,12 +4,11 @@
 \alias{r8_call_to_json}
 \title{Write a document of a call of a typed function}
 \usage{
-r8_call_to_json(f, ...)
+r8_call_to_json(...)
 }
 \arguments{
-\item{f}{A typed function of \code{\link[=new_function]{new_function()}}.}
-
-\item{...}{The arguments, as the call of \code{f} takes them.}
+\item{...}{The typed function of \code{\link[=new_function]{new_function()}}, unnamed and first, then the
+arguments, as the call of the function takes them.}
 }
 \value{
 Character: The document, of class \code{json}; an invalid argument raises

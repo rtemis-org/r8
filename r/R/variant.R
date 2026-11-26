@@ -110,6 +110,12 @@ other_variant <- function(x, variant) {
   declared <- .r8_variants[[qname]]
   if (is.null(declared)) {
     if (!r8_is_registered(qname)) {
+      # The variants of the declaration that the value carries, read in a
+      # session that has not loaded its package; without one, names alone.
+      carried <- r8_value_variants(x)
+      if (!is.null(carried) && !variant %in% carried) {
+        unknown_variant(variant, qname, carried)
+      }
       return(FALSE)
     }
     declared <- enum_variants(qname, r8_type_ir(qname))
@@ -147,18 +153,21 @@ variant_abort <- function(x, ...) {
 #' Signal that an enum declares no variant of a name
 #'
 #' @param name Character: The name.
-#' @param qname Character: The qualified name of a registered enum.
+#' @param qname Character: The qualified name of the enum.
+#' @param variants Optional Character: Its variants, for an enum that is not
+#'   registered; `NULL` reads those of the registered one.
 #'
 #' @return Does not return; signals `r8_value_error`.
 #'
 #' @keywords internal
 #' @noRd
-unknown_variant <- function(name, qname) {
-  variants <- vapply(
-    r8_type_ir(qname)[["variants"]],
-    function(v) v[["name"]],
-    ""
-  )
+unknown_variant <- function(name, qname, variants = NULL) {
+  variants <- variants %||%
+    vapply(
+      r8_type_ir(qname)[["variants"]],
+      function(v) v[["name"]],
+      ""
+    )
   near <- r8_nearest_name(name, variants)
   r8_abort(
     "`",

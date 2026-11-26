@@ -1724,6 +1724,7 @@ fn w_class_system(w: &mut W, system: ClassSystem) {
         ClassSystem::S3 => 0,
         ClassSystem::S4 => 1,
         ClassSystem::Implicit => 2,
+        ClassSystem::S7 => 3,
     });
 }
 
@@ -1732,6 +1733,7 @@ fn r_class_system(r: &mut R) -> Res<ClassSystem> {
         0 => ClassSystem::S3,
         1 => ClassSystem::S4,
         2 => ClassSystem::Implicit,
+        3 => ClassSystem::S7,
         t => return Err(RecordError::Tag("class system", t)),
     })
 }

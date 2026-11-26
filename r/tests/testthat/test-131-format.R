@@ -255,3 +255,33 @@ test_that("a type object prints its fields, defaults, and rules", {
     )
   )
 })
+
+test_that("a default prints in one exact R form in a field and in its type", {
+  S <- declare_in("fmt_exact", {
+    new_struct(
+      "S",
+      fields = list(
+        d = field(type_date(), default = as.Date("2026-01-01")),
+        p = field(
+          type_posixct(),
+          default = as.POSIXct("2026-01-01 10:00:00", tz = "UTC")
+        ),
+        v = field(vec(type_double()), default = c(1, 0.1 + 0.2))
+      )
+    )
+  })
+  out <- format(S)
+  expect_true('  d: date = as.Date("2026-01-01")' %in% out)
+  expect_true(
+    '  p: date-time = as.POSIXct("2026-01-01 10:00:00", tz = "UTC")' %in% out
+  )
+  expect_true("  v: vector of double = c(1, 0.30000000000000004)" %in% out)
+  expect_identical(
+    format(field(type_date(), default = as.Date("2026-01-01")))[[1L]],
+    '<r8 field> date = as.Date("2026-01-01")'
+  )
+  expect_identical(
+    format(field(vec(type_double()), default = c(1, 0.1 + 0.2)))[[1L]],
+    "<r8 field> vector of double = c(1, 0.30000000000000004)"
+  )
+})

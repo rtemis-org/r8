@@ -182,9 +182,9 @@ test_that("Rust-stored enums construct, read, change, persist, and cross workers
     lib,
     c(
       sprintf("x <- readRDS(%s)", deparse(rds)),
-      # The variant is read without the type's package, whose load brings the
-      # names that a test of it is checked against.
-      "cat('before', R8::r8_variant(x[[2]]), R8::r8_is_variant(x[[2]], 'Loocv'), R8::r8_is_variant(x[[2]], 'Lookv'), 'r8pkgR' %in% loadedNamespaces(), '\\n')",
+      # The variant is read without the type's package, and a name that is no
+      # variant is refused by the declaration that the value carries.
+      "cat('before', R8::r8_variant(x[[2]]), R8::r8_is_variant(x[[2]], 'Loocv'), tryCatch(R8::r8_is_variant(x[[2]], 'Lookv'), r8_value_error = function(e) 'refused'), 'r8pkgR' %in% loadedNamespaces(), '\\n')",
       "suppressPackageStartupMessages(library(r8pkgR))",
       "cat('after', tryCatch(R8::r8_is_variant(x[[2]], 'Lookv'), r8_value_error = function(e) 'refused'), '\\n')",
       "cat('loaded', format(x[[1]]), format(x[[2]]), x[[3]]$train, '\\n')",
@@ -199,7 +199,7 @@ test_that("Rust-stored enums construct, read, change, persist, and cross workers
     )
   )
   info <- paste(out, collapse = "\n")
-  expect_true("before Loocv TRUE FALSE FALSE " %in% out, info = info)
+  expect_true("before Loocv TRUE refused FALSE " %in% out, info = info)
   expect_true("after refused " %in% out, info = info)
   expect_true(
     "loaded Fixed (3 training cases) LOOCV 1 2 " %in% out,

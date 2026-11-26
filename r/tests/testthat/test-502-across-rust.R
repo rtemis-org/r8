@@ -104,9 +104,8 @@ scenario(
         "m <- moved(p, 2, 9); n <- moved(q, 0, 1)",
         "say('moved', class(m$range)[1], m$range$lo, m$range$hi, m$range$label, m$range$number, contents(m))",
         "say('moved unknown', class(n$range)[1], n$range$hi, n$range$number, class(held(n))[1])",
-        # The rules of the held type are checked where the value is first read.
-        "bad <- moved(q, 5, 1)",
-        "say('invalid', msg(bad$range), msg(serialize(bad, NULL)), msg(held(bad)))",
+        # The rules of the held type are checked by the method that makes the value.
+        "say('invalid', msg(moved(q, 5, 1)))",
         "b <- banded(p, 'new')",
         "say('new', class(b$range)[1], b$range$label, b$range$hi, b$range$weights, class(b$figure)[1], b$figure$side)",
         "say('json', vapply(list(p, q, m), function(x) { y <- r8_from_json(Panel, r8_to_json(x)); r8_equal(x, y) && r8_hash(x) == r8_hash(y) && contents(x) == contents(y) }, NA))",
@@ -166,11 +165,7 @@ scenario(
       info = info
     )
     expect_true(
-      paste(
-        "invalid",
-        strrep("the rule `ordered` is violated [invalid_value] ", 3L)
-      ) %in%
-        out,
+      "invalid the rule `ordered` is violated [invalid_value] " %in% out,
       info = info
     )
     expect_true(

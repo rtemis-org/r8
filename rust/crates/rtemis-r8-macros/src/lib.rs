@@ -835,6 +835,7 @@ fn rust_stored_enum_impl(
     let mut get = Vec::new();
     let mut with = Vec::new();
     let mut bytes = Vec::new();
+    let mut settle = Vec::new();
     let mut count = Vec::new();
     let mut names_of = Vec::new();
     let mut each = Vec::new();
@@ -857,6 +858,7 @@ fn rust_stored_enum_impl(
                 get.push(quote! { Self::#vid => #unknown_field });
                 with.push(quote! { Self::#vid => #unknown_field });
                 bytes.push(quote! { Self::#vid => 0 });
+                settle.push(quote! { Self::#vid => Ok(()) });
                 count.push(quote! { Self::#vid => 0 });
                 each.push(quote! { Self::#vid => Ok(()) });
             }
@@ -935,6 +937,12 @@ fn rust_stored_enum_impl(
                 bytes.push(quote! {
                     Self::#vid { #(#idents: #vars),* } => 0 #(+ #api::Field::owned_bytes(#vars))*
                 });
+                settle.push(quote! {
+                    Self::#vid { #(#idents: #vars),* } => {
+                        #(#api::Field::settle(#vars)?;)*
+                        Ok(())
+                    }
+                });
                 count.push(quote! { Self::#vid { .. } => #n });
                 let names_c: Vec<Tokens> = names.iter().map(|n| c_str(n)).collect();
                 names_of.push(quote! { #vname => { #(f(#names_c);)* } });
@@ -960,6 +968,9 @@ fn rust_stored_enum_impl(
                 });
                 bytes.push(
                     quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::owned_bytes(inner) },
+                );
+                settle.push(
+                    quote! { Self::#vid(inner) => <#inner as #api::RustStoredStruct>::settle(inner) },
                 );
                 count
                     .push(quote! { Self::#vid(_) => <#inner as #api::RustStoredStruct>::N_FIELDS });
@@ -1029,6 +1040,9 @@ fn rust_stored_enum_impl(
             fn owned_bytes(&self) -> usize {
                 match self { #(#bytes,)* }
             }
+            fn settle(&self) -> #api::Result<()> {
+                match self { #(#settle,)* }
+            }
             fn n_fields(&self) -> usize {
                 match self { #(#count,)* }
             }
@@ -1052,6 +1066,9 @@ fn of_kind(kind: &Tokens) -> Tokens {
         }
         fn heap_bytes(&self) -> usize {
             <Self as #kind>::owned_bytes(self)
+        }
+        fn settle_fields(&self) -> #api::Result<()> {
+            <Self as #kind>::settle(self)
         }
         fn each_field(
             &self,
@@ -1219,6 +1236,11 @@ fn rust_stored_impl(
                 0
                 #(+ <#base_ty as #api::RustStoredStruct>::owned_bytes(&self.#base))*
                 #(+ #api::Field::owned_bytes(&self.#idents))*
+            }
+            fn settle(&self) -> #api::Result<()> {
+                #(<#base_ty as #api::RustStoredStruct>::settle(&self.#base)?;)*
+                #(#api::Field::settle(&self.#idents)?;)*
+                Ok(())
             }
             fn fields(
                 &self,
