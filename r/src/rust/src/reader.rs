@@ -731,6 +731,7 @@ fn has_json_form(ty: &FieldType, default: SEXP) -> bool {
 /// @param constants List: For a default that is a syntactic constant, a list
 ///   of its value; otherwise `NULL`.
 /// @param texts Character: Each default's source text, or `""`.
+/// @param descriptions Character: Each parameter's description, or `""`.
 /// @param dispatch Character: The names of the dispatched parameters.
 /// @return List: The IR parameters, or the message of one that does not
 ///   read.
@@ -742,10 +743,12 @@ fn r8_params_ir(
     types: Robj,
     constants: Robj,
     texts: crate::utf8::Utf8s,
+    descriptions: crate::utf8::Utf8s,
     dispatch: crate::utf8::Utf8s,
 ) -> extendr_api::Result<Robj> {
     let names: Vec<String> = names.to_vec();
     let texts: Vec<String> = texts.to_vec();
+    let descriptions: Vec<String> = descriptions.to_vec();
     let dispatch: Vec<String> = dispatch.to_vec();
     use rtemis_r8::ir::{HostDefault, Param, ParamDef};
     let snapshot = crate::declare::snapshot()?;
@@ -793,7 +796,12 @@ fn r8_params_ir(
                 ty,
                 default,
                 host_default,
-                description: "".into(),
+                compute: None,
+                description: descriptions
+                    .get(i)
+                    .map(String::as_str)
+                    .unwrap_or_default()
+                    .into(),
             }));
         }
         Ok(out)

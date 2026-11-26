@@ -69,6 +69,7 @@ pub fn param(name: &str, ty: ParamType, facts: Facts) -> ParamDef {
         ty,
         default: facts.default.map(Box::new),
         host_default: None,
+        compute: None,
         description: facts.description.into(),
     }
     .into()
@@ -84,6 +85,7 @@ pub fn dispatched(name: &str, marked: bool, description: &str) -> ParamDef {
         ty: None,
         default: None,
         host_default: None,
+        compute: None,
         description: description.into(),
     }
     .into()

@@ -37,6 +37,7 @@
 
 pub mod abi;
 pub mod access;
+pub mod call;
 pub mod canonical;
 pub mod derive;
 mod emit;

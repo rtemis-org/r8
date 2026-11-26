@@ -432,25 +432,30 @@ print.r8_variant <- function(x, ...) print_lines(x)
 #'
 #' @param p An `r8_params`.
 #'
-#' @return Character: One line per parameter, `name: type = default`.
+#' @return Character: One line per parameter, `name: type = default`, each
+#'   followed by its description when it has one.
 #'
 #' @keywords internal
 #' @noRd
 param_lines <- function(p) {
   p <- unclass(p)
-  vapply(
+  descriptions <- p[["descriptions"]] %||% character(length(p[["names"]]))
+  unlist(lapply(
     seq_along(p[["names"]]),
     function(i) {
       type <- p[["types"]][[i]]
-      paste0(
-        "  ",
-        p[["names"]][[i]],
-        if (!is.null(type)) paste0(": ", type_text(type)),
-        if (nzchar(p[["texts"]][[i]])) paste0(" = ", p[["texts"]][[i]])
+      c(
+        paste0(
+          "  ",
+          p[["names"]][[i]],
+          if (!is.null(type)) paste0(": ", type_text(type)),
+          if (nzchar(p[["texts"]][[i]])) paste0(" = ", p[["texts"]][[i]])
+        ),
+        if (nzchar(descriptions[[i]])) paste0("    ", descriptions[[i]])
       )
-    },
-    ""
-  )
+    }
+  )) %||%
+    character()
 } # /R8::param_lines
 
 

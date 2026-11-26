@@ -469,6 +469,7 @@ fn sample_trait() -> TraitDef {
                         ty: None,
                         default: None,
                         host_default: None,
+                        compute: None,
                         description: "".into(),
                     }),
                     ParamDef::Full(Param {
@@ -480,6 +481,7 @@ fn sample_trait() -> TraitDef {
                             host: "r".into(),
                             text: "length(x)".into(),
                         }),
+                        compute: None,
                         description: "The other.".into(),
                     }),
                     ParamDef::Full(Param {
@@ -490,6 +492,9 @@ fn sample_trait() -> TraitDef {
                             &serde_json::json!(1.5),
                         ))),
                         host_default: None,
+                        compute: Some(
+                            serde_json::from_value(json!({"length": [{"var": "x"}]})).unwrap(),
+                        ),
                         description: "".into(),
                     }),
                     "...".into(),

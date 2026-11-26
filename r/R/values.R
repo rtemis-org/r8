@@ -456,12 +456,12 @@ logic_at <- function(x, pointer) {
 #' @noRd
 problems_data <- function(errors) {
   n <- length(errors[["code"]])
-  out <- data.frame(
-    code = errors[["code"]],
-    path = errors[["path"]],
+  out <- list(
+    code = errors[["code"]] %||% character(),
+    path = errors[["path"]] %||% character(),
     rule = errors[["rule"]] %||% rep(NA_character_, n),
     rule_index = errors[["rule_index"]] %||% rep(NA_integer_, n),
-    message = errors[["message"]],
+    message = errors[["message"]] %||% character(),
     where = errors[["where"]] %||% rep(NA_character_, n),
     suggestion = errors[["suggestion"]] %||% rep(NA_character_, n),
     hint = errors[["hint"]] %||% rep(NA_character_, n)
@@ -471,7 +471,9 @@ problems_data <- function(errors) {
   ) {
     out[["diagnosis"]] <- errors[["diagnosis"]]
   }
-  out
+  # The columns are of length n; the frame is built without data.frame(),
+  # which takes about 100 microseconds.
+  structure(out, class = "data.frame", row.names = .set_row_names(n))
 } # /R8::problems_data
 
 
@@ -1529,7 +1531,11 @@ document_text <- function(json) {
       class = "r8_type_error"
     )
   }
-  json <- paste(enc2utf8(as.vector(json)), collapse = "\n")
+  json <- if (length(json) == 1L) {
+    enc2utf8(as.vector(json))
+  } else {
+    paste(enc2utf8(as.vector(json)), collapse = "\n")
+  }
   if (!validUTF8(json)) {
     r8_abort(
       "`json` is not valid UTF-8. Read the file with its encoding, such as ",
@@ -1729,14 +1735,26 @@ r8_namespace_providers <- function() {
 
 
 # %% r8_schema ----
-#' The JSON Schema of a type's values
+#' The JSON Schema of a type's values, or of a function's arguments
 #'
 #' Writes the JSON Schema (draft 2020-12) that the documents of `type`
 #' satisfy, for tools outside R8: each named type it reaches is in `$defs`,
 #' and the root admits the document envelope. R8's facts that JSON Schema
 #' cannot state, such as rules and units, are annotations under `x-r8`.
 #'
-#' @param type An R8 type object.
+#' For a typed function of [new_function()], the schema is that of the
+#' arguments object of a document of a call ([r8_call_from_json()]), which a
+#' tool's input schema takes: one property per parameter, with its
+#' description, and `additionalProperties: false`. A parameter without a
+#' default is required, and one of type `option()` admits `null`. A default
+#' written as a constant is `default`; a default written in R is optional,
+#' annotated `x-r8.host_default` with its text, which the function evaluates
+#' when it runs. The function's name, rules, and return type are annotations
+#' under `x-r8`. A function with a parameter without a type, `...`, or a
+#' parameter of type `host_class()` has no schema, and raises
+#' `r8_type_error`, which names them.
+#'
+#' @param type An R8 type object, or a typed function of [new_function()].
 #' @param closed Logical: Write each `dyn()` field as the closed list of the
 #'   implementors registered in the session, each with its tag value as a
 #'   constant, and each `subtype()` field as the struct and its registered
@@ -1750,14 +1768,31 @@ r8_namespace_providers <- function() {
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 #' cat(r8_schema(Point))
+#' clip <- new_function(
+#'   "clip",
+#'   function(
+#'     x = arg_vec(type_double(), description = "The values."),
+#'     lo = arg_double(default = 0, description = "The lower bound.")
+#'   ) {
+#'     pmax(x, lo)
+#'   }
+#' )
+#' cat(r8_schema(clip))
 #' options(op)
 #'
 #' @export
 r8_schema <- function(type, closed = FALSE) {
+  check_flag(closed, "closed", "r8_type_error")
+  if (inherits(type, "r8_function")) {
+    fs <- call_functions(type)
+    return(r8_function_schema(names(fs), closed)[["schema"]])
+  }
   if (!inherits(type, "r8_type")) {
-    r8_abort("`type` is an R8 type object.", class = "r8_type_error")
+    r8_abort(
+      "`type` is an R8 type object, or a typed function of new_function().",
+      class = "r8_type_error"
+    )
   }
   ensure_registered(type)
-  check_flag(closed, "closed", "r8_type_error")
   r8_type_schema(attr(type, "r8_name"), closed)
 } # /R8::r8_schema

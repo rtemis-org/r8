@@ -12,10 +12,10 @@ use extendr_ffi::{
     STRING_ELT, TYPEOF, cetype_t,
 };
 use rtemis_r8::canonical::{date_text, datetime_text};
-use rtemis_r8::rules::Shown;
+use rtemis_r8_io::parquet::{Column as Out, Parquet, ParquetError, TextColumn, write_parquet};
 use rtemis_r8_io::{
     Cells, Column, ColumnSpec, Csv, Encoding, Kind, MISSING_DATETIME, MISSING_INTEGER, Options,
-    Read, Refused, Scalar, Texts, decode,
+    Read, ReadOptions, Refused, Scalar, Texts, Zone, decode, is_missing_double, number_text,
 };
 
 const NA_INTEGER: i32 = i32::MIN;
@@ -251,6 +251,153 @@ fn refused(kind: &str, message: String) -> Robj {
     list!(refused = kind, message = message).into()
 }
 
+/// The names of a header that are missing or repeat.
+fn header_refused(header: &[String]) -> Option<Robj> {
+    for (k, h) in header.iter().enumerate() {
+        if h.is_empty() {
+            return Some(refused(
+                "header",
+                format!("column {} has no name in the header", k + 1),
+            ));
+        }
+        if header[..k].contains(h) {
+            return Some(refused(
+                "header",
+                format!("two columns are named `{h}` in the header"),
+            ));
+        }
+    }
+    None
+}
+
+/// How the columns of a header are read, or what is refused.
+#[allow(clippy::too_many_arguments)]
+fn column_specs(
+    header: &[String],
+    names: &Robj,
+    kinds: &Robj,
+    levels: &Robj,
+    other: &str,
+    na_strings: &Robj,
+    na_strings_in: &Robj,
+    recode_in: &Robj,
+) -> std::result::Result<Vec<ColumnSpec>, Robj> {
+    let (names, kinds) = (given(names), given(kinds));
+    let levels: Vec<Robj> = levels
+        .as_list()
+        .map(|l| l.values().collect())
+        .unwrap_or_default();
+    let missing = given(na_strings);
+    let missing_in = named(na_strings_in);
+    let recode_in = named(recode_in);
+    for (arg, of) in [("na_strings_in", &missing_in), ("recode_in", &recode_in)] {
+        if let Some((k, _)) = of.iter().find(|(k, _)| !header.contains(k)) {
+            return Err(refused(
+                "argument",
+                format!("`{arg}` names `{k}`, which is not a column of the file"),
+            ));
+        }
+    }
+    let mut specs = Vec::with_capacity(header.len());
+    for h in header {
+        let k = match names.iter().position(|n| n == h) {
+            Some(i) => kind(&kinds[i], &levels[i]),
+            None => kind(other, &().into()),
+        };
+        let mut recode = Vec::new();
+        if let Some((_, v)) = recode_in.iter().find(|(n, _)| n == h) {
+            for (i, t) in v.names().into_iter().flatten().enumerate() {
+                match scalar(v, i, &k) {
+                    Some(s) => recode.push((t.to_string(), s)),
+                    None if k == Kind::Infer => {
+                        recode.push((t.to_string(), Scalar::Logical(true)));
+                    }
+                    None => {
+                        return Err(refused(
+                            "argument",
+                            format!(
+                                "`recode_in` gives a value of another type for \"{t}\" of `{h}`"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        let spec = ColumnSpec {
+            kind: k,
+            missing: missing.clone(),
+            missing_here: missing_in
+                .iter()
+                .filter(|(n, _)| n == h)
+                .flat_map(|(_, v)| given(v))
+                .collect(),
+            recode,
+        };
+        if let Some((i, why)) = spec.refused() {
+            let t = &spec.recode[i].0;
+            return Err(refused(
+                "argument",
+                match why {
+                    Refused::Inferred => format!(
+                        "`recode_in` names `{h}`, whose type is not declared; a value is of a declared column"
+                    ),
+                    Refused::Twice => format!("`recode_in` gives \"{t}\" of `{h}` two values"),
+                    Refused::Missing => format!(
+                        "`recode_in` gives a value for \"{t}\" of `{h}`, which `na_strings` or `na_strings_in` makes missing"
+                    ),
+                    Refused::Reads => format!(
+                        "`recode_in` gives a value for \"{t}\" of `{h}`, which reads as it is"
+                    ),
+                    Refused::Kind => {
+                        format!("`recode_in` gives a value of another type for \"{t}\" of `{h}`")
+                    }
+                },
+            ));
+        }
+        specs.push(spec);
+    }
+    Ok(specs)
+}
+
+/// The options of a read, or the refusal of the time zone.
+fn read_options(limit: i32, time_zone: &str) -> std::result::Result<ReadOptions, Robj> {
+    let Some(zone) = Zone::named(time_zone) else {
+        return Err(refused(
+            "argument",
+            format!(
+                "`time_zone` is the IANA name of a time zone, such as \"America/New_York\"; \"{time_zone}\" is not one"
+            ),
+        ));
+    };
+    Ok(ReadOptions {
+        limit: usize::try_from(limit).unwrap_or(0),
+        zone,
+    })
+}
+
+/// What was read, or what is refused, for R.
+fn outcome(header: &[String], specs: &[ColumnSpec], read: Read) -> Result<Robj> {
+    if read.rows > i32::MAX as u64 {
+        return Ok(refused(
+            "rows",
+            format!(
+                "a table has at most 2,147,483,647 rows; the file has {}",
+                read.rows
+            ),
+        ));
+    }
+    written(header, specs, read)
+}
+
+macro_rules! or_refused {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(r) => return Ok(r),
+        }
+    };
+}
+
 /// Reads a delimited file.
 ///
 /// @param bytes Raw: The bytes of the file, or `NULL` for those of `path`.
@@ -265,6 +412,7 @@ fn refused(kind: &str, message: String) -> Robj {
 /// @param na_strings_in List: Those of columns, by name.
 /// @param recode_in List: The values of texts of columns, by name, named vectors.
 /// @param limit Integer: The cells that do not read that each column lists.
+/// @param time_zone Character: The zone of the date-times without an offset.
 /// @return List: what was read, or `refused` and `message`.
 /// @keywords internal
 /// @noRd
@@ -283,8 +431,10 @@ fn read_delimited(
     na_strings_in: Robj,
     recode_in: Robj,
     limit: i32,
+    time_zone: &str,
 ) -> Result<Robj> {
     interruptible(|| {
+        let options = or_refused!(read_options(limit, time_zone));
         let held;
         let bytes: &[u8] = match bytes.as_raw_slice() {
             Some(_) if bytes.len() == 0 => &[],
@@ -309,109 +459,82 @@ fn read_delimited(
             Err(e) => return Ok(refused("malformed", e.to_string())),
         };
         let header = csv.header();
-        for (k, h) in header.iter().enumerate() {
-            if h.is_empty() {
-                return Ok(refused(
-                    "header",
-                    format!("column {} has no name in the header", k + 1),
-                ));
-            }
-            if header[..k].contains(h) {
-                return Ok(refused(
-                    "header",
-                    format!("two columns are named `{h}` in the header"),
-                ));
-            }
+        if let Some(r) = header_refused(header) {
+            return Ok(r);
         }
-        let (names, kinds) = (given(&names), given(&kinds));
-        let levels: Vec<Robj> = levels
-            .as_list()
-            .map(|l| l.values().collect())
-            .unwrap_or_default();
-        let missing = given(&na_strings);
-        let missing_in = named(&na_strings_in);
-        let recode_in = named(&recode_in);
-        for (arg, of) in [("na_strings_in", &missing_in), ("recode_in", &recode_in)] {
-            if let Some((k, _)) = of.iter().find(|(k, _)| !header.contains(k)) {
-                return Ok(refused(
-                    "argument",
-                    format!("`{arg}` names `{k}`, which is not a column of the file"),
-                ));
-            }
-        }
-        let mut specs = Vec::with_capacity(header.len());
-        for h in header {
-            let k = match names.iter().position(|n| n == h) {
-                Some(i) => kind(&kinds[i], &levels[i]),
-                None => kind(other, &().into()),
-            };
-            let mut recode = Vec::new();
-            if let Some((_, v)) = recode_in.iter().find(|(n, _)| n == h) {
-                for (i, t) in v.names().into_iter().flatten().enumerate() {
-                    match scalar(v, i, &k) {
-                        Some(s) => recode.push((t.to_string(), s)),
-                        None if k == Kind::Infer => {
-                            recode.push((t.to_string(), Scalar::Logical(true)));
-                        }
-                        None => {
-                            return Ok(refused(
-                                "argument",
-                                format!(
-                                    "`recode_in` gives a value of another type for \"{t}\" of `{h}`"
-                                ),
-                            ));
-                        }
-                    }
-                }
-            }
-            let spec = ColumnSpec {
-                kind: k,
-                missing: missing.clone(),
-                missing_here: missing_in
-                    .iter()
-                    .filter(|(n, _)| n == h)
-                    .flat_map(|(_, v)| given(v))
-                    .collect(),
-                recode,
-            };
-            if let Some((i, why)) = spec.refused() {
-                let t = &spec.recode[i].0;
-                return Ok(refused(
-                    "argument",
-                    match why {
-                        Refused::Inferred => format!(
-                            "`recode_in` names `{h}`, whose type is not declared; a value is of a declared column"
-                        ),
-                        Refused::Twice => format!("`recode_in` gives \"{t}\" of `{h}` two values"),
-                        Refused::Missing => format!(
-                            "`recode_in` gives a value for \"{t}\" of `{h}`, which `na_strings` or `na_strings_in` makes missing"
-                        ),
-                        Refused::Reads => format!(
-                            "`recode_in` gives a value for \"{t}\" of `{h}`, which reads as it is"
-                        ),
-                        Refused::Kind => format!(
-                            "`recode_in` gives a value of another type for \"{t}\" of `{h}`"
-                        ),
-                    },
-                ));
-            }
-            specs.push(spec);
-        }
-        let read = match csv.read(&specs, usize::try_from(limit).unwrap_or(0)) {
+        let specs = or_refused!(column_specs(
+            header,
+            &names,
+            &kinds,
+            &levels,
+            other,
+            &na_strings,
+            &na_strings_in,
+            &recode_in
+        ));
+        let read = match csv.read(&specs, &options) {
             Ok(r) => r,
             Err(e) => return Ok(refused("malformed", e.to_string())),
         };
-        if read.rows > i32::MAX as u64 {
-            return Ok(refused(
-                "rows",
-                format!(
-                    "a table has at most 2,147,483,647 rows; the file has {}",
-                    read.rows
-                ),
-            ));
-        }
-        written(header, &specs, read)
+        outcome(header, &specs, read)
     })
+}
+
+/// Reads a Parquet file.
+///
+/// @param path Character: The file.
+/// @param names,kinds,levels,other,na_strings,na_strings_in,recode_in,limit,time_zone
+///   As `read_delimited()` takes them.
+/// @return List: what was read, or `refused` and `message`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn read_parquet(
+    path: &str,
+    names: Robj,
+    kinds: Robj,
+    levels: Robj,
+    other: &str,
+    na_strings: Robj,
+    na_strings_in: Robj,
+    recode_in: Robj,
+    limit: i32,
+    time_zone: &str,
+) -> Result<Robj> {
+    interruptible(|| {
+        let options = or_refused!(read_options(limit, time_zone));
+        let file = match Parquet::open(path) {
+            Ok(f) => f,
+            Err(e) => return Ok(parquet_refused(e)),
+        };
+        let header = file.header();
+        if let Some(r) = header_refused(header) {
+            return Ok(r);
+        }
+        let specs = or_refused!(column_specs(
+            header,
+            &names,
+            &kinds,
+            &levels,
+            other,
+            &na_strings,
+            &na_strings_in,
+            &recode_in
+        ));
+        let read = match file.read(&specs, &options) {
+            Ok(r) => r,
+            Err(e) => return Ok(parquet_refused(e)),
+        };
+        outcome(header, &specs, read)
+    })
+}
+
+fn parquet_refused(e: ParquetError) -> Robj {
+    match e {
+        ParquetError::File(m) => refused("malformed", m),
+        e @ ParquetError::Column { .. } => refused("column", e.to_string()),
+    }
 }
 
 /// What was read, as R's vectors.
@@ -489,14 +612,6 @@ fn value_text(v: &Scalar) -> String {
         Scalar::Text(t) => format!("{t:?}"),
         Scalar::Date(d) => date_text(i64::from(*d)),
         Scalar::DateTime(m) => datetime_text(*m),
-    }
-}
-
-/// A double in its shortest decimal form that reads back exactly.
-fn number_text(x: f64) -> String {
-    match Shown::number(x) {
-        Shown::Number(t) => t,
-        _ => x.to_string(),
     }
 }
 
@@ -580,7 +695,7 @@ impl Cells for Vector {
                 },
                 Form::Double => {
                     let v = REAL_ELT(self.x, i);
-                    if v.to_bits() as u32 == 1954 && v.is_nan() {
+                    if is_missing_double(v) {
                         return false;
                     }
                     out.push_str(&number_text(v));
@@ -641,8 +756,128 @@ fn write_delimited(columns: List, path: &str, delimiter: i32) -> Result<Robj> {
     })
 }
 
+/// The texts of a character vector of UTF-8.
+struct Strings(SEXP);
+
+impl TextColumn for Strings {
+    fn text(&self, i: usize) -> Option<&str> {
+        unsafe {
+            let c = STRING_ELT(self.0, i as R_xlen_t);
+            if c == R_NaString {
+                return None;
+            }
+            // The vector is protected by its caller, and its texts are UTF-8.
+            std::ffi::CStr::from_ptr(extendr_ffi::R_CHAR(c))
+                .to_str()
+                .ok()
+        }
+    }
+}
+
+/// The cells of R's vector, as Parquet takes them.
+enum Held {
+    Slice(Vector),
+    Days(Vec<i32>),
+    Micros(Vec<i64>),
+}
+
+/// Writes columns as a Parquet file.
+///
+/// @param columns List: The columns by name, of UTF-8.
+/// @param path Character: The file.
+/// @return `NULL`, or the message of a file that is not written.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn write_parquet_file(columns: List, path: &str) -> Result<Robj> {
+    interruptible(|| {
+        let names: Vec<String> = columns.iter().map(|(k, _)| k.to_string()).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let held: Vec<Robj> = columns.values().collect();
+        let vectors = held.iter().map(Vector::of).collect::<Result<Vec<_>>>()?;
+        let rows = held.first().map_or(0, |c| c.len());
+        let cells: Vec<Held> = vectors
+            .into_iter()
+            .map(|v| match v.form {
+                Form::Date => Held::Days(
+                    (0..rows)
+                        .map(|i| v.number(i).map_or(MISSING_INTEGER, |d| d.floor() as i32))
+                        .collect(),
+                ),
+                Form::DateTime => Held::Micros(
+                    (0..rows)
+                        .map(|i| {
+                            v.number(i)
+                                .map_or(MISSING_DATETIME, |s| (s * 1e6).round() as i64)
+                        })
+                        .collect(),
+                ),
+                _ => Held::Slice(v),
+            })
+            .collect();
+        let strings: Vec<Strings> = cells
+            .iter()
+            .map(|c| match c {
+                Held::Slice(v) => Strings(v.x),
+                _ => Strings(std::ptr::null_mut()),
+            })
+            .collect();
+        let out: Vec<Out<'_>> = cells
+            .iter()
+            .zip(&strings)
+            .map(|(c, text)| match c {
+                Held::Days(d) => Out::Date(d),
+                Held::Micros(m) => Out::DateTime(m),
+                Held::Slice(v) => unsafe {
+                    let n = rows;
+                    let ints = |x: SEXP| -> &[i32] {
+                        if n == 0 {
+                            &[]
+                        } else {
+                            std::slice::from_raw_parts(INTEGER(x), n)
+                        }
+                    };
+                    match v.form {
+                        Form::Logical => Out::Logical(if n == 0 {
+                            &[]
+                        } else {
+                            std::slice::from_raw_parts(LOGICAL(v.x), n)
+                        }),
+                        Form::Integer => Out::Integer(ints(v.x)),
+                        Form::Double => Out::Double(if n == 0 {
+                            &[]
+                        } else {
+                            std::slice::from_raw_parts(REAL(v.x), n)
+                        }),
+                        Form::Text => Out::Text(text),
+                        Form::Factor => Out::Factor {
+                            codes: ints(v.x),
+                            levels: &v.levels,
+                        },
+                        Form::Date | Form::DateTime => {
+                            unreachable!("held as days and microseconds")
+                        }
+                    }
+                },
+            })
+            .collect();
+        let done = std::fs::File::create(path)
+            .map_err(|e| e.to_string())
+            .and_then(|f| {
+                write_parquet(std::io::BufWriter::new(f), &names, &out, rows)
+                    .map_err(|e| e.to_string())
+            });
+        Ok(match done {
+            Ok(()) => ().into(),
+            Err(e) => e.into(),
+        })
+    })
+}
+
 extendr_module! {
     mod R8_io;
     fn read_delimited;
+    fn read_parquet;
     fn write_delimited;
+    fn write_parquet_file;
 }

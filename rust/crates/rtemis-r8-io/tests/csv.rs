@@ -2,8 +2,15 @@
 
 use rtemis_r8_io::{
     Column, ColumnSpec, Csv, Encoding, Kind, MISSING_INTEGER, MalformedKind, Options, Read,
-    Refused, Scalar, decode, text,
+    ReadOptions, Refused, Scalar, Zone, decode, text,
 };
+
+fn limit(limit: usize) -> ReadOptions {
+    ReadOptions {
+        limit,
+        ..ReadOptions::default()
+    }
+}
 
 fn read(t: &str, kinds: &[Kind]) -> Read {
     let csv = Csv::new(t, Options::default()).unwrap();
@@ -14,7 +21,7 @@ fn read(t: &str, kinds: &[Kind]) -> Read {
             ..ColumnSpec::new(k.clone())
         })
         .collect();
-    csv.read(&specs, 5).unwrap()
+    csv.read(&specs, &limit(5)).unwrap()
 }
 
 fn inferred(t: &str) -> Vec<Column> {
@@ -54,7 +61,12 @@ fn cells_split_as_the_standard_states() {
 fn a_text_that_does_not_split_gives_its_line() {
     let of = |t: &str| {
         let e = Csv::new(t, Options::default())
-            .and_then(|c| c.read(&vec![ColumnSpec::new(Kind::Infer); c.header().len()], 5))
+            .and_then(|c| {
+                c.read(
+                    &vec![ColumnSpec::new(Kind::Infer); c.header().len()],
+                    &limit(5),
+                )
+            })
             .unwrap_err();
         (e.line, e.kind)
     };
@@ -98,6 +110,11 @@ fn a_column_has_the_kind_that_all_its_cells_have() {
         one(&["1970-01-01T00:00:01Z", "1970-01-01 01:00:00+01:00"]),
         Column::DateTime(vec![1_000_000, 0])
     );
+    // A date-time without an offset is the clock reading of the zone, UTC.
+    assert_eq!(
+        one(&["2024-01-31T10:00:00", "2024-01-31 10:00:00.5"]),
+        Column::DateTime(vec![1_706_695_200_000_000, 1_706_695_200_500_000])
+    );
     assert_eq!(one(&[" 1", "2 "]), Column::Integer(vec![1, 2]));
     assert_eq!(one(&["\"1\"", "2"]), Column::Integer(vec![1, 2]));
     // A column of missing cells has the first kind.
@@ -112,7 +129,6 @@ fn a_column_has_the_kind_that_all_its_cells_have() {
         vec!["1", "TRUE"],
         vec!["2024-01-31", "2024-02-30"],
         vec!["2024-01-31", "2024-01-31T00:00:00Z"],
-        vec!["2024-01-31T10:00:00"],
         vec!["T", "F"],
         vec!["12345678901234567890"],
         vec!["1", "12345678901234567890"],
@@ -267,7 +283,7 @@ fn a_text_reads_as_a_given_value() {
         },
     ];
     assert!(specs.iter().all(|s| s.refused().is_none()));
-    let r = csv.read(&specs, 5).unwrap();
+    let r = csv.read(&specs, &limit(5)).unwrap();
     assert!(
         matches!(&r.columns[0], Column::Double(x) if x[..3] == [0.1, 2.0, 0.1] && x[3].is_nan())
     );
@@ -442,7 +458,7 @@ fn any_text_is_read_or_refused() {
         if let Ok(csv) = Csv::new(&t, Options::default()) {
             let n = csv.header().len();
             for kind in [Kind::Infer, Kind::Text, Kind::Double, Kind::DateTime] {
-                if let Ok(r) = csv.read(&vec![ColumnSpec::new(kind); n], 5) {
+                if let Ok(r) = csv.read(&vec![ColumnSpec::new(kind); n], &limit(5)) {
                     assert!(r.columns.iter().all(|c| c.len() as u64 == r.rows));
                 }
             }
@@ -494,7 +510,7 @@ fn a_table_that_is_written_reads_back() {
             };
             n
         ];
-        let r = csv.read(&specs, 0).unwrap();
+        let r = csv.read(&specs, &limit(0)).unwrap();
         for (c, written) in r.columns.iter().zip(&columns) {
             let expected: Vec<Option<&str>> = written.0.iter().map(Option::as_deref).collect();
             assert_eq!(texts(c), expected, "seed {seed}: {t:?}");
@@ -512,4 +528,47 @@ fn a_quoted_text_is_a_level() {
         r.columns[0],
         Column::Factor(vec![1, 2, MISSING_INTEGER, MISSING_INTEGER, 3])
     );
+}
+
+#[test]
+fn a_clock_reading_is_an_instant_of_its_zone() {
+    let t =
+        "at\n2024-06-01 08:15:00\n2024-03-10 02:30:00\n2024-11-03 01:30:00\n2024-06-01T08:15:00Z\n";
+    let csv = Csv::new(t, Options::default()).unwrap();
+    let zone = Zone::named("America/New_York").unwrap();
+    let options = ReadOptions {
+        limit: 5,
+        zone: zone.clone(),
+    };
+    let declared = csv
+        .read(&[ColumnSpec::new(Kind::DateTime)], &options)
+        .unwrap();
+    // 08:15 in New York in June is 12:15 UTC; an offset keeps its instant. The clock
+    // skips 02:30 on 2024-03-10 and shows 01:30 twice on 2024-11-03.
+    assert_eq!(
+        declared.columns[0],
+        Column::DateTime(vec![
+            1_717_244_100_000_000,
+            rtemis_r8_io::MISSING_DATETIME,
+            rtemis_r8_io::MISSING_DATETIME,
+            1_717_229_700_000_000
+        ])
+    );
+    let unread: Vec<_> = declared
+        .unread
+        .iter()
+        .map(|u| (u.text.as_deref(), u.rows.clone()))
+        .collect();
+    assert_eq!(
+        unread,
+        [
+            (Some("2024-03-10 02:30:00"), vec![1]),
+            (Some("2024-11-03 01:30:00"), vec![2])
+        ]
+    );
+    // Inferred, the column of such texts is text.
+    let inferred = csv.read(&[ColumnSpec::new(Kind::Infer)], &options).unwrap();
+    assert!(matches!(inferred.columns[0], Column::Text(_)));
+    assert!(Zone::named("Mars/Olympus").is_none());
+    assert_eq!(Zone::named("UTC").unwrap().instant(5), Some(5));
 }

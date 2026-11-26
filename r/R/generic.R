@@ -1095,7 +1095,8 @@ signature_lines <- function(m, g, indent) {
     }
     n <- p[["name"]]
     has_default <- n %in% names(fmls) && !identical(fmls[[n]], quote(expr = ))
-    if (is.null(p[["type"]]) && !has_default) {
+    description <- p[["description"]] %||% ""
+    if (is.null(p[["type"]]) && !has_default && !nzchar(description)) {
       next
     }
     out <- c(
@@ -1107,7 +1108,8 @@ signature_lines <- function(m, g, indent) {
           paste0(": ", plain_notation(r8_type_notation(p[["type"]])))
         },
         if (has_default) paste0(" = ", deparse1(fmls[[n]]))
-      )
+      ),
+      if (nzchar(description)) paste0(indent, "  ", description)
     )
   }
   if (!is.null(m[["return_type"]])) {

@@ -27,7 +27,7 @@ use crate::rules::TypeLookup;
 const INT_MIN: i64 = -2_147_483_647;
 const INT_MAX: i64 = 2_147_483_647;
 
-struct Writer<'a> {
+pub(crate) struct Writer<'a> {
     lookup: &'a dyn TypeLookup,
     defs: BTreeMap<String, Value>,
     /// Write a `dyn()` field as the closed list of the registered
@@ -57,9 +57,24 @@ fn rules_annotation(rules: &[RuleDef]) -> Option<Value> {
     (!rules.is_empty()).then(|| serde_json::to_value(rules).expect("rules serialize"))
 }
 
+/// A writer of schemas over `lookup`, whose named types collect in its
+/// `$defs`.
+pub(crate) fn writer(lookup: &dyn TypeLookup, closed: bool) -> Writer<'_> {
+    Writer {
+        lookup,
+        defs: BTreeMap::new(),
+        closed,
+    }
+}
+
 impl Writer<'_> {
+    /// The named types that the schemas written reach, by qualified name.
+    pub(crate) fn into_defs(self) -> BTreeMap<String, Value> {
+        self.defs
+    }
+
     /// The schema of a field type, for a present value.
-    fn ty(&mut self, ft: &FieldType) -> Value {
+    pub(crate) fn ty(&mut self, ft: &FieldType) -> Value {
         match ft {
             FieldType::Logical => json!({"type": "boolean"}),
             FieldType::Integer(c) => {

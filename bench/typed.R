@@ -5,9 +5,10 @@
 # The cost of the checks of a typed generic's call, and of a typed function's
 # (new_function()), against the same checks in a function: hand-written, and with
 # checkmate's assert_*() and qassert(); and against a struct constructor with the
-# same fields. Each row reports the time
-# of a call and the time beyond the same call without checks, the minimum of
-# `rounds` rounds of a byte-compiled loop, all in one process. Usage:
+# same fields; and documents of a call, against the direct call. Each row
+# reports the time of a call and the time beyond the same call without checks,
+# the minimum of `rounds` rounds of a byte-compiled loop, all in one process.
+# Usage:
 # Rscript bench/typed.R [rounds], with the release build of R8 installed.
 # spec: R8/class-system#checks-at-a-call
 
@@ -184,4 +185,44 @@ out <- c(
     beyond_ns = NA
   ))
 )
+# A document of a call, against the direct call of the same function.
+t_doc <- new_function(
+  "t_doc",
+  function(x = arg_vec(type_double()), lo = arg_double(), hi = arg_double()) 1,
+  rules = list(rule(lo <= hi))
+)
+doc <- '{"$function": "benchtyped::t_doc", "arguments": {"x": [1, 2, 3], "lo": 0, "hi": 1}}'
+loop_direct <- compiler::cmpfun(function(k) {
+  for (i in seq_len(k)) t_doc(c(1, 2, 3), 0, 1)
+})
+loop_from <- compiler::cmpfun(function(k) {
+  for (i in seq_len(k)) r8_call_from_json(t_doc, doc)
+})
+loop_check <- compiler::cmpfun(function(k) {
+  for (i in seq_len(k)) r8_check_call(t_doc, doc)
+})
+loop_to <- compiler::cmpfun(function(k) {
+  for (i in seq_len(k)) r8_call_to_json(t_doc, c(1, 2, 3), 0, 1)
+})
+best <- function(f, k) {
+  invisible(time(f(k), k))
+  min(replicate(rounds, time(f(k), k)))
+}
+direct <- best(loop_direct, 1e4)
+for (d in list(
+  list("r8_call_from_json()", loop_from),
+  list("r8_check_call()", loop_check),
+  list("r8_call_to_json()", loop_to)
+)) {
+  ns <- best(d[[2L]], 2e3)
+  out <- c(
+    out,
+    list(data.frame(
+      check = "a document of a call",
+      how = d[[1L]],
+      call_ns = round(ns),
+      beyond_ns = round(ns - direct)
+    ))
+  )
+}
 print(do.call(rbind, out), row.names = FALSE)

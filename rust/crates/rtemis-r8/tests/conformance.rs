@@ -321,6 +321,7 @@ fn conformance_corpus() {
                 "update" => run_update(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 "filter" => run_filter(ir.as_ref(), case),
                 "check" => run_check(ir.as_ref(), case),
+                "call" => run_call(ir.as_ref(), case),
                 "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 op @ ("canonical" | "hash") => run_canonical(
                     op,
@@ -351,6 +352,81 @@ fn conformance_corpus() {
     println!("conformance: {passed} passed, {skipped} skipped");
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(passed > 0, "no conformance case ran");
+}
+
+/// Runs one `call` case: the errors of the document of a call of the
+/// function `type`, and the rules left unchecked. The arguments of a valid
+/// call satisfy the function's JSON Schema of arguments, and those of a call
+/// whose problems are all structural do not.
+fn run_call(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
+    use rtemis_r8::call::{arguments_schema, read_call};
+    let Some(docs) = ir else {
+        return Some("a `call` case needs the suite's `ir`".into());
+    };
+    let f = QualifiedName::parse(case["type"].as_str()?).ok()?;
+    let text = case["input"].to_string();
+    let mut cache = rtemis_r8::validate::RuleCache::new();
+    let rule_of = |e: &rtemis_r8::validate::ValueError| match (&e.rule, e.rule_index) {
+        (Some(r), _) => Some(r.to_string()),
+        (None, Some(i)) => Some(format!("#{i}")),
+        (None, None) => None,
+    };
+    let (got, unchecked) = match read_call(&text, std::slice::from_ref(&f), docs, &mut cache) {
+        Ok(call) => (
+            Vec::new(),
+            sorted_errors(
+                call.unchecked
+                    .iter()
+                    .map(|e| (e.path.clone(), e.code.to_string(), rule_of(e))),
+            ),
+        ),
+        Err(errors) => (
+            sorted_errors(
+                errors
+                    .iter()
+                    .map(|e| (e.path.clone(), e.code.to_string(), rule_of(e))),
+            ),
+            Vec::new(),
+        ),
+    };
+    let want = expected_errors(&case["expect"]);
+    let want_unchecked = match case["expect"].get("unchecked") {
+        Some(u) => expected_errors(&serde_json::json!({ "errors": u })),
+        None => Vec::new(),
+    };
+    if got != want {
+        return Some(format!("errors {got:?}, expected {want:?}"));
+    }
+    if unchecked != want_unchecked {
+        return Some(format!(
+            "unchecked {unchecked:?}, expected {want_unchecked:?}"
+        ));
+    }
+    if let (Ok(schema), Some(args)) = (
+        arguments_schema(&f, docs, false),
+        case["input"].get("arguments"),
+    ) {
+        let structural = |code: &str| {
+            !matches!(
+                code,
+                "rule_violation"
+                    | "rule_error"
+                    | "version_missing"
+                    | "version_older"
+                    | "version_newer"
+                    | "unknown_function"
+                    | "call_form"
+            )
+        };
+        let accepted = jsonschema::draft202012::is_valid(&schema, args);
+        if got.is_empty() && !accepted {
+            return Some("the schema of the arguments rejects a valid call".into());
+        }
+        if !got.is_empty() && got.iter().all(|(_, c, _)| structural(c)) && accepted {
+            return Some("the schema of the arguments accepts an invalid call".into());
+        }
+    }
+    None
 }
 
 /// Runs one `check` case.

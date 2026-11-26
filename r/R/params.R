@@ -74,7 +74,8 @@ arg_default <- function(default, constructor) {
 #'
 #' @param constructor Character: The constructor's name.
 #'
-#' @return Function: The constructor's formals, then `default`.
+#' @return Function: The constructor's formals, then `default` and
+#'   `description`.
 #'
 #' @keywords internal
 #' @noRd
@@ -83,7 +84,7 @@ arg_shorthand <- function(constructor) {
   as.function(
     c(
       formals(f),
-      alist(default = ),
+      alist(default = , description = ""),
       as.call(list(
         quote(arg_default),
         quote(default),
@@ -111,6 +112,10 @@ arg_shorthand <- function(constructor) {
 #' gives a parameter without a type a default that is itself a type, such as
 #' `arg(default = GBM)`.
 #'
+#' `description` is named after `default`: `arg_integer(min = 1L, default =
+#' 10L, description = "The number of folds.")`. `arg(description = "...")`
+#' alone describes a parameter without a type or a default.
+#'
 #' Each call of the generic checks and converts its typed arguments
 #' ([generic()]).
 #'
@@ -124,6 +129,9 @@ arg_shorthand <- function(constructor) {
 #'   `arg_matrix()`, `arg_array()`, and `arg_sparse_matrix()`, the type of
 #'   the elements or of a present value.
 #' @param default Optional expression: The default.
+#' @param description Character: What the parameter is, one string, which the
+#'   declaration keeps: [r8_schema()] writes it, and the roclet [r8_rd()]
+#'   writes it as the parameter's `@param`.
 #' @param min,max,exclusive_min,exclusive_max,values Optional Numeric: The
 #'   bounds and admitted values, as [type_integer()] and [type_double()] take
 #'   them; `values` of `arg_character()` as [type_character()] takes it.
@@ -153,7 +161,7 @@ arg_shorthand <- function(constructor) {
 #' params(x, n = arg_integer(default = length(x)), weights = arg_option(vec(type_double())))
 #'
 #' @export
-arg <- function(type, default) {
+arg <- function(type, default, description = "") {
   arg_default(default, arg)
 } # /R8::arg
 
@@ -216,7 +224,7 @@ arg_vec <- arg_shorthand("vec")
 
 #' @rdname arg
 #' @export
-arg_option <- function(type, default = NULL) {
+arg_option <- function(type, default = NULL, description = "") {
   arg_default(default, option)
 }
 
@@ -529,11 +537,13 @@ read_params <- function(exprs, env, generic = TRUE) {
   types <- vector("list", n)
   constants <- vector("list", n)
   texts <- character(n)
+  descriptions <- character(n)
   for (i in which(nzchar(given))) {
     p <- read_param(nms[[i]], exprs[[i]], env, nms)
     if (!is.null(p[["type"]])) {
       types[[i]] <- p[["type"]]
     }
+    descriptions[[i]] <- p[["description"]] %||% ""
     if (is.null(p[["default"]])) {
       next
     }
@@ -570,6 +580,7 @@ read_params <- function(exprs, env, generic = TRUE) {
       types = types,
       constants = constants,
       texts = texts,
+      descriptions = descriptions,
       env = env
     ),
     class = "r8_params"
@@ -679,7 +690,7 @@ param_name <- function(given, exprs, i, env) {
 #' @return List: `type`, a field type or an R8 type object, or `NULL`;
 #'   `default`, a list of the default expression, or `NULL`; and
 #'   `type_default`, `TRUE` for `arg(default = )` without a type, whose
-#'   default may be a type.
+#'   default may be a type; and `description`, a string.
 #'
 #' @keywords internal
 #' @noRd
@@ -716,6 +727,12 @@ read_param <- function(name, e, env, params) {
     unname(formals(f)["default"])
   }
   matched <- matched[names(matched) != "default"]
+  description <- if ("description" %in% names(matched)) {
+    param_description(name, matched[["description"]], env)
+  } else {
+    ""
+  }
+  matched <- matched[names(matched) != "description"]
   if (!is.null(default)) {
     default <- list(default[[1L]])
     if (calls_arg(default[[1L]], env)) {
@@ -726,16 +743,20 @@ read_param <- function(name, e, env, params) {
     }
   }
   if (identical(constructor, "arg") && length(matched) == 0L) {
-    if (is.null(default)) {
+    if (is.null(default) && !nzchar(description)) {
       param_abort(
         name,
-        "arg() gives a type or a default; a parameter without them is its ",
-        "bare name, params(",
+        "arg() gives a type, a default, or a description; a parameter without ",
+        "them is its bare name, params(",
         name,
         ")."
       )
     }
-    return(list(default = default, type_default = TRUE))
+    return(list(
+      default = default,
+      type_default = TRUE,
+      description = description
+    ))
   }
   for (i in seq_along(matched)) {
     if (is.call(matched[[i]]) && calls_arg(matched[[i]], env)) {
@@ -759,8 +780,35 @@ read_param <- function(name, e, env, params) {
     error = function(cond) param_abort(name, conditionMessage(cond))
   )
   check_param_type(name, type)
-  list(type = type, default = default)
+  list(type = type, default = default, description = description)
 } # /R8::read_param
+
+
+# %% param_description ----
+#' The description of a parameter
+#'
+#' @param name Character: The parameter's name.
+#' @param e The expression of `description`.
+#' @param env Environment: Where the parameter is declared.
+#'
+#' @return Character: One string.
+#'
+#' @keywords internal
+#' @noRd
+param_description <- function(name, e, env) {
+  text <- tryCatch(
+    eval(e, env),
+    error = function(cond) param_abort(name, conditionMessage(cond))
+  )
+  if (!is.character(text) || length(text) != 1L || is.na(text)) {
+    param_abort(
+      name,
+      "its description is one string, such as description = \"The number ",
+      "of folds.\"."
+    )
+  }
+  enc2utf8(text)
+} # /R8::param_description
 
 
 # %% check_param_type ----
@@ -808,7 +856,12 @@ check_param_type <- function(name, type) {
 #' @keywords internal
 #' @noRd
 params_ir <- function(p, dispatch) {
-  if (!any(nzchar(p[["texts"]])) && all(vapply(p[["types"]], is.null, NA))) {
+  descriptions <- p[["descriptions"]] %||% character(length(p[["names"]]))
+  if (
+    !any(nzchar(p[["texts"]])) &&
+      !any(nzchar(descriptions)) &&
+      all(vapply(p[["types"]], is.null, NA))
+  ) {
     return(dispatch_params(p[["names"]], dispatch))
   }
   declared(r8_params_ir(
@@ -816,6 +869,7 @@ params_ir <- function(p, dispatch) {
     p[["types"]],
     p[["constants"]],
     p[["texts"]],
+    descriptions,
     dispatch
   ))
 } # /R8::params_ir

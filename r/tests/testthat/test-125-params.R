@@ -124,7 +124,7 @@ test_that("every type constructor has a shorthand with its arguments", {
     expect_identical(R8:::arg_constructor(f), shorthand[[n]])
     expect_identical(
       names(formals(f)),
-      c(names(formals(constructor)), "default")
+      c(names(formals(constructor)), "default", "description")
     )
   }
   expect_identical(R8:::arg_constructor(arg), "arg")
@@ -176,7 +176,7 @@ test_that("params() refuses what declares no parameter", {
   refused(params(x, arg_integer()), "n = arg_integer\\(\\)")
   refused(params(x, ... = arg_double()), "takes no type and no default")
   refused(params(x, `a b` = 1), "a syntactic R name")
-  refused(params(x, n = arg()), "a type or a default")
+  refused(params(x, n = arg()), "a type, a default, or a description")
   f <- function(...) params(x, ...)
   refused(f(1), "`...` as the string")
 })

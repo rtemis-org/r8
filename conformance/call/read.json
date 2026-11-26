@@ -1,0 +1,571 @@
+{
+  "$corpus": 1,
+  "description": "Documents of a call of a typed function: the form, the arguments against the parameters' types, the rules over the parameters, and the versions of `$types`.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "struct",
+        "name": "Range",
+        "description": "",
+        "version": 2,
+        "fields": [
+          {
+            "name": "lo",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          },
+          {
+            "name": "hi",
+            "type": {
+              "kind": "double"
+            },
+            "description": ""
+          },
+          {
+            "name": "closed",
+            "type": {
+              "kind": "logical"
+            },
+            "default": true,
+            "description": ""
+          }
+        ]
+      }
+    ],
+    "functions": [
+      {
+        "name": "clip",
+        "description": "Clips values to a range.",
+        "params": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "double"
+              }
+            },
+            "description": "The values."
+          },
+          {
+            "name": "lo",
+            "type": {
+              "kind": "double"
+            },
+            "default": 0
+          },
+          {
+            "name": "hi",
+            "type": {
+              "kind": "double"
+            }
+          },
+          {
+            "name": "n",
+            "type": {
+              "kind": "integer"
+            },
+            "host_default": {
+              "host": "r",
+              "text": "length(x)"
+            }
+          },
+          {
+            "name": "w",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "named",
+                "name": "ns::Range"
+              }
+            }
+          },
+          {
+            "name": "z",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double"
+              }
+            },
+            "default": null
+          }
+        ],
+        "rules": [
+          {
+            "id": "order",
+            "invariant": {
+              "<=": [
+                {
+                  "var": "lo"
+                },
+                {
+                  "var": "hi"
+                }
+              ]
+            }
+          },
+          {
+            "id": "count",
+            "invariant": {
+              ">=": [
+                {
+                  "var": "n"
+                },
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "loose",
+        "description": "",
+        "params": [
+          "x",
+          {
+            "name": "n",
+            "type": {
+              "kind": "integer"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "valid",
+      "description": "A call with the required arguments; the rule over an argument whose default is written in R is unchecked.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1,
+            2,
+            3
+          ],
+          "hi": 1,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [],
+        "unchecked": [
+          {
+            "code": "rule_unchecked",
+            "path": "/arguments",
+            "rule": "count"
+          }
+        ]
+      }
+    },
+    {
+      "id": "valid-all",
+      "description": "A call with every argument.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "lo": 0,
+          "hi": 1,
+          "n": 3,
+          "w": {
+            "lo": 0,
+            "hi": 1
+          },
+          "z": 0.5
+        }
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "unknown-and-missing",
+      "description": "An argument that names no parameter, and a required one omitted.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hy": 1,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_argument",
+            "path": "/arguments/hy"
+          },
+          {
+            "code": "missing_argument",
+            "path": "/arguments/hi"
+          }
+        ]
+      }
+    },
+    {
+      "id": "option-required",
+      "description": "A parameter of type option() without a default is required.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hi": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_argument",
+            "path": "/arguments/w"
+          }
+        ]
+      }
+    },
+    {
+      "id": "argument-types",
+      "description": "Arguments of the wrong types, every one reported.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1,
+            "b"
+          ],
+          "lo": "a",
+          "hi": 1,
+          "w": {
+            "lo": 0
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "type_mismatch",
+            "path": "/arguments/lo"
+          },
+          {
+            "code": "missing_field",
+            "path": "/arguments/w/hi"
+          },
+          {
+            "code": "type_mismatch",
+            "path": "/arguments/x/1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "null-with-default",
+      "description": "null for a parameter with a default that is not option() is a value, not an omitted argument.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "lo": null,
+          "hi": 1,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "missing_value",
+            "path": "/arguments/lo"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-violation",
+      "description": "The rules hold over the arguments.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "lo": 2,
+          "hi": 1,
+          "n": 2,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/arguments",
+            "rule": "order"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-default",
+      "description": "A rule reads the default of an omitted argument in JSON form.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hi": -1,
+          "n": 2,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/arguments",
+            "rule": "order"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-violation-unchecked",
+      "description": "A call that violates a rule lists the rules that the check could not decide among its problems.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "lo": 2,
+          "hi": 1,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_violation",
+            "path": "/arguments",
+            "rule": "order"
+          },
+          {
+            "code": "rule_unchecked",
+            "path": "/arguments",
+            "rule": "count"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rules-after-types",
+      "description": "The rules are checked when every argument holds.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "lo": "a",
+          "hi": -1,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "type_mismatch",
+            "path": "/arguments/lo"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-function",
+      "description": "A function that the call does not admit.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::other",
+        "arguments": {
+          "x": [
+            1,
+            2,
+            3
+          ],
+          "hi": 1,
+          "w": null
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "unknown_function",
+            "path": "/$function"
+          }
+        ]
+      }
+    },
+    {
+      "id": "form",
+      "description": "A document without arguments and with a member of its own.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "extra": 1
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "call_form",
+            "path": "/arguments"
+          },
+          {
+            "code": "call_form",
+            "path": "/extra"
+          }
+        ]
+      }
+    },
+    {
+      "id": "types-current",
+      "description": "$types at the registered versions.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hi": 1,
+          "n": 1,
+          "w": {
+            "lo": 0,
+            "hi": 1
+          }
+        },
+        "$types": {
+          "ns::Range": 2
+        }
+      },
+      "expect": {
+        "errors": []
+      }
+    },
+    {
+      "id": "types-older",
+      "description": "$types at an older version of a type the arguments contain.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hi": 1,
+          "n": 1,
+          "w": {
+            "lo": 0,
+            "hi": 1
+          }
+        },
+        "$types": {
+          "ns::Range": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "version_older",
+            "path": "/$types/ns::Range"
+          }
+        ]
+      }
+    },
+    {
+      "id": "types-missing",
+      "description": "$types that does not list a type the arguments contain.",
+      "op": "call",
+      "type": "ns::clip",
+      "input": {
+        "$function": "ns::clip",
+        "arguments": {
+          "x": [
+            1
+          ],
+          "hi": 1,
+          "n": 1,
+          "w": {
+            "lo": 0,
+            "hi": 1
+          }
+        },
+        "$types": {}
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "version_missing",
+            "path": "/$types/ns::Range"
+          }
+        ]
+      }
+    },
+    {
+      "id": "undocumented",
+      "description": "A function with a parameter without a type has no document form.",
+      "op": "call",
+      "type": "ns::loose",
+      "input": {
+        "$function": "ns::loose",
+        "arguments": {
+          "x": 1,
+          "n": 1
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "function_undocumented",
+            "path": "/$function"
+          }
+        ]
+      }
+    }
+  ]
+}

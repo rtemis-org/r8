@@ -37,7 +37,7 @@ use crate::name::{MethodName, Name, QualifiedName};
 pub const MAGIC: [u8; 4] = *b"R8D\0";
 
 /// The format version this crate writes.
-pub const FORMAT: u32 = 9;
+pub const FORMAT: u32 = 10;
 
 /// The deepest nesting of field types, expressions, and JSON values a record
 /// holds.
@@ -899,6 +899,7 @@ fn w_param(w: &mut W, p: &ParamDef) {
             ty,
             default,
             host_default,
+            compute,
             description,
         }) => {
             w.u8(1);
@@ -906,7 +907,8 @@ fn w_param(w: &mut W, p: &ParamDef) {
             w.u8(u8::from(*dispatch)
                 | u8::from(ty.is_some()) << 1
                 | u8::from(default.is_some()) << 2
-                | u8::from(host_default.is_some()) << 3);
+                | u8::from(host_default.is_some()) << 3
+                | u8::from(compute.is_some()) << 4);
             if let Some(t) = ty {
                 w_type(w, t);
             }
@@ -916,6 +918,9 @@ fn w_param(w: &mut W, p: &ParamDef) {
             if let Some(HostDefault { host, text }) = host_default {
                 w.str(host);
                 w.str(text);
+            }
+            if let Some(l) = compute {
+                w_logic(w, l);
             }
             w.str(description);
         }
@@ -1750,7 +1755,7 @@ fn r_param(r: &mut R) -> Res<ParamDef> {
         0 => ParamDef::Name(r.str()?.to_owned()),
         1 => {
             let name = r.str()?.to_owned();
-            let f = r.flags(0b1111, "parameter")?;
+            let f = r.flags(0b1_1111, "parameter")?;
             let ty = if f & 2 != 0 { Some(r_type(r)?) } else { None };
             let default = if f & 4 != 0 {
                 Some(Box::new(r_tree(r)?))
@@ -1765,12 +1770,14 @@ fn r_param(r: &mut R) -> Res<ParamDef> {
             } else {
                 None
             };
+            let compute = if f & 16 != 0 { Some(r_logic(r)?) } else { None };
             ParamDef::Full(Param {
                 name,
                 dispatch: f & 1 != 0,
                 ty,
                 default,
                 host_default,
+                compute,
                 description: r.str()?.into(),
             })
         }

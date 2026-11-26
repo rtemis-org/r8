@@ -2,12 +2,12 @@
 % Please edit documentation in R/values.R
 \name{r8_schema}
 \alias{r8_schema}
-\title{The JSON Schema of a type's values}
+\title{The JSON Schema of a type's values, or of a function's arguments}
 \usage{
 r8_schema(type, closed = FALSE)
 }
 \arguments{
-\item{type}{An R8 type object.}
+\item{type}{An R8 type object, or a typed function of \code{\link[=new_function]{new_function()}}.}
 
 \item{closed}{Logical: Write each \code{dyn()} field as the closed list of the
 implementors registered in the session, each with its tag value as a
@@ -25,10 +25,33 @@ satisfy, for tools outside R8: each named type it reaches is in \verb{$defs},
 and the root admits the document envelope. R8's facts that JSON Schema
 cannot state, such as rules and units, are annotations under \code{x-r8}.
 }
+\details{
+For a typed function of \code{\link[=new_function]{new_function()}}, the schema is that of the
+arguments object of a document of a call (\code{\link[=r8_call_from_json]{r8_call_from_json()}}), which a
+tool's input schema takes: one property per parameter, with its
+description, and \code{additionalProperties: false}. A parameter without a
+default is required, and one of type \code{option()} admits \code{null}. A default
+written as a constant is \code{default}; a default written in R is optional,
+annotated \code{x-r8.host_default} with its text, which the function evaluates
+when it runs. The function's name, rules, and return type are annotations
+under \code{x-r8}. A function with a parameter without a type, \code{...}, or a
+parameter of type \code{host_class()} has no schema, and raises
+\code{r8_type_error}, which names them.
+}
 \examples{
 op <- options(r8.namespace = "demo")
 Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 cat(r8_schema(Point))
+clip <- new_function(
+  "clip",
+  function(
+    x = arg_vec(type_double(), description = "The values."),
+    lo = arg_double(default = 0, description = "The lower bound.")
+  ) {
+    pmax(x, lo)
+  }
+)
+cat(r8_schema(clip))
 options(op)
 
 }

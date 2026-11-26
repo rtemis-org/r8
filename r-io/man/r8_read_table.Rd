@@ -14,7 +14,8 @@ r8_read_table(
   recode_in = NULL,
   format = NULL,
   delimiter = NULL,
-  encoding = "UTF-8"
+  encoding = NULL,
+  time_zone = "UTC"
 )
 
 r8_check_file(
@@ -27,11 +28,13 @@ r8_check_file(
   recode_in = NULL,
   format = NULL,
   delimiter = NULL,
-  encoding = "UTF-8"
+  encoding = NULL,
+  time_zone = "UTC"
 )
 }
 \arguments{
-\item{file}{Character: The file. One whose name ends in \code{.gz} is decompressed.}
+\item{file}{Character: The file. A CSV or TSV file whose name ends in \code{.gz} is
+decompressed.}
 
 \item{type}{Optional table type: An R8 table type (\code{\link[R8:new_table]{R8::new_table()}}), or an
 \code{\link[R8:type_table]{R8::type_table()}}, of which the result is a \link[R8:Raven]{R8::Raven}.}
@@ -47,14 +50,18 @@ declared type are read.}
 \item{recode_in}{Optional named list: The values that texts read as, by column:
 \code{list(lab = c("<0.1" = 0.1))}.}
 
-\item{format}{Optional character \{"csv", "tsv"\}: The format; \code{NULL} takes it from
-the name of the file.}
+\item{format}{Optional character \{"csv", "tsv", "parquet"\}: The format; \code{NULL}
+takes it from the name of the file.}
 
-\item{delimiter}{Optional character: The character between two cells; \code{NULL} takes
-it from the format.}
+\item{delimiter}{Optional character: The character between two cells of a CSV or
+TSV file; \code{NULL} takes it from the format.}
 
-\item{encoding}{Character \{"UTF-8", "latin1", "windows-1252"\}: The encoding of the
-file. A file that begins with the mark of UTF-16 is read as such.}
+\item{encoding}{Optional character \{"UTF-8", "latin1", "windows-1252"\}: The
+encoding of a CSV or TSV file; \code{NULL} is UTF-8. A file that begins with the mark
+of UTF-16 is read as such.}
+
+\item{time_zone}{Character: The IANA name of the time zone of the date-times without
+an offset, such as \code{"America/New_York"}.}
 
 \item{against}{A table type: an R8 table type, or an \code{\link[R8:type_table]{R8::type_table()}}.}
 
@@ -74,7 +81,7 @@ cells that do not read are among \code{problems} with the code \code{unread}, an
 no answer in their rows.
 }
 \description{
-\code{r8_read_table()} reads a CSV or TSV file as a value of a table type, and
+\code{r8_read_table()} reads a CSV, TSV, or Parquet file as a value of a table type, and
 \code{r8_check_file()} reports what in the file does not read as the type or does not
 satisfy its rules. Reading requires: it gives a value of the type, or an error that
 lists what does not read. Checking looks: it raises no error for what it finds.
@@ -105,8 +112,36 @@ a column with a number that has zeros before it, such as \code{00123}, is text. 
 \section{Texts of each type}{
 
 A logical is \code{TRUE}, \code{True}, or \code{true}, or their opposites. A number has a decimal
-point. A date is \code{2024-01-31}, and a date-time has an offset,
-\verb{2024-01-31T10:00:00Z}. Spaces around one of these are not part of it.
+point. A date is \code{2024-01-31}. A date-time is \verb{2024-01-31T10:00:00Z}, with an
+offset, or \verb{2024-01-31 10:00:00}, without one, which is the clock reading of
+\code{time_zone}. Spaces around one of these are not part of it.
+}
+
+\section{Parquet}{
+
+A column has the type that the file stores: BOOLEAN is logical; INT32, INT64, and
+the other integers are integer where every value is one of R8's integers, double
+where every value is within 2^53, and text otherwise; FLOAT and DOUBLE are double;
+STRING is text, as are ENUM, JSON, and UUID; DATE is a date; TIMESTAMP is a
+date-time, and one without a time zone is the clock reading of \code{time_zone}; DECIMAL
+is integer at scale 0, and double otherwise. A string is not read as a number
+unless the type declares its column so. A raw BYTE_ARRAY, INT96, TIME, and a nested
+or repeated column are an error that names the column.
+
+With a type, a stored value is read where it is of the declared type exactly: a
+whole double as an integer, an integer within 2^53 as a double, a date-time at
+midnight as a date, and any value as text. Another value does not read, and is
+reported by its text as a CSV holds it, which \code{recode_in} and \code{na_strings} name:
+\code{recode_in = list(n = c("2.5" = 2L))}. A string is a quoted text of a CSV.
+}
+
+\section{Time zones}{
+
+A date-time without an offset, a CSV text such as \verb{2024-03-10 08:15:00} or a
+Parquet TIMESTAMP that is not adjusted to UTC, is the instant at which a clock in
+\code{time_zone} shows it. A clock reading that the zone skips or shows twice, at a
+change of daylight saving time, does not read. The database of zones is that of the
+package, the same on every platform.
 }
 
 \section{Missing cells}{

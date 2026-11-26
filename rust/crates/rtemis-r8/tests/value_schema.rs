@@ -98,7 +98,7 @@ fn exported_schemas_agree_with_validation() {
         // and an `update` case are declarations, and that of a `check` case is
         // a table that its type may refuse.
         for case in suite["cases"].as_array().unwrap() {
-            if ["dispatch", "refine", "update", "check"]
+            if ["dispatch", "refine", "update", "check", "call"]
                 .contains(&case["op"].as_str().unwrap_or_default())
             {
                 continue;
@@ -189,7 +189,7 @@ fn closed_schemas_list_the_registered_implementors() {
         // and an `update` case are declarations, and that of a `check` case is
         // a table that its type may refuse.
         for case in suite["cases"].as_array().unwrap() {
-            if ["dispatch", "refine", "update", "check"]
+            if ["dispatch", "refine", "update", "check", "call"]
                 .contains(&case["op"].as_str().unwrap_or_default())
             {
                 continue;

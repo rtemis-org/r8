@@ -633,14 +633,14 @@ pub struct ReadOptions<'a> {
 }
 
 /// The members of a document's envelope beside `$type`.
-struct Envelope<'a> {
+pub(crate) struct Envelope<'a> {
     /// The versions of `$types`, by type; `None` for one that is not a whole
     /// number.
-    versions: Vec<(&'a str, Option<u64>)>,
+    pub(crate) versions: Vec<(&'a str, Option<u64>)>,
     /// The hashes of `$declarations`, by type, when the document holds it.
-    declarations: Option<Vec<(&'a str, Option<&'a str>)>>,
+    pub(crate) declarations: Option<Vec<(&'a str, Option<&'a str>)>>,
     /// The IR documents of `$ir`.
-    ir: Option<Value>,
+    pub(crate) ir: Option<Value>,
 }
 
 fn pointer_token(name: &str) -> String {
@@ -771,7 +771,7 @@ impl Envelope<'_> {
 
     /// The errors of the named types that the value contains and the envelope
     /// does not list, or lists at another version, but those of `errors`.
-    fn contained(&self, name: &str, current: u32, errors: &mut Vec<ValueError>) {
+    pub(crate) fn contained(&self, name: &str, current: u32, errors: &mut Vec<ValueError>) {
         if let Some(e) = self.version(name, current)
             && !errors.iter().any(|x| x.code == e.code && x.path == e.path)
         {
@@ -789,7 +789,7 @@ impl Envelope<'_> {
     }
 }
 
-fn document_error(code: &'static str, path: &str, message: String) -> ValueError {
+pub(crate) fn document_error(code: &'static str, path: &str, message: String) -> ValueError {
     ValueError {
         code,
         path: path.to_string(),
@@ -945,7 +945,7 @@ fn holds_named(ft: &FieldType) -> bool {
 /// the emitter records them: a named type, a `dyn()` value's implementor, and
 /// a newtype variant's struct. The walk enters only the fields through which
 /// a named type can be held.
-fn contained<'a, A: Access<'a>>(
+pub(crate) fn contained<'a, A: Access<'a>>(
     v: A,
     ft: &FieldType,
     lookup: &dyn TypeLookup,

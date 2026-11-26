@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 41 files of 370 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 42 files of 376 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -46,13 +46,14 @@ What each feature does, in 41 files of 370 tests. The runtime has its own tests 
 | `test-142-public.R` | The examples of the help pages and the test packages use R8's functions, and none of its internals. | 2 |
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
 | `test-144-scenarios.R` | The written list of the scenarios is that of the test files. | 3 |
+| `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8_check_call(), r8_call_from_json(), and r8_call_to_json(). | 6 |
 | `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 3 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
 | `test-153-documentation.R` | The documentation of packages that declare R8 types: help pages from roxygen2, and the R declarations of types declared in Rust. | 3 |
 
 ## Scenarios
 
-What happens to a user: 65 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
+What happens to a user: 66 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
 
 ### A. One session: a user declares a type again at the console
 
@@ -66,6 +67,7 @@ What happens to a user: 65 scenarios, of which 1 are open, since what R8 is to d
 | A6 | a value of a variant that is gone is refused where R8 checks it | A user declares an enum again without one of its variants. A value of that variant was built before. | Code that handles every variant meets one that it does not know. | Validation, a document, and r8_update() are errors that name the variant. | one session |
 | A7 | a changed rule applies to a value once it is updated | A user declares a type again with a stricter rule, and uses values built before, of which one violates the rule. | The earlier rule still runs, or no rule does. | The values are refused until r8_update(), which runs the new rule. | one session |
 | A8 | a method or a generic declared again replaces the earlier one | A user corrects the body of a method and runs its declaration again, then declares the generic again and the method after it. | Calls run the earlier method, which the dispatch of R8 keeps for speed. | The next call runs the method that was declared last. | one session |
+| A9 | an agent calls a typed function from a document | A user declares a typed function with described parameters, gives an agent its schema, and runs the documents of a call that the agent writes. | A document runs a function that the user did not offer, or runs with an argument of the wrong type, or reports one problem at a time. | The schema states each parameter with its type, default, and description. A document of a call runs only a function the user named, and a document with problems is refused with every problem, each at its path in the document, before the function runs. | one session |
 
 ### B. One package: it is installed, loaded, unloaded, and developed
 

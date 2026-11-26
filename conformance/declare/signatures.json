@@ -1728,6 +1728,196 @@
           }
         ]
       }
+    },
+    {
+      "id": "param-compute",
+      "description": "A parameter whose default is an expression of the rule dialect, reserved and refused.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Other",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "o",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "integer"
+                    },
+                    "compute": {
+                      "length": [
+                        {
+                          "var": "x"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": []
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "param_compute",
+            "path": "/traits/0/methods/0/params/1/compute"
+          }
+        ]
+      }
+    },
+    {
+      "id": "param-description",
+      "description": "A parameter without a type or a default, with a description.",
+      "op": "declare",
+      "input": {
+        "$ir": 1,
+        "namespace": "ns",
+        "types": [
+          {
+            "kind": "struct",
+            "name": "Base",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          },
+          {
+            "kind": "struct",
+            "name": "Child",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "b",
+                "type": {
+                  "kind": "double"
+                },
+                "description": "",
+                "inherited_from": "ns::Base"
+              },
+              {
+                "name": "c",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ],
+            "extends": "ns::Base"
+          },
+          {
+            "kind": "struct",
+            "name": "Other",
+            "description": "",
+            "version": 1,
+            "fields": [
+              {
+                "name": "o",
+                "type": {
+                  "kind": "double"
+                },
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "traits": [
+          {
+            "name": "Fit",
+            "description": "",
+            "methods": [
+              {
+                "name": "fit",
+                "description": "",
+                "params": [
+                  "x",
+                  {
+                    "name": "n",
+                    "description": "The number of draws."
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "impls": []
+      },
+      "expect": {
+        "errors": []
+      }
     }
   ]
 }

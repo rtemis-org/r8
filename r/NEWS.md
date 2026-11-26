@@ -1,3 +1,10 @@
+# R8 0.6.0
+
+- `arg()` and its shorthands take `description`, which the declaration keeps; `arg(description = )` alone describes a parameter without a type. The roclet `r8_rd()` writes a described parameter's `@param` from it, and refuses a block that also documents that parameter.
+- `r8_schema(f)` writes the JSON Schema of the arguments of a typed function, for a tool's input schema.
+- `r8_check_call()`, `r8_call_from_json()`, and `r8_call_to_json()` check, run, and write documents of a call of a typed function, `{"$function": "ns::f", "arguments": {...}}`, among the functions that the caller names.
+- The declaration record has format 10; a package installed with an earlier R8 is reinstalled.
+
 # R8 0.5.0
 
 - The IR holds the lowering of `extends`: a child's rules carry `inherited_from` as its fields do, and the field type `{"kind": "subtype", "of": "ns::Parent"}` admits a struct and every struct that extends it. The declaration hash of a child covers its flattened fields and rules.

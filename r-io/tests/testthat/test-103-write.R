@@ -45,7 +45,7 @@ test_that("a table that is written reads back as it was", {
     u = hole(as.Date("1900-01-01") + sample(1e5, n)),
     t = hole(as.POSIXct(round(stats::runif(n, -1e9, 4e9), 6), tz = "UTC"))
   )
-  for (ext in c(".csv", ".tsv")) {
+  for (ext in c(".csv", ".tsv", ".parquet")) {
     f <- tempfile(fileext = ext)
     expect_identical(r8_write_table(x, f), f)
     expect_true(R8::r8_equal(r8_read_table(f, T), x))
@@ -67,7 +67,7 @@ test_that("a file is written as it is read", {
   refuses(r8_write_table(1, f), "`x` is a table", "r8_argument_error")
   refuses(
     r8_write_table(R8::Raven(a = 1), "x.txt"),
-    ".csv or .tsv",
+    ".csv, .tsv, or .parquet",
     "r8_argument_error"
   )
   refuses(

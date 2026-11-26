@@ -13,6 +13,6 @@ keywords = ["r8", "r", "rlang", "type-system", "ffi"]
 categories = ["api-bindings", "development-tools::ffi"]
 
 [dependencies]
-rtemis-r8 = { path = "../rtemis-r8", version = "0.5", features = ["macros"] }
-rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.5" }
+rtemis-r8 = { path = "../rtemis-r8", version = "0.6", features = ["macros"] }
+rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.6" }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

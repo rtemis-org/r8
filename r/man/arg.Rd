@@ -21,9 +21,9 @@
 \alias{arg_index_map}
 \title{Declare a parameter's type and default}
 \usage{
-arg(type, default)
+arg(type, default, description = "")
 
-arg_logical(default)
+arg_logical(default, description = "")
 
 arg_integer(
   min = NULL,
@@ -31,7 +31,8 @@ arg_integer(
   exclusive_min = NULL,
   exclusive_max = NULL,
   values = NULL,
-  default
+  default,
+  description = ""
 )
 
 arg_double(
@@ -42,36 +43,64 @@ arg_double(
   infinite = FALSE,
   nan = FALSE,
   values = NULL,
-  default
+  default,
+  description = ""
 )
 
-arg_character(pattern = NULL, values = NULL, default)
+arg_character(pattern = NULL, values = NULL, default, description = "")
 
-arg_raw(default)
+arg_raw(default, description = "")
 
-arg_date(default)
+arg_date(default, description = "")
 
-arg_posixct(default)
+arg_posixct(default, description = "")
 
-arg_factor(levels = NULL, ordered = FALSE, default)
+arg_factor(levels = NULL, ordered = FALSE, default, description = "")
 
-arg_json(default)
+arg_json(default, description = "")
 
-arg_matrix(type = NULL, nrow = NULL, ncol = NULL, of = NULL, default)
+arg_matrix(
+  type = NULL,
+  nrow = NULL,
+  ncol = NULL,
+  of = NULL,
+  default,
+  description = ""
+)
 
-arg_array(type, dim = NULL, default)
+arg_array(type, dim = NULL, default, description = "")
 
-arg_sparse_matrix(type = type_double(), nrow = NULL, ncol = NULL, default)
+arg_sparse_matrix(
+  type = type_double(),
+  nrow = NULL,
+  ncol = NULL,
+  default,
+  description = ""
+)
 
-arg_table(columns = list(), open = FALSE, rules = list(), of = NULL, default)
+arg_table(
+  columns = list(),
+  open = FALSE,
+  rules = list(),
+  of = NULL,
+  default,
+  description = ""
+)
 
-arg_vec(type, min_length = NULL, max_length = NULL, unique = FALSE, default)
+arg_vec(
+  type,
+  min_length = NULL,
+  max_length = NULL,
+  unique = FALSE,
+  default,
+  description = ""
+)
 
-arg_option(type, default = NULL)
+arg_option(type, default = NULL, description = "")
 
-arg_btree_map(type, keys = NULL, default)
+arg_btree_map(type, keys = NULL, default, description = "")
 
-arg_index_map(type, keys = NULL, default)
+arg_index_map(type, keys = NULL, default, description = "")
 }
 \arguments{
 \item{type}{An \code{r8_field_type} or an R8 type: The parameter's type; for
@@ -80,6 +109,10 @@ arg_index_map(type, keys = NULL, default)
 the elements or of a present value.}
 
 \item{default}{Optional expression: The default.}
+
+\item{description}{Character: What the parameter is, one string, which the
+declaration keeps: \code{\link[=r8_schema]{r8_schema()}} writes it, and the roclet \code{\link[=r8_rd]{r8_rd()}}
+writes it as the parameter's \verb{@param}.}
 
 \item{min, max, exclusive_min, exclusive_max, values}{Optional Numeric: The
 bounds and admitted values, as \code{\link[=type_integer]{type_integer()}} and \code{\link[=type_double]{type_double()}} take
@@ -131,6 +164,9 @@ default \code{NULL}: the argument may be omitted and is then absent;
 \code{arg(option(type))} is required and may be \code{NULL}. \code{arg(default = expr)}
 gives a parameter without a type a default that is itself a type, such as
 \code{arg(default = GBM)}.
+
+\code{description} is named after \code{default}: \code{arg_integer(min = 1L, default = 10L, description = "The number of folds.")}. \code{arg(description = "...")}
+alone describes a parameter without a type or a default.
 
 Each call of the generic checks and converts its typed arguments
 (\code{\link[=generic]{generic()}}).

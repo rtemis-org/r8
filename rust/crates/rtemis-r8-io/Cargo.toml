@@ -1,7 +1,6 @@
 [package]
 name = "rtemis-r8-io"
-description = "Readers of table files for the R8 type system: cells read as declared types, with every cell that does not read"
-publish = false
+description = "Readers and writers of table files for the R8 type system: CSV and Parquet, cells read as declared types, with every cell that does not read"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,12 +9,23 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
-keywords = ["r8", "r", "csv", "table", "validation"]
+keywords = ["r8", "csv", "parquet", "table", "validation"]
 categories = ["parser-implementations", "encoding"]
+# The Parquet files of other writers stay in the repository.
+exclude = ["tests/fixtures", "tests/parquet.rs"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+## Reading and writing Parquet files, with the codecs snappy, gzip, lz4, and zstd.
+parquet = ["dep:parquet"]
 
 [dependencies]
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 memchr = "2"
-rtemis-r8 = { path = "../rtemis-r8", version = "0.5" }
+parquet = { version = "60", default-features = false, features = ["snap", "flate2-zlib-rs", "lz4", "zstd"], optional = true }
+rtemis-r8 = { path = "../rtemis-r8", version = "0.6" }
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

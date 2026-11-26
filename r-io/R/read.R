@@ -9,7 +9,7 @@
 # %% r8_read_table ----
 #' Read a table from a file
 #'
-#' `r8_read_table()` reads a CSV or TSV file as a value of a table type, and
+#' `r8_read_table()` reads a CSV, TSV, or Parquet file as a value of a table type, and
 #' `r8_check_file()` reports what in the file does not read as the type or does not
 #' satisfy its rules. Reading requires: it gives a value of the type, or an error that
 #' lists what does not read. Checking looks: it raises no error for what it finds.
@@ -35,8 +35,32 @@
 #'
 #' @section Texts of each type:
 #' A logical is `TRUE`, `True`, or `true`, or their opposites. A number has a decimal
-#' point. A date is `2024-01-31`, and a date-time has an offset,
-#' `2024-01-31T10:00:00Z`. Spaces around one of these are not part of it.
+#' point. A date is `2024-01-31`. A date-time is `2024-01-31T10:00:00Z`, with an
+#' offset, or `2024-01-31 10:00:00`, without one, which is the clock reading of
+#' `time_zone`. Spaces around one of these are not part of it.
+#'
+#' @section Parquet:
+#' A column has the type that the file stores: BOOLEAN is logical; INT32, INT64, and
+#' the other integers are integer where every value is one of R8's integers, double
+#' where every value is within 2^53, and text otherwise; FLOAT and DOUBLE are double;
+#' STRING is text, as are ENUM, JSON, and UUID; DATE is a date; TIMESTAMP is a
+#' date-time, and one without a time zone is the clock reading of `time_zone`; DECIMAL
+#' is integer at scale 0, and double otherwise. A string is not read as a number
+#' unless the type declares its column so. A raw BYTE_ARRAY, INT96, TIME, and a nested
+#' or repeated column are an error that names the column.
+#'
+#' With a type, a stored value is read where it is of the declared type exactly: a
+#' whole double as an integer, an integer within 2^53 as a double, a date-time at
+#' midnight as a date, and any value as text. Another value does not read, and is
+#' reported by its text as a CSV holds it, which `recode_in` and `na_strings` name:
+#' `recode_in = list(n = c("2.5" = 2L))`. A string is a quoted text of a CSV.
+#'
+#' @section Time zones:
+#' A date-time without an offset, a CSV text such as `2024-03-10 08:15:00` or a
+#' Parquet TIMESTAMP that is not adjusted to UTC, is the instant at which a clock in
+#' `time_zone` shows it. A clock reading that the zone skips or shows twice, at a
+#' change of daylight saving time, does not read. The database of zones is that of the
+#' package, the same on every platform.
 #'
 #' @section Missing cells:
 #' A cell is missing where its text is one of `na_strings`, exactly. In a column of
@@ -48,7 +72,8 @@
 #' number of cells than the header, a name that repeats in the header or is missing,
 #' and bytes that are no text in `encoding` are errors with the line.
 #'
-#' @param file Character: The file. One whose name ends in `.gz` is decompressed.
+#' @param file Character: The file. A CSV or TSV file whose name ends in `.gz` is
+#'   decompressed.
 #' @param type Optional table type: An R8 table type ([R8::new_table()]), or an
 #'   [R8::type_table()], of which the result is a [R8::Raven].
 #' @param infer_types Character \{"strict", "none"\}: How the columns without a
@@ -58,12 +83,15 @@
 #'   `list(age = "-99")`.
 #' @param recode_in Optional named list: The values that texts read as, by column:
 #'   `list(lab = c("<0.1" = 0.1))`.
-#' @param format Optional character \{"csv", "tsv"\}: The format; `NULL` takes it from
-#'   the name of the file.
-#' @param delimiter Optional character: The character between two cells; `NULL` takes
-#'   it from the format.
-#' @param encoding Character \{"UTF-8", "latin1", "windows-1252"\}: The encoding of the
-#'   file. A file that begins with the mark of UTF-16 is read as such.
+#' @param format Optional character \{"csv", "tsv", "parquet"\}: The format; `NULL`
+#'   takes it from the name of the file.
+#' @param delimiter Optional character: The character between two cells of a CSV or
+#'   TSV file; `NULL` takes it from the format.
+#' @param encoding Optional character \{"UTF-8", "latin1", "windows-1252"\}: The
+#'   encoding of a CSV or TSV file; `NULL` is UTF-8. A file that begins with the mark
+#'   of UTF-16 is read as such.
+#' @param time_zone Character: The IANA name of the time zone of the date-times without
+#'   an offset, such as `"America/New_York"`.
 #'
 #' @return `r8_read_table()`: A value of `type`, or a [R8::Raven]; raises
 #'   `r8_value_error` with the report, in the field `report`, where a cell does not
@@ -95,7 +123,8 @@ r8_read_table <- function(
   recode_in = NULL,
   format = NULL,
   delimiter = NULL,
-  encoding = "UTF-8"
+  encoding = NULL,
+  time_zone = "UTC"
 ) {
   columns <- declared_columns(type)
   read <- read_file(
@@ -108,6 +137,7 @@ r8_read_table <- function(
     format,
     delimiter,
     encoding,
+    time_zone,
     limit = 1000L
   )
   if (nrow(read[["unread"]]) > 0L || read[["lines"]][["all"]] > 0) {
@@ -158,7 +188,8 @@ r8_check_file <- function(
   recode_in = NULL,
   format = NULL,
   delimiter = NULL,
-  encoding = "UTF-8"
+  encoding = NULL,
+  time_zone = "UTC"
 ) {
   if (
     !is.numeric(limit) ||
@@ -187,6 +218,7 @@ r8_check_file <- function(
     format,
     delimiter,
     encoding,
+    time_zone,
     limit = as.integer(limit)
   )
   file_report(file, read, against, columns, as.integer(limit))
@@ -375,31 +407,52 @@ check_recode <- function(x) {
 #' The format of a file
 #'
 #' @param file Character: The file.
-#' @param format,delimiter The arguments.
+#' @param format,delimiter,encoding The arguments.
 #'
-#' @return List: `delimiter`, an integer, and `compressed`; signals
-#'   `r8_argument_error`.
+#' @return List: `format`, `delimiter`, an integer, `encoding`, and `compressed`;
+#'   signals `r8_argument_error`.
 #'
 #' @keywords internal
 #' @noRd
-file_format <- function(file, format, delimiter) {
+file_format <- function(file, format, delimiter, encoding = NULL) {
   if (!is.character(file) || length(file) != 1L || is.na(file)) {
     io_abort("`file` is one path.", class = "r8_argument_error")
   }
+  formats <- c("csv", "tsv", "parquet")
   compressed <- grepl("\\.gz$", file, ignore.case = TRUE)
   if (is.null(format)) {
     name <- tolower(sub("\\.gz$", "", file, ignore.case = TRUE))
     format <- sub("^.*\\.", "", basename(name))
-    if (!format %in% c("csv", "tsv")) {
+    if (!format %in% formats) {
       io_abort(
         "The name of `",
         basename(file),
-        "` does not end in .csv or .tsv; `format` gives the format: format = \"csv\".",
+        "` does not end in .csv, .tsv, or .parquet; `format` gives the format: ",
+        "format = \"csv\".",
         class = "r8_argument_error"
       )
     }
   } else {
-    check_string(format, "format", c("csv", "tsv"))
+    check_string(format, "format", formats)
+  }
+  if (identical(format, "parquet")) {
+    for (arg in c("delimiter", "encoding")) {
+      if (!is.null(get(arg))) {
+        io_abort(
+          "`",
+          arg,
+          "` is an argument of a CSV or TSV file; a Parquet file has none.",
+          class = "r8_argument_error"
+        )
+      }
+    }
+    if (compressed) {
+      io_abort(
+        "A Parquet file compresses its own pages; its name does not end in .gz.",
+        class = "r8_argument_error"
+      )
+    }
+    return(list(format = format, compressed = FALSE))
   }
   if (is.null(delimiter)) {
     delimiter <- if (identical(format, "tsv")) "\t" else ","
@@ -416,19 +469,28 @@ file_format <- function(file, format, delimiter) {
       class = "r8_argument_error"
     )
   }
-  list(delimiter = code, compressed = compressed)
+  if (is.null(encoding)) {
+    encoding <- "UTF-8"
+  }
+  check_string(encoding, "encoding", c("UTF-8", "latin1", "windows-1252"))
+  list(
+    format = format,
+    delimiter = code,
+    encoding = encoding,
+    compressed = compressed
+  )
 } # /R8.io::file_format
 
 
 # %% read_file ----
 #' Read the columns of a file
 #'
-#' @param file,infer_types,na_strings,na_strings_in,recode_in,format,delimiter,encoding
+#' @param file,infer_types,na_strings,na_strings_in,recode_in,format,delimiter,encoding,time_zone
 #'   As [r8_read_table()] takes them.
 #' @param declared What `declared_columns()` gives.
 #' @param limit Integer: The cells that do not read that each column lists.
 #'
-#' @return What `read_delimited()` gives, with data frames; signals
+#' @return What `read_delimited()` or `read_parquet()` gives, with data frames; signals
 #'   `r8_argument_error` and `r8_file_error`.
 #'
 #' @keywords internal
@@ -443,11 +505,17 @@ read_file <- function(
   format,
   delimiter,
   encoding,
+  time_zone,
   limit
 ) {
-  form <- file_format(file, format, delimiter)
+  form <- file_format(file, format, delimiter, encoding)
   check_string(infer_types, "infer_types", c("strict", "none"))
-  check_string(encoding, "encoding", c("UTF-8", "latin1", "windows-1252"))
+  if (!is.character(time_zone) || length(time_zone) != 1L || is.na(time_zone)) {
+    io_abort(
+      "`time_zone` is the IANA name of a time zone, such as \"America/New_York\".",
+      class = "r8_argument_error"
+    )
+  }
   na_strings <- check_texts(na_strings, "na_strings")
   na_strings_in <- check_by_column(
     na_strings_in,
@@ -461,20 +529,37 @@ read_file <- function(
     io_abort("`", file, "` is not a file.", class = "r8_file_error")
   }
   columns <- declared[["columns"]]
-  res <- read_delimited(
-    if (form[["compressed"]]) unpacked(path),
-    path,
-    form[["delimiter"]],
-    encoding,
-    as.character(columns[["name"]]),
-    as.character(columns[["kind"]]),
-    as.list(columns[["levels"]]),
-    if (identical(infer_types, "strict")) "infer" else "character",
-    na_strings,
-    na_strings_in,
-    recode_in,
-    limit
-  )
+  other <- if (identical(infer_types, "strict")) "infer" else "character"
+  res <- if (identical(form[["format"]], "parquet")) {
+    read_parquet(
+      path,
+      as.character(columns[["name"]]),
+      as.character(columns[["kind"]]),
+      as.list(columns[["levels"]]),
+      other,
+      na_strings,
+      na_strings_in,
+      recode_in,
+      limit,
+      enc2utf8(time_zone)
+    )
+  } else {
+    read_delimited(
+      if (form[["compressed"]]) unpacked(path),
+      path,
+      form[["delimiter"]],
+      form[["encoding"]],
+      as.character(columns[["name"]]),
+      as.character(columns[["kind"]]),
+      as.list(columns[["levels"]]),
+      other,
+      na_strings,
+      na_strings_in,
+      recode_in,
+      limit,
+      enc2utf8(time_zone)
+    )
+  }
   if (!is.null(res[["refused"]])) {
     if (identical(res[["refused"]], "argument")) {
       io_abort(res[["message"]], ".", class = "r8_argument_error")

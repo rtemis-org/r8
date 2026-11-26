@@ -19,10 +19,21 @@ NULL
 #' @param na_strings_in List: Those of columns, by name.
 #' @param recode_in List: The values of texts of columns, by name, named vectors.
 #' @param limit Integer: The cells that do not read that each column lists.
+#' @param time_zone Character: The zone of the date-times without an offset.
 #' @return List: what was read, or `refused` and `message`.
 #' @keywords internal
 #' @noRd
-read_delimited <- function(bytes, path, delimiter, encoding, names, kinds, levels, other, na_strings, na_strings_in, recode_in, limit) .Call(wrap__read_delimited, bytes, path, delimiter, encoding, names, kinds, levels, other, na_strings, na_strings_in, recode_in, limit)
+read_delimited <- function(bytes, path, delimiter, encoding, names, kinds, levels, other, na_strings, na_strings_in, recode_in, limit, time_zone) .Call(wrap__read_delimited, bytes, path, delimiter, encoding, names, kinds, levels, other, na_strings, na_strings_in, recode_in, limit, time_zone)
+
+#' Reads a Parquet file.
+#'
+#' @param path Character: The file.
+#' @param names,kinds,levels,other,na_strings,na_strings_in,recode_in,limit,time_zone
+#'   As `read_delimited()` takes them.
+#' @return List: what was read, or `refused` and `message`.
+#' @keywords internal
+#' @noRd
+read_parquet <- function(path, names, kinds, levels, other, na_strings, na_strings_in, recode_in, limit, time_zone) .Call(wrap__read_parquet, path, names, kinds, levels, other, na_strings, na_strings_in, recode_in, limit, time_zone)
 
 #' Writes columns as a delimited file.
 #'
@@ -33,5 +44,14 @@ read_delimited <- function(bytes, path, delimiter, encoding, names, kinds, level
 #' @keywords internal
 #' @noRd
 write_delimited <- function(columns, path, delimiter) .Call(wrap__write_delimited, columns, path, delimiter)
+
+#' Writes columns as a Parquet file.
+#'
+#' @param columns List: The columns by name, of UTF-8.
+#' @param path Character: The file.
+#' @return `NULL`, or the message of a file that is not written.
+#' @keywords internal
+#' @noRd
+write_parquet_file <- function(columns, path) .Call(wrap__write_parquet_file, columns, path)
 
 # nolint end

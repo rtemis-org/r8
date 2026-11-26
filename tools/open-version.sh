@@ -27,7 +27,7 @@ for crate in r/src/rust/Cargo.toml r-io/src/rust/Cargo.toml; do
   edit "1,/^version = /s/^version = '.*'$/version = '$version'/" "$crate"
   edit "s/^rtemis-r8 = '.*'$/rtemis-r8 = '$mm'/" "$crate"
 done
-edit "s/^rtemis-r8-io = '.*'$/rtemis-r8-io = '$mm'/" r-io/src/rust/Cargo.toml
+edit "s/^\(rtemis-r8-io = {.*version = '\)[^']*'/\1$mm'/" r-io/src/rust/Cargo.toml
 edit "s/^Version: .*/Version: $version/" r/DESCRIPTION
 edit "s/^Version: .*/Version: $version/" r-io/DESCRIPTION
 edit "s/^\(    R8 (>= \)[^)]*)/\1$version)/" r-io/DESCRIPTION

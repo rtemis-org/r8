@@ -566,6 +566,20 @@ enum_block <- function(block) {
 } # /R8::enum_block
 
 
+# %% rd_escape ----
+#' Text as Rd text
+#'
+#' @param x Character: Plain text.
+#'
+#' @return Character: `x` with `\\`, `%`, and braces escaped.
+#'
+#' @keywords internal
+#' @noRd
+rd_escape <- function(x) {
+  gsub("([\\\\%{}])", "\\\\\\1", x)
+} # /R8::rd_escape
+
+
 # %% rd_notation ----
 #' The notation of a type as Rd text
 #'
@@ -581,9 +595,7 @@ enum_block <- function(block) {
 #' @keywords internal
 #' @noRd
 rd_notation <- function(notation, blocks, env) {
-  escape <- function(x) {
-    gsub("([\\\\%{}])", "\\\\\\1", x)
-  }
+  escape <- rd_escape
   ns <- paste0(declaring_namespace(env), "::")
   code <- function(name) {
     bare <- sub("^.*::", "", name)
@@ -635,6 +647,7 @@ generic_block <- function(block, blocks, env) {
     return(block)
   }
   types <- list()
+  descriptions <- character()
   for (p in m[["params"]]) {
     if (is.list(p) && !is.null(p[["type"]])) {
       types[[p[["name"]]]] <- rd_notation(
@@ -643,6 +656,9 @@ generic_block <- function(block, blocks, env) {
         env
       )
     }
+    if (is.list(p) && nzchar(p[["description"]] %||% "")) {
+      descriptions[[p[["name"]]]] <- p[["description"]]
+    }
   }
   block$tags <- lapply(block$tags, function(tag) {
     if (!identical(tag$tag, "param")) {
@@ -650,6 +666,23 @@ generic_block <- function(block, blocks, env) {
     }
     # A tag of several parameters takes their type when they share one.
     names <- trimws(strsplit(tag$val$name, ",", fixed = TRUE)[[1L]])
+    described <- intersect(names, names(descriptions))
+    if (length(described) > 0L) {
+      n <- described[[1L]]
+      r8_abort(
+        block$file,
+        ":",
+        block$line,
+        ": parameter `",
+        n,
+        "` has its description in its declaration, \"",
+        descriptions[[n]],
+        "\", and in @param, \"",
+        tag$val$description,
+        "\"; a described parameter takes no @param.",
+        class = "r8_declaration_error"
+      )
+    }
     text <- unique(types[names])
     if (
       length(text) == 1L &&
@@ -660,6 +693,17 @@ generic_block <- function(block, blocks, env) {
     }
     tag
   })
+  # A described parameter's @param, from its declaration.
+  for (n in names(descriptions)) {
+    text <- rd_escape(descriptions[[n]])
+    if (!is.null(types[[n]])) {
+      text <- paste0(types[[n]], ": ", text)
+    }
+    block$tags <- c(
+      block$tags,
+      list(roxy_tag_of(block, "param", list(name = n, description = text)))
+    )
+  }
   if (
     !is.null(m[["return_type"]]) &&
       !roxygen2::block_has_tags(block, c("return", "returns"))

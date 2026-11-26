@@ -147,23 +147,53 @@ pub fn date(t: &str) -> Option<i32> {
 /// The microseconds since 1970-01-01T00:00:00Z of an RFC 3339 date-time with an
 /// offset: `2020-01-31T12:00:00Z`, `2020-01-31 12:00:00.5+02:00`.
 pub fn datetime(t: &str) -> Option<i64> {
+    let (clock, at) = clock_part(t)?;
     let b = t.as_bytes();
-    if b.len() < 20 || !matches!(b[10], b'T' | b' ') || b[13] != b':' || b[16] != b':' {
+    let offset = match b.get(at)? {
+        b'Z' if b.len() == at + 1 => 0,
+        sign @ (b'+' | b'-') if b.len() == at + 6 && b[at + 3] == b':' => {
+            let (h, m) = (two(b, at + 1)?, two(b, at + 4)?);
+            if h > 23 || m > 59 {
+                return None;
+            }
+            let o = h * 3600 + m * 60;
+            if *sign == b'-' { -o } else { o }
+        }
+        _ => return None,
+    };
+    Some(clock - offset * 1_000_000)
+}
+
+/// The clock reading of a date-time without an offset, `2020-01-31 12:00:00` or
+/// `2020-01-31T12:00:00.5`, as the microseconds since 1970-01-01 00:00:00 of the same
+/// clock.
+pub fn clock(t: &str) -> Option<i64> {
+    let (clock, at) = clock_part(t)?;
+    (at == t.len()).then_some(clock)
+}
+
+/// Two digits at `k`.
+fn two(b: &[u8], k: usize) -> Option<i64> {
+    let (x, y) = (*b.get(k)?, *b.get(k + 1)?);
+    (x.is_ascii_digit() && y.is_ascii_digit())
+        .then(|| i64::from(x - b'0') * 10 + i64::from(y - b'0'))
+}
+
+/// The microseconds of the date and the time of day at the start of a date-time,
+/// and the place after them.
+fn clock_part(t: &str) -> Option<(i64, usize)> {
+    let b = t.as_bytes();
+    if b.len() < 19 || !matches!(b[10], b'T' | b' ') || b[13] != b':' || b[16] != b':' {
         return None;
     }
     let days = i64::from(date(t.get(..10)?)?);
-    let two = |k: usize| -> Option<i64> {
-        let (a, b) = (*b.get(k)?, *b.get(k + 1)?);
-        (a.is_ascii_digit() && b.is_ascii_digit())
-            .then(|| i64::from(a - b'0') * 10 + i64::from(b - b'0'))
-    };
-    let (h, m, s) = (two(11)?, two(14)?, two(17)?);
+    let (h, m, s) = (two(b, 11)?, two(b, 14)?, two(b, 17)?);
     if h > 23 || m > 59 || s > 59 {
         return None;
     }
     let mut at = 19;
     let mut micros = 0;
-    if b[at] == b'.' {
+    if b.get(at) == Some(&b'.') {
         let n = b[at + 1..]
             .iter()
             .take_while(|b| b.is_ascii_digit())
@@ -181,17 +211,8 @@ pub fn datetime(t: &str) -> Option<i64> {
         }
         at += 1 + n;
     }
-    let offset = match b.get(at)? {
-        b'Z' if b.len() == at + 1 => 0,
-        sign @ (b'+' | b'-') if b.len() == at + 6 && b[at + 3] == b':' => {
-            let (h, m) = (two(at + 1)?, two(at + 4)?);
-            if h > 23 || m > 59 {
-                return None;
-            }
-            let o = h * 3600 + m * 60;
-            if *sign == b'-' { -o } else { o }
-        }
-        _ => return None,
-    };
-    Some(((days * 86_400 + h * 3600 + m * 60 + s - offset) * 1_000_000) + micros)
+    Some((
+        (days * 86_400 + h * 3600 + m * 60 + s) * 1_000_000 + micros,
+        at,
+    ))
 }

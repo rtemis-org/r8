@@ -14,6 +14,53 @@ NULL
 #' @noRd
 r8_alloc_stats <- function() .Call(wrap__r8_alloc_stats)
 
+#' The JSON Schema (draft 2020-12) of the arguments object of a registered
+#' function (`rtemis_r8::call::arguments_schema()`).
+#'
+#' @param name Character: The function's qualified name.
+#' @param closed Logical: Write `dyn()` and `subtype()` types as the closed
+#'   lists of the registered types.
+#' @return List: `schema`, the schema as indented JSON text, or
+#'   `undocumented`, the names of the parameters that a document cannot hold.
+#' @keywords internal
+#' @noRd
+r8_function_schema <- function(name, closed) .Call(wrap__r8_function_schema, name, closed)
+
+#' The parameters of a registered function that a document cannot hold
+#' (`rtemis_r8::call::undocumented_params()`).
+#'
+#' @param name Character: The function's qualified name.
+#' @return Character: The names, or `NULL` for a function that is not
+#'   registered.
+#' @keywords internal
+#' @noRd
+r8_function_undocumented <- function(name) .Call(wrap__r8_function_undocumented, name)
+
+#' Reads a document of a call of one of the functions `admitted`
+#' (`rtemis_r8::call::read_call()`).
+#'
+#' @param text Character: The document.
+#' @param admitted Character: The qualified names of the functions the call
+#'   may name.
+#' @return List: `errors`, the problems, for a call that does not hold; or
+#'   `function`, the qualified name, `arguments`, the arguments given in their
+#'   stored R form, by name, `unchecked`, the rules that the check did not
+#'   decide, `name`, the symbol under which a frame binds the function, and
+#'   `call`, the call of that symbol with the arguments' symbols.
+#' @keywords internal
+#' @noRd
+r8_read_call <- function(text, admitted) .Call(wrap__r8_read_call, text, admitted)
+
+#' The document of a call of a registered function with the arguments
+#' `values`, checked as `r8_read_call()` checks a document.
+#'
+#' @param name Character: The function's qualified name.
+#' @param values List: The arguments, by parameter name.
+#' @return List: `json`, the document's text, or `errors`, the problems.
+#' @keywords internal
+#' @noRd
+r8_write_call <- function(name, values) .Call(wrap__r8_write_call, name, values)
+
 #' Constructs a value: the fields of `fields`, a named list, form a value of
 #' the struct `type_name`, or of the variant `variant` of the enum
 #' `type_name`. The fields are validated in place and kept by reference
@@ -662,12 +709,13 @@ r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 #' @param constants List: For a default that is a syntactic constant, a list
 #'   of its value; otherwise `NULL`.
 #' @param texts Character: Each default's source text, or `""`.
+#' @param descriptions Character: Each parameter's description, or `""`.
 #' @param dispatch Character: The names of the dispatched parameters.
 #' @return List: The IR parameters, or the message of one that does not
 #'   read.
 #' @keywords internal
 #' @noRd
-r8_params_ir <- function(names, types, constants, texts, dispatch) .Call(wrap__r8_params_ir, names, types, constants, texts, dispatch)
+r8_params_ir <- function(names, types, constants, texts, descriptions, dispatch) .Call(wrap__r8_params_ir, names, types, constants, texts, descriptions, dispatch)
 
 #' The required fields of `new_trait(required_fields = )`: each a field type,
 #' an R8 type object, or `field(type, description = )`; a default, a fill

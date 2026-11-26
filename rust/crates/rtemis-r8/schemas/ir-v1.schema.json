@@ -1775,6 +1775,17 @@
           ],
           "description": "The parameter's default as an expression of one host's language,\nevaluated at each call that omits the argument. A call from that\nhost may omit the argument; a call from any other host supplies it."
         },
+        "compute": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Logic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The parameter's default as an expression of the rule dialect over the\ntyped parameters, which every host evaluates the same; reserved, and\nrefused by the check."
+        },
         "description": {
           "type": "string",
           "description": "The parameter's description."

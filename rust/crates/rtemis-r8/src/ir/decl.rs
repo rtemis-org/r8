@@ -558,6 +558,11 @@ pub struct Param {
     /// host may omit the argument; a call from any other host supplies it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_default: Option<HostDefault>,
+    /// The parameter's default as an expression of the rule dialect over the
+    /// typed parameters, which every host evaluates the same; reserved, and
+    /// refused by the check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute: Option<Logic>,
     /// The parameter's description.
     #[serde(default, skip_serializing_if = "str::is_empty")]
     pub description: Box<str>,
@@ -606,6 +611,7 @@ impl From<Param> for ParamDef {
             && p.ty.is_none()
             && p.default.is_none()
             && p.host_default.is_none()
+            && p.compute.is_none()
             && p.description.is_empty()
         {
             ParamDef::Name(p.name)

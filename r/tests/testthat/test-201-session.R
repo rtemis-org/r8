@@ -270,3 +270,58 @@ scenario(
     expect_identical(size(P(a = 1)), "third")
   }
 )
+
+
+scenario(
+  "A9",
+  "an agent calls a typed function from a document",
+  situation = "A user declares a typed function with described parameters, gives an agent its schema, and runs the documents of a call that the agent writes.",
+  risk = "A document runs a function that the user did not offer, or runs with an argument of the wrong type, or reports one problem at a time.",
+  result = "The schema states each parameter with its type, default, and description. A document of a call runs only a function the user named, and a document with problems is refused with every problem, each at its path in the document, before the function runs.",
+  code = {
+    clip <- declare_in("a9", {
+      new_function(
+        "clip",
+        function(
+          x = arg_vec(type_double(), description = "The values."),
+          lo = arg_double(default = 0, description = "The lower bound."),
+          hi = arg_double(description = "The upper bound.")
+        ) {
+          pmin(pmax(x, lo), hi)
+        },
+        rules = list(order = rule(lo <= hi))
+      )
+    })
+    schema <- gsub("[[:space:]]+", " ", r8_schema(clip))
+    expect_match(
+      schema,
+      '"hi": { "type": "number", "description": "The upper bound." }',
+      fixed = TRUE
+    )
+    expect_match(schema, '"required": [ "x", "hi" ]', fixed = TRUE)
+    expect_identical(
+      r8_call_from_json(
+        clip,
+        '{"$function": "a9::clip", "arguments": {"x": [-1, 2], "hi": 1}}'
+      ),
+      c(0, 1)
+    )
+    e <- expect_error(
+      r8_call_from_json(
+        clip,
+        '{"$function": "a9::clip", "arguments": {"x": ["a"], "lo": 2, "hi": "b"}}'
+      ),
+      class = "r8_argument_error"
+    )
+    expect_setequal(
+      e[["problems"]][["path"]],
+      c("/arguments/x/0", "/arguments/hi")
+    )
+    expect_identical(
+      r8_check_call(clip, '{"$function": "base::system", "arguments": {}}')[[
+        "code"
+      ]],
+      "unknown_function"
+    )
+  }
+)

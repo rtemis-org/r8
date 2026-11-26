@@ -702,6 +702,7 @@ impl Checker<'_> {
             && q.ty.is_none()
             && q.default.is_none()
             && q.host_default.is_none()
+            && q.compute.is_none()
             && q.description.is_empty()
         {
             self.report(
@@ -729,6 +730,16 @@ impl Checker<'_> {
         }
         if let Some(t) = &q.ty {
             self.value_type(t, &format!("{path}/type"));
+        }
+        if q.compute.is_some() {
+            self.report(
+                "param_compute",
+                &format!("{path}/compute"),
+                format!(
+                    "parameter `{}` has a computed default, which R8 does not evaluate yet",
+                    q.name
+                ),
+            );
         }
         if q.default.is_some() && q.host_default.is_some() {
             self.report(

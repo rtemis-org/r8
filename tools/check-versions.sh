@@ -27,7 +27,7 @@ io_req=$(sed -n 's/^rtemis-r8 = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtem
 io_package=$(sed -n 's/^Version: *//p' r-io/DESCRIPTION)
 io_binding=$(sed -n "s/^version = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml | head -n 1)
 io_binding_req=$(sed -n "s/^rtemis-r8 = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml)
-io_binding_io_req=$(sed -n "s/^rtemis-r8-io = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml)
+io_binding_io_req=$(sed -n "s/^rtemis-r8-io = .*version = '\([^']*\)'.*/\1/p" r-io/src/rust/Cargo.toml)
 io_r8=$(sed -n 's/^ *R8 (>= \([^)]*\)).*/\1/p' r-io/DESCRIPTION)
 
 expected=$(major_minor "$workspace")

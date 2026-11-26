@@ -113,7 +113,8 @@
             "refine",
             "update",
             "filter",
-            "check"
+            "check",
+            "call"
           ]
         },
         "type": {
@@ -621,6 +622,37 @@
                         }
                       }
                     }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "op": {
+              "const": "call"
+            },
+            "expect": {
+              "type": "object",
+              "required": [
+                "errors"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/error"
+                  }
+                },
+                "unchecked": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/error"
                   }
                 }
               }

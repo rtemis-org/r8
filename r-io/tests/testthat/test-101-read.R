@@ -249,7 +249,11 @@ test_that("the format is the name's, or the argument's", {
     c(1L, 2L)
   )
   f <- file_of("a;b", "1;2", ext = ".txt")
-  refuses(r8_read_table(f), "does not end in .csv or .tsv", "r8_argument_error")
+  refuses(
+    r8_read_table(f),
+    "does not end in .csv, .tsv, or .parquet",
+    "r8_argument_error"
+  )
   expect_identical(
     as.list(r8_read_table(f, format = "csv", delimiter = ";")),
     list(a = 1L, b = 2L)
@@ -266,7 +270,11 @@ test_that("the format is the name's, or the argument's", {
   argument("`delimiter` is one ASCII character", "x.csv", delimiter = ";;")
   argument("`delimiter`", "x.csv", delimiter = "é")
   argument("`delimiter`", "x.csv", delimiter = "\"")
-  argument("`format` is \"csv\" or \"tsv\".", "x.csv", format = "xls")
+  argument(
+    "`format` is \"csv\", \"tsv\", or \"parquet\".",
+    "x.csv",
+    format = "xls"
+  )
   argument(
     "`infer_types` is \"strict\" or \"none\".",
     "x.csv",

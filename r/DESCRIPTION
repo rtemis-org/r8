@@ -1,6 +1,6 @@
 Package: R8
 Title: Structs, Enums, and Traits with a 'Rust' Runtime
-Version: 0.5.0
+Version: 0.6.0
 Date: 2026-11-18
 Authors@R: c(
     person(given = "E.D.", family = "Gennatas", role = c("aut", "cre", "cph"),
@@ -40,6 +40,8 @@ SystemRequirements: Cargo (Rust's package manager), rustc >= 1.88.0, xz
 Config/roxygen2/version: 8.1.1
 Collate: 
     'R8-package.R'
+    'function.R'
+    'call.R'
     'check.R'
     'conform.R'
     'declare.R'
@@ -47,7 +49,6 @@ Collate:
     'extendr-wrappers.R'
     'extends.R'
     'format.R'
-    'function.R'
     'generate.R'
     'generic.R'
     'identity.R'
