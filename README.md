@@ -1,6 +1,8 @@
-# R8
+# R8 type system
 
 R8 is a type system whose runtime is written in Rust, with an API for R. Types are structs, enums, and traits, declared in Rust with `#[derive(R8)]` or in a host language; values are immutable and validated once per value, and one declaration drives validation, JSON encoding, and every export. The Rust crates hold everything independent of the host language, and each host's API is a binding over them: R's in `r/`, and Python's and web applications' through their own bindings.
+
+![r8 cover](https://docs.rtemis.org/r/r8/assets/cover.avif)
 
 ## Rust crates
 
