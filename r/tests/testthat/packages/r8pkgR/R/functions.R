@@ -3,6 +3,8 @@
 # 2026- EDG rtemis.org
 
 # Typed functions whose bodies are in Rust (src/rust/src/functions.rs).
+# `spread()` and `portion()` return one value, which the expressions of
+# R8::calc() call once for each group.
 
 clip <- R8::new_function(
   "clip",
@@ -59,4 +61,30 @@ unwound <- R8::new_function(
   "unwound",
   function() R8::rust(),
   return_type = R8::type_double()
+)
+
+spread <- R8::new_function(
+  "spread",
+  function(x = R8::arg_vec(R8::type_double(), description = "The values.")) {
+    R8::rust()
+  },
+  return_type = R8::type_double(),
+  description = "The largest value less the smallest."
+)
+
+portion <- R8::new_function(
+  "portion",
+  function(
+    x = R8::arg_vec(R8::type_double(), description = "The parts."),
+    whole = R8::arg_vec(R8::type_double(), description = "The wholes."),
+    scale = R8::arg_double(
+      default = 1,
+      description = "The factor of the ratio."
+    )
+  ) {
+    R8::rust()
+  },
+  rules = list(scale = R8::rule(scale > 0)),
+  return_type = R8::type_double(min = 0),
+  description = "`scale` times the sum of `x` over the sum of `whole`."
 )

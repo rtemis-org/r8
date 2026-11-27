@@ -223,5 +223,7 @@ r8::exports! {
         functions::tally,
         functions::fraction,
         functions::unwound,
+        functions::spread,
+        functions::portion,
     ],
 }

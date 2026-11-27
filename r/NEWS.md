@@ -28,7 +28,7 @@
 - `r8map(x, f, args = list(...))` of a list or an atomic vector calls a typed function on each element, with the constant arguments of `args`, and gives an atomic vector or a list by the function's return type, with the names of `x`.
 - A map of a typed function reports its progress to the functions of the option `r8.progress`, `begin`, `update`, and `end`, which a host such as rtemis.core draws; a map that ends within 0.2 s reports nothing.
 - The rule dialect has `^`, `median()`, `n()`, `count()`, `NA`, `na.rm = TRUE` in aggregates, and `col(expr)`, the column whose name an R expression gives.
-- A `calc()` calls a typed function of `new_function()` for each group, or over all rows: `r8summarize(x, list(sbp = calc(trimmed_mean(sbp, trim = 0.2))), by = "ward")`. A parameter of `vec(T)` takes the group's cells and a scalar parameter a constant, and each call is checked as a direct call.
+- A `calc()` calls a typed function of `new_function()` for each group, or over all rows: `r8summarize(x, list(sbp = calc(trimmed_mean(sbp, trim = 0.2))), by = "ward")`. A parameter of `vec(T)` takes the group's cells and a scalar parameter a constant, and each call is checked as a direct call. A body in Rust is called from R8's Rust code, without R.
 - `field(compute =)` takes a `calc()`: `field(option(type_double()), compute = calc(mg / 1000))`.
 - `aggregate()` of a table is an error that names `r8summarize()`.
 - `n_threads` of `r8map()`, `r8summarize()`, `r8set()`, `r8sort()`, `r8filter()`, and `r8check()`, and the option `r8.n_threads`, set the threads that their work in Rust may use; a result is the same for any number of threads.

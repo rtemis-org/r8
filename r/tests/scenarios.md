@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 45 files of 417 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 45 files of 418 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -52,7 +52,7 @@ What each feature does, in 45 files of 417 tests. The runtime has its own tests 
 | `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 4 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
 | `test-153-documentation.R` | The documentation of packages that declare R8 types: help pages from roxygen2, and the R declarations of types declared in Rust. | 3 |
-| `test-154-rust-functions.R` | Typed functions whose bodies are in Rust: the functions of r8pkgR that R/functions.R declares with rust(), and src/rust/src/functions.rs holds. | 4 |
+| `test-154-rust-functions.R` | Typed functions whose bodies are in Rust: the functions of r8pkgR that R/functions.R declares with rust(), and src/rust/src/functions.rs holds. | 5 |
 
 ## Scenarios
 

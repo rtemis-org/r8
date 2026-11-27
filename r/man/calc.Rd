@@ -62,7 +62,11 @@ function returns one logical, integer, double, string, date, or date-time,
 or \code{option()} of one, and its value has no unit. Each call is checked as a
 direct call: a missing cell for a parameter of \code{vec(T)} is the call's error,
 with the group's keys, and a parameter of \code{vec(option(T))} receives the
-missing cells. A rule and a computed field call no function.
+missing cells. A function whose body is \code{\link[=rust]{rust()}} is called from R8's Rust
+code through the body that its package registers, with the cells of each
+group as an R vector; a call that the checks or the body refuse runs through
+the function's closure, which raises the error of a direct call. A rule and
+a computed field call no function.
 }
 
 \examples{

@@ -29,6 +29,7 @@ mod rview;
 mod signature;
 mod table;
 mod text;
+mod typed_calls;
 mod utf8;
 mod value;
 mod values;

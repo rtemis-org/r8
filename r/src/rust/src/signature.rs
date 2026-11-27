@@ -43,6 +43,11 @@ use rtemis_r8::rules::{DocumentSet, TypeLookup};
 use rtemis_r8::validate::{ValueError, validate_field_access};
 
 use crate::construct::{GENERATION, normalize, problems, with_cache};
+
+#[allow(improper_ctypes)]
+unsafe extern "C" {
+    fn Rf_ScalarReal(x: f64) -> SEXP;
+}
 use crate::rview::*;
 
 /// The outcome of a test: the value passes as it is, the validator decides,
@@ -842,51 +847,158 @@ pub(crate) fn errors_of(
 fn r8_check_args(key: Robj, values: Robj) -> Result<Robj> {
     crate::interrupt::interruptible(unsafe { values.get() }, || {
         let sig = signature(unsafe { key.get() }).ok_or_else(no_signature)?;
-        let list = unsafe { values.get() };
         let docs = crate::declare::registry().snapshot();
-        let checked: Vec<(&Slot, SEXP)> = sig
+        match validated(&sig, unsafe { values.get() }, &docs)? {
+            Err(errors) => problems(&errors),
+            Ok(out) if out.iter().all(Option::is_none) => Ok(().into()),
+            Ok(out) => Ok(List::from_values(
+                out.into_iter().map(|v| v.unwrap_or_else(|| Robj::from(()))),
+            )
+            .into()),
+        }
+    })
+}
+
+/// The validation of the values of the forced parameters, `list`, whose tests
+/// did not pass: the errors, or for each forced parameter its value in its
+/// stored form where that differs from the value given.
+fn validated(
+    sig: &Signature,
+    list: SEXP,
+    docs: &DocumentSet,
+) -> Result<std::result::Result<Vec<Option<Robj>>, Vec<ValueError>>> {
+    let checked: Vec<(&Slot, SEXP)> = sig
+        .slots
+        .iter()
+        .map(|s| (s, unsafe { VECTOR_ELT(list, s.at as isize) }))
+        .filter(|(s, x)| s.test.run(*x) == CHECK)
+        .collect();
+    let errors: Vec<ValueError> = checked
+        .iter()
+        .flat_map(|(s, x)| errors_of(*x, &s.ty, docs, Some(&s.name)))
+        .collect();
+    if !errors.is_empty() {
+        return Ok(Err(errors));
+    }
+    let mut out: Vec<Option<Robj>> = vec![None; sig.forced.len()];
+    for (s, x) in checked {
+        s.test.admit(x);
+        out[s.at] = normalize(x, &s.ty, docs)?;
+    }
+    if !sig.rules.is_empty() {
+        let values: Vec<SEXP> = sig
             .slots
             .iter()
-            .map(|s| (s, unsafe { VECTOR_ELT(list, s.at as isize) }))
-            .filter(|(s, x)| s.test.run(*x) == CHECK)
+            .map(|s| match &out[s.at] {
+                Some(r) => unsafe { r.get() },
+                None => unsafe { VECTOR_ELT(list, s.at as isize) },
+            })
             .collect();
-        let errors: Vec<ValueError> = checked
-            .iter()
-            .flat_map(|(s, x)| errors_of(*x, &s.ty, &docs, Some(&s.name)))
-            .collect();
+        let names: Vec<&str> = sig.slots.iter().map(|s| &*s.name).collect();
+        let errors = rule_errors(sig, &values, &names, docs);
         if !errors.is_empty() {
-            return problems(&errors);
+            return Ok(Err(errors));
         }
-        let mut out: Vec<Robj> = vec![Robj::from(()); sig.forced.len()];
-        let mut changed = false;
-        for (s, x) in checked {
-            s.test.admit(x);
-            if let Some(r) = normalize(x, &s.ty, &*docs)? {
-                out[s.at] = r;
-                changed = true;
+    }
+    Ok(Ok(out))
+}
+
+/// The checks of the calls of a typed function that R8's Rust makes through
+/// the function's compiled body: the checks that `checked_call()` and
+/// `function_result()` of `view.c` make at a call from R, over values in a
+/// list that holds them.
+pub(crate) struct CallChecks(Rc<Signature>);
+
+/// The checks of the calls of the function whose key is the symbol `key`, its
+/// qualified name; `None` when it has no signature.
+pub(crate) fn call_checks(key: SEXP) -> Option<CallChecks> {
+    function_key(key)?;
+    signature(key).map(CallChecks)
+}
+
+impl CallChecks {
+    /// The number of the forced parameters, which are the function's typed
+    /// parameters in the order of the declaration.
+    pub(crate) fn forced(&self) -> usize {
+        self.0.forced.len()
+    }
+
+    /// Whether the arguments in the first elements of `list`, one for each
+    /// forced parameter, pass their types and the function's rules; each passes
+    /// in its stored form, which replaces it in `list`. A call whose arguments
+    /// do not pass goes to the function's closure, which reports the errors.
+    pub(crate) fn arguments(&self, list: SEXP) -> bool {
+        let sig = &self.0;
+        let at = |i: usize| unsafe { VECTOR_ELT(list, i as isize) };
+        let mut check = false;
+        for s in &sig.slots {
+            let x = at(s.at);
+            match s.test.run(x) {
+                PASS => {}
+                TO_INTEGER => unsafe {
+                    let v = extendr_ffi::Rf_ScalarInteger(*REAL(x) as i32);
+                    extendr_ffi::SET_VECTOR_ELT(list, s.at as isize, v);
+                },
+                TO_DOUBLE => unsafe {
+                    let v = Rf_ScalarReal(f64::from(*INTEGER(x)));
+                    extendr_ffi::SET_VECTOR_ELT(list, s.at as isize, v);
+                },
+                _ => check = true,
             }
         }
-        if !sig.rules.is_empty() {
-            let values: Vec<SEXP> = sig
-                .slots
-                .iter()
-                .map(|s| match unsafe { out[s.at].get() } {
-                    x if is_null(x) => unsafe { VECTOR_ELT(list, s.at as isize) },
-                    x => x,
-                })
-                .collect();
-            let names: Vec<&str> = sig.slots.iter().map(|s| &*s.name).collect();
-            let errors = rule_errors(&sig, &values, &names, &docs);
-            if !errors.is_empty() {
-                return problems(&errors);
-            }
+        if !check && !sig.rules.is_empty() {
+            let values: Vec<SEXP> = (0..sig.forced.len()).map(at).collect();
+            check = !sig.rules_hold(&values);
         }
-        Ok(if changed {
-            List::from_values(out).into()
-        } else {
-            ().into()
-        })
-    })
+        if !check {
+            return true;
+        }
+        let docs = crate::declare::registry().snapshot();
+        match validated(sig, list, &docs) {
+            Ok(Ok(out)) => {
+                for (i, v) in out.iter().enumerate() {
+                    if let Some(v) = v {
+                        unsafe { extendr_ffi::SET_VECTOR_ELT(list, i as isize, v.get()) };
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the result in the element `at` of `list` passes the return
+    /// type, in its stored form, which replaces it in `list`.
+    pub(crate) fn result(&self, list: SEXP, at: usize) -> bool {
+        let (ty, test) = match &self.0.returned {
+            Returned::Type(t, test) => (t, test),
+            Returned::Any => return true,
+            Returned::SelfType => return false,
+        };
+        let x = unsafe { VECTOR_ELT(list, at as isize) };
+        let stored = match test.run(x) {
+            PASS => return true,
+            TO_INTEGER => unsafe { extendr_ffi::Rf_ScalarInteger(*REAL(x) as i32) },
+            TO_DOUBLE => unsafe { Rf_ScalarReal(f64::from(*INTEGER(x))) },
+            _ => {
+                let docs = crate::declare::registry().snapshot();
+                if !errors_of(x, ty, &docs, None).is_empty() {
+                    return false;
+                }
+                test.admit(x);
+                match normalize(x, ty, &*docs) {
+                    Ok(None) => return true,
+                    Ok(Some(r)) => {
+                        unsafe { extendr_ffi::SET_VECTOR_ELT(list, at as isize, r.get()) };
+                        return true;
+                    }
+                    Err(_) => return false,
+                }
+            }
+        };
+        unsafe { extendr_ffi::SET_VECTOR_ELT(list, at as isize, stored) };
+        true
+    }
 }
 
 /// The violations of a function's rules by the values of its typed

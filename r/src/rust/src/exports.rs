@@ -1058,6 +1058,19 @@ pub unsafe extern "C" fn r8_native_function(
     })
 }
 
+/// The compiled body of the function whose key is the symbol `key`, its
+/// qualified name, and the number of the declaration's parameters, which the
+/// body takes in order; `None` when no package registered a body of the
+/// function.
+pub(crate) fn native_body(key: extendr_ffi::SEXP) -> Option<(MethodFn, usize)> {
+    NATIVE.with(|n| {
+        n.try_borrow()
+            .ok()?
+            .get(&(key as usize))
+            .map(|v| (v.call, v.params.len()))
+    })
+}
+
 /// The text of the `#[r8::function]` signature of the registered function
 /// `qname` (`rtemis_r8::rust_signature`).
 ///

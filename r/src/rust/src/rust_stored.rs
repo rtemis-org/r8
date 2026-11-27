@@ -177,7 +177,7 @@ pub(crate) fn with_field(
             &mut err,
         )
     };
-    codec_returned();
+    returned_to_rust();
     if status != OK || new_state.is_null() {
         return Err(error_text(&err));
     }
@@ -265,7 +265,7 @@ pub(crate) fn build(x: SEXP) -> Result<(), (&'static str, String)> {
 }
 
 /// An empty error report, for a callee to fill.
-fn blank() -> Error {
+pub(crate) fn blank() -> Error {
     Error {
         code: [0; 64],
         message: [0; 1024],
@@ -302,10 +302,11 @@ pub unsafe extern "C" fn r8_set_drop_unwind(drop: *mut ()) {
     DROP_UNWIND.store(drop, std::sync::atomic::Ordering::Release);
 }
 
-/// After a codec function that R8 calls from a Rust frame: a jump of R that the
-/// codec's `R8Api.protect` caught does not continue through Rust frames, so it
-/// is dropped, and the call reports it as the error `unwind`.
-fn codec_returned() {
+/// After compiled code of a package that R8 calls from a Rust frame, a codec
+/// function or a function's body: a jump of R that the code's `R8Api.protect`
+/// caught does not continue through Rust frames, so it is dropped, and the call
+/// reports it as the error `unwind`.
+pub(crate) fn returned_to_rust() {
     let f = DROP_UNWIND.load(std::sync::atomic::Ordering::Acquire);
     if !f.is_null() {
         let f: unsafe extern "C" fn() = unsafe { std::mem::transmute::<*mut (), _>(f) };
@@ -326,7 +327,7 @@ pub(crate) fn from_fields(vt: *const Codec, fields: SEXP) -> Result<*mut c_void,
     let mut state: *mut c_void = std::ptr::null_mut();
     let mut err = blank();
     let status = unsafe { f(items.as_ptr(), items.len(), &mut state, &mut err) };
-    codec_returned();
+    returned_to_rust();
     if status != OK || state.is_null() {
         return Err(error_text(&err));
     }
@@ -374,7 +375,7 @@ pub(crate) fn from_reader(
     let mut state: *mut c_void = std::ptr::null_mut();
     let mut err = blank();
     let status = unsafe { f(reader, root, &mut state, &mut err) };
-    codec_returned();
+    returned_to_rust();
     if status != OK || state.is_null() {
         return Err(error_text(&err));
     }
@@ -419,7 +420,7 @@ pub(crate) fn from_variant(
             &mut err,
         )
     };
-    codec_returned();
+    returned_to_rust();
     if status != OK || state.is_null() {
         return Err(error_text(&err));
     }

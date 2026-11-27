@@ -8,7 +8,7 @@
 
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::thread::{self, ThreadId};
 
 use crate::sys::{self, SEXP};
@@ -16,6 +16,9 @@ use crate::sys::{self, SEXP};
 static HEAD: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 static MAIN: OnceLock<ThreadId> = OnceLock::new();
 static QUEUED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+/// Whether `QUEUED` may hold cells. It is set and cleared under the lock, so
+/// that an entry with no cell queued takes no lock.
+static ANY_QUEUED: AtomicBool = AtomicBool::new(false);
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 
 /// Records R's main thread; `r8::exports!` calls it from the package's
@@ -58,8 +61,14 @@ pub(crate) unsafe fn prepare() -> crate::Result<()> {
 /// Removes the cells that tokens dropped on other threads queued. Called on
 /// the main thread at each entry of the crate's code from R.
 pub(crate) fn drain() {
+    if !ANY_QUEUED.load(Ordering::Acquire) {
+        return;
+    }
     let cells: Vec<usize> = match QUEUED.lock() {
-        Ok(mut q) => std::mem::take(&mut *q),
+        Ok(mut q) => {
+            ANY_QUEUED.store(false, Ordering::Release);
+            std::mem::take(&mut *q)
+        }
         Err(_) => return,
     };
     for c in cells {
@@ -128,6 +137,7 @@ impl Drop for Token {
             unsafe { unlink(self.0 as SEXP) };
         } else if let Ok(mut q) = QUEUED.lock() {
             q.push(self.0);
+            ANY_QUEUED.store(true, Ordering::Release);
         }
     }
 }

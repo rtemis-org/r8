@@ -570,7 +570,11 @@ col_name <- function(e, env) {
 #' or `option()` of one, and its value has no unit. Each call is checked as a
 #' direct call: a missing cell for a parameter of `vec(T)` is the call's error,
 #' with the group's keys, and a parameter of `vec(option(T))` receives the
-#' missing cells. A rule and a computed field call no function.
+#' missing cells. A function whose body is [rust()] is called from R8's Rust
+#' code through the body that its package registers, with the cells of each
+#' group as an R vector; a call that the checks or the body refuse runs through
+#' the function's closure, which raises the error of a direct call. A rule and
+#' a computed field call no function.
 #'
 #' @param expr Expression: The expression, over the columns of a table.
 #'

@@ -68,3 +68,25 @@ pub fn fraction(part: f64, whole: f64) -> r8::Result<f64> {
 pub fn unwound() -> r8::Result<f64> {
     Err(r8::Error::new("unwind", "no jump of R was caught"))
 }
+
+/// The largest value less the smallest; `NaN` for no values.
+#[r8::function]
+pub fn spread(x: &[f64]) -> f64 {
+    let (lo, hi) = x
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| {
+            (lo.min(v), hi.max(v))
+        });
+    if x.is_empty() { f64::NAN } else { hi - lo }
+}
+
+/// `scale` times the sum of `x` over the sum of `whole`; an error where
+/// `whole` sums to 0.
+#[r8::function]
+pub fn portion(x: &[f64], whole: &[f64], scale: f64) -> r8::Result<f64> {
+    let w: f64 = whole.iter().sum();
+    if w == 0.0 {
+        return Err(r8::Error::new("zero_whole", "`whole` sums to 0"));
+    }
+    Ok(scale * x.iter().sum::<f64>() / w)
+}

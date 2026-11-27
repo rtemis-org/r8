@@ -111,7 +111,7 @@ test_that("a body moved to Rust leaves the declaration, its schema, and its reco
       ),
       "params <- function(text) { t <- gsub('[[:space:]]', '', paste(text, collapse = '')); n <- regmatches(t, regexpr('fn[a-z_]+\\\\([^{]*\\\\{', t)); sub(',\\\\)', ')', n) }",
       "source_fn <- function(name) { t <- gsub('[[:space:]]', '', paste(src, collapse = '')); m <- regmatches(t, regexpr(paste0('fn', name, '\\\\([^{]*\\\\{'), t)); sub(',\\\\)', ')', m) }",
-      "for (f in list(clip = clip, level = level, tally = tally, fraction = fraction)) { name <- sub('^.*::', '', attr(f, 'r8_function')); g <- params(strsplit(r8rust_signature(f), '\\n')[[1]]); s <- source_fn(name); say('signature', name, identical(g, s) || identical(sub('->(.*)\\\\{$', '->r8::Result<\\\\1>{', g), s)) }"
+      "for (f in list(clip = clip, level = level, tally = tally, fraction = fraction, spread = spread, portion = portion)) { name <- sub('^.*::', '', attr(f, 'r8_function')); g <- params(strsplit(r8rust_signature(f), '\\n')[[1]]); s <- source_fn(name); say('signature', name, identical(g, s) || identical(sub('->(.*)\\\\{$', '->r8::Result<\\\\1>{', g), s)) }"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -122,7 +122,9 @@ test_that("a body moved to Rust leaves the declaration, its schema, and its reco
     "signature clip TRUE ",
     "signature level TRUE ",
     "signature tally TRUE ",
-    "signature fraction TRUE "
+    "signature fraction TRUE ",
+    "signature spread TRUE ",
+    "signature portion TRUE "
   )) {
     expect_true(line %in% out, info = paste(line, info, sep = "\n"))
   }
@@ -146,16 +148,18 @@ test_that("load compares each Rust body with its declaration", {
       sprintf("source(%s)", deparse(file.path(pkg, "R", "r8-types.R"))),
       # The declarations of R/functions.R with bodies in R, as a session
       # outside the package declares them.
-      "rust_names <- c('pkgr::clip', 'pkgr::level', 'pkgr::tally', 'pkgr::fraction', 'pkgr::unwound')",
+      "rust_names <- c('pkgr::clip', 'pkgr::level', 'pkgr::tally', 'pkgr::fraction', 'pkgr::unwound', 'pkgr::spread', 'pkgr::portion')",
       "check <- function(in_rust = rust_names, in_r = character()) tryCatch({ R8:::check_functions('r8pkgR', R8:::r8_exports_functions(ptr, 'pkgr'), in_rust, in_r); 'agree' }, error = conditionMessage)",
       "clip <- new_function('clip', function(x = arg_vec(type_double()), lo = arg_double(), hi = arg_double()) x)",
       "level <- new_function('level', function(x = arg_vec(type_double()), lo = arg_double(default = 0), hi = arg_double()) x)",
       "tally <- new_function('tally', function(x = arg_vec(type_integer()), label = arg_character(default = 'n'), flags = arg_option(vec(type_logical())), bytes = arg_raw(default = as.raw(1:3)), na.rm = arg_logical(default = FALSE), data = NULL, k = arg_integer(default = length(x)), ...) x)",
       "fraction <- new_function('fraction', function(part = arg_double(), whole = arg_double()) part)",
       "unwound <- new_function('unwound', function() 1)",
+      "spread <- new_function('spread', function(x = arg_vec(type_double())) 0, return_type = type_double())",
+      "portion <- new_function('portion', function(x = arg_vec(type_double()), whole = arg_vec(type_double()), scale = arg_double(default = 1)) 0, return_type = type_double(min = 0))",
       "say('first', check())",
-      "e <- check(c(rust_names, 'pkgr::spread'))",
-      "say('absent', grepl('`pkgr::spread()` has the body rust(), and the package\\'s Rust code exports no function `spread`', e, fixed = TRUE))",
+      "e <- check(c(rust_names, 'pkgr::midrange'))",
+      "say('absent', grepl('`pkgr::midrange()` has the body rust(), and the package\\'s Rust code exports no function `midrange`', e, fixed = TRUE))",
       "say('unlisted', grepl('exports the function `tally`, which no new_function() of the package declares', check(setdiff(rust_names, 'pkgr::tally')), fixed = TRUE))",
       "say('in_r', grepl('`pkgr::clip()` has a body in R, and the package\\'s Rust code exports a body of it', check(setdiff(rust_names, 'pkgr::clip'), 'pkgr::clip'), fixed = TRUE))",
       "level <- new_function('level', function(x = arg_vec(type_integer()), lo = arg_double(default = 0), hi = arg_double()) x)",
@@ -211,6 +215,85 @@ test_that("a function whose body is in Rust needs its package's registration", {
     "before TRUE ",
     "after r8_dispatch_error TRUE ",
     "again TRUE "
+  )) {
+    expect_true(line %in% out, info = paste(line, info, sep = "\n"))
+  }
+})
+
+test_that("an expression of calc() calls a body in Rust through its entry, as a direct call", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
+      "say <- function(...) cat(..., '\\n')",
+      "set.seed(1)",
+      "n <- 1000L",
+      "x <- Raven(g = sample(c('a', 'b', 'c'), n, TRUE), k = sample(1:5, n, TRUE), v = stats::rnorm(n), w = stats::runif(n))",
+      "rows <- split(seq_len(n), x$g)",
+      "direct <- function(f) unname(vapply(rows, f, 0))",
+      # Each group's value is that of a direct call: cells of an integer
+      # column converted, a constant, a default, and an expression of cells.
+      "s <- r8summarize(x, list(s = calc(spread(v)), i = calc(spread(k)), p = calc(portion(w, whole = v + 10, scale = 2)), q = calc(portion(w, whole = w))), by = 'g')",
+      "say('groups', identical(s$g, c('a', 'b', 'c')))",
+      "say('spread', identical(s$s, direct(function(r) spread(x$v[r]))))",
+      "say('integer', identical(s$i, direct(function(r) spread(x$k[r]))))",
+      "say('portion', identical(s$p, direct(function(r) portion(x$w[r], whole = x$v[r] + 10, scale = 2))))",
+      "say('default', identical(s$q, rep(1, 3)))",
+      "say('qualified', identical(r8summarize(x, list(s = calc(r8pkgR::spread(v))), by = 'g')$s, s$s))",
+      # Over all rows, over each row's group, and over each column.
+      "y <- r8set(x, list(d = calc(v - spread(v))))",
+      "say('rows', identical(y$d, x$v - spread(x$v)))",
+      "y <- r8set(x, list(d = calc(spread(v))), by = 'g')",
+      "say('by', identical(y$d, s$s[match(x$g, s$g)]))",
+      "m <- r8map(x, calc(spread(col())), columns = c('v', 'w'), by = 'g')",
+      "say('map', identical(m, r8map(x, spread, columns = c('v', 'w'), by = 'g')))",
+      # The entry computes the value; the function's closure is not called.
+      "probe <- spread",
+      "body(probe) <- quote(stop('the closure ran'))",
+      "attributes(probe) <- attributes(spread)",
+      "say('entry', identical(r8summarize(x, list(s = calc(probe(v))), by = 'g')$s, s$s))",
+      # A call that the checks or the body refuse raises the error of a
+      # direct call, at its group.
+      "parent <- function(e) paste(class(e)[1], class(e$parent)[1], if (is.null(e$parent$problems)) e$parent$code else e$parent$problems$code)",
+      "e <- tryCatch(r8summarize(x, list(p = calc(portion(w, whole = v - v))), by = 'g'), error = identity)",
+      "say('body', parent(e), grepl('`p` calls `pkgr::portion()` in the group g = \"a\": `whole` sums to 0 [zero_whole]', conditionMessage(e), fixed = TRUE))",
+      "e <- tryCatch(r8summarize(x, list(p = calc(portion(w, whole = w, scale = -1))), by = 'g'), error = identity)",
+      "say('rule', parent(e))",
+      "e <- tryCatch(r8summarize(x, list(p = calc(portion(v - 10, whole = w))), by = 'g'), error = identity)",
+      "say('result', parent(e))",
+      "z <- Raven(g = c('a', 'a', 'b'), v = c(1, NA, 2))",
+      "e <- tryCatch(r8summarize(z, list(s = calc(spread(v))), by = 'g'), error = identity)",
+      "say('missing', parent(e), grepl('in the group g = \"a\"', conditionMessage(e), fixed = TRUE))",
+      # Without its package's registration, the call is the closure's.
+      "f <- r8pkgR::spread",
+      "unloadNamespace('r8pkgR')",
+      "invisible(gc())",
+      "e <- tryCatch(r8summarize(x, list(s = calc(f(v))), by = 'g'), error = identity)",
+      "say('unloaded', class(e)[1], class(e$parent)[1])"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  for (line in c(
+    "groups TRUE ",
+    "spread TRUE ",
+    "integer TRUE ",
+    "portion TRUE ",
+    "default TRUE ",
+    "qualified TRUE ",
+    "rows TRUE ",
+    "by TRUE ",
+    "map TRUE ",
+    "entry TRUE ",
+    "body r8_value_error r8_compiled_error zero_whole TRUE ",
+    "rule r8_value_error r8_argument_error rule_violation ",
+    "result r8_value_error r8_result_error below_min ",
+    "missing r8_value_error r8_argument_error missing_value TRUE ",
+    "unloaded r8_value_error r8_dispatch_error "
   )) {
     expect_true(line %in% out, info = paste(line, info, sep = "\n"))
   }
