@@ -53,14 +53,14 @@ same_construction <- function(type, fields, variant = "") {
 same_identity <- function(x) {
   skip_without_oracle()
   in_place <- R8:::r8_value_identity(x)
-  ref <- oracle_document_identity(r8_to_json(x), R8:::value_type(x))
+  ref <- oracle_document_identity(r8to_json(x), R8:::value_type(x))
   expect_identical(
     in_place[["canonical"]],
     ref[["canonical"]],
     info = R8:::value_type(x)
   )
   expect_identical(in_place[["hash"]], ref[["hash"]], info = R8:::value_type(x))
-  expect_true(r8_equal(x, r8_from_json(get_type(x), r8_to_json(x))))
+  expect_true(r8equal(x, r8from_json(get_type(x), r8to_json(x))))
 }
 
 get_type <- function(x) R8:::.r8_types[[R8:::value_type(x)]]
@@ -355,7 +355,7 @@ test_that("$<- validates the field and the rules that read it", {
   expect_identical(r$hi, 5)
 })
 
-test_that("r8_equal() compares normalized forms in place", {
+test_that("r8equal() compares normalized forms in place", {
   E <- declare_in(
     "construct",
     new_struct(
@@ -368,17 +368,17 @@ test_that("r8_equal() compares normalized forms in place", {
     )
   )
   a <- E(d = c(0, NA, NaN), h = c(a = 1L, b = 2L))
-  expect_true(r8_equal(a, E(d = c(-0, NA, NaN), h = c(b = 2L, a = 1L))))
-  expect_true(r8_equal(
+  expect_true(r8equal(a, E(d = c(-0, NA, NaN), h = c(b = 2L, a = 1L))))
+  expect_true(r8equal(
     a,
     E(d = c(0L, NA, NaN), h = list(a = 1L, b = 2L), n = 1)
   ))
-  expect_false(r8_equal(a, E(d = c(0, NaN, NaN), h = c(a = 1L, b = 2L))))
-  expect_false(r8_equal(a, E(d = c(0, NA, NaN), h = c(a = 1L, b = 3L))))
-  expect_false(r8_equal(a, E(d = c(0, NA, NaN), h = c(a = 1L, b = 2L), n = 2)))
+  expect_false(r8equal(a, E(d = c(0, NaN, NaN), h = c(a = 1L, b = 2L))))
+  expect_false(r8equal(a, E(d = c(0, NA, NaN), h = c(a = 1L, b = 3L))))
+  expect_false(r8equal(a, E(d = c(0, NA, NaN), h = c(a = 1L, b = 2L), n = 2)))
   expect_identical(
-    r8_hash(a),
-    r8_hash(E(d = c(-0, NA, NaN), h = c(b = 2L, a = 1L)))
+    r8hash(a),
+    r8hash(E(d = c(-0, NA, NaN), h = c(b = 2L, a = 1L)))
   )
   same_identity(a)
 })
@@ -439,7 +439,7 @@ test_that("a computed field of a matrix type is the matrix it names", {
     )
   )
   m <- matrix(as.numeric(1:6), 3)
-  x <- r8_resolve(C(m = m))
+  x <- r8resolve(C(m = m))
   expect_identical(x$n, m)
 })
 
@@ -552,6 +552,6 @@ test_that("an array without declared dimensions takes any number of them", {
   for (dim in list(8L, c(2L, 4L), c(2L, 2L, 2L), c(1L, 2L, 2L, 2L))) {
     x <- A(a = array(as.numeric(1:8), dim))
     expect_identical(dim(x$a), dim)
-    expect_true(r8_equal(r8_from_json(A, r8_to_json(x)), x))
+    expect_true(r8equal(r8from_json(A, r8to_json(x)), x))
   }
 })

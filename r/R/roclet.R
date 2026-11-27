@@ -2,17 +2,17 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# The roxygen2 roclet `r8_rd`, which a package lists in place of `rd`. It adds
+# The roxygen2 roclet `r8rd()`, which a package lists in place of `rd`. It adds
 # to each `implement()` block the tags that place the method in an Rd file,
 # and to each enum block a usage of its variants, then runs the `rd` roclet.
 # spec: R8/class-system#r-familiar-layer
 
-# %% r8_rd ----
+# %% r8rd ----
 #' Rd files for R8 declarations
 #'
 #' A roxygen2 roclet that writes the Rd files of the `rd` roclet and adds R8
 #' methods and enum variants to them. A package lists it in place of `rd`:
-#' `Roxygen: list(roclets = c("collate", "namespace", "R8::r8_rd"))` in its
+#' `Roxygen: list(roclets = c("collate", "namespace", "R8::r8rd"))` in its
 #' `DESCRIPTION`.
 #'
 #' Each `implement(generic, Type) <- function(...)` call adds an entry to the
@@ -25,7 +25,7 @@
 #' Rd file in the package. A method the package implements in Rust, registered when roxygen2 loads the package, takes an entry by the
 #' same rules, with the formals of the trait's method. A replacement method
 #' is written as its call, `labels(x) <- value`. A method of a converter
-#' from `r8_converter()`, `implement(as_target, "character") <- function(x)
+#' from `r8converter()`, `implement(as_target, "character") <- function(x)
 #' ...`, takes the entry `## R8 method for class 'character'` in the Rd
 #' file of the converter, or else of its target type. The usage of an enum
 #' lists its variants, such as `Method@KFold(k)` and `Method@Bootstrap`.
@@ -41,19 +41,19 @@
 #'
 #' @examples
 #' \dontrun{
-#' roxygen2::roxygenise(roclets = c("collate", "namespace", "R8::r8_rd"))
+#' roxygen2::roxygenise(roclets = c("collate", "namespace", "R8::r8rd"))
 #' }
 #'
 #' @export
-r8_rd <- function() {
+r8rd <- function() {
   if (!requireNamespace("roxygen2", quietly = TRUE)) {
     r8_abort(
-      "The roclet r8_rd needs the package 'roxygen2'.",
+      "The roclet r8rd() needs the package 'roxygen2'.",
       class = "r8_declaration_error"
     )
   }
   roxygen2::roclet(c("r8_rd", "rd"))
-} # /R8::r8_rd
+} # /R8::r8rd
 
 
 # %% is_implement_call ----

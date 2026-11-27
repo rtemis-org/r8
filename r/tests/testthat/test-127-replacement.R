@@ -119,7 +119,7 @@ test_that("a host object's replacement result keeps its class vector", {
   })
 })
 
-test_that("r8_next_impl() in a replacement impl passes the current arguments", {
+test_that("r8next_impl() in a replacement impl passes the current arguments", {
   ty <- range_types("rp5")
   Range <- ty[["Range"]]
   Window <- ty[["Window"]]
@@ -131,14 +131,14 @@ test_that("r8_next_impl() in a replacement impl passes the current arguments", {
     }
     implement(`tag<-`, Window) <- function(x, value) {
       x$label <- toupper(value)
-      r8_next_impl()
+      r8next_impl()
     }
     w <- Window(lo = 1, hi = 2, tag = "a", label = "w")
     tag(w) <- "b"
     expect_identical(c(w$tag, w$label), c("b", "B"))
     implement(`tag<-`, Window) <- function(x, value) {
       x <- Range(lo = 0, hi = 1, tag = "r")
-      r8_next_impl()
+      r8next_impl()
     }
     expect_error(
       tag(w) <- "c",
@@ -148,7 +148,7 @@ test_that("r8_next_impl() in a replacement impl passes the current arguments", {
   })
 })
 
-test_that("an S3 replacement generic's method is checked and continues with r8_next_impl()", {
+test_that("an S3 replacement generic's method is checked and continues with r8next_impl()", {
   ty <- range_types("rp6")
   Range <- ty[["Range"]]
   Window <- ty[["Window"]]
@@ -170,7 +170,7 @@ test_that("an S3 replacement generic's method is checked and continues with r8_n
       Window,
       methods = list(`units<-` = function(x, value) {
         x$label <- "u"
-        r8_next_impl()
+        r8next_impl()
       })
     )
     w <- Window(lo = 1, hi = 2, tag = "a", label = "w")
@@ -181,7 +181,7 @@ test_that("an S3 replacement generic's method is checked and continues with r8_n
   })
 })
 
-test_that("a Print impl continues with r8_next_impl()", {
+test_that("a Print impl continues with r8next_impl()", {
   ty <- range_types("rp7")
   Range <- ty[["Range"]]
   Window <- ty[["Window"]]
@@ -196,7 +196,7 @@ test_that("a Print impl continues with r8_next_impl()", {
       Window,
       methods = list(print = function(x, ...) {
         cat("a window, ")
-        r8_next_impl()
+        r8next_impl()
       })
     )
     expect_output(

@@ -1,12 +1,13 @@
 # R8 0.6.0
 
+- Exported functions that operate on values, types, tables, and packages begin with `r8` joined to their first word, with underscores between the later words: `r8filter()`, `r8set()`, `r8check()`, `r8to_json()`, `r8is_variant()`, and the roclet `r8rd()`. Classes and conditions begin with `r8_`: `r8_value`, `r8_table`, and `r8_value_error`.
 - A typed function whose body is `rust()` has its body in its package's Rust code: a function marked `#[r8::function]` and listed in `functions` of `r8::exports!`. The declaration in R stays the function's, its schema included; each call checks the arguments, calls the Rust function, and checks the result, and loading the package compares the Rust function's signature with the declaration.
-- `r8_rust_signature(f)` writes the Rust signature of a typed function, for its body in Rust.
+- `r8rust_signature(f)` writes the Rust signature of a typed function, for its body in Rust.
 - Compiled methods and function bodies take `&[f64]`, `&[i32]`, `&[u8]`, `&[bool]`, and `&str`, borrowed from the R value for the call, and `#[r8(name = "...")]` gives a parameter an R name; a `Vec` result is a plain R vector.
 - A typed call checks a vector of logicals, integers, or doubles in place, and a typed function with a return type runs its body in its own frame as written.
-- `arg()` and its shorthands take `description`, which the declaration keeps; `arg(description = )` alone describes a parameter without a type. The roclet `r8_rd()` writes a described parameter's `@param` from it, and refuses a block that also documents that parameter.
-- `r8_schema(x)` writes the JSON Schema of the arguments of a typed function, for a tool's input schema; its first argument is `x`, a type or a typed function.
-- `r8_check_call()`, `r8_call_from_json()`, and `r8_call_to_json()` check, run, and write documents of a call of a typed function, `{"$function": "ns::f", "arguments": {...}}`, among the functions that the caller names.
+- `arg()` and its shorthands take `description`, which the declaration keeps; `arg(description = )` alone describes a parameter without a type. The roclet `r8rd()` writes a described parameter's `@param` from it, and refuses a block that also documents that parameter.
+- `r8schema(x)` writes the JSON Schema of the arguments of a typed function, for a tool's input schema; its first argument is `x`, a type or a typed function.
+- `r8check_call()`, `r8call_from_json()`, and `r8call_to_json()` check, run, and write documents of a call of a typed function, `{"$function": "ns::f", "arguments": {...}}`, among the functions that the caller names.
 - The declaration record has format 10; a package installed with an earlier R8 is reinstalled.
 - A shorthand of `arg()` takes `default` and `description` by name, and a parameter is not named `.Call`, `quote`, `environment`, `withVisible`, or `invisible`. A constant default of `c()` mixes no kinds of element, and `pkg::Type` as a default is refused as `Type` is.
 - A `return()` inside `local()` or `evalq()` in the body of a typed function returns from that call, unchecked.
@@ -17,11 +18,11 @@
 - A Rust-stored value whose buffer Rust owns writes a field without starting a collection of R's garbage: each value that shares the buffer counts a share of its bytes.
 - A default prints in one R form in a field object, a parameter, and a type: a date as `as.Date()`, a date-time as `as.POSIXct()`, and each double with the fewest digits that identify it.
 - `host_class(class, package, system = "s7")`, and an S7 class object, declare an argument, a result, a field, or a dispatched position of an S7 class.
-- `r8_is_variant()` of a value whose package is not loaded refuses a name that is no variant, as with the package loaded, by the declaration that the value carries.
+- `r8is_variant()` of a value whose package is not loaded refuses a name that is no variant, as with the package loaded, by the declaration that the value carries.
 - A package with Rust code built against an earlier R8 of the same ABI version loads after R8 appends members to its C tables, which a reader finds absent.
 - An error that a package's compiled code returns, from a compiled method or the Rust body of a typed function, is an `r8_compiled_error`, with its code in the field `code`, and a panic an `r8_panic`.
 - A value that a package's Rust code makes is validated when its type has rules, constraints, or `subtype()` or `dyn()` fields, and the method that made it raises the error.
-- `calc(expr)` declares an expression of the rule dialect as a value. `r8_set(x, list(bmi = calc(weight / height^2)))` stores the column that it computes in Rust, with the unit that the expression infers, and `r8_set(x, columns, by)` evaluates its aggregates over each row's group.
+- `calc(expr)` declares an expression of the rule dialect as a value. `r8set(x, list(bmi = calc(weight / height^2)))` stores the column that it computes in Rust, with the unit that the expression infers, and `r8set(x, columns, by)` evaluates its aggregates over each row's group.
 - `r8summarize(x, columns, by)` gives one row for each group of the rows of a table, in the order of the keys, with the summaries that `calc()` values of `n()`, `count()`, `sum()`, `mean()`, `median()`, `min()`, and `max()` compute; `na.rm = TRUE` leaves out missing cells.
 - `r8map(x, f, columns, by)`, a generic, maps a typed function of R8, or a `calc()` in which `col()` is the column, over the columns of a table, one row for each group. An impl for `Raven` applies to every table.
 - `r8map(x, f, args = list(...))` of a list or an atomic vector calls a typed function on each element, with the constant arguments of `args`, and gives an atomic vector or a list by the function's return type, with the names of `x`.
@@ -29,7 +30,7 @@
 - The rule dialect has `^`, `median()`, `n()`, `count()`, `NA`, `na.rm = TRUE` in aggregates, and `col(expr)`, the column whose name an R expression gives.
 - `field(compute =)` takes a `calc()`: `field(option(type_double()), compute = calc(mg / 1000))`.
 - `aggregate()` of a table is an error that names `r8summarize()`.
-- `n_threads` of `r8map()`, `r8summarize()`, `r8_set()`, `r8_sort()`, `r8_filter()`, and `r8_check()`, and the option `r8.n_threads`, set the threads that their work in Rust may use; a result is the same for any number of threads.
+- `n_threads` of `r8map()`, `r8summarize()`, `r8set()`, `r8sort()`, `r8filter()`, and `r8check()`, and the option `r8.n_threads`, set the threads that their work in Rust may use; a result is the same for any number of threads.
 
 # R8 0.5.0
 

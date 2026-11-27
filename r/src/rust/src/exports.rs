@@ -3,7 +3,7 @@
 //!
 //! A package whose declarations are compiled registers a function returning
 //! its static `R8Exports` with `R_RegisterCCallable(pkg, "r8_exports", fn)`
-//! (`R8.h`). `r8_register()` fetches the table through R8's C routine
+//! (`R8.h`). `r8register()` fetches the table through R8's C routine
 //! `exports` (`src/view.c`), as an external pointer tagged with the symbol
 //! `r8_exports`, compares the table's types with the package's R
 //! declarations ([`r8_exports_compare`]), and passes it to

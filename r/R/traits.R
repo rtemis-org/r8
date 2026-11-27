@@ -655,7 +655,7 @@ cache_impl <- function(key, args, impl) {
 #' @keywords internal
 #' @noRd
 put_impl <- function(trait_name, method, type, fn) {
-  # The provider, which r8_next_impl() reads from the running impl.
+  # The provider, which r8next_impl() reads from the running impl.
   attr(fn, "r8_provider") <- c(trait_name, method, type)
   assign(paste(trait_name, method, type, sep = "|"), fn, envir = .r8_impls)
   if (nzchar(type)) {
@@ -683,7 +683,7 @@ clear_dispatch <- function() {
 } # /R8::clear_dispatch
 
 
-# %% r8_clear_dispatch ----
+# %% r8clear_dispatch ----
 #' Clear R8's dispatch cache
 #'
 #' R8 caches the method each generic selected for the chain of its
@@ -693,17 +693,17 @@ clear_dispatch <- function() {
 #' `methods::setClassUnion()` on an existing class changes the chain of
 #' objects of that class without an impl's declaration; a session that does
 #' so after a generic of an impl on the new superclass ran calls
-#' `r8_clear_dispatch()`.
+#' `r8clear_dispatch()`.
 #'
 #' @return `NULL`, invisibly.
 #'
 #' @examples
-#' r8_clear_dispatch()
+#' r8clear_dispatch()
 #'
 #' @export
-r8_clear_dispatch <- function() {
+r8clear_dispatch <- function() {
   clear_dispatch()
-} # /R8::r8_clear_dispatch
+} # /R8::r8clear_dispatch
 
 
 # %% clear_ancestry ----
@@ -791,7 +791,7 @@ stale_abort <- function(type, parent, class) {
 #' The nearest of `type` and its ancestors with an impl of the trait provides
 #' the method, or the trait's default implementation when that impl omits it;
 #' without such a type, the trait's default implementation applies. With
-#' `after`, the search starts at the parent of `after`, for `r8_next_impl()`.
+#' `after`, the search starts at the parent of `after`, for `r8next_impl()`.
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.
@@ -1523,7 +1523,7 @@ impl_declare <- function(
         t[["source"]],
         "` extends `",
         type_name,
-        "`, so r8_convert() upcasts it; an impl of From(",
+        "`, so r8convert() upcasts it; an impl of From(",
         sub("^.*::", "", t[["source"]]),
         ") for `",
         type_name,
@@ -1638,7 +1638,7 @@ register_method <- function(t, m, key, fn) {
     # An S3 method is registered for the class itself; a host class's key
     # holds the name in double quotes.
     s3_class <- if (is_host_key(key)) host_key_class(key) else key
-    # The S3 method is the stamped impl, from which r8_next_impl() reads its
+    # The S3 method is the stamped impl, from which r8next_impl() reads its
     # provider.
     fn <- .r8_impls[[paste(t[["name"]], m, key, sep = "|")]]
     if (identical(t[["name"]], "R8::Print")) {
@@ -1661,7 +1661,7 @@ register_method <- function(t, m, key, fn) {
 #' Check that a package defines an S4 class
 #'
 #' Checks `host_class(class, package, system = "s4")` when the package's
-#' namespace is loaded: at the impl's declaration, and in `r8_register()`
+#' namespace is loaded: at the impl's declaration, and in `r8register()`
 #' at the declaring package's load.
 #'
 #' @param class Character: The class name.

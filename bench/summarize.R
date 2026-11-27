@@ -116,13 +116,13 @@ in_rows <- function(n, g) {
   dt <- as.data.table(d)
   setDTthreads(1L)
   count <- c(
-    R8 = ms(\() r8_set(v, list(nk = calc(n())), by = "k", n_threads = 1L), 3L),
+    R8 = ms(\() r8set(v, list(nk = calc(n())), by = "k", n_threads = 1L), 3L),
     dt1 = ms(\() copy(dt)[, nk := .N, by = k], 3L),
     dplyr = ms(\() mutate(d, nk = n(), .by = k), 3L),
     base = ms(\() ave(seq_len(n), d$k, FUN = length), 3L)
   )
   bmi <- c(
-    R8 = ms(\() r8_set(v, list(bmi = calc(w / h^2)), n_threads = 1L), 3L),
+    R8 = ms(\() r8set(v, list(bmi = calc(w / h^2)), n_threads = 1L), 3L),
     base = ms(\() d$w / d$h^2, 3L),
     dt1 = ms(\() copy(dt)[, bmi := w / h^2], 3L)
   )

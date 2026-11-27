@@ -24,10 +24,10 @@ if (MODE %in% c("value", "control")) {
 } else if (MODE %in% c("json_write", "json", "json_control")) {
   path <- file.path(Sys.getenv("R8_BENCH_TMP"), paste0("gbm-", gsub(" ", "_", SYSTEM), ".json"))
   if (MODE == "json_write") {
-    writeLines(R8::r8_to_json(do.call(GBM, gbm_args(n))), path)
+    writeLines(R8::r8to_json(do.call(GBM, gbm_args(n))), path)
   } else {
     text <- readLines(path)
-    if (MODE == "json") x <- R8::r8_from_json(GBM, text)
+    if (MODE == "json") x <- R8::r8from_json(GBM, text)
   }
 } else {
   source(file.path(BENCH_DIR, "table.R"))

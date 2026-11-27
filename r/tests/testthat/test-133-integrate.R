@@ -32,7 +32,7 @@ test_that("knitr receives html, inline markdown, or plain text by target", {
   inline <- knit_print.r8_value(x, inline = TRUE)
   expect_identical(as.character(inline), "`<demo::GBMI>; n_trees: 500`")
   expect_output(with_pandoc_to("gfm", knit_print.r8_value(x)), "n_trees: 500")
-  t <- r8_text("a", r8_span("b", "strong"))
+  t <- r8text("a", r8span("b", "strong"))
   expect_match(
     with_pandoc_to("html", knit_print.r8_text(t)),
     "r8-strong",
@@ -51,7 +51,7 @@ test_that("a Print impl's text reaches documents and notebooks", {
       Print,
       GBM,
       methods = list(print = function(x, ...) {
-        r8_text(r8_span("GBM", "highlight"), " in ", r8_output_type())
+        r8text(r8span("GBM", "highlight"), " in ", r8output_type())
       })
     )
   )
@@ -84,7 +84,7 @@ test_that("repr gives html and plain text, and pillar the type or Display text",
   x <- GBM(n_trees = 500L)
   expect_match(repr_html.r8_value(x), "^<pre class=\"r8\">")
   expect_identical(repr_text.r8_value(x), "<demo::GBMI>\n  n_trees: 500")
-  expect_identical(repr_text.r8_text(r8_text("a")), "a")
+  expect_identical(repr_text.r8_text(r8text("a")), "a")
   expect_identical(obj_sum.r8_value(x), "demo::GBMI")
   Named <- declare_in(
     "demo",
@@ -101,7 +101,7 @@ test_that("repr gives html and plain text, and pillar the type or Display text",
   expect_identical(obj_sum.r8_value(Named(n_trees = 3L)), "GBM(3)")
 })
 
-test_that("the classes mode marks spans by class, styled by r8_css()", {
+test_that("the classes mode marks spans by class, styled by r8css()", {
   GBM <- gbm_integrate()
   x <- GBM(n_trees = 500L)
   classes <- format(x, output_type = "html", html_style = "classes")
@@ -120,7 +120,7 @@ test_that("the classes mode marks spans by class, styled by r8_css()", {
     format(x, output_type = "html", html_style = "css"),
     class = "r8_text_error"
   )
-  css <- r8_css()
+  css <- r8css()
   expect_match(
     css,
     ".r8 .r8-bracket { color:var(--r8-bracket,#6CA3A0) }",
@@ -132,8 +132,8 @@ test_that("the classes mode marks spans by class, styled by r8_css()", {
     fixed = TRUE
   )
   expect_match(css, "@media (prefers-color-scheme: dark) {", fixed = TRUE)
-  custom <- r8_css(
-    r8_theme(bracket = list(color = "#FF0000")),
+  custom <- r8css(
+    r8theme(bracket = list(color = "#FF0000")),
     style_element = TRUE
   )
   expect_match(custom, "^<style>\n")
@@ -148,7 +148,7 @@ test_that("the classes mode marks spans by class, styled by r8_css()", {
     "  .r8 .r8-variant { color:var(--r8-variant,#0F6A66) }",
     fixed = TRUE
   )
-  expect_error(r8_css(list()), class = "r8_text_error")
+  expect_error(r8css(list()), class = "r8_text_error")
 })
 
 test_that("repr dispatches to R8's methods once repr loads", {
@@ -157,5 +157,5 @@ test_that("repr dispatches to R8's methods once repr loads", {
   x <- GBM(n_trees = 500L)
   expect_identical(repr::repr_html(x), repr_html.r8_value(x))
   expect_identical(repr::repr_text(x), "<demo::GBMI>\n  n_trees: 500")
-  expect_match(repr::repr_html(r8_text("a")), "^<pre class=\"r8\">")
+  expect_match(repr::repr_html(r8text("a")), "^<pre class=\"r8\">")
 })

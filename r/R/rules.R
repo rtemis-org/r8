@@ -41,7 +41,7 @@
 #' @section Rows:
 #' A rule of a [new_table()] or a `type_table()` reads the cells of one row by the
 #' names of the columns; the cell of a factor is its label. A rule also chooses the
-#' rows of a table ([r8_filter()]), and then `mean()`, `sum()`, `median()`, `min()`,
+#' rows of a table ([r8filter()]), and then `mean()`, `sum()`, `median()`, `min()`,
 #' `max()`, `n()`, and `count()` read whole columns, as in [calc()]. `pmin()` and
 #' `pmax()` are of the cells of a row.
 #'
@@ -107,7 +107,7 @@
 #'
 #' | Word | In a rule |
 #' |:--|:--|
-#' | `is_variant(x, "V")` | The variant of the enum field `x` is `V`; R tests a value with `r8_is_variant()`. |
+#' | `is_variant(x, "V")` | The variant of the enum field `x` is `V`; R tests a value with `r8is_variant()`. |
 #' | `all(x, cond)`, `any(x, cond)` | `cond` holds for every or some element `.x` of `x`. |
 #' | `subset(x, y)` | Every element of the vector `x` is an element of `y`. |
 #' | `non_decreasing(x)`, `non_increasing(x)` | The vector `x` is in order. |
@@ -371,11 +371,11 @@ col_name <- function(e, env) {
 #' captured unevaluated, compiled against the columns of the table it is given
 #' with, and evaluated in Rust. A bare name is a column, `val(expr)` is the
 #' value of an R expression, and `col(expr)` is the column whose name an R
-#' expression gives. [r8_set()] stores the column that an expression computes
+#' expression gives. [r8set()] stores the column that an expression computes
 #' for every row, [r8summarize()] the value of an expression of aggregates for
 #' each group, and [r8map()] one expression over many columns, in which `col()`
 #' is each column in turn. `field(option(T), compute = calc(expr))` declares a
-#' field that [r8_resolve()] computes from the others.
+#' field that [r8resolve()] computes from the others.
 #'
 #' @section Results:
 #' A number is a double, except `n()`, `count()`, and a choice among integers

@@ -146,7 +146,7 @@ test_that("an extra column has any name and any of the column types", {
   )
   expect_identical(r$`Age (years)`, c(1, NA, Inf))
   expect_identical(levels(r$f), c("v", "u"))
-  expect_identical(r8_from_json(Raven, r8_to_json(r)), r)
+  expect_identical(r8from_json(Raven, r8to_json(r)), r)
   expect_identical(Raven(iris)$Species, iris$Species)
   refuses(Raven(`$x` = 1), "does not begin with `$`")
   refuses(Raven(a = 1, a = 2), "two columns are named `a`")
@@ -255,7 +255,7 @@ test_that("rbind() binds values of one table", {
   refuses(
     rbind(
       Raven(x = 1),
-      r8_annotate(Raven(x = 1), unit = c(x = "kg"))
+      r8annotate(Raven(x = 1), unit = c(x = "kg"))
     ),
     "units or descriptions"
   )
@@ -271,51 +271,51 @@ test_that("rbind() binds values of one table", {
 test_that("the columns of a table have units and descriptions", {
   V <- vitals("tb6")
   v <- V(cases())
-  about <- r8_columns(v)
+  about <- r8columns(v)
   expect_identical(about$name, names(v))
   expect_identical(about$unit, c("a", NA, NA, NA))
   expect_identical(about$description, c("Age", NA, NA, NA))
   expect_identical(about$declared, c(TRUE, TRUE, TRUE, FALSE))
   expect_identical(
-    r8_columns(Raven(iris))$type,
+    r8columns(Raven(iris))$type,
     c(rep("double", 4L), "factor")
   )
   r <- Raven(v)
-  expect_identical(r8_columns(r)$unit, c("a", NA, NA, NA))
-  expect_identical(r8_columns(r[2:1, c("sbp", "age")])$unit, c(NA, "a"))
-  r <- r8_annotate(
+  expect_identical(r8columns(r)$unit, c("a", NA, NA, NA))
+  expect_identical(r8columns(r[2:1, c("sbp", "age")])$unit, c(NA, "a"))
+  r <- r8annotate(
     r,
     unit = c(sbp = "mm[Hg]"),
     description = c(sbp = "Pressure")
   )
   expect_match(format(r), "[mm[Hg]]", fixed = TRUE, all = FALSE)
-  expect_identical(r8_columns(r)$description[1:2], c("Age", "Pressure"))
-  r <- r8_annotate(r, unit = c(age = NA), description = c(age = NA, sbp = NA))
-  expect_identical(r8_columns(r)$unit, c(NA, "mm[Hg]", NA, NA))
-  expect_identical(r8_columns(r)$description, rep(NA_character_, 4L))
-  expect_identical(r8_annotate(r), r)
+  expect_identical(r8columns(r)$description[1:2], c("Age", "Pressure"))
+  r <- r8annotate(r, unit = c(age = NA), description = c(age = NA, sbp = NA))
+  expect_identical(r8columns(r)$unit, c(NA, "mm[Hg]", NA, NA))
+  expect_identical(r8columns(r)$description, rep(NA_character_, 4L))
+  expect_identical(r8annotate(r), r)
   # A replaced column and a removed one take their facts along; the others keep
   # theirs.
-  r <- r8_annotate(r, unit = c(age = "a"))
+  r <- r8annotate(r, unit = c(age = "a"))
   r$sbp <- c(1, 2, 3)
-  expect_identical(r8_columns(r)$unit, c("a", NA, NA, NA))
+  expect_identical(r8columns(r)$unit, c("a", NA, NA, NA))
   r["age"] <- list(c(0.1, 0.2, 0.3))
-  expect_identical(r8_columns(r)$unit, rep(NA_character_, 4L))
+  expect_identical(r8columns(r)$unit, rep(NA_character_, 4L))
   # The unit of a declared column is its type's.
   w <- v
   w$age <- w$age + 1
-  expect_identical(r8_columns(w)$unit[[1L]], "a")
+  expect_identical(r8columns(w)$unit[[1L]], "a")
   bad <- function(expr, text) {
     expect_error(expr, text, fixed = TRUE, class = "r8_argument_error")
   }
-  bad(r8_annotate(v, unit = c(age = "mo")), "is declared by `tb6::Vitals`")
-  bad(r8_annotate(r, unit = c(nope = "a")), "not a column")
-  bad(r8_annotate(r, unit = c(age = " a")), "no surrounding spaces")
-  bad(r8_annotate(r, description = c(age = "")), "is not empty")
-  bad(r8_annotate(r, unit = "a"), "unit = c(age = \"a\")")
-  bad(r8_annotate(r, unit = list(age = "a")), "by the names of columns")
-  bad(r8_annotate(r, unit = c(age = "a", age = "b")), "by the names of columns")
-  bad(r8_columns(cases()), "a value of a table")
+  bad(r8annotate(v, unit = c(age = "mo")), "is declared by `tb6::Vitals`")
+  bad(r8annotate(r, unit = c(nope = "a")), "not a column")
+  bad(r8annotate(r, unit = c(age = " a")), "no surrounding spaces")
+  bad(r8annotate(r, description = c(age = "")), "is not empty")
+  bad(r8annotate(r, unit = "a"), "unit = c(age = \"a\")")
+  bad(r8annotate(r, unit = list(age = "a")), "by the names of columns")
+  bad(r8annotate(r, unit = c(age = "a", age = "b")), "by the names of columns")
+  bad(r8columns(cases()), "a value of a table")
 })
 
 test_that("a table is a field, an implementor, and an argument", {
@@ -351,9 +351,9 @@ test_that("a table is a field, an implementor, and an argument", {
   )
   expect_identical(f$cases$x, c(1, 2))
   expect_identical(out[["size"]](f$any), 2L)
-  expect_identical(r8_from_json(out[["Fit"]], r8_to_json(f)), f)
-  expect_true(r8_equal(f, unserialize(serialize(f, NULL))))
-  expect_match(r8_hash(f), "^sha256:")
+  expect_identical(r8from_json(out[["Fit"]], r8to_json(f)), f)
+  expect_true(r8equal(f, unserialize(serialize(f, NULL))))
+  expect_match(r8hash(f), "^sha256:")
   expect_match(format(f), "cases: <tb7::V> 2 x 1", fixed = TRUE, all = FALSE)
   refuses(out[["Fit"]](cases = Raven(x = 1), many = list()), "`cases`")
   refuses(out[["Fit"]](cases = data.frame(x = 1), many = list()), "`cases`")
@@ -365,21 +365,21 @@ test_that("equality and the hash cover the order and the units, not descriptions
     Raven(b = c("x", "y"), a = c(1, NA)),
     Raven(a = c(1, NaN), b = c("x", "y")),
     Raven(a = c(1L, NA), b = c("x", "y")),
-    r8_annotate(r, unit = c(a = "kg"))
+    r8annotate(r, unit = c(a = "kg"))
   )
   for (x in differs) {
-    expect_false(r8_equal(r, x))
-    expect_false(identical(r8_hash(r), r8_hash(x)))
+    expect_false(r8equal(r, x))
+    expect_false(identical(r8hash(r), r8hash(x)))
   }
-  d <- r8_annotate(r, description = c(a = "Weight"))
-  expect_true(r8_equal(r, d))
-  expect_identical(r8_hash(r), r8_hash(d))
-  expect_false(identical(r, d) && identical(r8_columns(r), r8_columns(d)))
+  d <- r8annotate(r, description = c(a = "Weight"))
+  expect_true(r8equal(r, d))
+  expect_identical(r8hash(r), r8hash(d))
+  expect_false(identical(r, d) && identical(r8columns(r), r8columns(d)))
   for (x in c(list(r, d), differs)) {
-    back <- r8_from_json(Raven, r8_to_json(x))
+    back <- r8from_json(Raven, r8to_json(x))
     expect_identical(back, x)
-    expect_identical(r8_columns(back), r8_columns(x))
-    expect_identical(r8_columns(unserialize(serialize(x, NULL))), r8_columns(x))
+    expect_identical(r8columns(back), r8columns(x))
+    expect_identical(r8columns(unserialize(serialize(x, NULL))), r8columns(x))
   }
 })
 
@@ -414,7 +414,7 @@ test_that("R's functions of data frames read a table or name R8's", {
     g = c("u", "u", "v", "v")
   )
   d <- as.data.frame(x)
-  n <- r8_select(x, c("a", "b"))
+  n <- r8select(x, c("a", "b"))
   m <- as.data.frame(n)
   for (f in list(as.matrix, t, is.na, summary, dim)) {
     expect_identical(f(n), f(m))
@@ -436,11 +436,11 @@ test_that("R's functions of data frames read a table or name R8's", {
     function() transform(x, z = a),
     function() within(x, z <- a)
   )) {
-    expect_error(f(), "r8_set(x, ", fixed = TRUE, class = "r8_value_error")
+    expect_error(f(), "r8set(x, ", fixed = TRUE, class = "r8_value_error")
   }
-  expect_error(subset(x, a > 1), "r8_filter(", fixed = TRUE)
+  expect_error(subset(x, a > 1), "r8filter(", fixed = TRUE)
   for (f in list(sort, order)) {
-    expect_error(f(x), "r8_sort(", fixed = TRUE, class = "r8_value_error")
+    expect_error(f(x), "r8sort(", fixed = TRUE, class = "r8_value_error")
   }
   for (z in list(c(0, -0, 1), c(-0, 0, -1), c(0, -0))) {
     v <- Raven(z = z)$z
@@ -482,11 +482,11 @@ test_that("data.table changes no table that it is given or that it is read from"
   x <- data.table::data.table(a = r$a)
   data.table::set(x, 1L, "a", -1)
   expect_true(first(r) >= 0)
-  expect_identical(r8_validate(r), r)
+  expect_identical(r8validate(r), r)
   # setDT() of the value itself takes its type, and the value says so.
   x <- r
   data.table::setDT(x)
-  expect_error(r8_validate(r), class = "r8_error")
+  expect_error(r8validate(r), class = "r8_error")
 })
 
 test_that("no operation on a table copies a column that it does not change", {
@@ -517,7 +517,7 @@ test_that("no operation on a table copies a column that it does not change", {
     }),
     few
   )
-  expect_lt(memory(r8_validate(r)), few)
+  expect_lt(memory(r8validate(r)), few)
   expect_lt(memory(Raven(r)), few)
   # The rows of a table are new columns.
   expect_lt(memory(r[1:10, ]), few)
@@ -540,7 +540,7 @@ test_that("a table prints as a grid that says what it leaves out", {
       "146           6.7          3.0           5.2          2.3  virginica"
     )
   )
-  r <- r8_annotate(
+  r <- r8annotate(
     Raven(
       a = c(1.25, NA, 100),
       b = c("x", NA, "long text that is cut somewhere")
@@ -634,11 +634,11 @@ test_that("a table is valid after any operations, as a full check finds", {
       }
     )
     expect_s3_class(v, "tb8::Vitals")
-    r8_validate(v)
+    r8validate(v)
     plain <- as.data.frame(v)
     expect_identical(as.data.frame(V(plain)), plain)
-    expect_true(r8_equal(v, V(plain)))
-    expect_identical(r8_hash(v), r8_hash(V(plain)))
+    expect_true(r8equal(v, V(plain)))
+    expect_identical(r8hash(v), r8hash(V(plain)))
   }
 })
 
@@ -660,7 +660,7 @@ test_that("a table of another declaration is refused and updated", {
   expect_identical(v$age, c(31, 32, 33))
   refuses(v[1, ], "another declaration")
   refuses(v$age <- c(1, 2, 3), "another declaration")
-  u <- r8_update(v)
+  u <- r8update(v)
   expect_identical(names(u), c("sbp", "age", "grp", "sex"))
   expect_identical(u[1, ]$sex, "f")
   declare_in("tb9", {
@@ -669,18 +669,18 @@ test_that("a table of another declaration is refused and updated", {
       columns = list(age = column(type_double(), unit = "mo"))
     )
   })
-  expect_error(r8_update(u), "was in `a`, and is in `mo`", class = "r8_error")
+  expect_error(r8update(u), "was in `a`, and is in `mo`", class = "r8_error")
 })
 
 test_that("a saved table reads in a session that did not declare it", {
   V <- vitals("tb10")
-  r <- r8_annotate(Raven(iris), unit = c(Sepal.Length = "cm"))
+  r <- r8annotate(Raven(iris), unit = c(Sepal.Length = "cm"))
   v <- V(cases())
   path <- tempfile(fileext = ".rds")
   saveRDS(list(r, v), path)
   back <- readRDS(path)
   expect_identical(back, list(r, v))
-  expect_identical(r8_columns(back[[1L]]), r8_columns(r))
+  expect_identical(r8columns(back[[1L]]), r8columns(r))
   # Damaged facts are refused.
   bytes <- serialize(r, NULL, xdr = FALSE)
   at <- which(vapply(

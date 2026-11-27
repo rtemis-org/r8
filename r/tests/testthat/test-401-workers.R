@@ -29,13 +29,13 @@ scenario(
         "m2 <- mirai::mirai({ library(r8pkgA); list(a = area(x), v = Rect(w = 4, h = 1)) }, x = x)",
         "r2 <- mirai::collect_mirai(m2)",
         "cat('mirai-area', r2$a, '\\n')",
-        "cat('mirai-value', R8::r8_equal(r2$v, Rect(w = 4, h = 1)), identical(r2$v, Rect(w = 4, h = 1)), '\\n')",
+        "cat('mirai-value', R8::r8equal(r2$v, Rect(w = 4, h = 1)), identical(r2$v, Rect(w = 4, h = 1)), '\\n')",
         "mirai::daemons(0)",
         "future::plan(future::multisession, workers = 1)",
         "f <- future::future({ library(r8pkgA); list(a = area(x), v = Rect(w = 5, h = 5)) }, globals = list(x = x), packages = character())",
         "r3 <- future::value(f)",
         "cat('future-area', r3$a, '\\n')",
-        "cat('future-value', R8::r8_hash(r3$v) == R8::r8_hash(Rect(w = 5, h = 5)), '\\n')",
+        "cat('future-value', R8::r8hash(r3$v) == R8::r8hash(Rect(w = 5, h = 5)), '\\n')",
         "future::plan(future::sequential)"
       )
     )
@@ -68,7 +68,7 @@ scenario(
         "cat('record', is.raw(attr(S, 'r8_record')), is.null(attr(S, 'r8_ir')), '\n')",
         "mirai::daemons(1)",
         "# The worker has no declaration of S or K; S's record holds both.",
-        "m <- mirai::mirai({ v <- S(cost = 2); list(cost = v$cost, kernel = R8::r8_variant(v$kernel)) }, S = S)",
+        "m <- mirai::mirai({ v <- S(cost = 2); list(cost = v$cost, kernel = R8::r8variant(v$kernel)) }, S = S)",
         "r <- mirai::collect_mirai(m)",
         "cat('mirai', r$cost, r$kernel, '\n')",
         "m2 <- mirai::mirai(tryCatch(S(cost = -1), r8_value_error = function(e) 'refused'), S = S)",

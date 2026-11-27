@@ -1,0 +1,22 @@
+url: https://docs.rtemis.org/r/r8-api/
+destination: ~/Docs/docs-rtemis/docs/r/r8-api/
+template:
+  bootstrap: 5
+  light-switch: true
+  theme: atom-one-light
+  theme-dark: atom-one-dark
+  bslib:
+    base_font: {google: "Geist"}
+    heading_font: {google: "Geist"}
+    code_font: {google: "Fira Code"}
+navbar:
+  structure:
+    left: [home, intro, reference, tutorials, news, docs]
+    right: [search, github, lightswitch]
+  components:
+    home: ~
+    docs:
+      text: Docs
+      icon: fa-book
+      href: https://docs.rtemis.org/r/r8/
+      target: _self

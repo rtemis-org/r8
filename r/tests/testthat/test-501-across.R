@@ -95,7 +95,7 @@ scenario(
       c(
         "library(pb)",
         "h <- Holder(p = pa::Point(x = 6, y = 2), label = 'a')",
-        "say('field', c(h$p$x, R8::r8_variant(h$kind)))",
+        "say('field', c(h$p$x, R8::r8variant(h$kind)))",
         "say('argument', first(h, pa::Point(x = 1, y = 0)))",
         "say('method', c(pa::mag(h), pa::mag(h$p)))",
         "say('wrong field', Holder(p = h, label = 'a'))",
@@ -141,9 +141,9 @@ scenario(
       c(pc, first$pa),
       c(
         "library(pc)",
-        "say('convert', R8::r8_convert(pa::Point(x = 3, y = 4), Polar)$r)",
+        "say('convert', R8::r8convert(pa::Point(x = 3, y = 4), Polar)$r)",
         "say('from', Polar@from(pa::Point(x = 3, y = 4))$r)",
-        "say('other', R8::r8_convert(pa::Kind@A, Polar))"
+        "say('other', R8::r8convert(pa::Kind@A, Polar))"
       )
     )
     expect_said(out, convert = "^5$", from = "^5$", other = "^error: ")

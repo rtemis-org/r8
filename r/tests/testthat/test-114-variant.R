@@ -27,40 +27,40 @@ resampler <- function(ns) {
   })
 }
 
-test_that("r8_variant() names the variant of a struct, newtype, and unit variant", {
+test_that("r8variant() names the variant of a struct, newtype, and unit variant", {
   Resampler <- resampler("variant1")
-  expect_identical(r8_variant(Resampler@KFold()), "KFold")
-  expect_identical(r8_variant(Resampler@Custom(train = 1L)), "Custom")
-  expect_identical(r8_variant(Resampler@Loocv), "Loocv")
+  expect_identical(r8variant(Resampler@KFold()), "KFold")
+  expect_identical(r8variant(Resampler@Custom(train = 1L)), "Custom")
+  expect_identical(r8variant(Resampler@Loocv), "Loocv")
   # The result is the caller's: changing it leaves the value's variant.
   cv <- Resampler@KFold()
-  v <- r8_variant(cv)
+  v <- r8variant(cv)
   v[1L] <- "Bootstrap"
-  expect_identical(r8_variant(cv), "KFold")
-  expect_true(r8_variant(cv) %in% c("KFold", "Loocv"))
+  expect_identical(r8variant(cv), "KFold")
+  expect_true(r8variant(cv) %in% c("KFold", "Loocv"))
   # A field write keeps the variant.
   cv$n <- 5L
-  expect_identical(r8_variant(cv), "KFold")
+  expect_identical(r8variant(cv), "KFold")
   # A value read from a document, and one that crossed serialize().
   expect_identical(
-    r8_variant(r8_from_json(Resampler, r8_to_json(Resampler@Loocv))),
+    r8variant(r8from_json(Resampler, r8to_json(Resampler@Loocv))),
     "Loocv"
   )
-  expect_identical(r8_variant(unserialize(serialize(cv, NULL))), "KFold")
+  expect_identical(r8variant(unserialize(serialize(cv, NULL))), "KFold")
 })
 
-test_that("r8_variant() refuses a struct value and any other object", {
+test_that("r8variant() refuses a struct value and any other object", {
   Resampler <- resampler("variant2")
   Point <- declare_in(
     "variant2",
     new_struct("Point", fields = list(x = type_double()))
   )
-  e <- expect_error(r8_variant(Point(x = 1)), class = "r8_type_error")
+  e <- expect_error(r8variant(Point(x = 1)), class = "r8_type_error")
   expect_identical(
     conditionMessage(e),
     "`x` is an R8 enum value; `variant2::Point` is a struct."
   )
-  e <- expect_error(r8_variant(1), class = "r8_type_error")
+  e <- expect_error(r8variant(1), class = "r8_type_error")
   expect_identical(conditionMessage(e), "`x` is an R8 enum value.")
   others <- list(
     NULL,
@@ -81,21 +81,21 @@ test_that("r8_variant() refuses a struct value and any other object", {
     structure(list(), class = class(Resampler@KFold()))
   )
   for (x in others) {
-    expect_error(r8_variant(x), class = "r8_type_error")
-    expect_error(r8_is_variant(x, "KFold"), class = "r8_type_error")
+    expect_error(r8variant(x), class = "r8_type_error")
+    expect_error(r8is_variant(x, "KFold"), class = "r8_type_error")
   }
 })
 
-test_that("r8_is_variant() tests one variant that the enum declares", {
+test_that("r8is_variant() tests one variant that the enum declares", {
   Resampler <- resampler("variant3")
   cv <- Resampler@KFold()
-  expect_true(r8_is_variant(cv, "KFold"))
-  expect_false(r8_is_variant(cv, "Bootstrap"))
-  expect_false(r8_is_variant(cv, "Custom"))
-  expect_true(r8_is_variant(Resampler@Loocv, "Loocv"))
-  expect_true(r8_is_variant(Resampler@Custom(train = 1L), "Custom"))
+  expect_true(r8is_variant(cv, "KFold"))
+  expect_false(r8is_variant(cv, "Bootstrap"))
+  expect_false(r8is_variant(cv, "Custom"))
+  expect_true(r8is_variant(Resampler@Loocv, "Loocv"))
+  expect_true(r8is_variant(Resampler@Custom(train = 1L), "Custom"))
   # A name the enum does not declare, with the nearest one.
-  e <- expect_error(r8_is_variant(cv, "KFol"), class = "r8_value_error")
+  e <- expect_error(r8is_variant(cv, "KFol"), class = "r8_value_error")
   expect_identical(
     conditionMessage(e),
     paste0(
@@ -103,7 +103,7 @@ test_that("r8_is_variant() tests one variant that the enum declares", {
       "is `KFold`. Variants: KFold, Bootstrap, Custom, Loocv."
     )
   )
-  e <- expect_error(r8_is_variant(cv, ""), class = "r8_value_error")
+  e <- expect_error(r8is_variant(cv, ""), class = "r8_value_error")
   expect_no_match(conditionMessage(e), "nearest")
   # `variant` is one string.
   for (v in list(
@@ -117,17 +117,17 @@ test_that("r8_is_variant() tests one variant that the enum declares", {
     quote(KFold),
     list("KFold")
   )) {
-    expect_error(r8_is_variant(cv, v), class = "r8_type_error")
+    expect_error(r8is_variant(cv, v), class = "r8_type_error")
   }
   # The type object's `@` reports an unknown variant with the same text.
   e <- expect_error(Resampler@KFol, class = "r8_value_error")
   expect_match(conditionMessage(e), "the nearest variant is `KFold`")
 })
 
-test_that("r8_is_variant() follows a declaration made again, and an unregistered type", {
+test_that("r8is_variant() follows a declaration made again, and an unregistered type", {
   Resampler <- resampler("variant4")
   cv <- Resampler@KFold()
-  expect_error(r8_is_variant(cv, "Jackknife"), class = "r8_value_error")
+  expect_error(r8is_variant(cv, "Jackknife"), class = "r8_value_error")
   declare_in(
     "variant4",
     new_enum(
@@ -135,13 +135,13 @@ test_that("r8_is_variant() follows a declaration made again, and an unregistered
       variants = list(KFold = variant(), Jackknife = variant())
     )
   )
-  expect_false(r8_is_variant(cv, "Jackknife"))
-  expect_error(r8_is_variant(cv, "Loocv"), class = "r8_value_error")
+  expect_false(r8is_variant(cv, "Jackknife"))
+  expect_error(r8is_variant(cv, "Loocv"), class = "r8_value_error")
   skip_without_oracle()
   # A value whose type no declaration of the session names.
   x <- oracle_any_value(list(), "nowhere::Shape", "Circle", "elsewhere")
-  expect_identical(r8_variant(x), "Circle")
-  expect_true(r8_is_variant(x, "Circle"))
-  expect_false(r8_is_variant(x, "Square"))
-  expect_error(r8_is_variant(x, 1), class = "r8_type_error")
+  expect_identical(r8variant(x), "Circle")
+  expect_true(r8is_variant(x, "Circle"))
+  expect_false(r8is_variant(x, "Square"))
+  expect_error(r8is_variant(x, 1), class = "r8_type_error")
 })

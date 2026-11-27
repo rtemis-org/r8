@@ -78,7 +78,7 @@ test_that("the default layout names the type, then each field, nested values ind
       "    test: integer[2] 11 12"
     )
   )
-  t <- r8_layout(x, head = 2L)
+  t <- r8layout(x, head = 2L)
   expect_s3_class(t, "r8_text")
   expect_identical(attr(t, "r8_depth"), c(0L, 1L, 1L, 1L, 1L, 2L, 2L))
   expect_identical(t[[4L]], "  coef: double[9] 0.12 -0.5 ...")
@@ -103,7 +103,7 @@ test_that("the default layout names the type, then each field, nested values ind
     "\033[38;5;32mdouble\033[0m\033[38;5;244m[9]\033[0m",
     fixed = TRUE
   )
-  expect_error(r8_layout(1), class = "r8_text_error")
+  expect_error(r8layout(1), class = "r8_text_error")
 })
 
 test_that("each output type reduces to the plain text", {
@@ -135,29 +135,29 @@ test_that("each output type reduces to the plain text", {
   expect_error(format(x, output_type = "rtf"), class = "r8_text_error")
 })
 
-test_that("r8_span() and r8_text() join pieces on one line, and c() stacks lines", {
-  t <- r8_text("Model ", r8_span("GBM", "type_name"), " has ", 500L, " trees")
+test_that("r8span() and r8text() join pieces on one line, and c() stacks lines", {
+  t <- r8text("Model ", r8span("GBM", "type_name"), " has ", 500L, " trees")
   expect_identical(as.character(t), "Model GBM has 500 trees")
   expect_identical(nchar(t), 23L)
   spans <- attr(t, "r8_spans")
   expect_identical(spans$start, c(1L, 7L, 10L, 15L, 18L))
   expect_identical(spans$end, c(6L, 9L, 14L, 17L, 23L))
   expect_identical(spans$role[[2L]], "type_name")
-  s <- c(t, r8_text(r8_span("12 s", "summary")))
+  s <- c(t, r8text(r8span("12 s", "summary")))
   expect_identical(as.character(s), c("Model GBM has 500 trees", "12 s"))
   expect_identical(attr(s, "r8_spans")$line, c(1L, 1L, 1L, 1L, 1L, 2L))
   expect_identical(
-    format(r8_span("é<b>", "strong"), output_type = "html"),
+    format(r8span("é<b>", "strong"), output_type = "html"),
     "<pre class=\"r8\"><span class=\"r8-line\" data-depth=\"0\"><span class=\"r8-strong\" style=\"font-weight:bold\">é&lt;b&gt;</span></span></pre>"
   )
-  expect_identical(format(r8_text()), character())
-  expect_error(r8_span("a", "red"), class = "r8_text_error")
-  expect_error(r8_span("a\nb", "strong"), class = "r8_text_error")
-  expect_error(r8_span(c("a", "b"), "strong"), class = "r8_text_error")
+  expect_identical(format(r8text()), character())
+  expect_error(r8span("a", "red"), class = "r8_text_error")
+  expect_error(r8span("a\nb", "strong"), class = "r8_text_error")
+  expect_error(r8span(c("a", "b"), "strong"), class = "r8_text_error")
 })
 
 test_that("text changed outside R8 encodes without its roles", {
-  t <- toupper(r8_text("a", r8_span("b", "strong")))
+  t <- toupper(r8text("a", r8span("b", "strong")))
   expect_warning(out <- format(t, output_type = "ansi"), "plain copy")
   expect_identical(out, "AB")
 })
@@ -171,8 +171,8 @@ test_that("a nested value whose type implements Display shows the impl's text", 
       Display,
       types$Split,
       methods = list(format = function(x, ...) {
-        r8_text(
-          r8_span(paste(length(x$train), "train"), "highlight"),
+        r8text(
+          r8span(paste(length(x$train), "train"), "highlight"),
           " / ",
           length(x$test),
           " test"
@@ -194,7 +194,7 @@ test_that("a Print impl returns text in the output type print() determines", {
       Print,
       types$GBM,
       methods = list(print = function(x, ...) {
-        r8_text(r8_span("GBM", "highlight"), " in ", r8_output_type())
+        r8text(r8span("GBM", "highlight"), " in ", r8output_type())
       })
     )
   )
@@ -214,23 +214,23 @@ test_that("a Print impl returns text in the output type print() determines", {
   expect_identical(format(x)[[1L]], "<demo::GBMT>")
 })
 
-test_that("r8_output_type() determines the choice, the setting, and the environment", {
-  expect_identical(r8_output_type("html"), "html")
+test_that("r8output_type() determines the choice, the setting, and the environment", {
+  expect_identical(r8output_type("html"), "html")
   with_opts(list(r8.output_type = "markdown"), {
-    expect_identical(r8_output_type(), "markdown")
-    expect_identical(r8_output_type("plain"), "plain")
+    expect_identical(r8output_type(), "markdown")
+    expect_identical(r8output_type("plain"), "plain")
   })
   with_env(c(R8_OUTPUT_TYPE = "html", NO_COLOR = ""), {
-    expect_identical(r8_output_type(), "html")
+    expect_identical(r8output_type(), "html")
   })
   with_env(c(R8_OUTPUT_TYPE = "", NO_COLOR = "1"), {
-    expect_identical(r8_output_type(), "plain")
+    expect_identical(r8output_type(), "plain")
   })
-  expect_error(r8_output_type("rtf"), class = "r8_text_error")
+  expect_error(r8output_type("rtf"), class = "r8_text_error")
 })
 
-test_that("r8_theme() replaces the styles of the roles it names", {
-  th <- r8_theme(
+test_that("r8theme() replaces the styles of the roles it names", {
+  th <- r8theme(
     type_name = list(color = "#FF0000"),
     bracket = list(color = NA)
   )
@@ -254,10 +254,10 @@ test_that("r8_theme() replaces the styles of the roles it names", {
       out
     )
   })
-  expect_error(r8_theme(colour = list(bold = TRUE)), "not a role")
-  expect_error(r8_theme(bracket = list(color = "teal")), "hex code")
-  expect_error(r8_theme(bracket = list(weight = 2)), "not a member")
-  expect_error(r8_theme(list(bold = TRUE)), class = "r8_text_error")
+  expect_error(r8theme(colour = list(bold = TRUE)), "not a role")
+  expect_error(r8theme(bracket = list(color = "teal")), "hex code")
+  expect_error(r8theme(bracket = list(weight = 2)), "not a member")
+  expect_error(r8theme(list(bold = TRUE)), class = "r8_text_error")
   expect_error(format(x, theme = list()), class = "r8_text_error")
 })
 
@@ -281,7 +281,7 @@ test_that("a list lays out its elements with types inferred from R objects", {
     fn = mean,
     NULL
   )
-  t <- r8_layout(x)
+  t <- r8layout(x)
   expect_identical(
     as.character(t),
     c(
@@ -308,32 +308,32 @@ test_that("a list lays out its elements with types inferred from R objects", {
     c("muted", "type_other", "summary")
   )
   expect_identical(attr(t, "r8_depth")[9:11], c(2L, 2L, 3L))
-  expect_identical(as.character(r8_layout(list())), "<list> 0 elements")
+  expect_identical(as.character(r8layout(list())), "<list> 0 elements")
   expect_identical(
-    as.character(r8_layout(unname(as.list(1:2)))),
+    as.character(r8layout(unname(as.list(1:2)))),
     c("<list> 2 elements", "  [[1]]: 1", "  [[2]]: 2")
   )
-  expect_error(r8_layout(lm(mpg ~ wt, mtcars)), class = "r8_text_error")
+  expect_error(r8layout(lm(mpg ~ wt, mtcars)), class = "r8_text_error")
 })
 
 test_that("a data frame lays out its columns as vectors, within the limits", {
-  t <- r8_layout(iris)
+  t <- r8layout(iris)
   expect_identical(t[[1L]], "<data.frame> 150 x 5")
   expect_identical(
     t[[6L]],
     "  Species: factor[150] setosa setosa setosa setosa setosa setosa setosa setosa ... (3 levels)"
   )
-  one <- r8_layout(data.frame(a = 1))
+  one <- r8layout(data.frame(a = 1))
   expect_identical(one[[2L]], "  a: double[1] 1")
-  wide <- r8_layout(as.data.frame(matrix(0, 2, 5000)))
+  wide <- r8layout(as.data.frame(matrix(0, 2, 5000)))
   expect_length(wide, 34L)
   expect_identical(wide[[34L]], "  ... 4,968 more")
-  nested <- r8_layout(list(df = head(mtcars, 2L)))
+  nested <- r8layout(list(df = head(mtcars, 2L)))
   expect_identical(
     nested[[2L]],
     "  df: table[2 x 11] mpg cyl disp hp drat wt qsec vs ..."
   )
-  long <- r8_layout(lapply(1:40, function(i) as.list(1:10)))
+  long <- r8layout(lapply(1:40, function(i) as.list(1:10)))
   expect_length(long, 129L)
   expect_identical(long[[129L]], "    ...")
   tb <- structure(
@@ -341,7 +341,7 @@ test_that("a data frame lays out its columns as vectors, within the limits", {
     class = c("tbl_df", "tbl", "data.frame"),
     row.names = c(NA, -3L)
   )
-  expect_identical(r8_layout(tb)[[1L]], "<tbl_df> 3 x 1")
+  expect_identical(r8layout(tb)[[1L]], "<tbl_df> 3 x 1")
 })
 
 test_that("a sensitive field is withheld from the text of a value", {
@@ -368,5 +368,5 @@ test_that("a sensitive field is withheld from the text of a value", {
   expect_output(str(k), "<sensitive>")
   # Reads and documents hold the value.
   expect_identical(k$token, "s3cret")
-  expect_match(r8_to_json(k), "s3cret")
+  expect_match(r8to_json(k), "s3cret")
 })

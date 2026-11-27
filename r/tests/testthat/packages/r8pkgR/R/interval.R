@@ -17,4 +17,4 @@ shares <- R8::generic("shares", R8::params(x))
 `upper<-` <- R8::generic("upper<-", R8::params(x, value = R8::arg_double()))
 
 # An impl in R, which continues to the compiled impl of its parent.
-R8::implement(total, Strip) <- function(x) x[["number"]] + R8::r8_next_impl()
+R8::implement(total, Strip) <- function(x) x[["number"]] + R8::r8next_impl()

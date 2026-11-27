@@ -49,8 +49,8 @@ test_that("a function whose body is in Rust computes, checks, and errs as its de
       "say('after', fraction(1, 4))",
       "say('print', any(grepl(\"body in Rust, package 'r8pkgR'\", utils::capture.output(print(clip)), fixed = TRUE)))",
       # Calls from documents reach the body.
-      "say('document', identical(R8::r8_call_from_json(level, '{\"$function\": \"pkgr::level\", \"arguments\": {\"x\": [1, 2, 3], \"hi\": 2.5}}'), c(1, 2.5, 2.5)))",
-      "say('written', R8::r8_call_to_json(level, c(1, 2), hi = 3))"
+      "say('document', identical(R8::r8call_from_json(level, '{\"$function\": \"pkgr::level\", \"arguments\": {\"x\": [1, 2, 3], \"hi\": 2.5}}'), c(1, 2.5, 2.5)))",
+      "say('written', R8::r8call_to_json(level, c(1, 2), hi = 3))"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -93,10 +93,10 @@ test_that("a body moved to Rust leaves the declaration, its schema, and its reco
       "op <- options(r8.namespace = 'other')",
       "level_r <- new_function('level', function(x = arg_vec(type_double(), description = 'Inflows, in order.'), lo = arg_double(default = 0, description = 'The floor.'), hi = arg_double(description = 'The capacity.')) x, rules = list(order = rule(lo <= hi)), return_type = vec(type_double()), description = 'Holds a running sum between `lo` and `hi`.')",
       "say('ir', identical(R8:::r8_function_ir('pkgr::level'), R8:::r8_function_ir('other::level')))",
-      "schema <- function(f) { s <- jsonlite::fromJSON(r8_schema(f), simplifyVector = FALSE); s$title <- NULL; s[['x-r8']]$`function` <- NULL; s }",
+      "schema <- function(f) { s <- jsonlite::fromJSON(r8schema(f), simplifyVector = FALSE); s$title <- NULL; s[['x-r8']]$`function` <- NULL; s }",
       "say('schema', identical(schema(level), schema(level_r)))",
       "say('formals', identical(formals(level), formals(level_r)))",
-      # The Rust signature that r8_rust_signature() writes is that of the
+      # The Rust signature that r8rust_signature() writes is that of the
       # compiled body, which load accepted.
       sprintf(
         "src <- readLines(%s)",
@@ -111,7 +111,7 @@ test_that("a body moved to Rust leaves the declaration, its schema, and its reco
       ),
       "params <- function(text) { t <- gsub('[[:space:]]', '', paste(text, collapse = '')); n <- regmatches(t, regexpr('fn[a-z_]+\\\\([^{]*\\\\{', t)); sub(',\\\\)', ')', n) }",
       "source_fn <- function(name) { t <- gsub('[[:space:]]', '', paste(src, collapse = '')); m <- regmatches(t, regexpr(paste0('fn', name, '\\\\([^{]*\\\\{'), t)); sub(',\\\\)', ')', m) }",
-      "for (f in list(clip = clip, level = level, tally = tally, fraction = fraction)) { name <- sub('^.*::', '', attr(f, 'r8_function')); g <- params(strsplit(r8_rust_signature(f), '\\n')[[1]]); s <- source_fn(name); say('signature', name, identical(g, s) || identical(sub('->(.*)\\\\{$', '->r8::Result<\\\\1>{', g), s)) }"
+      "for (f in list(clip = clip, level = level, tally = tally, fraction = fraction)) { name <- sub('^.*::', '', attr(f, 'r8_function')); g <- params(strsplit(r8rust_signature(f), '\\n')[[1]]); s <- source_fn(name); say('signature', name, identical(g, s) || identical(sub('->(.*)\\\\{$', '->r8::Result<\\\\1>{', g), s)) }"
     )
   )
   info <- paste(out, collapse = "\n")
@@ -171,9 +171,9 @@ test_that("load compares each Rust body with its declaration", {
     "absent TRUE ",
     "unlisted TRUE ",
     "in_r TRUE ",
-    "- `pkgr::level()` in Rust: its parameter `x` is vector of double, and in the declaration vector of integer. Its Rust signature, from r8_rust_signature():",
-    "- `pkgr::clip()` in Rust: it takes the parameters (x, lo, hi), and the declaration (x, low, hi). Its Rust signature, from r8_rust_signature():",
-    "- `pkgr::fraction()` in Rust: it returns double, and the declaration integer. Its Rust signature, from r8_rust_signature():",
+    "- `pkgr::level()` in Rust: its parameter `x` is vector of double, and in the declaration vector of integer. Its Rust signature, from r8rust_signature():",
+    "- `pkgr::clip()` in Rust: it takes the parameters (x, lo, hi), and the declaration (x, low, hi). Its Rust signature, from r8rust_signature():",
+    "- `pkgr::fraction()` in Rust: it returns double, and the declaration integer. Its Rust signature, from r8rust_signature():",
     "        x: &[i32],",
     "    ) -> i32 {"
   )) {

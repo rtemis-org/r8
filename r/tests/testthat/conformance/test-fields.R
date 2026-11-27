@@ -3,7 +3,7 @@
 # 2026- EDG rtemis.org
 
 # Fields of a `Probe` value: construction, reading, defaults, problems,
-# replacement, equality, and r8_conform(), for R-stored and Rust-stored
+# replacement, equality, and r8conform(), for R-stored and Rust-stored
 # values alike (helper-conformance.R).
 # spec: R8/class-system#conformance-tests
 
@@ -112,21 +112,21 @@ test_that("equality and the hash follow the contents", {
   a <- conform_value(p)
   b <- conform_value(p)
   c <- conform_value(p, ratio = 0.25)
-  expect_true(r8_equal(a, b))
-  expect_identical(r8_hash(a), r8_hash(b))
-  expect_false(r8_equal(a, c))
-  expect_false(identical(r8_hash(a), r8_hash(c)))
+  expect_true(r8equal(a, b))
+  expect_identical(r8hash(a), r8hash(b))
+  expect_false(r8equal(a, c))
+  expect_false(identical(r8hash(a), r8hash(c)))
 })
 
-test_that("r8_conform() converts what it can and constructs strictly", {
+test_that("r8conform() converts what it can and constructs strictly", {
   p <- conformance_provider()
   input <- probe_args(count = 3, index = c(1, 2), colour = "red")
-  expect_message(x <- r8_conform(input, p[["Probe"]]), "change")
+  expect_message(x <- r8conform(input, p[["Probe"]]), "change")
   expect_identical(x$count, 3L)
   expect_identical(x$index, c(1L, 2L))
-  expect_true(r8_equal(x, conform_value(p)))
+  expect_true(r8equal(x, conform_value(p)))
   expect_error(
-    suppressMessages(r8_conform(probe_args(ratio = 2), p[["Probe"]])),
+    suppressMessages(r8conform(probe_args(ratio = 2), p[["Probe"]])),
     class = "r8_value_error"
   )
 })

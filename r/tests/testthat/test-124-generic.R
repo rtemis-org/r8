@@ -3,7 +3,7 @@
 # 2026- EDG rtemis.org
 
 # Generics and methods in the style of R: generic(), implement() <-, and
-# r8_method().
+# r8method().
 #
 # spec: R8/class-system#r-familiar-layer
 
@@ -45,7 +45,7 @@ test_that("generic() declares a generic and implement() its methods", {
   expect_true(ir[["generic"]])
   expect_identical(ir[["methods"]][[1L]][["name"]], "describe")
   expect_identical(unlist(ir[["methods"]][[1L]][["params"]]), "x")
-  expect_identical(r8_method(describe, GBM)(GBM(n_trees = 2L)), "2 trees")
+  expect_identical(r8method(describe, GBM)(GBM(n_trees = 2L)), "2 trees")
   expect_output(print(describe), "<r8 generic gen1::describe>")
   expect_output(print(describe), "Methods for: gen1::GBM, gen1::Kernel")
 })
@@ -112,13 +112,13 @@ test_that("a generic shares the namespace's names with types and trait methods",
   )
 })
 
-test_that("implement() lowers format, str, dim, and r8_partial_cmp to standard traits", {
+test_that("implement() lowers format, str, dim, and r8partial_cmp to standard traits", {
   GBM <- gbm_types("gen5")[["GBM"]]
   declare_in("gen5", {
     implement(format, GBM) <- function(x, ...) paste0("GBM(", x$n_trees, ")")
     implement(str, GBM) <- function(object, ...) cat("GBM str\n")
     implement(dim, GBM) <- function(x) c(x$n_trees, 2L)
-    implement(r8_partial_cmp, GBM) <- function(x, y) sign(x$n_trees - y$n_trees)
+    implement(r8partial_cmp, GBM) <- function(x, y) sign(x$n_trees - y$n_trees)
   })
   g <- GBM(n_trees = 3L)
   expect_identical(format(g), "GBM(3)")
@@ -126,7 +126,7 @@ test_that("implement() lowers format, str, dim, and r8_partial_cmp to standard t
   expect_output(str(g), "GBM str")
   expect_identical(nrow(g), 3L)
   expect_true(g < GBM(n_trees = 4L))
-  expect_identical(r8_method(format, GBM)(g), "GBM(3)")
+  expect_identical(r8method(format, GBM)(g), "GBM(3)")
 })
 
 test_that("implement(print) is a Print impl, stated in a message", {
@@ -144,7 +144,7 @@ test_that("implement(print) is a Print impl, stated in a message", {
   expect_false(out[["visible"]])
   expect_identical(out[["value"]], g)
   expect_identical(format(g)[[1L]], "<gen6::GBM>")
-  expect_true(is.function(r8_method(print, GBM)))
+  expect_true(is.function(r8method(print, GBM)))
 })
 
 test_that("implement() on another S3 generic registers a method for the qualified class", {
@@ -187,7 +187,7 @@ test_that("implement() registers methods of an S3 generic that R8's namespace ca
     implement(tidy_up, GBM) <- function(x, ...) x$n_trees + 1L
   })
   expect_identical(tidy_up(GBM(n_trees = 9L)), 10L)
-  expect_identical(r8_method(tidy_up, GBM)(GBM(n_trees = 1L)), 2L)
+  expect_identical(r8method(tidy_up, GBM)(GBM(n_trees = 1L)), 2L)
 })
 
 test_that("implement() takes the method of a trait", {
@@ -221,13 +221,13 @@ test_that("implement() refuses the functions R8 owns, operators, and non-generic
   }
   refuse(try_impl(`$`), "reads the fields")
   refuse(try_impl(`[[<-`), "validates every change")
-  refuse(try_impl(`==`), "r8_equal")
-  refuse(try_impl(`<`), "implement\\(r8_partial_cmp, GBM\\)")
+  refuse(try_impl(`==`), "r8equal")
+  refuse(try_impl(`<`), "implement\\(r8partial_cmp, GBM\\)")
   refuse(try_impl(`+`), "operators")
   refuse(try_impl(Ops), "operators")
   refuse(try_impl(nrow), "implement\\(dim, GBM\\)")
-  refuse(try_impl(r8_convert), "implement\\(as_target, GBM\\)")
-  refuse(try_impl(r8_converter), "r8_converter\\(Target\\)")
+  refuse(try_impl(r8convert), "implement\\(as_target, GBM\\)")
+  refuse(try_impl(r8converter), "r8converter\\(Target\\)")
   refuse(try_impl(function(x) x), "not a generic")
   refuse(try_impl(methods::show), "S4 generic")
   refuse(try_impl(1), "takes a generic")

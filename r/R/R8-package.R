@@ -11,15 +11,16 @@
 #' with other host languages.
 #'
 #' @section Runtime:
-#' [r8_runtime_version()].
+#' [r8runtime_version()].
 #'
 #' @section Names:
 #' A function that a declaration is written with takes no prefix:
 #' [new_struct()], [type_double()], [field()], [rule()], [impl()],
-#' [generic()], [params()], [arg()], and the standard traits. A function that operates on values,
-#' types, or packages takes the prefix `r8_`: [r8_to_json()], [r8_hash()],
-#' [r8_validate()], [r8_register()]. S3 classes, condition classes, and value
-#' attributes take the prefix `r8_`; `R8_` prefixes the environment
+#' [generic()], [params()], [arg()], and the standard traits. A function that
+#' operates on values, types, tables, or packages begins with `r8` joined to
+#' its first word, with underscores between the later words: [r8filter()],
+#' [r8hash()], [r8to_json()], [r8register()]. S3 classes, condition classes,
+#' and value attributes take the prefix `r8_`; `R8_` prefixes the environment
 #' variable `R8_OUTPUT_TYPE`.
 #'
 #' @section Conditions:
@@ -37,16 +38,16 @@
 #'   codec is not registered, and `r8_unknown_type_error`, a document that
 #'   names a type no loaded package declares.
 #' - `r8_dispatch_error`: a generic or trait method with no impl for the
-#'   value's type, a conversion without a `From` impl, or `r8_next_impl()`
+#'   value's type, a conversion without a `From` impl, or `r8next_impl()`
 #'   without a next impl.
 #' - `r8_other_declaration_error`, beside `r8_value_error` or
 #'   `r8_dispatch_error`: a value made under another declaration of its type
-#'   than the registered one, which [r8_update()] converts or refuses.
+#'   than the registered one, which [r8update()] converts or refuses.
 #' - `r8_compiled_error`: an error that a package's compiled code returned, a
 #'   compiled method or the body of a function whose body is [rust()], with its
 #'   code in the field `code` and the call of the generic or the function; its
 #'   subclass `r8_panic` is a panic of the compiled code.
-#' - `r8_file_error`: a damaged file ([r8_read_rds()]).
+#' - `r8_file_error`: a damaged file ([r8read_rds()]).
 #' - `r8_text_error`: text output given invalid arguments.
 #'
 #' Every warning R8 signals has the class `r8_warning`:
@@ -55,7 +56,7 @@
 #'   earlier declaration of their parent.
 #' - `r8_declaration_warning`: a package whose compiled code was compiled against
 #'   another declaration of a type of another package, and may not read it
-#'   ([r8_register()]).
+#'   ([r8register()]).
 #'
 #' @section Types that other packages use:
 #' A package does not change a type that other packages use without coordinating

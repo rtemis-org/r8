@@ -3,7 +3,7 @@
 # 2026- EDG rtemis.org
 
 # Values of another declaration of their type than the registered one: what
-# reads them, what refuses them, and what r8_update() does with them. The
+# reads them, what refuses them, and what r8update() does with them. The
 # scenarios tell the same of users' work.
 #
 # spec: R8/class-system#values-of-another-declaration
@@ -22,8 +22,8 @@ test_that("a declaration whose differences have no part in a value is the same",
     field(type_double(), extensions = list("up1:note" = 1))
   )) {
     S <- struct(f)
-    expect_identical(r8_validate(x), x)
-    expect_identical(r8_update(x), x)
+    expect_identical(r8validate(x), x)
+    expect_identical(r8update(x), x)
     y <- x
     y$a <- 3
     expect_identical(y$a, 3)
@@ -58,11 +58,11 @@ test_that("a value of another declaration is read, shown, and not used", {
   expect_output(print(x), "Made under another declaration of `up2::S`")
   expect_output(str(x), "a: 1")
   # What uses.
-  expect_error(r8_validate(x), "declaration_changed", class = "r8_value_error")
-  expect_error(r8_hash(x), "declaration_changed", class = "r8_value_error")
-  expect_error(r8_to_json(x), "declaration_changed", class = "r8_value_error")
-  expect_error(r8_resolve(x), "declaration_changed", class = other)
-  expect_error(r8_equal(x, x), "declaration_changed", class = other)
+  expect_error(r8validate(x), "declaration_changed", class = "r8_value_error")
+  expect_error(r8hash(x), "declaration_changed", class = "r8_value_error")
+  expect_error(r8to_json(x), "declaration_changed", class = "r8_value_error")
+  expect_error(r8resolve(x), "declaration_changed", class = other)
+  expect_error(r8equal(x, x), "declaration_changed", class = other)
   expect_error(x == x, "declaration_changed", class = other)
   expect_error(x$a <- 2, "declaration_changed", class = "r8_value_error")
   expect_error(
@@ -70,7 +70,7 @@ test_that("a value of another declaration is read, shown, and not used", {
     "declaration_changed",
     class = "r8_value_error"
   )
-  expect_error(r8_update(x), "may mean something else", class = other)
+  expect_error(r8update(x), "may mean something else", class = other)
 })
 
 test_that("a function that takes or returns a type refuses a value of another declaration", {
@@ -96,12 +96,12 @@ test_that("a function that takes or returns a type refuses a value of another de
   expect_identical(out$one(a), 1)
   expect_error(out$one(b), "`b` was without a unit", class = other)
   expect_error(out$two(a, b), "`b` was without a unit", class = other)
-  expect_error(r8_upcast(b, out$A), "`b` was without a unit", class = other)
+  expect_error(r8upcast(b, out$A), "`b` was without a unit", class = other)
   # An index that held the method of the value's type is not used.
   expect_error(out$one(b), class = other)
 })
 
-test_that("r8_update() converts the values that a value holds", {
+test_that("r8update() converts the values that a value holds", {
   types <- function(unit = NULL, ...) {
     fields <- list(x = field(type_double(), unit = unit), ...)
     declare_in("up4", {
@@ -142,35 +142,35 @@ test_that("r8_update() converts the values that a value holds", {
   before <- as.list(h)
   t <- types(note = option(type_character()))
   expect_error(
-    r8_validate(h),
+    r8validate(h),
     "`note` was added as an optional field (in `up4::P`)",
     fixed = TRUE
   )
-  u <- r8_update(h)
+  u <- r8update(h)
   expect_identical(u$p, t$P(x = 1, note = NULL))
   expect_identical(u$ps, list(t$P(x = 2), t$P(x = 3)))
   expect_identical(u$map$a, t$P(x = 4))
   expect_identical(u$k, t$K@One(p = t$P(x = 5)))
   expect_identical(u$when, before$when)
   expect_identical(u$m, before$m)
-  expect_identical(r8_validate(u), u)
+  expect_identical(r8validate(u), u)
   # Lists, as of readRDS().
-  l <- r8_update(list(h, n = list(1, p = before$p), "a", NULL))
+  l <- r8update(list(h, n = list(1, p = before$p), "a", NULL))
   expect_identical(l[[1L]], u)
   expect_identical(l$n$p, t$P(x = 1))
   expect_null(l[[4L]])
   t <- types(unit = "mg")
-  expect_error(r8_update(h), "(in `up4::P`)", fixed = TRUE, class = other)
+  expect_error(r8update(h), "(in `up4::P`)", fixed = TRUE, class = other)
 })
 
-test_that("r8_update() takes an R8 value or a list", {
-  expect_error(r8_update(1), class = "r8_type_error")
+test_that("r8update() takes an R8 value or a list", {
+  expect_error(r8update(1), class = "r8_type_error")
   expect_error(
-    r8_update(structure(list(), class = c("a::B", "r8_value"))),
+    r8update(structure(list(), class = c("a::B", "r8_value"))),
     "is not one",
     class = "r8_type_error"
   )
-  expect_identical(r8_update(list(1, "a")), list(1, "a"))
+  expect_identical(r8update(list(1, "a")), list(1, "a"))
 })
 
 test_that("a value of an enum is updated unless its variant was removed", {
@@ -184,12 +184,12 @@ test_that("a value of an enum is updated unless its variant was removed", {
   c <- K@C
   K <- kinds(c("A", "B", "D"))
   expect_error(
-    r8_validate(a),
+    r8validate(a),
     "the variant `C` was removed",
     class = "r8_value_error"
   )
-  expect_identical(r8_update(a), K@A)
-  expect_error(r8_update(c), "its variant was removed", class = other)
+  expect_identical(r8update(a), K@A)
+  expect_error(r8update(c), "its variant was removed", class = other)
 })
 
 test_that("a declaration is read back whatever its length and letters", {
@@ -210,10 +210,10 @@ test_that("a declaration is read back whatever its length and letters", {
       setNames(rep(list("\u03b2eta"), n), paste0("field_number_", seq_len(n)))
     )
     x <- unserialize(serialize(x, NULL))
-    expect_identical(r8_validate(x), x)
+    expect_identical(r8validate(x), x)
     Wide <- wide(n, "mg")
     expect_error(
-      r8_validate(x),
+      r8validate(x),
       "`field_number_1` was in `\u00b5g/m\u00b3`, and is in `mg`",
       class = "r8_value_error"
     )
@@ -229,8 +229,8 @@ test_that("a value whose declaration this R8 does not read is shown and not used
   x <- oracle_any_value(list(a = 1), "up7::S", "", "sha256:later")
   expect_identical(x$a, 1)
   expect_match(format(x), "does not read", all = FALSE)
-  expect_error(r8_update(x), "does not read", class = other)
-  expect_error(r8_to_json(x), "does not read", class = "r8_value_error")
+  expect_error(r8update(x), "does not read", class = other)
+  expect_error(r8to_json(x), "does not read", class = "r8_value_error")
 })
 
 test_that("the declaration again makes its values usable again", {
@@ -242,9 +242,9 @@ test_that("the declaration again makes its values usable again", {
   }
   x <- struct("kg")(a = 1)
   struct("g")
-  expect_error(r8_validate(x), class = "r8_value_error")
+  expect_error(r8validate(x), class = "r8_value_error")
   struct("kg")
-  expect_identical(r8_validate(x), x)
+  expect_identical(r8validate(x), x)
 })
 
 test_that("equality meets a value of another declaration in a field that names no type", {
@@ -259,10 +259,10 @@ test_that("equality meets a value of another declaration in a field that names n
   X <- declare_in("up9", {
     new_struct("X", fields = list(n = field(type_double(min = 0), unit = "mg")))
   })
-  expect_error(r8_equal(h, out$D(d = X(n = 1))), "is in `mg`", class = other)
+  expect_error(r8equal(h, out$D(d = X(n = 1))), "is in `mg`", class = other)
   expect_error(h == out$D(d = X(n = 1)), "is in `mg`", class = other)
-  expect_error(r8_update(h), "is in `mg`", class = other)
-  expect_error(r8_validate(h), class = "r8_value_error")
+  expect_error(r8update(h), "is in `mg`", class = other)
+  expect_error(r8validate(h), class = "r8_value_error")
 })
 
 test_that("a constructor builds a default that is a value from the registered declaration", {
@@ -287,19 +287,19 @@ test_that("a constructor builds a default that is a value from the registered de
     new_struct("P", fields = list(x = type_double(), z = option(type_double())))
   })
   h <- H()
-  expect_identical(r8_validate(h), h)
+  expect_identical(r8validate(h), h)
   expect_identical(h$k, out$K@A)
   expect_identical(names(h$ps[[1L]]), c("x", "z"))
   expect_error(H(k = a), "the variant `C` was added", class = "r8_value_error")
 })
 
-test_that("r8_convert() refuses a value of another declaration of its target", {
+test_that("r8convert() refuses a value of another declaration of its target", {
   S <- declare_in("up11", new_struct("S", fields = list(a = type_double())))
   x <- S(a = 1)
   S <- declare_in("up11", {
     new_struct("S", fields = list(a = field(type_double(), unit = "kg")))
   })
-  expect_error(r8_convert(x, S), "is in `kg`", class = other)
+  expect_error(r8convert(x, S), "is in `kg`", class = other)
 })
 
 test_that("a value of a stale type refuses a write and a comparison", {
@@ -314,7 +314,7 @@ test_that("a value of a stale type refuses a write and a comparison", {
     new_struct("P", fields = list(a = type_double(min = 5)))
   }))
   expect_error(x$b <- 9, "type_stale", class = "r8_value_error")
-  expect_error(r8_equal(x, y), "type_stale", class = "r8_value_error")
+  expect_error(r8equal(x, y), "type_stale", class = "r8_value_error")
 })
 
 test_that("factor levels that are added or removed are checked, and reordered ones refused", {
@@ -324,13 +324,13 @@ test_that("factor levels that are added or removed are checked, and reordered on
   S <- struct(c("a", "b"))
   x <- S(f = factor("b", levels = c("a", "b")))
   S <- struct(c("a", "b", "c"))
-  expect_identical(r8_update(x), S(f = factor("b", levels = c("a", "b", "c"))))
+  expect_identical(r8update(x), S(f = factor("b", levels = c("a", "b", "c"))))
   struct("b")
-  expect_identical(levels(r8_update(x)$f), "b")
+  expect_identical(levels(r8update(x)$f), "b")
   struct("a")
-  expect_error(r8_update(x), class = "r8_value_error")
+  expect_error(r8update(x), class = "r8_value_error")
   struct(c("b", "a"))
-  expect_error(r8_update(x), "may mean something else", class = other)
+  expect_error(r8update(x), "may mean something else", class = other)
 })
 
 test_that("an update that the new declaration does not admit names its type", {
@@ -338,7 +338,7 @@ test_that("an update that the new declaration does not admit names its type", {
   x <- S(a = -1)
   declare_in("up14", new_struct("S", fields = list(a = type_double(min = 0))))
   expect_error(
-    r8_update(x),
+    r8update(x),
     "Cannot update to `up14::S`: 1 problem",
     fixed = TRUE
   )
@@ -368,13 +368,13 @@ test_that("a document of another declaration is refused unless it shows the same
   }
   S <- struct(type_double(min = 0), unit = "mg")
   x <- S(a = 1)
-  short <- r8_to_json(x)
-  full <- r8_to_json(x, declarations = TRUE)
+  short <- r8to_json(x)
+  full <- r8to_json(x, declarations = TRUE)
   expect_match(short, "\"$declarations\":{\"up16::S\":\"sha256:", fixed = TRUE)
   expect_no_match(short, "$ir", fixed = TRUE)
   expect_match(full, "\"unit\":\"mg\"", fixed = TRUE)
-  expect_identical(r8_from_json(S, short), x)
-  expect_identical(r8_from_json(S, full), x)
+  expect_identical(r8from_json(S, short), x)
+  expect_identical(r8from_json(S, full), x)
   # What has no part in a value.
   S <- struct(
     type_double(min = 0),
@@ -382,37 +382,37 @@ test_that("a document of another declaration is refused unless it shows the same
     default = 4,
     description = "A."
   )
-  expect_identical(r8_from_json(S, short)$a, 1)
+  expect_identical(r8from_json(S, short)$a, 1)
   # A bound.
   S <- struct(type_double(), unit = "mg")
   expect_error(
-    r8_from_json(S, short),
+    r8from_json(S, short),
     "another declaration of `up16::S` than the registered.*declaration = \"any\"",
     class = "r8_value_error"
   )
-  expect_identical(r8_from_json(S, full)$a, 1)
-  expect_identical(r8_from_json(S, short, declaration = "any")$a, 1)
+  expect_identical(r8from_json(S, full)$a, 1)
+  expect_identical(r8from_json(S, short, declaration = "any")$a, 1)
   # A unit.
   S <- struct(type_double(), unit = "mg/kg")
   expect_error(
-    r8_from_json(S, short),
+    r8from_json(S, short),
     "declaration_changed",
     class = "r8_value_error"
   )
   expect_error(
-    r8_from_json(S, full),
+    r8from_json(S, full),
     "`a` was in `mg`, and is in `mg/kg`",
     class = "r8_value_error"
   )
-  expect_identical(r8_from_json(S, full, declaration = "any")$a, 1)
+  expect_identical(r8from_json(S, full, declaration = "any")$a, 1)
   # Written by hand.
   hand <- "{\"$type\":\"up16::S\",\"$types\":{\"up16::S\":1},\"a\":2}"
-  expect_identical(r8_from_json(S, hand)$a, 2)
+  expect_identical(r8from_json(S, hand)$a, 2)
   expect_error(
-    r8_from_json(S, hand, declaration = "none"),
+    r8from_json(S, hand, declaration = "none"),
     class = "r8_type_error"
   )
-  expect_error(r8_to_json(x, declarations = 1), class = "r8_type_error")
+  expect_error(r8to_json(x, declarations = 1), class = "r8_type_error")
 })
 
 test_that("a document of a dyn() field holds the declaration of what it holds", {
@@ -423,10 +423,10 @@ test_that("a document of a dyn() field holds the declaration of what it holds", 
     D <- new_struct("D", fields = list(d = dyn(Sized)))
     list(X = X, D = D)
   })
-  json <- r8_to_json(out$D(d = out$X(n = 1)))
+  json <- r8to_json(out$D(d = out$X(n = 1)))
   expect_match(json, "\"up17::X\":\"sha256:", fixed = TRUE)
   declare_in("up17", {
     new_struct("X", fields = list(n = field(type_double(min = 0), unit = "mg")))
   })
-  expect_error(r8_from_json(out$D, json), "`up17::X`", class = "r8_value_error")
+  expect_error(r8from_json(out$D, json), "`up17::X`", class = "r8_value_error")
 })

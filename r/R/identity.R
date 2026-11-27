@@ -2,7 +2,7 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# %% r8_hash ----
+# %% r8hash ----
 #' Content hash of an R8 value
 #'
 #' The SHA-256 of the RFC 8785 canonical JSON of the type's name, its
@@ -20,11 +20,11 @@
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' r8_hash(Point(x = 1, y = 2))
+#' r8hash(Point(x = 1, y = 2))
 #' options(op)
 #'
 #' @export
-r8_hash <- function(x) {
+r8hash <- function(x) {
   if (!is_value(x)) {
     value_required(x)
   }
@@ -33,10 +33,10 @@ r8_hash <- function(x) {
     value_abort("Invalid", value_type(x), res[["errors"]])
   }
   res
-} # /R8::r8_hash
+} # /R8::r8hash
 
 
-# %% r8_equal ----
+# %% r8equal ----
 #' Equality of two R8 values
 #'
 #' `TRUE` when both values have the same type and equal fields: their
@@ -50,11 +50,11 @@ r8_hash <- function(x) {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' r8_equal(Point(x = 1, y = 2), Point(x = 1L, y = 2))
+#' r8equal(Point(x = 1, y = 2), Point(x = 1L, y = 2))
 #' options(op)
 #'
 #' @export
-r8_equal <- function(x, y) {
+r8equal <- function(x, y) {
   if (!is_value(x) || !is_value(y)) {
     r8_abort("`x` and `y` are R8 values.", class = "r8_type_error")
   }
@@ -71,7 +71,7 @@ r8_equal <- function(x, y) {
     )
   }
   res
-} # /R8::r8_equal
+} # /R8::r8equal
 
 
 # %% ordering ----
@@ -95,7 +95,7 @@ ordering <- function(o, type) {
     return(as.integer(o))
   }
   r8_abort(
-    "Invalid result of `r8_partial_cmp()` from the PartialOrd impl of `",
+    "Invalid result of `r8partial_cmp()` from the PartialOrd impl of `",
     type,
     "`: it returns -1L, 0L, or 1L, or NA when the values are not ordered; found ",
     paste(utils::capture.output(utils::str(o)), collapse = " "),
@@ -108,7 +108,7 @@ ordering <- function(o, type) {
 # %% Ops.r8_value ----
 #' Comparison of R8 values
 #'
-#' `x == y` and `x != y` compare two R8 values with `r8_equal()`, the
+#' `x == y` and `x != y` compare two R8 values with `r8equal()`, the
 #' `PartialEq` standard trait. `<`, `<=`, `>`, and `>=` use the type's
 #' `PartialOrd` impl, and return `FALSE` for values it does not order. Other
 #' operators raise an error.
@@ -122,7 +122,7 @@ Ops.r8_value <- function(e1, e2) {
   # R binds .Generic in the frame of a group generic's method.
   op <- .Generic # nolint: object_usage_linter.
   if (op %in% c("==", "!=")) {
-    eq <- r8_equal(e1, e2)
+    eq <- r8equal(e1, e2)
     return(if (op == "==") eq else !eq)
   }
   if (op %in% c("<", "<=", ">", ">=")) {
@@ -134,7 +134,7 @@ Ops.r8_value <- function(e1, e2) {
         class = "r8_dispatch_error"
       )
     }
-    o <- ordering(r8_partial_cmp(e1, e2), value_type(e1))
+    o <- ordering(r8partial_cmp(e1, e2), value_type(e1))
     if (is.na(o)) {
       return(FALSE)
     }
@@ -155,7 +155,7 @@ Ops.r8_value <- function(e1, e2) {
 } # /R8::Ops.r8_value
 
 
-# %% r8_size ----
+# %% r8size ----
 #' Size of an R8 value
 #'
 #' The memory an R8 value holds, in bytes. For a value of a Rust-stored type,
@@ -170,11 +170,11 @@ Ops.r8_value <- function(e1, e2) {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Resampler <- new_struct("Resampler", fields = list(n = type_integer()))
-#' r8_size(Resampler(n = 10L))
+#' r8size(Resampler(n = 10L))
 #' options(op)
 #'
 #' @export
-r8_size <- function(x) {
+r8size <- function(x) {
   if (!is_value(x)) {
     value_required(x)
   }
@@ -188,4 +188,4 @@ r8_size <- function(x) {
     numeric(1)
   )
   parts[["state"]] + sum(fields)
-} # /R8::r8_size
+} # /R8::r8size

@@ -61,7 +61,7 @@ whenever \code{a} is present.
 
 A rule of a \code{\link[=new_table]{new_table()}} or a \code{type_table()} reads the cells of one row by the
 names of the columns; the cell of a factor is its label. A rule also chooses the
-rows of a table (\code{\link[=r8_filter]{r8_filter()}}), and then \code{mean()}, \code{sum()}, \code{median()}, \code{min()},
+rows of a table (\code{\link[=r8filter]{r8filter()}}), and then \code{mean()}, \code{sum()}, \code{median()}, \code{min()},
 \code{max()}, \code{n()}, and \code{count()} read whole columns, as in \code{\link[=calc]{calc()}}. \code{pmin()} and
 \code{pmax()} are of the cells of a row.
 }
@@ -139,7 +139,7 @@ which is the same rule.
 The dialect is R syntax with its own meanings; these words differ from
 the R functions of the same name, or exist in rules only:\tabular{ll}{
    Word \tab In a rule \cr
-   \code{is_variant(x, "V")} \tab The variant of the enum field \code{x} is \code{V}; R tests a value with \code{r8_is_variant()}. \cr
+   \code{is_variant(x, "V")} \tab The variant of the enum field \code{x} is \code{V}; R tests a value with \code{r8is_variant()}. \cr
    \code{all(x, cond)}, \code{any(x, cond)} \tab \code{cond} holds for every or some element \code{.x} of \code{x}. \cr
    \code{subset(x, y)} \tab Every element of the vector \code{x} is an element of \code{y}. \cr
    \code{non_decreasing(x)}, \code{non_increasing(x)} \tab The vector \code{x} is in order. \cr

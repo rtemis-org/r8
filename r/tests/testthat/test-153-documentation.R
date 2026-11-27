@@ -57,7 +57,7 @@ test_that("the generator names a type of another namespace by its package's expo
   expect_true("unexported TRUE " %in% out, info = info)
 })
 
-test_that("the roclet r8_rd documents the methods a package implements in Rust", {
+test_that("the roclet r8rd() documents the methods a package implements in Rust", {
   skip_if(
     !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
     "set R8_PACKAGE_TESTS to install the test packages"
@@ -83,7 +83,7 @@ test_that("the roclet r8_rd documents the methods a package implements in Rust",
   out <- run_r(
     lib,
     c(
-      sprintf("roxygen2::roxygenise(%s, roclets = 'R8::r8_rd')", deparse(copy)),
+      sprintf("roxygen2::roxygenise(%s, roclets = 'R8::r8rd')", deparse(copy)),
       sprintf(
         "rd <- readLines(file.path(%s, 'man', 'Signal.Rd'))",
         deparse(copy)
@@ -293,7 +293,7 @@ test_that("roxygen2 documents R8 declarations and the package passes check", {
     "Status: OK" %in% check,
     info = paste(c(built, check), collapse = "\n")
   )
-  # In a fresh session, r8_register() restores the generic's methods, the S3
+  # In a fresh session, r8register() restores the generic's methods, the S3
   # methods of a base generic and of the package's own S3 generic, and the
   # Print impl.
   used <- run_r(

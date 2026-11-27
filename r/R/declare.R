@@ -32,8 +32,8 @@
 #'   `"mg"`.
 #' @param compute Optional `r8_calc`: For a field of type `option()`, its
 #'   value as an expression over the other fields, a [calc()], which
-#'   `r8_resolve()` fills.
-#' @param context Logical: For a field of type `option()`, `r8_resolve(x,
+#'   `r8resolve()` fills.
+#' @param context Logical: For a field of type `option()`, `r8resolve(x,
 #'   context)` fills the value from `context`. At most one of `compute` and
 #'   `context` is given.
 #' @param extensions Optional named list: Namespaced extensions, such as
@@ -181,7 +181,7 @@ column <- function(
 #' `invariant` or `when` as JSONLogic, or a field's `default` as the value's
 #' JSON form. It holds what the R forms do not express, such as an `and` of
 #' three operands, a default that is an enum variant with fields or a struct,
-#' and a number that a double does not hold exactly. `r8_document_rust()`
+#' and a number that a double does not hold exactly. `r8document_rust()`
 #' writes it where a Rust declaration has no R form.
 #'
 #' @param text Character: One JSON text.
@@ -695,9 +695,9 @@ type_ir <- function(type) {
 #' @param storage Character \{"r", "rust"\}: Where values hold their fields.
 #'   `"rust"`: a Rust-stored type, whose values the codec in the package's
 #'   compiled exports builds and holds. Its constructor signals
-#'   `r8_codec_missing_error` until the codec is registered, and `r8_register()`
+#'   `r8_codec_missing_error` until the codec is registered, and `r8register()`
 #'   checks that the exports carry the codec. A package whose types are declared
-#'   in Rust generates these declarations with `r8_document_rust()`.
+#'   in Rust generates these declarations with `r8document_rust()`.
 #'
 #' @section Changing a type that other packages use:
 #' An exported type is part of its package's interface. Do not change it without
@@ -707,20 +707,20 @@ type_ir <- function(type) {
 #'
 #' - A field that is removed or renamed, another type or unit, a loosened bound,
 #'   a removed rule, and another `version` stop compiled code of other packages
-#'   from reading values of the type ([r8_register()], section "Types that other
+#'   from reading values of the type ([r8register()], section "Types that other
 #'   packages use"). A new required field and a tightened bound or rule break
 #'   code that constructs values. Every change of a struct's fields or rules
 #'   requires the structs that extend it to be built again.
 #' - A new field of type `option()` is the change that breaks the least. For a
 #'   change of another kind, consider a new type, with a conversion
-#'   ([r8_convert()]), and leave the published one as it is.
+#'   ([r8convert()]), and leave the published one as it is.
 #' - When a published type has to change, raise the package's version, and the
 #'   type's `version` when its values take another meaning or its earlier
 #'   documents do not read; state the change in `NEWS`, run the checks of the
 #'   reverse dependencies, and give their maintainers time to release. The CRAN
 #'   Repository Policy asks for at least two weeks.
 #' - A value carries the declaration that it was made under. One made before a
-#'   change, such as a saved one, is refused where it is used until [r8_update()]
+#'   change, such as a saved one, is refused where it is used until [r8update()]
 #'   gives its value under the new declaration, which it does for a new optional
 #'   field and for another order of fields, and does not for another unit, kind
 #'   of type, or `version`, and for a removed field.
@@ -978,7 +978,7 @@ new_enum <- function(
   name <- as.character(substitute(name))
   # `from` is a reserved variant name.
   if (identical(name, "from")) {
-    return(r8_converter(object))
+    return(r8converter(object))
   }
   qname <- attr(object, "r8_name")
   variants <- .r8_variants[[qname]] %||% enum_variants(qname, type_ir(object))
@@ -1067,7 +1067,7 @@ build_variant <- function(v, qname, name, rust_stored, package = "") {
 } # /R8::build_variant
 
 
-# %% r8_declaration ----
+# %% r8declaration ----
 #' Declaration of a type
 #'
 #' The IR document of a type: its namespace and its declaration, as JSON
@@ -1080,17 +1080,17 @@ build_variant <- function(v, qname, name, rust_stored, package = "") {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' r8_declaration(Point)
+#' r8declaration(Point)
 #' options(op)
 #'
 #' @export
-r8_declaration <- function(type) {
+r8declaration <- function(type) {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
   ensure_registered(type)
   r8_type_document(attr(type, "r8_name"))
-} # /R8::r8_declaration
+} # /R8::r8declaration
 
 
 # %% nameOfClass.r8_type ----

@@ -4,7 +4,7 @@
 
 # The methods each package implements in compiled code, by package: a data
 # frame of `trait_name`, `tuple` (the key of the positions), and `method`,
-# which the roclet `r8_rd` documents.
+# which the roclet `r8rd()` documents.
 .r8_compiled_methods <- new.env(parent = emptyenv())
 
 # By package, the external pointers to compiled functions that the closures
@@ -16,12 +16,12 @@
 .r8_unload_hooks <- new.env(parent = emptyenv())
 
 
-# %% r8_register ----
+# %% r8register ----
 #' Register a package's R8 declarations
 #'
 #' A package's top-level `new_struct()`, `new_enum()`, `new_trait()`, and
 #' `impl()` calls run when the package is installed, and record themselves in
-#' the package's namespace. `r8_register()`, called from the package's
+#' the package's namespace. `r8register()`, called from the package's
 #' `.onLoad()`, registers them in the session: it checks each declaration
 #' again and makes its types, traits, and impls available. Registering a
 #' package again replaces its declarations.
@@ -31,7 +31,7 @@
 #' declaration hash, the type of every codec is declared with
 #' `storage = "rust"`, and every type declared with `storage = "rust"` has a codec;
 #' otherwise registration signals `r8_declaration_error` and lists each
-#' difference. `r8_document_rust()` generates the R declarations of types
+#' difference. `r8document_rust()` generates the R declarations of types
 #' declared in Rust. Each impl declaration of the exports is built from its
 #' impl entries, grouped by trait and positions.
 #'
@@ -51,23 +51,23 @@
 #' other packages use" of [new_struct()].
 #'
 #' @param pkgname Optional Character: The package; by default, the package
-#'   whose code calls `r8_register()`.
+#'   whose code calls `r8register()`.
 #'
 #' @return The number of declarations registered, invisibly.
 #'
 #' @examples
 #' \dontrun{
 #' .onLoad <- function(libname, pkgname) {
-#'   R8::r8_register()
+#'   R8::r8register()
 #' }
 #' }
 #'
 #' @export
-r8_register <- function(pkgname = NULL) {
+r8register <- function(pkgname = NULL) {
   ns <- if (is.null(pkgname)) topenv(parent.frame()) else asNamespace(pkgname)
   if (!isNamespace(ns)) {
     r8_abort(
-      "r8_register() is called from a package's .onLoad().",
+      "r8register() is called from a package's .onLoad().",
       class = "r8_declaration_error"
     )
   }
@@ -130,7 +130,7 @@ r8_register <- function(pkgname = NULL) {
   stale_elsewhere(pkg)
   warn_changed(exports[["changed"]], pkg)
   invisible(length(entries) + exports[["n"]])
-} # /R8::r8_register
+} # /R8::r8register
 
 
 # %% check_namespaces ----
@@ -565,7 +565,7 @@ check_functions <- function(pkg, exported, in_rust, in_r) {
       return("")
     }
     paste0(
-      " Its Rust signature, from r8_rust_signature():\n",
+      " Its Rust signature, from r8rust_signature():\n",
       paste0("    ", strsplit(text, "\n", fixed = TRUE)[[1L]], collapse = "\n")
     )
   }
@@ -677,7 +677,7 @@ check_exports <- function(pkg, compared, rust_stored) {
       paste0("- ", problems, collapse = "\n"),
       if (regenerate) {
         paste0(
-          "\nR8::r8_document_rust() regenerates R/r8-types.R from the ",
+          "\nR8::r8document_rust() regenerates R/r8-types.R from the ",
           "declarations in Rust."
         )
       },

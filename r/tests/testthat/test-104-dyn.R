@@ -80,17 +80,17 @@ test_that("a dyn() value round-trips by tag value, by $type, and as a unit-only 
     plain = e$Color@Red,
     base = e$Pruned(depth = 3L, prune = TRUE)
   )
-  json <- r8_to_json(m)
+  json <- r8to_json(m)
   expect_match(json, "\"algorithm\":\"GLMNET\"", fixed = TRUE)
   expect_match(json, "\"$type\":\"dyn2::Color\",\"type\":\"Red\"", fixed = TRUE)
   expect_match(json, "\"$type\":\"dyn2::Pruned\"", fixed = TRUE)
-  back <- r8_from_json(e$Model, json)
-  expect_true(r8_equal(back, m))
-  expect_identical(r8_hash(back), r8_hash(m))
+  back <- r8from_json(e$Model, json)
+  expect_true(r8equal(back, m))
+  expect_identical(r8hash(back), r8hash(m))
   # A descendant without its own impl writes its type name as its tag.
   p <- e$Model(algo = e$Pruned(depth = 1L, prune = FALSE))
-  expect_match(r8_to_json(p), "\"algorithm\":\"Pruned\"", fixed = TRUE)
-  expect_true(r8_equal(r8_from_json(e$Model, r8_to_json(p)), p))
+  expect_match(r8to_json(p), "\"algorithm\":\"Pruned\"", fixed = TRUE)
+  expect_true(r8equal(r8from_json(e$Model, r8to_json(p)), p))
 })
 
 test_that("tag values are names and unique among a trait's implementors", {
@@ -152,7 +152,7 @@ test_that("a document naming an unregistered type names its namespace", {
     "{\"$type\":\"dyn5::Model\",\"$types\":{\"dyn5::Model\":1,\"nopkg::Thing\":1},",
     "\"plain\":{\"$type\":\"nopkg::Thing\",\"a\":1}}"
   )
-  err <- tryCatch(r8_from_json(e$Model, json), error = function(e) e)
+  err <- tryCatch(r8from_json(e$Model, json), error = function(e) e)
   expect_s3_class(err, "r8_unknown_type_error")
   expect_match(
     conditionMessage(err),
@@ -160,18 +160,18 @@ test_that("a document naming an unregistered type names its namespace", {
     fixed = TRUE
   )
   expect_error(
-    r8_from_json(e$Model, json, load = "no.such.package.r8"),
+    r8from_json(e$Model, json, load = "no.such.package.r8"),
     "is not installed",
     class = "r8_type_error"
   )
 })
 
-test_that("r8_schema() writes a dyn() field open or as its registered implementors", {
+test_that("r8schema() writes a dyn() field open or as its registered implementors", {
   e <- dyn_types("dyn6")
-  open <- R8:::r8_json_parse(r8_schema(e$Model))
+  open <- R8:::r8_json_parse(r8schema(e$Model))
   algo <- open[["properties"]][["algo"]][["anyOf"]][[1L]]
   expect_identical(algo[["x-r8"]][["dyn"]], "dyn6::Algorithm")
-  closed <- R8:::r8_json_parse(r8_schema(e$Model, closed = TRUE))
+  closed <- R8:::r8_json_parse(r8schema(e$Model, closed = TRUE))
   alts <- closed[["properties"]][["algo"]][["anyOf"]][[1L]][["anyOf"]]
   tags <- vapply(
     alts,

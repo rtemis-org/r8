@@ -20,7 +20,7 @@ the type in the trait's tag member, or else in \code{"$type"}. \code{dyn(generic
 for a generic from \code{\link[=generic]{generic()}} that dispatches on one argument, holds a
 value of any type with a method of the generic. A value of a class of
 another class system is not held, even when the class has an impl of the
-trait; \code{\link[=r8_convert]{r8_convert()}} through a \code{From} impl turns it into an R8 value. A
+trait; \code{\link[=r8convert]{r8convert()}} through a \code{From} impl turns it into an R8 value. A
 struct and the structs that extend it are \code{\link[=subtype]{subtype()}}.
 }
 \examples{

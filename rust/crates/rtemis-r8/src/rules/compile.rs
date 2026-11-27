@@ -1759,7 +1759,7 @@ pub fn compile_calc(
             c.error(
                 "calc_summary",
                 "",
-                "a summary reads the cells of its columns within aggregates, such as `mean(x)`; `r8_set()` computes a column of every row".to_string(),
+                "a summary reads the cells of its columns within aggregates, such as `mean(x)`; `r8set()` computes a column of every row".to_string(),
             );
         }
         if !matches!(

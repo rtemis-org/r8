@@ -190,8 +190,8 @@ test_that("a redeclared rule applies to a value once it is updated", {
     )
   })
   expect_error(x$n <- 4L, "declaration_changed", class = "r8_value_error")
-  expect_error(r8_update(x), "CAP", class = "r8_value_error")
-  y <- r8_update(Capped(n = 4L))
+  expect_error(r8update(x), "CAP", class = "r8_value_error")
+  y <- r8update(Capped(n = 4L))
   expect_error(y$n <- 8L, "CAP", class = "r8_value_error")
 })
 
@@ -202,14 +202,14 @@ test_that("a document round trips to an identical value", {
     kernel = t[["Kernel"]]@Rbf(gamma = 0.5),
     weights = c(1, 2.5)
   )
-  json <- r8_to_json(x)
+  json <- r8to_json(x)
   expect_identical(
     json,
     '{"$type":"rtemis::Svm","$types":{"rtemis::Kernel":1,"rtemis::Svm":1},"$declarations":{"rtemis::Kernel":"sha256:31cff0cd1a6c6cec2a7bb77f44dbc646a33a2ce0758da968fa188620b86f8fd0","rtemis::Svm":"sha256:9757f0755f90569265241c37d7fa5ab2bedb7765aa8a8fa8de32f7ed0a299d59"},"cost":2,"kernel":{"gamma":0.5,"type":"Rbf"},"weights":[1,2.5],"mtry":null}'
   )
-  expect_identical(r8_from_json(t[["Svm"]], json), x)
+  expect_identical(r8from_json(t[["Svm"]], json), x)
   expect_error(
-    r8_from_json(t[["Kernel"]], json),
+    r8from_json(t[["Kernel"]], json),
     "document_type",
     class = "r8_value_error"
   )
@@ -270,7 +270,7 @@ test_that("every field type has an R form that round trips through JSON", {
   expect_identical(names(x$hm), c("a", "b"))
   expect_identical(names(x$om), c("z", "a"))
   expect_identical(x$model, fit)
-  y <- r8_from_json(Every, r8_to_json(x))
+  y <- r8from_json(Every, r8to_json(x))
   # The host-only field has no JSON form.
   expect_null(y$model)
   x_without <- x
@@ -298,11 +298,11 @@ test_that("a sparse matrix field is a dgCMatrix and round trips", {
   v <- Counts(x = m)
   expect_s4_class(v$x, "dgCMatrix")
   expect_identical(as.matrix(v$x), as.matrix(m))
-  expect_identical(r8_from_json(Counts, r8_to_json(v)), v)
+  expect_identical(r8from_json(Counts, r8to_json(v)), v)
   expect_error(Counts(x = as.matrix(m)), "dgCMatrix", class = "r8_value_error")
 })
 
-test_that("r8_conform() reports each change and constructs the value strictly", {
+test_that("r8conform() reports each change and constructs the value strictly", {
   T <- declare_in("demo", {
     Inner <- new_struct("Inner", fields = list(a = type_double()))
     new_struct(
@@ -325,13 +325,13 @@ test_that("r8_conform() reports each change and constructs the value strictly", 
     inner = list(a = 1),
     colour = "red"
   )
-  expect_message(x <- r8_conform(input, T), "6 change")
+  expect_message(x <- r8conform(input, T), "6 change")
   expect_identical(names(x$w), NULL)
   expect_s3_class(x$g, "factor")
   expect_s3_class(x$inner, "demo::Inner")
   # Construction stays strict for what conform cannot fix.
   expect_error(
-    suppressMessages(r8_conform(list(w = -1), T)),
+    suppressMessages(r8conform(list(w = -1), T)),
     class = "r8_value_error"
   )
   expect_error(
@@ -341,18 +341,18 @@ test_that("r8_conform() reports each change and constructs the value strictly", 
   )
 })
 
-test_that("r8_equal() compares contents, and r8_hash() identifies them", {
+test_that("r8equal() compares contents, and r8hash() identifies them", {
   t <- svm_types()
   Svm <- t[["Svm"]]
   a <- Svm(cost = 2)
   b <- Svm(cost = 2L, kernel = t[["Kernel"]]@Linear)
-  expect_true(r8_equal(a, b))
+  expect_true(r8equal(a, b))
   expect_true(a == b)
   expect_false(a != b)
-  expect_false(r8_equal(a, Svm(cost = 3)))
-  expect_identical(r8_hash(a), r8_hash(b))
-  expect_false(identical(r8_hash(a), r8_hash(Svm(cost = 3))))
-  expect_match(r8_hash(a), "^sha256:[0-9a-f]{64}$")
+  expect_false(r8equal(a, Svm(cost = 3)))
+  expect_identical(r8hash(a), r8hash(b))
+  expect_false(identical(r8hash(a), r8hash(Svm(cost = 3))))
+  expect_match(r8hash(a), "^sha256:[0-9a-f]{64}$")
   expect_error(a < b, class = "r8_dispatch_error")
 })
 
@@ -372,12 +372,12 @@ test_that("a host-only field enters equality and the hash by presence", {
   bare <- M(count = 1L)
   with1 <- M(count = 1L, model = fit1)
   with2 <- M(count = 1L, model = fit2)
-  expect_false(r8_equal(bare, with1))
-  expect_false(r8_equal(with1, with2))
-  expect_true(r8_equal(with1, M(count = 1L, model = fit1)))
+  expect_false(r8equal(bare, with1))
+  expect_false(r8equal(with1, with2))
+  expect_true(r8equal(with1, M(count = 1L, model = fit1)))
   # The hash records presence, not the R value.
-  expect_false(identical(r8_hash(bare), r8_hash(with1)))
-  expect_identical(r8_hash(with1), r8_hash(with2))
+  expect_false(identical(r8hash(bare), r8hash(with1)))
+  expect_identical(r8hash(with1), r8hash(with2))
 })
 
 test_that("matrices compare, hash, and write their dimension names", {
@@ -393,11 +393,11 @@ test_that("matrices compare, hash, and write their dimension names", {
   z <- x
   rownames(z)[n] <- NA
   vx <- M(m = x)
-  expect_true(r8_equal(vx, M(m = x)))
-  expect_false(r8_equal(vx, M(m = y)))
-  expect_false(r8_equal(vx, M(m = z)))
-  expect_false(identical(r8_hash(vx), r8_hash(M(m = y))))
-  expect_identical(r8_from_json(M, r8_to_json(vx)), vx)
+  expect_true(r8equal(vx, M(m = x)))
+  expect_false(r8equal(vx, M(m = y)))
+  expect_false(r8equal(vx, M(m = z)))
+  expect_false(identical(r8hash(vx), r8hash(M(m = y))))
+  expect_identical(r8from_json(M, r8to_json(vx)), vx)
 })
 
 test_that("sizes print in IEC units, and an R-stored value shows none", {
@@ -505,7 +505,7 @@ test_that("names that repeat are refused in a table, a map, JSON, and a document
       class = "r8_value_error"
     )
     expect_error(
-      r8_validate(d, type_table(columns = list(), open = TRUE)),
+      r8validate(d, type_table(columns = list(), open = TRUE)),
       "duplicate_column",
       class = "r8_value_error"
     )
@@ -529,7 +529,7 @@ test_that("names that repeat are refused in a table, a map, JSON, and a document
     '"x":1,"j":[{"a":1,"a":2}]'
   )) {
     expect_error(
-      r8_from_json(
+      r8from_json(
         T,
         paste0('{"$type":"rep::T","$types":{"rep::T":1},', text, "}")
       ),

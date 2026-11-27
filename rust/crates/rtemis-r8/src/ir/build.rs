@@ -195,7 +195,7 @@ impl fmt::Display for BuildError {
             BuildError::LengthOrder => f.write_str("`min_length` is at most `max_length`."),
             BuildError::Keys => f.write_str("`keys` is a type_character()."),
             BuildError::ComputeContext => f.write_str(
-                "A field is filled by `compute` or from the `context` of r8_resolve(), not both.",
+                "A field is filled by `compute` or from the `context` of r8resolve(), not both.",
             ),
             BuildError::Constant => f.write_str(
                 "A constant in a rule is one value, not NA; write an array as c(...).",
@@ -483,7 +483,7 @@ pub fn option(inner: FieldType) -> Built<FieldType> {
 
 /// A field's fill policy from `field(compute = , context = )`: `compute`,
 /// the expression of a computed field, or `context`, a field that
-/// `r8_resolve(x, context)` fills; at most one.
+/// `r8resolve(x, context)` fills; at most one.
 pub fn resolve(compute: Option<Logic>, context: bool) -> Built<Option<Resolve>> {
     Ok(match (compute, context) {
         (Some(_), true) => return Err(BuildError::ComputeContext),

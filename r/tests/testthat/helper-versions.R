@@ -43,7 +43,7 @@ write_package <- function(
     file.path(path, "NAMESPACE")
   )
   writeLines(
-    c(code, ".onLoad <- function(libname, pkgname) R8::r8_register()"),
+    c(code, ".onLoad <- function(libname, pkgname) R8::r8register()"),
     file.path(path, "R", "types.R")
   )
   path
@@ -147,7 +147,7 @@ install_version <- function(path, libs = character(), lib = tempfile("lib")) {
 # The R declarations of the types in the Rust code of the package at `path`.
 generate_types <- function(path, libs = character()) {
   code <- sprintf(
-    "pkgbuild::compile_dll(%s, quiet = TRUE); R8::r8_document_rust(%s)",
+    "pkgbuild::compile_dll(%s, quiet = TRUE); R8::r8document_rust(%s)",
     deparse(path),
     deparse(path)
   )

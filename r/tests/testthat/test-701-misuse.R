@@ -64,16 +64,16 @@ scenario(
     forged <- unclass(p)
     forged$x <- -1
     class(forged) <- class(p)
-    expect_error(r8_validate(forged), class = "r8_error")
-    expect_error(r8_to_json(forged), class = "r8_error")
-    expect_error(r8_hash(forged), class = "r8_error")
+    expect_error(r8validate(forged), class = "r8_error")
+    expect_error(r8to_json(forged), class = "r8_error")
+    expect_error(r8hash(forged), class = "r8_error")
     expect_error(forged$x <- 1, "is not one", class = "r8_error")
     expect_match(format(forged)[[1L]], "is not one")
     renamed <- p
     class(renamed) <- c("f3::Other", "r8_value")
     attr(renamed, "r8_type") <- "f3::Other"
-    expect_identical(r8_to_json(renamed), r8_to_json(p))
-    expect_true(r8_equal(renamed, p))
+    expect_identical(r8to_json(renamed), r8to_json(p))
+    expect_true(r8equal(renamed, p))
     Holder <- declare_in("f3", new_struct("Holder", fields = list(o = Other)))
     expect_error(Holder(o = renamed), class = "r8_value_error")
   }
@@ -98,7 +98,7 @@ scenario(
 scenario(
   "F5",
   "a saved value of Rust with invalid fields is not given to Rust code",
-  situation = "A file that holds a value of a type whose values Rust holds is damaged, or edited, in the numbers and the texts of its fields. Damage to R's own part of a file is R's to find, and r8_read_rds() finds it.",
+  situation = "A file that holds a value of a type whose values Rust holds is damaged, or edited, in the numbers and the texts of its fields. Damage to R's own part of a file is R's to find, and r8read_rds() finds it.",
   risk = "The Rust code computes with a value that its type refuses.",
   result = "The fields read as the file holds them. The Rust code is given the value once its fields are checked, and an invalid one is an error.",
   how = "installed",
@@ -116,7 +116,7 @@ scenario(
         "cat('fields', x$lo, x$hi, '\\n')",
         "cat('width', msg(width(x)), '\\n')",
         "cat('write', msg({ y <- x; y$hi <- 9; width(y) }), '\\n')",
-        "cat('validate', inherits(tryCatch(R8::r8_validate(x), error = identity), 'r8_value_error'), '\\n')",
+        "cat('validate', inherits(tryCatch(R8::r8validate(x), error = identity), 'r8_value_error'), '\\n')",
         "p <- Panel(range = Interval(lo = 3, hi = 7), frame = Interval(lo = 0, hi = 1), figure = Square(side = 1))",
         "cat('nested', msg(contents(edit(p, 7, 1))), '\\n')",
         "set.seed(2)",
@@ -126,7 +126,7 @@ scenario(
         "  part <- list(bytes(2), bytes(5), bytes(3), bytes(4), charToRaw('abcdef'), bytes(77L))[[sample(6L, 1L)]]",
         "  k <- find(b, part)[1L] + sample(length(part), sample(2L, 1L)) - 1L",
         "  b[k] <- as.raw(sample(if (length(part) == 6L) 97:122 else 0:255, length(k), TRUE))",
-        "  res <- c(res, tryCatch({ x <- unserialize(b); for (f in names(x)) x[[f]]; ok <- tryCatch({ R8::r8_validate(x); TRUE }, error = function(e) FALSE); given <- tryCatch({ width(x); TRUE }, error = function(e) FALSE); if (ok == given) paste('same', ok) else 'differ' }, error = function(e) 'error'))",
+        "  res <- c(res, tryCatch({ x <- unserialize(b); for (f in names(x)) x[[f]]; ok <- tryCatch({ R8::r8validate(x); TRUE }, error = function(e) FALSE); given <- tryCatch({ width(x); TRUE }, error = function(e) FALSE); if (ok == given) paste('same', ok) else 'differ' }, error = function(e) 'error'))",
         "}",
         "cat('random', all(res %in% c('same TRUE', 'same FALSE')), all(c('same TRUE', 'same FALSE') %in% res), '\\n')"
       )
@@ -156,15 +156,15 @@ scenario(
   code = {
     r <- Raven(age = c(17, 30, 80), score = c(1, 2, 3))
     age <- c(100, 100, 100)
-    expect_identical(r8_filter(r, rule(age >= 18))$score, c(2, 3))
+    expect_identical(r8filter(r, rule(age >= 18))$score, c(2, 3))
     cutoff <- 50
-    older <- function(x) r8_filter(x, rule(age >= val(cutoff)))$score
+    older <- function(x) r8filter(x, rule(age >= val(cutoff)))$score
     expect_identical(older(r), 3)
     r$cutoff <- c(0, 0, 0)
     expect_identical(older(r), 3)
     expect_error(r[score > 1, ], "rule(score > 1)", fixed = TRUE)
     expect_error(
-      r8_filter(r, rule(age >= limit)),
+      r8filter(r, rule(age >= limit)),
       "write `val(limit)`",
       fixed = TRUE
     )
@@ -182,8 +182,8 @@ scenario(
     two <- rule(arm == "a" && dose > 0)
     x <- Raven(dose = c(1, NA, NA, -1), arm = c("a", "a", "b", "b"), row = 1:4)
     for (r in list(one, two)) {
-      expect_identical(r8_filter(x, r)$row, 1L)
-      expect_identical(r8_filter(x, !r)$row, 3:4)
+      expect_identical(r8filter(x, r)$row, 1L)
+      expect_identical(r8filter(x, !r)$row, 3:4)
       Doses <- declare_in("f14", {
         new_table(
           "Doses",
@@ -222,7 +222,7 @@ scenario(
     p$weight_z <- z
     p$bmi <- p$weight / p$height^2
     p$log_dose <- suppressWarnings(log(p$weight - 70))
-    expect_identical(r8_columns(p)$unit, c("kg", "m", NA, NA, NA, NA))
+    expect_identical(r8columns(p)$unit, c("kg", "m", NA, NA, NA, NA))
     expect_identical(is.nan(p$log_dose), c(TRUE, FALSE))
     expect_error(
       p$weight <- z,
@@ -232,9 +232,9 @@ scenario(
     expect_error(p$auc <- c(0.4, NaN), "auc >= 0.5", fixed = TRUE)
     r <- Raven(p)
     r$weight <- z
-    expect_identical(r8_columns(r)$unit[1:2], c(NA, "m"))
+    expect_identical(r8columns(r)$unit[1:2], c(NA, "m"))
     # A check, and a rule, for what is new.
-    expect_identical(r8_validate(p$bmi, vec(type_double(min = 0))), p$bmi)
-    expect_identical(nrow(r8_filter(p, rule(bmi > 24))), 1L)
+    expect_identical(r8validate(p$bmi, vec(type_double(min = 0))), p$bmi)
+    expect_identical(nrow(r8filter(p, rule(bmi > 24))), 1L)
   }
 )

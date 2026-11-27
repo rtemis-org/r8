@@ -18,7 +18,7 @@
 //! `min`, `max`, `exclusive_min`, `exclusive_max`, `pattern`, `infinite`,
 //! `nan`, `min_length`, `max_length`, `unique`, `default = "<JSON>"`, `unit`,
 //! `sensitive`, and `context`, for a field of type `Option<T>` that
-//! `r8_resolve(x, context)` fills. Doc comments are
+//! `r8resolve(x, context)` fills. Doc comments are
 //! descriptions.
 //!
 //! A struct extends another by embedding it: its first field, marked

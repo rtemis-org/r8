@@ -36,10 +36,10 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
       "cat('unknown', grepl('Fields: name, values', e), '\\n')",
       "e <- tryCatch(distance(a, 1), r8_argument_error = conditionMessage)",
       "cat('distance', distance(a, b), distance(a, rn), grepl('`y` must be a value of `pkgr::Signal`', e, fixed = TRUE), '\\n')",
-      "r <- R8::r8_from_json(Signal, R8::r8_to_json(s))",
-      "cat('json', R8::r8_equal(r, s), '\\n')",
+      "r <- R8::r8from_json(Signal, R8::r8to_json(s))",
+      "cat('json', R8::r8equal(r, s), '\\n')",
       "u <- unserialize(serialize(s, NULL))",
-      "cat('serialize', R8::r8_equal(u, s), '\\n')",
+      "cat('serialize', R8::r8equal(u, s), '\\n')",
       "mirai::daemons(1)",
       "m <- mirai::mirai({ library(r8pkgR); list(magnitude(s), Signal(name = 'w', values = s$values * 2)) }, s = s)[]",
       "cat('mirai', m[[1]], m[[2]]$name, m[[2]]$values, '\\n')",
@@ -76,7 +76,7 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
   out <- run_r(
     lib,
     sprintf(
-      "R8::r8_document_rust(%s, check = TRUE); cat('current\\n')",
+      "R8::r8document_rust(%s, check = TRUE); cat('current\\n')",
       deparse(normalizePath(pkg))
     )
   )
@@ -95,9 +95,9 @@ test_that("types and impls in Rust register, dispatch, persist, and cross worker
     lib,
     c(
       sprintf("p <- %s", deparse(copy)),
-      "e <- tryCatch(R8::r8_document_rust(p, check = TRUE), error = function(e) conditionMessage(e))",
+      "e <- tryCatch(R8::r8document_rust(p, check = TRUE), error = function(e) conditionMessage(e))",
       "cat('stale', grepl('differs from the declarations', e), '\\n')",
-      "R8::r8_document_rust(p)",
+      "R8::r8document_rust(p)",
       "cat('written\\n')"
     )
   )
@@ -153,20 +153,20 @@ test_that("Rust-stored structs extend one another, and compiled impls apply to d
       "no <- function(y) grepl('Invalid arguments of `overlap()`: 1 problem\\n- `y` must be a value', msg(overlap(s, y)), fixed = TRUE)",
       "say('argument', overlap(s, Interval(lo = 1, hi = 9)), no(s), no(1), no(NULL))",
       "say('format', format(s))",
-      "say('other', grepl('`x` is not a `pkgr::Interval`', msg(r8_method(width, Interval)(Signal(name = 'a', values = 1))), fixed = TRUE))",
-      "u <- r8_upcast(s, Interval); v <- r8_upcast(s, Band)",
+      "say('other', grepl('`x` is not a `pkgr::Interval`', msg(r8method(width, Interval)(Signal(name = 'a', values = 1))), fixed = TRUE))",
+      "u <- r8upcast(s, Interval); v <- r8upcast(s, Band)",
       "say('upcast', class(u)[1], stored(u, 'Interval'), u$hi, class(v)[1], stored(v, 'Band'), v$weights, v$label)",
-      "say('convert', class(r8_convert(s, Interval))[1], grepl('not an ancestor', msg(r8_upcast(u, Band))))",
-      "say('equal', r8_equal(v, Band(lo = 0, hi = 4, unit = NULL, label = 's', weights = c(1, 2, 3))))",
-      "j <- r8_from_json(Strip, r8_to_json(s))",
-      "say('json', stored(j, 'Strip'), r8_equal(j, s), shares(s), shares(j))",
+      "say('convert', class(r8convert(s, Interval))[1], grepl('not an ancestor', msg(r8upcast(u, Band))))",
+      "say('equal', r8equal(v, Band(lo = 0, hi = 4, unit = NULL, label = 's', weights = c(1, 2, 3))))",
+      "j <- r8from_json(Strip, r8to_json(s))",
+      "say('json', stored(j, 'Strip'), r8equal(j, s), shares(s), shares(j))",
       "w <- unserialize(serialize(s, NULL))",
-      "say('serialize', stored(w, 'Strip'), r8_equal(w, s), width(w))",
+      "say('serialize', stored(w, 'Strip'), r8equal(w, s), width(w))",
       "w <- r_stored(s)",
-      "say('r_stored', stored(w, 'Strip'), width(w), total(w), stored(r8_upcast(w, Band), 'Band'))",
+      "say('r_stored', stored(w, 'Strip'), width(w), total(w), stored(r8upcast(w, Band), 'Band'))",
       sprintf("saveRDS(s, %s)", deparse(rds)),
       "mirai::daemons(1)",
-      "m <- mirai::mirai({ library(r8pkgR); list(width(s), total(s), class(R8::r8_upcast(s, Band))[1]) }, s = s)[]",
+      "m <- mirai::mirai({ library(r8pkgR); list(width(s), total(s), class(R8::r8upcast(s, Band))[1]) }, s = s)[]",
       "say('mirai', unlist(m))",
       "invisible(mirai::daemons(0))"
     )
@@ -311,8 +311,8 @@ test_that("compiled impls dispatch on several arguments, replace, and convert", 
       "say('other', meets(t, i, 1), '|', meets(t, s, 1), '|', meets(t, t, 1), '|', meets(i, t, 1))",
       "w <- r_stored(b)",
       "say('r_stored', meets(i, w, 1), '|', meets(w, i, 1))",
-      "say('method', is.function(r8_method(meets, Interval, Band)), r8_method(meets, Interval, Interval)(i, i, 3))",
-      "say('ambiguities', nrow(r8_ambiguities(meets)))",
+      "say('method', is.function(r8method(meets, Interval, Band)), r8method(meets, Interval, Interval)(i, i, 3))",
+      "say('ambiguities', nrow(r8ambiguities(meets)))",
       # A replacement method of a family keeps the type; one of a parent does
       # not serve a child.
       "label(b) <- 'new'; label(s) <- 'strip'",
@@ -321,11 +321,11 @@ test_that("compiled impls dispatch on several arguments, replace, and convert", 
       "say('upper', i$hi, cls(upper(b) <- 9), grepl('[below_lo]', msg(upper(i) <- 0), fixed = TRUE))",
       "say('argument', cls(label(b) <- 1))",
       # A conversion, of a descendant too, and its error.
-      "x <- r8_convert(b, Signal)",
-      "say('convert', format(r8_convert(g, Interval)), format(Interval@from(g)), class(x)[1], x$name, x$values)",
-      "say('child', format(r8_convert(s, Signal)), cls(r8_convert(i, Signal)))",
-      "say('empty', grepl('[no_values]', msg(r8_convert(Signal(name = 'e', values = numeric()), Interval)), fixed = TRUE))",
-      "m <- mirai::mirai({ library(r8pkgS); list(r8pkgR::meets(t, i, 1), r8pkgR::meets(i, t, 1), format(R8::r8_convert(g, r8pkgR::Interval))) }, t = t, i = r8pkgR::Interval(lo = 1, hi = 2), g = g)[]",
+      "x <- r8convert(b, Signal)",
+      "say('convert', format(r8convert(g, Interval)), format(Interval@from(g)), class(x)[1], x$name, x$values)",
+      "say('child', format(r8convert(s, Signal)), cls(r8convert(i, Signal)))",
+      "say('empty', grepl('[no_values]', msg(r8convert(Signal(name = 'e', values = numeric()), Interval)), fixed = TRUE))",
+      "m <- mirai::mirai({ library(r8pkgS); list(r8pkgR::meets(t, i, 1), r8pkgR::meets(i, t, 1), format(R8::r8convert(g, r8pkgR::Interval))) }, t = t, i = r8pkgR::Interval(lo = 1, hi = 2), g = g)[]",
       "say('mirai', unlist(m))"
     )
   )
@@ -459,7 +459,7 @@ test_that("the signatures of compiled impls are those of their traits", {
     c(
       "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
       "say <- function(...) cat(..., '\\n')",
-      "i <- jsonlite::fromJSON(r8_declaration(Interval), simplifyVector = FALSE)$impls",
+      "i <- jsonlite::fromJSON(r8declaration(Interval), simplifyVector = FALSE)$impls",
       "own <- Filter(function(x) identical(x$trait, 'pkgr::middle'), i)[[1]]$methods[[1]]",
       "say('own', own$name, own$return_type$name)",
       "x <- Interval(lo = 0, hi = 4); say('default', shifted(x)$lo, shifted(x, 2)$lo)",

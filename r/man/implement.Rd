@@ -13,7 +13,7 @@ then the types of the method: one R8 type object, or for a generic that
 dispatches on several arguments, one per dispatched argument it
 specializes, matched by position or by name, as
 \code{implement(combine, A, B)} or \code{implement(combine, y = B)}; a converter
-from \code{\link[=r8_converter]{r8_converter()}} takes an R8 type object or a class name.}
+from \code{\link[=r8converter]{r8converter()}} takes an R8 type object or a class name.}
 
 \item{return_type}{Optional: The type of the value this method returns, an
 \code{r8_field_type} or an R8 type, which fits the return type that the
@@ -36,7 +36,7 @@ arguments, or, for a generic with \code{...}, the generic's arguments first,
 \item A generic from \code{generic()}, or a trait method such as \code{Fit@fit}: an
 impl of its trait.
 \item \code{format}, \code{str}, and \code{dim}: an impl of the standard trait \code{Display},
-\code{Debug}, or \code{Shape}; \code{r8_partial_cmp}: of \code{PartialOrd}, which \code{<},
+\code{Debug}, or \code{Shape}; \code{r8partial_cmp}: of \code{PartialOrd}, which \code{<},
 \code{<=}, \code{>}, and \code{>=} use.
 \item \code{print}: an impl of the standard trait \code{Print}; \code{print()} calls the
 function and returns the value invisibly, and \code{format()} keeps its own
@@ -47,8 +47,8 @@ text. The declaration states this in a message.
 (\code{$}, \code{[[}, \code{@}, \code{as.list}, \verb{$<-}, \verb{[[<-}, \verb{[<-}, \verb{names<-},
 \verb{length<-}, \verb{dim<-}, \verb{levels<-}, \code{==}, \code{!=}), the comparison and other
 operators, S4 generics, and functions that are not generics raise
-\code{r8_declaration_error}. For \code{r8_convert} and \code{r8_converter}, the error
-names the converter's form. A converter from \code{r8_converter(Target)} is
+\code{r8_declaration_error}. For \code{r8convert} and \code{r8converter}, the error
+names the converter's form. A converter from \code{r8converter(Target)} is
 the generic of the conversions to \code{Target}: \code{implement(as_target, Source)} and \code{implement(as_target, "character")} declare the conversion
 from an R8 type or a class, an impl of \code{From(source)} for \code{Target}, and
 the method takes exactly \code{(x)}.
@@ -56,7 +56,7 @@ the method takes exactly \code{(x)}.
 
 An impl is declared in the namespace of its generic or of its type.
 
-In a package, \code{r8_rd()} documents the method in the generic's Rd file.
+In a package, \code{r8rd()} documents the method in the generic's Rd file.
 }
 \examples{
 op <- options(r8.namespace = "models")
@@ -77,5 +77,5 @@ options(op)
 
 }
 \seealso{
-\code{\link[=generic]{generic()}}, \code{\link[=r8_method]{r8_method()}}.
+\code{\link[=generic]{generic()}}, \code{\link[=r8method]{r8method()}}.
 }

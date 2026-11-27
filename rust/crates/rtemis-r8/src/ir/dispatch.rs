@@ -506,7 +506,7 @@ fn rank(p: &TypeRef, chain: &Chain) -> Option<usize> {
 /// arguments are `args`, among `impls`: the most specific applicable impl.
 /// With `above`, the impl at that index is the running one, and the result
 /// is the most specific applicable impl that is less specific than it, for
-/// `r8_next_impl()`.
+/// `r8next_impl()`.
 pub fn select(
     lookup: &dyn TypeLookup,
     impls: &[&ImplDef],

@@ -32,48 +32,48 @@ dose_type <- function() {
   )
 }
 
-test_that("r8_resolve() fills context fields from context and computed fields in order", {
+test_that("r8resolve() fills context fields from context and computed fields in order", {
   Dose <- dose_type()
   x <- Dose()
   expect_null(x$g)
-  y <- r8_resolve(x, context = list(mg = 2500))
+  y <- r8resolve(x, context = list(mg = 2500))
   expect_identical(y$mg, 2500)
   expect_identical(y$g, 2.5)
   expect_identical(y$kg, 0.0025)
   expect_null(x$mg)
   fit <- stats::lm(dist ~ speed, data = datasets::cars)
-  z <- r8_resolve(x, context = list(mg = 1, model = fit))
+  z <- r8resolve(x, context = list(mg = 1, model = fit))
   expect_identical(z$model, fit)
 })
 
 test_that("resolution reports what it cannot fill", {
   Dose <- dose_type()
-  expect_error(r8_resolve(Dose()), "computed_absent", class = "r8_value_error")
+  expect_error(r8resolve(Dose()), "computed_absent", class = "r8_value_error")
   expect_error(
-    r8_resolve(Dose(), context = list(mg = -1)),
+    r8resolve(Dose(), context = list(mg = -1)),
     "below_min",
     class = "r8_value_error"
   )
   expect_error(
-    r8_resolve(Dose(), context = list(g = 1)),
+    r8resolve(Dose(), context = list(g = 1)),
     "not an absent context field",
     class = "r8_value_error"
   )
 })
 
-test_that("r8_validate(complete = TRUE) names the pending fields", {
+test_that("r8validate(complete = TRUE) names the pending fields", {
   Dose <- dose_type()
   x <- Dose()
-  expect_invisible(r8_validate(x))
-  e <- expect_error(r8_validate(x, complete = TRUE), class = "r8_value_error")
+  expect_invisible(r8validate(x))
+  e <- expect_error(r8validate(x, complete = TRUE), class = "r8_value_error")
   expect_match(conditionMessage(e), "`mg` \\(context\\)")
   expect_match(conditionMessage(e), "`g` \\(computed\\)")
-  done <- r8_resolve(
+  done <- r8resolve(
     x,
     context = list(
       mg = 1,
       model = stats::lm(dist ~ speed, data = datasets::cars)
     )
   )
-  expect_invisible(r8_validate(done, complete = TRUE))
+  expect_invisible(r8validate(done, complete = TRUE))
 })

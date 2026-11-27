@@ -1,6 +1,6 @@
 # r8-types.R
 # ::r8benchR::
-# R8::r8_document_rust() writes this file from the R8 declarations in
+# R8::r8document_rust() writes this file from the R8 declarations in
 # the package's Rust code, and replaces it when they change.
 
 #' Wide20

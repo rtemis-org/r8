@@ -4,7 +4,7 @@
 
 # spec: R8/class-system#inheritance
 
-# %% r8_ancestors ----
+# %% r8ancestors ----
 #' The ancestors of a struct
 #'
 #' The parents of a struct through `extends`, the nearest first. A child's
@@ -21,18 +21,18 @@
 #' op <- options(r8.namespace = "demo")
 #' Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
 #' Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
-#' r8_ancestors(Window)
+#' r8ancestors(Window)
 #' options(op)
 #'
 #' @export
-r8_ancestors <- function(type) {
+r8ancestors <- function(type) {
   name <- type_name_of(type)
   a <- ancestry(name)
   if (isTRUE(a[["stale"]])) {
     stale_abort(name, a[["parent"]], "r8_type_error")
   }
   a[["ancestors"]]
-} # /R8::r8_ancestors
+} # /R8::r8ancestors
 
 
 # %% type_name_of ----
@@ -59,14 +59,14 @@ type_name_of <- function(type) {
 } # /R8::type_name_of
 
 
-# %% r8_upcast ----
+# %% r8upcast ----
 #' The value of an ancestor that a child's value holds
 #'
 #' A child holds its ancestors' fields first, so the value of an ancestor is
 #' those fields with the ancestor's type. The fields are the child's own
 #' objects, not copies, and a Rust-stored ancestor's codec builds its state
 #' from them. The result is valid: the child's rules include the
-#' ancestor's, which read the ancestor's fields only. `r8_convert(x, Parent)`
+#' ancestor's, which read the ancestor's fields only. `r8convert(x, Parent)`
 #' returns the same value, and an impl of the ancestor in compiled code
 #' receives it.
 #'
@@ -79,11 +79,11 @@ type_name_of <- function(type) {
 #' op <- options(r8.namespace = "demo")
 #' Range <- new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
 #' Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
-#' r8_upcast(Window(lo = 1, hi = 2, label = "w"), Range)
+#' r8upcast(Window(lo = 1, hi = 2, label = "w"), Range)
 #' options(op)
 #'
 #' @export
-r8_upcast <- function(x, type) {
+r8upcast <- function(x, type) {
   if (!is_value(x) || !is.null(value_variant(x))) {
     r8_abort("`x` is an R8 struct value.", class = "r8_type_error")
   }
@@ -121,19 +121,19 @@ r8_upcast <- function(x, type) {
     check_codec(target, attr(type, "r8_package") %||% "")
   }
   .Call(.r8_native[["upcast"]], x, target)
-} # /R8::r8_upcast
+} # /R8::r8upcast
 
 
-# %% r8_next_impl ----
+# %% r8next_impl ----
 #' Call the next impl of the running method
 #'
-#' Called from the body of an impl, `r8_next_impl()` calls the impl that the
+#' Called from the body of an impl, `r8next_impl()` calls the impl that the
 #' running one takes precedence over: that of the nearest ancestor, after the
 #' type that provides the running impl, with an impl of the trait, or else the
 #' trait's default implementation. For a method that dispatches on several
 #' arguments, the next impl is the most specific applicable impl less specific
 #' than the running one; when two are, each more specific in one position,
-#' `r8_next_impl(Type, ...)` names the one to continue to. It passes the current
+#' `r8next_impl(Type, ...)` names the one to continue to. It passes the current
 #' values of the running impl's formals, so an impl may change its arguments
 #' first, as with `NextMethod()`; generics in the next impl dispatch on the
 #' values passed. Every impl that R8 registers continues this way, an S3 method
@@ -153,18 +153,18 @@ r8_upcast <- function(x, type) {
 #' Window <- new_struct("Window", fields = list(label = type_character()), extends = Range)
 #' span_text <- generic("span_text", params(x))
 #' implement(span_text, Range) <- function(x) paste(x$lo, "to", x$hi)
-#' implement(span_text, Window) <- function(x) paste(x$label, r8_next_impl())
+#' implement(span_text, Window) <- function(x) paste(x$label, r8next_impl())
 #' span_text(Window(lo = 1, hi = 2, label = "w"))
 #' options(op)
 #'
 #' @export
-r8_next_impl <- function(...) {
+r8next_impl <- function(...) {
   chosen <- list(...)
   caller <- sys.function(sys.parent())
   provider <- attr(caller, "r8_provider")
   if (is.null(provider)) {
     r8_abort(
-      "r8_next_impl() is called from the body of an impl that R8 registers: ",
+      "r8next_impl() is called from the body of an impl that R8 registers: ",
       "a method declared with implement() or impl().",
       class = "r8_dispatch_error"
     )
@@ -172,7 +172,7 @@ r8_next_impl <- function(...) {
   if (identical(provider[[1L]], "R8::From")) {
     r8_abort(
       "A From impl has no next impl; convert the value of an ancestor ",
-      "explicitly, as r8_convert(r8_upcast(x, Parent), Target).",
+      "explicitly, as r8convert(r8upcast(x, Parent), Target).",
       class = "r8_dispatch_error"
     )
   }
@@ -235,7 +235,7 @@ r8_next_impl <- function(...) {
     }
   }
   do.call(fn, args)
-} # /R8::r8_next_impl
+} # /R8::r8next_impl
 
 
 # %% maps_s3_generic ----
@@ -301,7 +301,7 @@ next_in_chain <- function(trait_name, method, x, after) {
     chain <- chain_keys(x)
     if (!after %in% chain) {
       r8_abort(
-        "r8_next_impl() continues the impl for `",
+        "r8next_impl() continues the impl for `",
         after,
         "` on a value of `",
         type,
@@ -336,7 +336,7 @@ next_in_chain <- function(trait_name, method, x, after) {
 chain_keys <- function(x) {
   if (is_value(x)) {
     type <- value_type(x)
-    if (is.null(value_variant(x))) c(type, r8_ancestors(x)) else type
+    if (is.null(value_variant(x))) c(type, r8ancestors(x)) else type
   } else {
     paste0("\"", .class2(x), "\"")
   }
@@ -344,7 +344,7 @@ chain_keys <- function(x) {
 
 
 # %% chosen_impl ----
-#' The impl that `r8_next_impl(Type, ...)` names
+#' The impl that `r8next_impl(Type, ...)` names
 #'
 #' @param trait_name Character: The trait's qualified name.
 #' @param method Character: The method name.

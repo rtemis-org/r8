@@ -578,13 +578,13 @@ declare_r8 <- function(where = globalenv(), storage = "r") {
     read = quote(x$n_trees),
     write_idiom = quote({ y <- xw; y$n_trees <- 200L; y }),
     write_field_rules = quote({ y <- xw; y$n_trees <- 200L; y }),
-    write_all = quote({ y <- xw; y$n_trees <- 200L; R8::r8_validate(y); y }),
+    write_all = quote({ y <- xw; y$n_trees <- 200L; R8::r8validate(y); y }),
     write_wide = quote({ v <- w; v$f1 <- 0.5; v }),
     write_fr_fn = function(x, name, value) {
       x[[name]] <- value
       x
     },
-    validate = quote(R8::r8_validate(x)),
+    validate = quote(R8::r8validate(x)),
     dispatch = quote(complexity(x))
   )
 }

@@ -27,7 +27,7 @@ representation_types <- function(ns) {
 }
 
 is_one <- function(x) {
-  inherits(tryCatch(r8_validate(x), error = identity), "r8_value")
+  inherits(tryCatch(r8validate(x), error = identity), "r8_value")
 }
 
 test_that("the attributes of a value are its names and its class", {
@@ -114,7 +114,7 @@ test_that("a value stays one wherever R code moves it", {
   for (w in names(ways)) {
     expect_true(is_one(ways[[w]]), info = w)
     expect_identical(as.list(ways[[w]]), list(x = 1, y = 2), info = w)
-    expect_true(r8_equal(ways[[w]], p), info = w)
+    expect_true(r8equal(ways[[w]], p), info = w)
   }
   expect_true(is_one(unserialize(serialize(t[["Empty"]](), NULL))))
   expect_true(is_one(unserialize(serialize(t[["Shape"]]@Nothing, NULL))))
@@ -151,7 +151,7 @@ test_that("an object that R code makes from the parts of a value is not one", {
   )
   for (w in names(ways)) {
     expect_false(is_one(ways[[w]]), info = w)
-    expect_error(r8_to_json(ways[[w]]), class = "r8_error", info = w)
+    expect_error(r8to_json(ways[[w]]), class = "r8_error", info = w)
   }
   # The value is as it was.
   expect_true(is_one(p))

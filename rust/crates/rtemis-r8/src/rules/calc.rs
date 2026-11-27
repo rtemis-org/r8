@@ -4,11 +4,11 @@
 //! [`computed`] evaluates expressions over the rows of a table: a column of
 //! every row, in which an aggregate is over all rows or over the row's group,
 //! or, for a summary, a column of one value for each group. Groups are the
-//! distinct values of key columns, numbered in the order of [`r8_sort()`]'s
+//! distinct values of key columns, numbered in the order of [`r8sort()`]'s
 //! keys: ascending, missing last, strings by code point, factors by level.
 //! `col()` in an expression is the column that [`mapped`] sets it to.
 //!
-//! [`r8_sort()`]: crate::rules
+//! [`r8sort()`]: crate::rules
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -156,7 +156,7 @@ fn integer_key(x: i64) -> u64 {
     (x as u64) ^ (1 << 63)
 }
 
-/// The keys of the rows of the column `k`, which order as `r8_sort()` orders
+/// The keys of the rows of the column `k`, which order as `r8sort()` orders
 /// the column.
 fn column_keys<'a, A: Access<'a>>(eval: &Eval<'a, A>, k: usize, rows: usize) -> Vec<u64> {
     if let Some(x) = eval.integers(k) {

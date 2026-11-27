@@ -2,8 +2,8 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Checks: r8_check() holds a table against rules or a type and reports what it finds,
-# and r8_validate() requires.
+# Checks: r8check() holds a table against rules or a type and reports what it finds,
+# and r8validate() requires.
 
 visits <- function() {
   data.frame(
@@ -42,9 +42,9 @@ rules <- list(
   kind = rule(ward > 1)
 )
 
-test_that("r8_check() counts what each rule is in each row, and refuses nothing", {
+test_that("r8check() counts what each rule is in each row, and refuses nothing", {
   x <- visits()
-  r <- r8_check(x, rules)
+  r <- r8check(x, rules)
   expect_s3_class(r, "R8::Report")
   expect_identical(r$rows, 5L)
   expect_null(r$type)
@@ -78,19 +78,19 @@ test_that("r8_check() counts what each rule is in each row, and refuses nothing"
   expect_match(p$message[[5L]], "the nearest column is `age`")
   expect_match(p$message[[6L]], "found a string and a number")
   # The same of a raven, and the data are as they were.
-  expect_identical(r8_check(Raven(x), rules), r)
+  expect_identical(r8check(Raven(x), rules), r)
   expect_identical(x, visits())
   # The tables of a report are tables.
   expect_identical(
-    r8_filter(r$problems, rule(row == 2))$rule,
+    r8filter(r$problems, rule(row == 2))$rule,
     c("pressures", "ratio")
   )
-  expect_true(r8_equal(r8_from_json(type_report, r8_to_json(r)), r))
+  expect_true(r8equal(r8from_json(type_report, r8to_json(r)), r))
 })
 
 test_that("a rule is named by the list, its id, or its place", {
   x <- visits()
-  named <- function(...) r8_check(x, ...)$rules$rule
+  named <- function(...) r8check(x, ...)$rules$rule
   expect_identical(named(rule(dbp >= 0)), "rule 1")
   expect_identical(named(rule(dbp >= 0, id = "LOW")), "LOW")
   expect_identical(
@@ -104,13 +104,13 @@ test_that("a rule is named by the list, its id, or its place", {
   )
   bad <- function(against, text) {
     expect_error(
-      r8_check(x, against),
+      r8check(x, against),
       text,
       fixed = TRUE,
       class = "r8_argument_error"
     )
     expect_error(
-      r8_validate(x, against),
+      r8validate(x, against),
       text,
       fixed = TRUE,
       class = "r8_argument_error"
@@ -140,11 +140,11 @@ test_that("one list of rules declares, checks, and reports under the same names"
     )
   })
   x <- visits()
-  of_type <- r8_check(x, V)
-  of_rules <- r8_check(x, set)
+  of_type <- r8check(x, V)
+  of_rules <- r8check(x, set)
   expect_identical(tail(of_type$rules$rule, 2L), names(set))
   expect_identical(
-    as.data.frame(r8_filter(of_type$problems, rule(rule %in% val(names(set))))),
+    as.data.frame(r8filter(of_type$problems, rule(rule %in% val(names(set))))),
     as.data.frame(of_rules$problems)
   )
   expect_error(V(age = 17, sbp = 100, dbp = 80), "Rule adult: age >= 18")
@@ -152,7 +152,7 @@ test_that("one list of rules declares, checks, and reports under the same names"
 
 test_that("a condition of a rule, and a rule without an answer, are told apart", {
   x <- data.frame(a = c(1, NA, 3, 4), b = c(TRUE, TRUE, NA, FALSE))
-  r <- r8_check(x, rule(a > 3, when = b))
+  r <- r8check(x, rule(a > 3, when = b))
   expect_identical(
     as.list(r$rules)[c("checked", "failed", "missing")],
     list(checked = 4L, failed = 1L, missing = 2L)
@@ -161,10 +161,10 @@ test_that("a condition of a rule, and a rule without an answer, are told apart",
 
 test_that("a problem shows what its rule read", {
   x <- data.frame(x = c(1, 2, 3, 10), id = c(1L, 2L, 2L, 3L))
-  r <- r8_check(x, list(s = rule(sum(x) < 10), m = rule(x <= mean(x))))
+  r <- r8check(x, list(s = rule(sum(x) < 10), m = rule(x <= mean(x))))
   expect_identical(r$problems$found, c("sum(x) = 16", "x = 10, mean(x) = 4"))
   expect_identical(r$problems$columns, c("x", "x"))
-  r <- r8_check(x, list(s = rule(x * 2 < 10, when = id > 0)))
+  r <- r8check(x, list(s = rule(x * 2 < 10, when = id > 0)))
   expect_identical(r$problems$found, "x = 10, id = 3, x * 2 = 20")
   T <- declare_in("chk_found", {
     new_table(
@@ -175,7 +175,7 @@ test_that("a problem shows what its rule read", {
       )
     )
   })
-  p <- as.data.frame(r8_check(x, T)$problems)
+  p <- as.data.frame(r8check(x, T)$problems)
   expect_identical(p$found, c("id = 2", "x = 10"))
   expect_identical(
     p$message,
@@ -186,24 +186,24 @@ test_that("a problem shows what its rule read", {
 
 test_that("the problems listed are limited, and the counts are not", {
   x <- data.frame(a = seq_len(5000))
-  r <- r8_check(x, list(rule(a > 4000), rule(a > 0)), limit = 10)
+  r <- r8check(x, list(rule(a > 4000), rule(a > 0)), limit = 10)
   expect_identical(r$rules$failed, c(4000L, 0L))
   expect_identical(r$problems$row, 1:10)
   expect_match(format(r), "lists 10 of 4,000 problems", all = FALSE)
-  expect_identical(nrow(r8_check(x, rule(a > 4000), limit = 0)$problems), 0L)
+  expect_identical(nrow(r8check(x, rule(a > 4000), limit = 0)$problems), 0L)
   for (bad in list(-1, NA, 1.5, "a", 1:2)) {
     expect_error(
-      r8_check(x, rule(a > 1), limit = bad),
+      r8check(x, rule(a > 1), limit = bad),
       "`limit`",
       class = "r8_argument_error"
     )
   }
 })
 
-test_that("r8_check() holds data against the columns and the rules of a type", {
+test_that("r8check() holds data against the columns and the rules of a type", {
   V <- visits_type("chk1")
   x <- visits()
-  r <- r8_check(x, V)
+  r <- r8check(x, V)
   expect_identical(r$type, "chk1::Visits")
   of <- as.data.frame(r$rules)
   expect_identical(
@@ -222,12 +222,12 @@ test_that("r8_check() holds data against the columns and the rules of a type", {
   expect_match(p$message[[5L]], "the cells of `ward` do not read")
   # A rule is read where its columns read, though other cells are refused.
   x$ward <- factor(x$ward, c("ED", "ICU"))
-  r <- r8_check(x, V)
+  r <- r8check(x, V)
   expect_identical(tail(as.list(r$rules)$failed, 2L), c(1L, 1L))
   expect_identical(tail(as.list(r$rules)$missing, 2L), c(1L, 2L))
   # What a type does not have, and what it requires.
   C <- visits_type("chk2", open = FALSE)
-  r <- r8_check(visits()[c("id", "age", "stay")], C)
+  r <- r8check(visits()[c("id", "age", "stay")], C)
   p <- as.data.frame(r$problems)
   expect_identical(
     p$code[p$rule %in% c("sbp", "dbp", "ward", "stay")],
@@ -242,19 +242,19 @@ test_that("r8_check() holds data against the columns and the rules of a type", {
     ward = factor("ED", c("ED", "ICU"))
   )
   expect_match(
-    format(r8_check(v, V)),
+    format(r8check(v, V)),
     "All 7 checks of chk1::Visits hold",
     all = FALSE
   )
   # A field's type.
   t <- type_table(list(age = type_double(max = 100)), open = TRUE)
-  r <- r8_check(visits(), t)
+  r <- r8check(visits(), t)
   expect_identical(r$rules$failed, 2L)
   # Counts are of rows, where a cell has two problems.
   two <- type_table(list(
     a = column(type_double(min = 0, max = 1, values = c(0, 1)))
   ))
-  r <- r8_check(data.frame(a = c(-1, 0.5, 2)), two)
+  r <- r8check(data.frame(a = c(-1, 0.5, 2)), two)
   expect_identical(r$rules$failed, 3L)
   expect_identical(nrow(r$problems), 5L)
 })
@@ -264,38 +264,38 @@ test_that("foreign data are checked as they are", {
   x <- data.frame(a = 1:2, row.names = c("p", "q"))
   x$wait <- as.difftime(c(3, 5), units = "days")
   x$parts <- list(1, "b")
-  r <- r8_check(x, list(rule(a > 0), rule(wait > 1), rule(parts == 1)))
+  r <- r8check(x, list(rule(a > 0), rule(wait > 1), rule(parts == 1)))
   expect_identical(r$rules$checked, c(2L, 0L, 0L))
   expect_match(r$problems$message[[1L]], "is a `difftime`")
   expect_match(r$problems$message[[2L]], "is a list")
   twice <- setNames(data.frame(1:2, 3:4), c("a", "a"))
   expect_match(
-    r8_check(twice, rule(a > 0))$problems$message,
+    r8check(twice, rule(a > 0))$problems$message,
     "two columns are named `a`"
   )
   skip_if_not_installed("data.table")
   dt <- data.table::data.table(a = c(1, -1))
-  expect_identical(r8_check(dt, rule(a > 0))$problems$row, 2L)
-  expect_identical(r8_check(data.frame(), rule(1 > 0))$rows, 0L)
+  expect_identical(r8check(dt, rule(a > 0))$problems$row, 2L)
+  expect_identical(r8check(data.frame(), rule(1 > 0))$rows, 0L)
 })
 
 test_that("an object that is no table is held against its type", {
-  r <- r8_check(c(1, -1), vec(type_double(min = 0)))
+  r <- r8check(c(1, -1), vec(type_double(min = 0)))
   expect_identical(r$rules$failed, 1L)
   expect_identical(r$problems$row, 2L)
   expect_match(format(r), "The check does not hold", all = FALSE)
   bad <- function(expr, text) {
     expect_error(expr, text, fixed = TRUE, class = "r8_argument_error")
   }
-  bad(r8_check(1, rule(a > 1)), "`x` is a table")
-  bad(r8_check(visits(), "a"), "`against` is a rule()")
-  bad(r8_check(visits(), list()), "`against` is a rule()")
-  bad(r8_check(visits(), list(1)), "`against[[1]]` is not a rule()")
+  bad(r8check(1, rule(a > 1)), "`x` is a table")
+  bad(r8check(visits(), "a"), "`against` is a rule()")
+  bad(r8check(visits(), list()), "`against` is a rule()")
+  bad(r8check(visits(), list(1)), "`against[[1]]` is not a rule()")
 })
 
 test_that("a report prints what holds and what does not", {
   x <- visits()
-  shown <- function(...) format(r8_check(x, ...))
+  shown <- function(...) format(r8check(x, ...))
   expect_identical(
     shown(rules[c("pressures", "mean_age", "typo")]),
     c(
@@ -315,22 +315,22 @@ test_that("a report prints what holds and what does not", {
   expect_match(shown(many), "and 10 more that do not hold", all = FALSE)
 })
 
-test_that("r8_validate() requires what r8_check() reports", {
+test_that("r8validate() requires what r8check() reports", {
   x <- visits()
-  expect_identical(withVisible(r8_validate(x, rule(id > 0)))$visible, FALSE)
-  expect_identical(r8_validate(x, rules["mean_age"]), x)
-  e <- tryCatch(r8_validate(x, rules[c("adult", "mean_age")]), error = identity)
+  expect_identical(withVisible(r8validate(x, rule(id > 0)))$visible, FALSE)
+  expect_identical(r8validate(x, rules["mean_age"]), x)
+  e <- tryCatch(r8validate(x, rules[c("adult", "mean_age")]), error = identity)
   expect_s3_class(e, "r8_value_error")
   expect_match(conditionMessage(e), "Invalid `x`: 1 of 2 rules holds on 5 rows")
   expect_match(conditionMessage(e), "adult .* 1 row fails")
   expect_s3_class(e$report, "R8::Report")
-  expect_error(r8_validate(x, rules["typo"]), "is not checked")
+  expect_error(r8validate(x, rules["typo"]), "is not checked")
   V <- visits_type("chk3")
-  expect_error(r8_validate(x, V), "Invalid `x`", class = "r8_value_error")
-  expect_error(r8_validate(x, 1), "`against`", class = "r8_argument_error")
+  expect_error(r8validate(x, V), "Invalid `x`", class = "r8_value_error")
+  expect_error(r8validate(x, 1), "`against`", class = "r8_argument_error")
 })
 
-test_that("r8_validate() of a table gives the problems that the type finds", {
+test_that("r8validate() of a table gives the problems that the type finds", {
   T <- declare_in("chk_require", {
     new_table(
       "T",
@@ -344,8 +344,8 @@ test_that("r8_validate() of a table gives the problems that the type finds", {
   good <- data.frame(id = 1:2, x = c(2, 3))
   bad <- data.frame(id = c(1L, 1L), x = c(2, 9))
   for (f in list(identity, Raven)) {
-    expect_identical(r8_validate(f(good), T), f(good))
-    e <- expect_error(r8_validate(f(bad), T), class = "r8_value_error")
+    expect_identical(r8validate(f(good), T), f(good))
+    e <- expect_error(r8validate(f(bad), T), class = "r8_value_error")
     expect_match(
       conditionMessage(e),
       "$x[[2]]` must be at most 5; found 9",
@@ -353,33 +353,33 @@ test_that("r8_validate() of a table gives the problems that the type finds", {
     )
     expect_match(conditionMessage(e), "1 appears more than once", fixed = TRUE)
   }
-  expect_identical(r8_validate(T(good), T), T(good))
+  expect_identical(r8validate(T(good), T), T(good))
   expect_error(
-    r8_validate(data.frame(id = 3L, x = 2), T),
+    r8validate(data.frame(id = 3L, x = 2), T),
     "order",
     class = "r8_value_error"
   )
   expect_error(
-    r8_validate(1, T),
+    r8validate(1, T),
     "must be a value of",
     class = "r8_value_error"
   )
   expect_error(
-    r8_validate(T(good), complete = "yes"),
+    r8validate(T(good), complete = "yes"),
     "`complete` is TRUE or FALSE.",
     class = "r8_argument_error"
   )
 })
 
 
-test_that("r8_to_data_frame() gives the columns as a data frame", {
+test_that("r8to_data_frame() gives the columns as a data frame", {
   r <- Raven(a = 1:3, b = c("x", "y", "z"))
   expect_identical(
-    r8_to_data_frame(r),
+    r8to_data_frame(r),
     data.frame(a = 1:3, b = c("x", "y", "z"))
   )
   expect_error(
-    r8_to_data_frame(iris),
+    r8to_data_frame(iris),
     "value of a table",
     class = "r8_argument_error"
   )

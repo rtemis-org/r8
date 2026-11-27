@@ -42,9 +42,9 @@ field name. \code{NULL} removes the default of an \code{option()} field.}
 \item{storage}{Character \{"r", "rust"\}: Where values hold their fields.
 \code{"rust"}: a Rust-stored type, whose values the codec in the package's
 compiled exports builds and holds. Its constructor signals
-\code{r8_codec_missing_error} until the codec is registered, and \code{r8_register()}
+\code{r8_codec_missing_error} until the codec is registered, and \code{r8register()}
 checks that the exports carry the codec. A package whose types are declared
-in Rust generates these declarations with \code{r8_document_rust()}.}
+in Rust generates these declarations with \code{r8document_rust()}.}
 
 \item{object}{A struct type object.}
 }
@@ -62,7 +62,7 @@ field \code{Config/R8/namespace}, or the package name); types declared at the
 console belong to the option \code{r8.namespace}, \code{"global"} by default.
 
 \code{Type@from(x)} converts \code{x} with the type's \code{From} impls, as
-\code{r8_converter(Type)(x)} does.
+\code{r8converter(Type)(x)} does.
 }
 \section{Changing a type that other packages use}{
 
@@ -73,20 +73,20 @@ combination of versions.
 \itemize{
 \item A field that is removed or renamed, another type or unit, a loosened bound,
 a removed rule, and another \code{version} stop compiled code of other packages
-from reading values of the type (\code{\link[=r8_register]{r8_register()}}, section "Types that other
+from reading values of the type (\code{\link[=r8register]{r8register()}}, section "Types that other
 packages use"). A new required field and a tightened bound or rule break
 code that constructs values. Every change of a struct's fields or rules
 requires the structs that extend it to be built again.
 \item A new field of type \code{option()} is the change that breaks the least. For a
 change of another kind, consider a new type, with a conversion
-(\code{\link[=r8_convert]{r8_convert()}}), and leave the published one as it is.
+(\code{\link[=r8convert]{r8convert()}}), and leave the published one as it is.
 \item When a published type has to change, raise the package's version, and the
 type's \code{version} when its values take another meaning or its earlier
 documents do not read; state the change in \code{NEWS}, run the checks of the
 reverse dependencies, and give their maintainers time to release. The CRAN
 Repository Policy asks for at least two weeks.
 \item A value carries the declaration that it was made under. One made before a
-change, such as a saved one, is refused where it is used until \code{\link[=r8_update]{r8_update()}}
+change, such as a saved one, is refused where it is used until \code{\link[=r8update]{r8update()}}
 gives its value under the new declaration, which it does for a new optional
 field and for another order of fields, and does not for another unit, kind
 of type, or \code{version}, and for a removed field.

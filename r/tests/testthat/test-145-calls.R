@@ -3,8 +3,8 @@
 # 2026- EDG rtemis.org
 
 # Descriptions of parameters, the JSON Schema of a function's arguments, and
-# documents of a call: r8_check_call(), r8_call_from_json(), and
-# r8_call_to_json().
+# documents of a call: r8check_call(), r8call_from_json(), and
+# r8call_to_json().
 #
 # spec: R8/class-system#typed-functions
 
@@ -55,7 +55,7 @@ test_that("a parameter's description is in its declaration", {
   expect_identical(v[["description"]], "A value.")
   expect_true("  v" %in% capture.output(print(g)))
   expect_identical(g(1, 2), 2)
-  e <- expect_error(r8_schema(g), class = "r8_type_error")
+  e <- expect_error(r8schema(g), class = "r8_type_error")
   expect_match(conditionMessage(e), "`x`, `v`", fixed = TRUE)
   # params() reads the same.
   p <- params(x, n = arg_integer(description = "Draws."))
@@ -71,7 +71,7 @@ test_that("a parameter's description is in its declaration", {
   expect_error(f(), "missing", class = "error")
 })
 
-test_that("r8_schema() writes the schema of a function's arguments", {
+test_that("r8schema() writes the schema of a function's arguments", {
   f <- declare_in("call2", {
     new_function(
       "f",
@@ -87,7 +87,7 @@ test_that("r8_schema() writes the schema of a function's arguments", {
     )
   })
   # The schema's text without its white space.
-  s <- gsub("[[:space:]]", "", r8_schema(f))
+  s <- gsub("[[:space:]]", "", r8schema(f))
   has <- function(text) expect_true(grepl(text, s, fixed = TRUE), info = text)
   has('"title":"call2::f"')
   has('"description":"F."')
@@ -100,17 +100,17 @@ test_that("r8_schema() writes the schema of a function's arguments", {
   dots <- declare_in("call2", {
     new_function("dots", function(x = arg_double(), ...) x)
   })
-  expect_error(r8_schema(dots), "`...`", class = "r8_type_error")
+  expect_error(r8schema(dots), "`...`", class = "r8_type_error")
 })
 
-test_that("r8_check_call() reports every problem of a document", {
+test_that("r8check_call() reports every problem of a document", {
   clip <- clip_of("call3")
-  ok <- r8_check_call(
+  ok <- r8check_call(
     clip,
     doc_of("call3", '{"x": [1, 2], "hi": 1, "n": 2, "w": null}')
   )
   expect_identical(nrow(ok), 0L)
-  bad <- r8_check_call(
+  bad <- r8check_call(
     clip,
     doc_of("call3", '{"x": [1, "a"], "lo": "b", "zz": 1}')
   )
@@ -126,7 +126,7 @@ test_that("r8_check_call() reports every problem of a document", {
   )
   # The rules, with a constant default of an omitted argument; a rule over an
   # argument whose default is written in R is unchecked.
-  rules <- r8_check_call(
+  rules <- r8check_call(
     clip,
     doc_of("call3", '{"x": [1], "hi": -1, "w": null}')
   )
@@ -134,12 +134,12 @@ test_that("r8_check_call() reports every problem of a document", {
   expect_identical(rules[["rule"]], "order")
   expect_identical(attr(rules, "unchecked")[["rule"]], "count")
   # A call that holds has no rows, and its unchecked rules apart.
-  held <- r8_check_call(clip, doc_of("call3", '{"x": [1], "hi": 1, "w": null}'))
+  held <- r8check_call(clip, doc_of("call3", '{"x": [1], "hi": 1, "w": null}'))
   expect_identical(nrow(held), 0L)
   expect_identical(attr(held, "unchecked")[["code"]], "rule_unchecked")
   # A name from the document is written with its control characters escaped
   # and cut.
-  long <- r8_check_call(
+  long <- r8check_call(
     clip,
     paste0(
       '{"$function": "call3::',
@@ -150,14 +150,14 @@ test_that("r8_check_call() reports every problem of a document", {
   expect_lt(nchar(long[["message"]]), 300L)
   expect_false(grepl("\033", long[["message"]], fixed = TRUE))
   # A function that the call does not admit.
-  other <- r8_check_call(clip, '{"$function": "call3::other", "arguments": {}}')
+  other <- r8check_call(clip, '{"$function": "call3::other", "arguments": {}}')
   expect_identical(other[["code"]], "unknown_function")
-  expect_error(r8_check_call(list(), "{}"), class = "r8_type_error")
+  expect_error(r8check_call(list(), "{}"), class = "r8_type_error")
 })
 
-test_that("r8_call_from_json() runs a call that holds and raises one that does not", {
+test_that("r8call_from_json() runs a call that holds and raises one that does not", {
   clip <- clip_of("call4")
-  out <- r8_call_from_json(
+  out <- r8call_from_json(
     clip,
     doc_of("call4", '{"x": [-1, 0.5, 3], "hi": 1, "w": {"lo": 0, "hi": 1}}')
   )
@@ -166,7 +166,7 @@ test_that("r8_call_from_json() runs a call that holds and raises one that does n
   expect_identical(out[["n"]], 3L)
   expect_identical(deparse(out[["call"]]), "clip(x = x, hi = hi, w = w)")
   e <- expect_error(
-    r8_call_from_json(clip, doc_of("call4", '{"x": [1], "lo": 2, "hi": 1}')),
+    r8call_from_json(clip, doc_of("call4", '{"x": [1], "lo": 2, "hi": 1}')),
     class = "r8_argument_error"
   )
   expect_match(
@@ -177,13 +177,13 @@ test_that("r8_call_from_json() runs a call that holds and raises one that does n
   expect_identical(e[["problems"]][["code"]], "missing_argument")
   # A rule that the document could not decide is checked by the function.
   e <- expect_error(
-    r8_call_from_json(clip, doc_of("call4", '{"x": [], "hi": 1, "w": null}')),
+    r8call_from_json(clip, doc_of("call4", '{"x": [], "hi": 1, "w": null}')),
     class = "r8_argument_error"
   )
   expect_match(conditionMessage(e), "count", fixed = TRUE)
   # null is NULL: a parameter with a default that is not option() refuses it.
   e <- expect_error(
-    r8_call_from_json(
+    r8call_from_json(
       clip,
       doc_of("call4", '{"x": [1], "lo": null, "hi": 1, "w": null}')
     ),
@@ -192,12 +192,12 @@ test_that("r8_call_from_json() runs a call that holds and raises one that does n
   expect_identical(e[["problems"]][["path"]], "/arguments/lo")
 })
 
-test_that("r8_call_to_json() writes a document that reads back", {
+test_that("r8call_to_json() writes a document that reads back", {
   clip <- clip_of("call5")
   Range <- declare_in("call5", {
     new_struct("Range", fields = list(lo = type_double(), hi = type_double()))
   })
-  doc <- r8_call_to_json(clip, c(-1, 3), hi = 1, w = Range(lo = 0, hi = 1))
+  doc <- r8call_to_json(clip, c(-1, 3), hi = 1, w = Range(lo = 0, hi = 1))
   expect_s3_class(doc, "json")
   expect_identical(
     unclass(doc),
@@ -206,31 +206,31 @@ test_that("r8_call_to_json() writes a document that reads back", {
       '"arguments":{"hi":1,"w":{"hi":1,"lo":0},"x":[-1,3]}}'
     )
   )
-  expect_identical(r8_call_from_json(clip, doc)[["value"]], c(0, 1))
+  expect_identical(r8call_from_json(clip, doc)[["value"]], c(0, 1))
   # Arguments by position, every parameter included.
   expect_match(
-    r8_call_to_json(clip, 1, 0, 1, 1L, NULL, TRUE),
+    r8call_to_json(clip, 1, 0, 1, 1L, NULL, TRUE),
     '"verbose":true',
     fixed = TRUE
   )
   expect_error(
-    r8_call_to_json(clip, 1, lo = 2, hi = 1, n = 1L, w = NULL),
+    r8call_to_json(clip, 1, lo = 2, hi = 1, n = 1L, w = NULL),
     "order",
     class = "r8_argument_error"
   )
   e <- expect_error(
-    r8_call_to_json(clip, "a", hi = 1, w = NULL),
+    r8call_to_json(clip, "a", hi = 1, w = NULL),
     class = "r8_argument_error"
   )
   expect_identical(e[["problems"]][["path"]], "/arguments/x")
   expect_error(
-    r8_call_to_json(clip, 1, zz = 2),
+    r8call_to_json(clip, 1, zz = 2),
     "unused argument",
     class = "r8_argument_error"
   )
   # A parameter named `f` is given by name.
   g <- declare_in("call5", new_function("g", function(f = arg_double()) f))
-  expect_match(r8_call_to_json(g, f = 1), '"arguments":{"f":1}', fixed = TRUE)
+  expect_match(r8call_to_json(g, f = 1), '"arguments":{"f":1}', fixed = TRUE)
 })
 
 test_that("the roclet writes a described parameter's @param", {
@@ -280,7 +280,7 @@ test_that("the schema writes each rule's text, as R writes the rule", {
       )
     )
   })
-  s <- gsub("[[:space:]]+", " ", r8_schema(f))
+  s <- gsub("[[:space:]]+", " ", r8schema(f))
   expect_match(s, '"text": "lo <= hi"', fixed = TRUE)
   expect_match(s, '"message": "lo is at most hi."', fixed = TRUE)
   # The text in Rust is the text that R writes of the same rule, but for the

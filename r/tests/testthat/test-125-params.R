@@ -668,7 +668,7 @@ test_that("a dispatched parameter may be named by a prefix of an argument of imp
     implement(connect, v = Node, g = Graph) <- function(g, v) "a node"
     expect_identical(connect(Graph(), 1), "any vertex")
     expect_identical(connect(Graph(), Node()), "a node")
-    expect_identical(r8_method(connect, g = Graph)(1, 2), "any vertex")
+    expect_identical(r8method(connect, g = Graph)(1, 2), "any vertex")
     pair <- generic(
       "pair",
       params(generic, val),
@@ -689,12 +689,12 @@ test_that("a dispatched parameter may be named by a prefix of an argument of imp
     # A parameter that is not dispatched has any name.
     expect_no_error(generic("fine", params(x, value, return_type)))
     expect_error(
-      r8_method(generic = connect, Graph),
+      r8method(generic = connect, Graph),
       "without an argument name",
       class = "r8_dispatch_error"
     )
     expect_error(
-      r8_method(connect),
+      r8method(connect),
       "then the types",
       class = "r8_dispatch_error"
     )

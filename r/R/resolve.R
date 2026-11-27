@@ -17,7 +17,7 @@ pending_fields <- function(x) {
 } # /R8::pending_fields
 
 
-# %% r8_resolve ----
+# %% r8resolve ----
 #' Resolve a value's pending fields
 #'
 #' Fills the absent fields of type `option()` that a struct declares with a
@@ -38,11 +38,11 @@ pending_fields <- function(x) {
 #'   mg = field(option(type_double()), context = TRUE, unit = "mg"),
 #'   g = field(option(type_double()), compute = calc(mg / 1000), unit = "g")
 #' ))
-#' r8_resolve(Dose(), context = list(mg = 250))$g
+#' r8resolve(Dose(), context = list(mg = 250))$g
 #' options(op)
 #'
 #' @export
-r8_resolve <- function(x, context = list()) {
+r8resolve <- function(x, context = list()) {
   if (!is_value(x) || !is.null(value_variant(x))) {
     r8_abort("`x` is an R8 struct value.", class = "r8_type_error")
   }
@@ -81,4 +81,4 @@ r8_resolve <- function(x, context = list()) {
     value_abort("Cannot resolve", value_type(x), res[["errors"]])
   }
   res[["value"]]
-} # /R8::r8_resolve
+} # /R8::r8resolve

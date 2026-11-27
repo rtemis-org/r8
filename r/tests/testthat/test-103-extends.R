@@ -42,8 +42,8 @@ test_that("a child holds its parent's fields and rules, then its own", {
       c("ext1::A", "ext1::B", "")
     )
     # A JSON round trip keeps the child's type.
-    y <- r8_from_json(C, r8_to_json(x))
-    expect_true(r8_equal(x, y))
+    y <- r8from_json(C, r8to_json(x))
+    expect_true(r8equal(x, y))
     expect_identical(class(y), class(x))
   })
 })

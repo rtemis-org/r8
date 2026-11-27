@@ -456,7 +456,7 @@ test_that("a body of rust() is the whole body, in a package", {
   }))
 })
 
-test_that("r8_rust_signature() writes the Rust function of a declaration", {
+test_that("r8rust_signature() writes the Rust function of a declaration", {
   level <- declare_in("fn_signature", {
     new_function(
       "level",
@@ -475,7 +475,7 @@ test_that("r8_rust_signature() writes the Rust function of a declaration", {
       description = "Holds a running sum between `lo` and `hi`."
     )
   })
-  text <- r8_rust_signature(level)
+  text <- r8rust_signature(level)
   expect_s3_class(text, "r8_rust_text")
   lines <- strsplit(text, "\n", fixed = TRUE)[[1L]]
   expect_identical(
@@ -503,5 +503,5 @@ test_that("r8_rust_signature() writes the Rust function of a declaration", {
     )
   )
   expect_output(print(text), "fn level(", fixed = TRUE)
-  expect_error(r8_rust_signature(sum), class = "r8_type_error")
+  expect_error(r8rust_signature(sum), class = "r8_type_error")
 })

@@ -213,7 +213,7 @@ scenario(
   "a saved value of Rust is read after its package changed the type",
   situation = "A user saves a value whose fields Rust holds. pa 2.0.0 reorders the fields, at the same version of the type, and the user reads the value.",
   risk = "The Rust code takes one field for another: the numbers are wrong.",
-  result = "The fields read by their names, without pa too. The Rust code of pa 2.0.0 is not given the value, and r8_update() makes one that it takes.",
+  result = "The fields read by their names, without pa too. The Rust code of pa 2.0.0 is not given the value, and r8update() makes one that it takes.",
   how = "installed",
   code = {
     first <- rust_first()
@@ -228,9 +228,9 @@ scenario(
       "say('alone', c(p$x, p$y))",
       "library(pa)",
       "say('read', c(p$x, p$y))",
-      "say('validate', R8::r8_validate(p)$x)",
+      "say('validate', R8::r8validate(p)$x)",
       "say('set', {q <- p; q$x <- 1; q$x})",
-      "say('update', {u <- R8::r8_update(p); c(u$x, u$y, R8::r8_validate(u)$x)})"
+      "say('update', {u <- R8::r8update(p); c(u$x, u$y, R8::r8validate(u)$x)})"
     )
     expect_said(
       said(first$pa, code),
@@ -323,10 +323,10 @@ scenario(
         "say('body added', says(side(held())))",
         "square(type_double())",
         "say('body loosened', says(side(held())))",
-        "w <- tryCatch(r8_register('r8pkgS'), warning = identity)",
+        "w <- tryCatch(r8register('r8pkgS'), warning = identity)",
         "say('quiet', is.numeric(w))",
         "signal(of(name = option(type_character())))",
-        "w <- tryCatch(r8_register('r8pkgS'), warning = identity)",
+        "w <- tryCatch(r8register('r8pkgS'), warning = identity)",
         "say('class', class(w)[1])",
         "cat(conditionMessage(w), '\\n')"
       )

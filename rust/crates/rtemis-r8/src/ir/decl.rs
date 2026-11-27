@@ -34,7 +34,7 @@ pub struct FieldDef {
     /// The field's type.
     pub ty: FieldType,
     /// A literal default in the field's JSON form as a tree, its numbers
-    /// kept as written, filled by the constructor and by `r8_from_json()`.
+    /// kept as written, filled by the constructor and by `r8from_json()`.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

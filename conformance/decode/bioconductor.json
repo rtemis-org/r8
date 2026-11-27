@@ -970,7 +970,7 @@
                     "type": {
                       "kind": "factor"
                     },
-                    "description": "Sequence of each range, a dense factor; an Rle input is expanded by r8_conform()."
+                    "description": "Sequence of each range, a dense factor; an Rle input is expanded by r8conform()."
                   },
                   {
                     "name": "start",

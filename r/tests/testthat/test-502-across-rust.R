@@ -32,7 +32,7 @@ scenario(
         "u <- shifted(t, 2)",
         "say('shifted', class(u)[1], u$lo, u$hi, u$number)",
         # r8pkgR's compiled impls for Interval read a value of r8pkgS by its fields.
-        "v <- r8_upcast(t, Interval); m <- middle(t)",
+        "v <- r8upcast(t, Interval); m <- middle(t)",
         "say('ancestor', width(t), format(t), class(v)[1], v$hi, class(m)[1], m$lo)",
         # An impl of a trait of r8pkgR's crate, and a parameter of r8pkgR's type.
         "say('total', total(t), grepl('does not implement', msg(total(v))))",
@@ -59,7 +59,7 @@ scenario(
     out <- run_r(
       lib,
       sprintf(
-        "R8::r8_document_rust(%s, check = TRUE); cat('current\\n')",
+        "R8::r8document_rust(%s, check = TRUE); cat('current\\n')",
         deparse(normalizePath(test_path("packages", "r8pkgS")))
       )
     )
@@ -96,9 +96,9 @@ scenario(
         "say('contents', contents(p))",
         "say('unknown', contents(q))",
         # A held value is the value itself, and a nested one a value of its type.
-        "say('read', identical(p$range, strip), class(q$range)[1], class(p$frame)[1], p$frame$hi, r8_variant(p$method), is.null(q$method), is.null(q$inset))",
+        "say('read', identical(p$range, strip), class(q$range)[1], class(p$frame)[1], p$frame$hi, r8variant(p$method), is.null(q$method), is.null(q$inset))",
         "w <- q; w$range <- strip; w$frame <- Interval(lo = 0, hi = 10); w$method <- Resampler@Loocv",
-        "say('write', contents(w), r8_variant(w$method), contents(q))",
+        "say('write', contents(w), r8variant(w$method), contents(q))",
         "say('held', class(held(p))[1], class(held(q))[1])",
         # Another value of an ancestor keeps the type and its other fields.
         "m <- moved(p, 2, 9); n <- moved(q, 0, 1)",
@@ -108,16 +108,16 @@ scenario(
         "say('invalid', msg(moved(q, 5, 1)))",
         "b <- banded(p, 'new')",
         "say('new', class(b$range)[1], b$range$label, b$range$hi, b$range$weights, class(b$figure)[1], b$figure$side)",
-        "say('json', vapply(list(p, q, m), function(x) { y <- r8_from_json(Panel, r8_to_json(x)); r8_equal(x, y) && r8_hash(x) == r8_hash(y) && contents(x) == contents(y) }, NA))",
-        "say('tag', grepl('\"figure\":{\"side\":2,\"name\":\"square\",\"figure\":\"Square\"}', r8_to_json(p), fixed = TRUE))",
-        "say('serialize', vapply(list(p, q, m), function(x) { y <- unserialize(serialize(x, NULL)); r8_equal(x, y) && contents(x) == contents(y) }, NA))",
+        "say('json', vapply(list(p, q, m), function(x) { y <- r8from_json(Panel, r8to_json(x)); r8equal(x, y) && r8hash(x) == r8hash(y) && contents(x) == contents(y) }, NA))",
+        "say('tag', grepl('\"figure\":{\"side\":2,\"name\":\"square\",\"figure\":\"Square\"}', r8to_json(p), fixed = TRUE))",
+        "say('serialize', vapply(list(p, q, m), function(x) { y <- unserialize(serialize(x, NULL)); r8equal(x, y) && contents(x) == contents(y) }, NA))",
         "say('r_stored', contents(r_stored(q)))",
         # An implementor declared in R, and a type that implements nothing.
         "op <- options(r8.namespace = 'demo')",
         "Circle <- new_struct('Circle', fields = list(r = type_double(), name = type_character()))",
         "impl(Figure, Circle, methods = list(area = function(x) x$r, scaled = function(x, by) { x$r <- x$r * by; x }))",
-        "x <- Panel(range = frame, frame = frame, figure = Circle(r = 3, name = 'c')); y <- r8_from_json(Panel, r8_to_json(x))",
-        "say('implementor', contents(x), area(x$figure), r8_equal(x, y), contents(y))",
+        "x <- Panel(range = frame, frame = frame, figure = Circle(r = 3, name = 'c')); y <- r8from_json(Panel, r8to_json(x))",
+        "say('implementor', contents(x), area(x$figure), r8equal(x, y), contents(y))",
         "say('refused', grepl('not_implementor', msg(Panel(range = frame, frame = frame, figure = strip))), grepl('not_subtype', msg(Panel(range = Square(side = 1), frame = frame, figure = Square(side = 1)))), grepl('invalid', msg(Panel(range = frame, frame = strip, figure = Square(side = 1))), ignore.case = TRUE))",
         # Parameters of a method in Rust: an open value, an optional value, and an optional vector.
         "r <- refit(p, tile, Circle(r = 2, name = 'd'))",
@@ -129,10 +129,10 @@ scenario(
         # Fields of r8pkgR's types in a type of r8pkgS, whose library does not build them.
         "g <- Grid(cell = frame, method = Resampler@Custom(train = 1:2, test = 3L), extent = Band(lo = 0, hi = 8, label = 'b', weights = 1), figure = Square(side = 3), note = tile)",
         "say('noted', noted(g$note), grepl('not_implementor', msg(g$note <- strip)))",
-        "h <- r8_from_json(Grid, r8_to_json(g)); u <- unserialize(serialize(g, NULL))",
-        "say('grid', cells(g), cells(h), cells(u), r8_equal(g, h), r8_equal(g, u))",
-        "say('nested', class(g$cell)[1], h$cell$hi, r8_variant(u$method), h$method$train, width(h$cell), format(u$method), area(h$figure))",
-        "g$method <- Resampler@Loocv; say('unit', format(g$method), format(r8_from_json(Grid, r8_to_json(g))$method))",
+        "h <- r8from_json(Grid, r8to_json(g)); u <- unserialize(serialize(g, NULL))",
+        "say('grid', cells(g), cells(h), cells(u), r8equal(g, h), r8equal(g, u))",
+        "say('nested', class(g$cell)[1], h$cell$hi, r8variant(u$method), h$method$train, width(h$cell), format(u$method), area(h$figure))",
+        "g$method <- Resampler@Loocv; say('unit', format(g$method), format(r8from_json(Grid, r8to_json(g))$method))",
         "say('result', class(lower(tile))[1], lower(tile)$hi, width(lower(tile)))",
         "k <- mirai::mirai({ library(r8pkgS); list(r8pkgR::contents(q), class(q$range)[1], r8pkgR::moved(q, 1, 5)) }, q = q)[]",
         "say('mirai', k[[1]], k[[2]], contents(k[[3]]))",
@@ -240,8 +240,8 @@ scenario(
       c(
         session,
         "g <- Grid(cell = frame, method = Resampler@Custom(train = 1:2, test = 3L), extent = Band(lo = 0, hi = 8, label = 'b', weights = 1), figure = Square(side = 3))",
-        "pj <- r8_to_json(p); gj <- r8_to_json(g)",
-        "run <- function() list(contents(moved(p, 2, 9)), moved(q, 2, 9)$range$number, banded(p, 'n')$range$weights, r8_from_json(Panel, pj)$range$weights, r8_from_json(Grid, gj)$method$train, unserialize(serialize(p, NULL))$range$weights, contents(unserialize(serialize(p, NULL))), unserialize(serialize(g, NULL))$extent$weights, lower(tile)$hi, r8_from_json(Grid, gj)$cell$hi)",
+        "pj <- r8to_json(p); gj <- r8to_json(g)",
+        "run <- function() list(contents(moved(p, 2, 9)), moved(q, 2, 9)$range$number, banded(p, 'n')$range$weights, r8from_json(Panel, pj)$range$weights, r8from_json(Grid, gj)$method$train, unserialize(serialize(p, NULL))$range$weights, contents(unserialize(serialize(p, NULL))), unserialize(serialize(g, NULL))$extent$weights, lower(tile)$hi, r8from_json(Grid, gj)$cell$hi)",
         "a <- run(); gctorture2(1); b <- run(); gctorture2(0)",
         "say('torture', identical(a, b), unlist(b[-1]))"
       )

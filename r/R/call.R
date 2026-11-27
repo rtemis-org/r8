@@ -110,7 +110,7 @@ read_call <- function(fs, json, load) {
 } # /R8::read_call
 
 
-# %% r8_check_call ----
+# %% r8check_call ----
 #' Check a document of a call of a typed function
 #'
 #' Reads a document of a call, `{"$function": "ns::f", "arguments": {...}}`, and
@@ -127,16 +127,16 @@ read_call <- function(fs, json, load) {
 #'   code.
 #' @param json Character: The document, one string or its lines.
 #' @param load Optional Character: Packages to load before the check, as
-#'   [r8_from_json()] takes them.
+#'   [r8from_json()] takes them.
 #'
 #' @return A data frame of the problems, as the condition of
-#'   [r8_call_from_json()] holds them (`code`, `path`, `rule`, `message`, and
+#'   [r8call_from_json()] holds them (`code`, `path`, `rule`, `message`, and
 #'   others), with no rows for a call that holds. Paths are JSON Pointers into
 #'   the document, such as `/arguments/lo`. The attribute `unchecked` holds, in
 #'   the same form, the rules that read an omitted argument whose default is
 #'   written in R, which the function checks when it runs.
 #'
-#' @seealso [r8_call_from_json()], [r8_call_to_json()], and [r8_schema()].
+#' @seealso [r8call_from_json()], [r8call_to_json()], and [r8schema()].
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -147,11 +147,11 @@ read_call <- function(fs, json, load) {
 #'   },
 #'   rules = list(order = rule(lo <= hi))
 #' )
-#' r8_check_call(clip, '{"$function": "demo::clip", "arguments": {"x": [1], "lo": 2, "hi": 1}}')
+#' r8check_call(clip, '{"$function": "demo::clip", "arguments": {"x": [1], "lo": 2, "hi": 1}}')
 #' options(op)
 #'
 #' @export
-r8_check_call <- function(f, json, load = NULL) {
+r8check_call <- function(f, json, load = NULL) {
   fs <- call_functions(f)
   res <- read_call(fs, json, load)
   errors <- res[["errors"]]
@@ -166,21 +166,21 @@ r8_check_call <- function(f, json, load = NULL) {
     problems_data(errors),
     unchecked = problems_data(unchecked)
   )
-} # /R8::r8_check_call
+} # /R8::r8check_call
 
 
-# %% r8_call_from_json ----
+# %% r8call_from_json ----
 #' Call a typed function from a document of a call
 #'
-#' Checks a document of a call as [r8_check_call()] does, raises every problem in
+#' Checks a document of a call as [r8check_call()] does, raises every problem in
 #' one `r8_argument_error`, and otherwise calls the function that `"$function"`
 #' names with the arguments in their stored form. An argument that the document
 #' omits takes its default, and `null` is `NULL`. The call is evaluated in an
 #' environment that binds the arguments by name, whose parent is the frame of the
-#' caller of `r8_call_from_json()`: `sys.call()` in the function's body shows the
+#' caller of `r8call_from_json()`: `sys.call()` in the function's body shows the
 #' arguments' names, and `parent.frame()` is that environment.
 #'
-#' @inheritParams r8_check_call
+#' @inheritParams r8check_call
 #'
 #' @return The function's result.
 #'
@@ -192,11 +192,11 @@ r8_check_call <- function(f, json, load = NULL) {
 #'     pmin(pmax(x, lo), hi)
 #'   }
 #' )
-#' r8_call_from_json(clip, '{"$function": "demo::clip", "arguments": {"x": [-1, 0.5, 3], "hi": 1}}')
+#' r8call_from_json(clip, '{"$function": "demo::clip", "arguments": {"x": [-1, 0.5, 3], "hi": 1}}')
 #' options(op)
 #'
 #' @export
-r8_call_from_json <- function(f, json, load = NULL) {
+r8call_from_json <- function(f, json, load = NULL) {
   fs <- call_functions(f)
   res <- read_call(fs, json, load)
   errors <- res[["errors"]]
@@ -218,14 +218,14 @@ r8_call_from_json <- function(f, json, load = NULL) {
   env <- list2env(res[["arguments"]], parent = parent.frame())
   assign(res[["name"]], fs[[res[["function"]]]], envir = env)
   eval(res[["call"]], env)
-} # /R8::r8_call_from_json
+} # /R8::r8call_from_json
 
 
-# %% r8_call_to_json ----
+# %% r8call_to_json ----
 #' Write a document of a call of a typed function
 #'
 #' Writes the document of a call of `f` with the arguments given, checked as
-#' [r8_check_call()] checks a document: `{"$function": "ns::f", "$types": {...},
+#' [r8check_call()] checks a document: `{"$function": "ns::f", "$types": {...},
 #' "arguments": {...}}`, in RFC 8785 form, with `"$types"` holding the version of
 #' each named type that the arguments contain. The arguments are matched to the
 #' parameters as R matches a call, and only the arguments given are written.
@@ -244,13 +244,13 @@ r8_call_from_json <- function(f, json, load = NULL) {
 #'     pmin(pmax(x, lo), hi)
 #'   }
 #' )
-#' doc <- r8_call_to_json(clip, c(-1, 0.5, 3), hi = 1)
+#' doc <- r8call_to_json(clip, c(-1, 0.5, 3), hi = 1)
 #' doc
-#' r8_call_from_json(clip, doc)
+#' r8call_from_json(clip, doc)
 #' options(op)
 #'
 #' @export
-r8_call_to_json <- function(...) {
+r8call_to_json <- function(...) {
   # The function is the first argument, without a name, so that a parameter
   # of any name, `f` included, is given by name.
   nms <- ...names()
@@ -258,7 +258,7 @@ r8_call_to_json <- function(...) {
   if (!inherits(f, "r8_function")) {
     r8_abort(
       "The first argument, without a name, is a typed function of ",
-      "new_function(): r8_call_to_json(f, x = 1).",
+      "new_function(): r8call_to_json(f, x = 1).",
       class = "r8_type_error"
     )
   }
@@ -293,7 +293,7 @@ r8_call_to_json <- function(...) {
     )
   }
   structure(res[["json"]], class = "json")
-} # /R8::r8_call_to_json
+} # /R8::r8call_to_json
 
 
 # %% undocumented_abort ----

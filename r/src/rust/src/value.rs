@@ -524,7 +524,7 @@ impl Other {
                 "made under another declaration of `{q}` than the registered one, which this version of R8 does not read"
             );
         }
-        // The changes that keep `r8_update()` from converting the value first.
+        // The changes that keep `r8update()` from converting the value first.
         let mut found: Vec<&rtemis_r8::update::Change> = self.changes.iter().collect();
         found.retain(|c| c.effect > Effect::None);
         found.sort_by_key(|c| std::cmp::Reverse(c.effect));
@@ -548,7 +548,7 @@ impl Other {
         )
     }
 
-    /// Why `r8_update()` does not convert the value.
+    /// Why `r8update()` does not convert the value.
     fn reason(&self) -> &'static str {
         match self.changes.iter().find(|c| c.effect == Effect::Meaning) {
             None => "its declaration does not read",
@@ -562,16 +562,16 @@ impl Other {
         }
     }
 
-    /// What differs, and whether `r8_update()` converts the value.
+    /// What differs, and whether `r8update()` converts the value.
     pub(crate) fn message(&self) -> String {
         if self.keeps_meaning() {
             format!(
-                "{}; r8_update() gives its value under the registered one",
+                "{}; r8update() gives its value under the registered one",
                 self.what()
             )
         } else {
             format!(
-                "{}; r8_update() does not convert it: {}",
+                "{}; r8update() does not convert it: {}",
                 self.what(),
                 self.reason()
             )
@@ -634,7 +634,7 @@ pub(crate) fn other(x: SEXP) -> Option<Other> {
 ///
 /// @param x An R8 value.
 /// @return List: `message`, character; `changes`, character, what differs;
-///   `keeps_meaning`, logical, whether `r8_update()` converts the value; or
+///   `keeps_meaning`, logical, whether `r8update()` converts the value; or
 ///   `NULL` for a value of the registered declaration and for one whose type is
 ///   not registered.
 /// @keywords internal

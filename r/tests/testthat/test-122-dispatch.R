@@ -48,8 +48,8 @@ test_that("a generic dispatches on the arguments it names, through extends", {
       "applies to \\(md1::B, md1::A\\)",
       class = "r8_dispatch_error"
     )
-    expect_identical(r8_method(combine, A1, B1)(a1, b1), "A1, B1")
-    expect_identical(r8_method(combine, x = C)(1, 2), "C, any")
+    expect_identical(r8method(combine, A1, B1)(a1, b1), "A1, B1")
+    expect_identical(r8method(combine, x = C)(1, 2), "C, any")
     expect_output(print(combine), "\\(md1::A1, md1::B1\\)")
   })
 })
@@ -87,7 +87,7 @@ test_that("an ambiguous call names the method to declare", {
     combine <- generic("combine", params(x, y), dispatch = c("x", "y"))
     implement(combine, A1, B) <- function(x, y) "A1, B"
     implement(combine, A, B1) <- function(x, y) "A, B1"
-    amb <- r8_ambiguities(combine)
+    amb <- r8ambiguities(combine)
     expect_identical(nrow(amb), 1L)
     expect_identical(amb[["meet"]], "(md3::A1, md3::B1)")
     a1 <- A1(a = 1, a1 = 2)
@@ -100,35 +100,35 @@ test_that("an ambiguous call names the method to declare", {
     # The error is not cached: declaring the meet disambiguates the call.
     implement(combine, A1, B1) <- function(x, y) "A1, B1"
     expect_identical(combine(a1, b1), "A1, B1")
-    expect_identical(nrow(r8_ambiguities(combine)), 0L)
+    expect_identical(nrow(r8ambiguities(combine)), 0L)
   })
 })
 
-test_that("r8_next_impl() continues to the unique less specific method or the one named", {
+test_that("r8next_impl() continues to the unique less specific method or the one named", {
   ty <- pair_types("md4")
   list2env(ty, environment())
   declare_in("md4", {
     combine <- generic("combine", params(x, y), dispatch = c("x", "y"))
     implement(combine, A, B) <- function(x, y) "A, B"
-    implement(combine, A1, B) <- function(x, y) paste("A1, B >", r8_next_impl())
+    implement(combine, A1, B) <- function(x, y) paste("A1, B >", r8next_impl())
     implement(combine, A, B1) <- function(x, y) "A, B1"
-    implement(combine, A1, B1) <- function(x, y) r8_next_impl()
+    implement(combine, A1, B1) <- function(x, y) r8next_impl()
     a1 <- A1(a = 1, a1 = 2)
     expect_identical(combine(a1, B(b = 1)), "A1, B > A, B")
     expect_error(
       combine(a1, B1(b = 1, b1 = 2)),
-      "after the running impl.*r8_next_impl\\(Type, ...\\)",
+      "after the running impl.*r8next_impl\\(Type, ...\\)",
       class = "r8_dispatch_error"
     )
-    implement(combine, A1, B1) <- function(x, y) r8_next_impl(A, B1)
+    implement(combine, A1, B1) <- function(x, y) r8next_impl(A, B1)
     expect_identical(combine(a1, B1(b = 1, b1 = 2)), "A, B1")
-    implement(combine, A1, B1) <- function(x, y) r8_next_impl(C, B1)
+    implement(combine, A1, B1) <- function(x, y) r8next_impl(C, B1)
     expect_error(
       combine(a1, B1(b = 1, b1 = 2)),
       "has no impl for \\(md4::C, md4::B1\\)",
       class = "r8_dispatch_error"
     )
-    implement(combine, A, B) <- function(x, y) r8_next_impl()
+    implement(combine, A, B) <- function(x, y) r8next_impl()
     expect_error(
       combine(A(a = 1), B(b = 1)),
       "has no next impl",

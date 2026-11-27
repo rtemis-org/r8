@@ -88,7 +88,7 @@ declare_file_report <- function() {
 #' @noRd
 file_report <- function(file, read, type, declared, limit) {
   of <- R8::.report_types()
-  checked <- R8::r8_check(list_frame_of(read), type, limit = limit)
+  checked <- R8::r8check(list_frame_of(read), type, limit = limit)
   unread <- read[["unread"]]
   lines <- read[["lines"]]
   rules <- as.list(checked[["rules"]])
@@ -196,7 +196,7 @@ list_frame_of <- function(read) {
 #' @keywords internal
 #' @noRd
 file_report_text <- function(x) {
-  base <- format(R8::r8_upcast(x, R8::.report_types()[["report"]]))
+  base <- format(R8::r8upcast(x, R8::.report_types()[["report"]]))
   unread <- as.list(x[["unread"]])
   recoded <- as.list(x[["recoded"]])
   n <- length(unread[["column"]])

@@ -126,7 +126,7 @@ other_abort <- function(
 } # /R8::other_abort
 
 
-# %% r8_update ----
+# %% r8update ----
 #' Convert a value to the registered declaration of its type
 #'
 #' A value belongs to the declaration of its type that it was made under, which
@@ -134,7 +134,7 @@ other_abort <- function(
 #' or a type is declared again at the console, a value made before, such as one
 #' read from a file, can be looked at. It prints, gives its fields, and is refused
 #' where it is used: as a field or an argument, in a method call, and in an assignment,
-#' comparison, hash, or document. `r8_update()` gives its value under the
+#' comparison, hash, or document. `r8update()` gives its value under the
 #' registered declaration where its fields mean the same under both, validated.
 #'
 #' The fields mean the same when each is declared under the same name, as the
@@ -166,12 +166,12 @@ other_abort <- function(
 #'   age = type_integer(min = 0L),
 #'   site = option(type_character())
 #' ))
-#' try(r8_to_json(v))
-#' r8_update(v)
+#' try(r8to_json(v))
+#' r8update(v)
 #' options(op)
 #'
 #' @export
-r8_update <- function(x) {
+r8update <- function(x) {
   if (!is_value(x) && (!is.list(x) || inherits(x, "r8_value"))) {
     value_required(x)
   }
@@ -193,7 +193,7 @@ r8_update <- function(x) {
     value_abort("Cannot update to", res[["of"]], res[["errors"]])
   }
   res[["value"]]
-} # /R8::r8_update
+} # /R8::r8update
 
 
 # %% value_required ----
@@ -549,7 +549,7 @@ coercion_hints <- function(errors, inputs) {
     ) {
       "`as.character()` gives its labels."
     } else if (code == "r_attributes") {
-      "`r8_conform()` removes them."
+      "`r8conform()` removes them."
     } else if (
       code %in%
         c("type_mismatch", "r_type") &&
@@ -891,7 +891,7 @@ check_codec <- function(qname, package = "") {
         paste0(
           " Loading '",
           package,
-          "' registers it (its .onLoad() calls r8_register())."
+          "' registers it (its .onLoad() calls r8register())."
         )
       },
       class = c("r8_codec_missing_error", "r8_value_error")
@@ -1418,7 +1418,7 @@ guard <- function(what) {
 `levels<-.r8_value` <- guard("levels<-")
 
 
-# %% r8_to_json ----
+# %% r8to_json ----
 #' Write an R8 value as JSON
 #'
 #' The value's document: `"$type"`, `"$types"` (the version of every type it
@@ -1427,7 +1427,7 @@ guard <- function(what) {
 #'
 #' @param x An R8 value.
 #' @param declarations Logical: Write the declarations of the types too, as IR
-#'   documents in `"$ir"`, so that [r8_from_json()] can tell what differs after a
+#'   documents in `"$ir"`, so that [r8from_json()] can tell what differs after a
 #'   declaration changes, and read the document where its fields mean the same.
 #'
 #' @return Character: The JSON document.
@@ -1435,11 +1435,11 @@ guard <- function(what) {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' r8_to_json(Point(x = 1, y = 2))
+#' r8to_json(Point(x = 1, y = 2))
 #' options(op)
 #'
 #' @export
-r8_to_json <- function(x, declarations = FALSE) {
+r8to_json <- function(x, declarations = FALSE) {
   if (!is_value(x)) {
     value_required(x)
   }
@@ -1449,10 +1449,10 @@ r8_to_json <- function(x, declarations = FALSE) {
     value_abort("Cannot write", value_type(x), res[["errors"]])
   }
   res[["json"]]
-} # /R8::r8_to_json
+} # /R8::r8to_json
 
 
-# %% r8_from_json ----
+# %% r8from_json ----
 #' Read an R8 value from JSON
 #'
 #' Reads a document of `type`: checks `"$type"`, the versions in `"$types"`, and
@@ -1468,8 +1468,8 @@ r8_to_json <- function(x, declarations = FALSE) {
 #' @param declaration Character \{"registered", "any"\}: `"registered"` refuses a
 #'   document that was written under another declaration of a type than the
 #'   registered one, unless it holds the declarations
-#'   (`r8_to_json(declarations = TRUE)`) and its fields mean the same under both, as
-#'   [r8_update()] states. `"any"` reads it as one of the registered declaration.
+#'   (`r8to_json(declarations = TRUE)`) and its fields mean the same under both, as
+#'   [r8update()] states. `"any"` reads it as one of the registered declaration.
 #'   A document without `"$declarations"`, as one written by hand, claims none.
 #'
 #' @return An R8 value. A document that names types no loaded package declares
@@ -1479,11 +1479,11 @@ r8_to_json <- function(x, declarations = FALSE) {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' r8_from_json(Point, r8_to_json(Point(x = 1, y = 2)))
+#' r8from_json(Point, r8to_json(Point(x = 1, y = 2)))
 #' options(op)
 #'
 #' @export
-r8_from_json <- function(type, json, load = NULL, declaration = "registered") {
+r8from_json <- function(type, json, load = NULL, declaration = "registered") {
   if (!inherits(type, "r8_type")) {
     r8_abort("`type` is an R8 type object.", class = "r8_type_error")
   }
@@ -1515,7 +1515,7 @@ r8_from_json <- function(type, json, load = NULL, declaration = "registered") {
     )
   }
   res[["value"]]
-} # /R8::r8_from_json
+} # /R8::r8from_json
 
 
 # %% document_text ----
@@ -1567,8 +1567,8 @@ declaration_hint <- function(errors) {
     errors[["path"]] == "/$declarations"
   errors[["message"]][at] <- paste0(
     errors[["message"]][at],
-    "; `r8_to_json(x, declarations = TRUE)` writes one that does, and ",
-    "`r8_from_json(declaration = \"any\")` reads it as one of the registered"
+    "; `r8to_json(x, declarations = TRUE)` writes one that does, and ",
+    "`r8from_json(declaration = \"any\")` reads it as one of the registered"
   )
   errors
 } # /R8::declaration_hint
@@ -1743,7 +1743,7 @@ r8_namespace_providers <- function() {
 } # /R8::r8_namespace_providers
 
 
-# %% r8_schema ----
+# %% r8schema ----
 #' The JSON Schema of a type's values, or of a function's arguments
 #'
 #' Writes the JSON Schema (draft 2020-12) that the documents of a type
@@ -1752,7 +1752,7 @@ r8_namespace_providers <- function() {
 #' cannot state, such as rules and units, are annotations under `x-r8`.
 #'
 #' For a typed function of [new_function()], the schema is that of the
-#' arguments object of a document of a call ([r8_call_from_json()]), which a
+#' arguments object of a document of a call ([r8call_from_json()]), which a
 #' tool's input schema takes: one property per parameter, with its
 #' description, and `additionalProperties: false`. A parameter without a
 #' default is required, and one of type `option()` admits `null`. A default
@@ -1776,7 +1776,7 @@ r8_namespace_providers <- function() {
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
-#' cat(r8_schema(Point))
+#' cat(r8schema(Point))
 #' clip <- new_function(
 #'   "clip",
 #'   function(
@@ -1786,11 +1786,11 @@ r8_namespace_providers <- function() {
 #'     pmax(x, lo)
 #'   }
 #' )
-#' cat(r8_schema(clip))
+#' cat(r8schema(clip))
 #' options(op)
 #'
 #' @export
-r8_schema <- function(x, closed = FALSE) {
+r8schema <- function(x, closed = FALSE) {
   check_flag(closed, "closed", "r8_type_error")
   if (inherits(x, "r8_function")) {
     fs <- call_functions(x)
@@ -1804,4 +1804,4 @@ r8_schema <- function(x, closed = FALSE) {
   }
   ensure_registered(x)
   r8_type_schema(attr(x, "r8_name"), closed)
-} # /R8::r8_schema
+} # /R8::r8schema

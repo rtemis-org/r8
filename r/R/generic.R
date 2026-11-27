@@ -244,7 +244,7 @@ check_method_formals <- function(fn, gen_args, label) {
 #' a whole double for an integer, and raises `r8_argument_error` with every
 #' problem of every argument. A result that does not satisfy the return type
 #' raises `r8_result_error`. An argument without a type stays lazy. The checks
-#' belong to the generic's call: [r8_method()] and [r8_next_impl()] call a
+#' belong to the generic's call: [r8method()] and [r8next_impl()] call a
 #' method without them.
 #'
 #' A replacement generic, `generic("labels<-", params(x, value))`, is called
@@ -276,7 +276,7 @@ check_method_formals <- function(fn, gen_args, label) {
 #'   specific method in every position applies; two methods each more
 #'   specific in one position make a call on both ambiguous, an
 #'   `r8_dispatch_error` that names the method to declare, and
-#'   [r8_ambiguities()] lists such pairs.
+#'   [r8ambiguities()] lists such pairs.
 #' @param return_type Optional: The type of the value that every method
 #'   returns, an `r8_field_type`, an R8 type, or `"Self"`, the type of the
 #'   first dispatched argument. A method may declare a type that fits it
@@ -289,7 +289,7 @@ check_method_formals <- function(fn, gen_args, label) {
 #' @return `generic()`: The generic, a function of class `r8_generic`. `print()`: `x`, invisibly.
 #'
 #' @seealso [params()] declares the parameters; [implement<-] declares a
-#'   method; [r8_method()] returns one.
+#'   method; [r8method()] returns one.
 #'
 #' @examples
 #' op <- options(r8.namespace = "models")
@@ -544,12 +544,12 @@ classify_generic <- function(g, type_label = "Type") {
     ),
     list(
       fns = list(base::`==`, base::`!=`),
-      reason = "equality of values is r8_equal(), with which r8_hash() agrees"
+      reason = "equality of values is r8equal(), with which r8hash() agrees"
     ),
     list(
       fns = list(base::`<`, base::`<=`, base::`>`, base::`>=`),
       reason = paste0(
-        "comparisons use the PartialOrd trait; implement(r8_partial_cmp, ",
+        "comparisons use the PartialOrd trait; implement(r8partial_cmp, ",
         type_label,
         ") <- function(x, y) ... defines the order"
       )
@@ -594,10 +594,10 @@ classify_generic <- function(g, type_label = "Type") {
       fn = g
     ))
   }
-  if (identical(g, r8_convert) || identical(g, r8_converter)) {
+  if (identical(g, r8convert) || identical(g, r8converter)) {
     r8_abort(
       "A conversion is a method of the target's converter: as_target <- ",
-      "r8_converter(Target), then implement(as_target, ",
+      "r8converter(Target), then implement(as_target, ",
       type_label,
       ") <- function(x) ... declares the conversion from ",
       type_label,
@@ -633,7 +633,7 @@ classify_generic <- function(g, type_label = "Type") {
 #' - A generic from `generic()`, or a trait method such as `Fit@fit`: an
 #'   impl of its trait.
 #' - `format`, `str`, and `dim`: an impl of the standard trait `Display`,
-#'   `Debug`, or `Shape`; `r8_partial_cmp`: of `PartialOrd`, which `<`,
+#'   `Debug`, or `Shape`; `r8partial_cmp`: of `PartialOrd`, which `<`,
 #'   `<=`, `>`, and `>=` use.
 #' - `print`: an impl of the standard trait `Print`; `print()` calls the
 #'   function and returns the value invisibly, and `format()` keeps its own
@@ -644,8 +644,8 @@ classify_generic <- function(g, type_label = "Type") {
 #'   (`$`, `[[`, `@`, `as.list`, `$<-`, `[[<-`, `[<-`, `names<-`,
 #'   `length<-`, `dim<-`, `levels<-`, `==`, `!=`), the comparison and other
 #'   operators, S4 generics, and functions that are not generics raise
-#'   `r8_declaration_error`. For `r8_convert` and `r8_converter`, the error
-#'   names the converter's form. A converter from `r8_converter(Target)` is
+#'   `r8_declaration_error`. For `r8convert` and `r8converter`, the error
+#'   names the converter's form. A converter from `r8converter(Target)` is
 #'   the generic of the conversions to `Target`: `implement(as_target,
 #'   Source)` and `implement(as_target, "character")` declare the conversion
 #'   from an R8 type or a class, an impl of `From(source)` for `Target`, and
@@ -653,14 +653,14 @@ classify_generic <- function(g, type_label = "Type") {
 #'
 #' An impl is declared in the namespace of its generic or of its type.
 #'
-#' In a package, `r8_rd()` documents the method in the generic's Rd file.
+#' In a package, `r8rd()` documents the method in the generic's Rd file.
 #'
 #' @param ... The generic, written as its name and without an argument name,
 #'   then the types of the method: one R8 type object, or for a generic that
 #'   dispatches on several arguments, one per dispatched argument it
 #'   specializes, matched by position or by name, as
 #'   `implement(combine, A, B)` or `implement(combine, y = B)`; a converter
-#'   from [r8_converter()] takes an R8 type object or a class name.
+#'   from [r8converter()] takes an R8 type object or a class name.
 #' @param return_type Optional: The type of the value this method returns, an
 #'   `r8_field_type` or an R8 type, which fits the return type that the
 #'   generic declares, as [impl_method()] states.
@@ -668,7 +668,7 @@ classify_generic <- function(g, type_label = "Type") {
 #'
 #' @return The generic, unchanged.
 #'
-#' @seealso [generic()], [r8_method()].
+#' @seealso [generic()], [r8method()].
 #'
 #' @examples
 #' op <- options(r8.namespace = "models")
@@ -841,7 +841,7 @@ declare_s3_method <- function(target, type, fn, env) {
   )
   if (!nzchar(target[["package"]])) {
     # A generic outside a package, found in its own environment; such code
-    # is not recorded for r8_register().
+    # is not recorded for r8register().
     entry[["envir"]] <- environment(target[["fn"]])
   }
   register_s3_method(entry)
@@ -863,7 +863,7 @@ declare_s3_method <- function(target, type, fn, env) {
 register_s3_method <- function(entry) {
   trait_name <- paste0(entry[["package"]], "::", entry[["name"]])
   put_impl(trait_name, entry[["name"]], entry[["type_name"]], entry[["fn"]])
-  # The S3 method is the stamped impl, from which r8_next_impl() reads its
+  # The S3 method is the stamped impl, from which r8next_impl() reads its
   # provider; a replacement method's result is checked.
   fn <- .r8_impls[[paste(
     trait_name,
@@ -902,7 +902,7 @@ register_s3_method <- function(entry) {
 } # /R8::register_s3_method
 
 
-# %% r8_method ----
+# %% r8method ----
 #' The method of a generic for a type
 #'
 #' Returns the function that `implement()` or `impl()` declared for a type,
@@ -921,11 +921,11 @@ register_s3_method <- function(entry) {
 #' GBM <- new_struct("GBM", fields = list(n_trees = type_integer(min = 1L)))
 #' describe <- generic("describe", params(x))
 #' implement(describe, GBM) <- function(x) "Gradient boosting"
-#' r8_method(describe, GBM)
+#' r8method(describe, GBM)
 #' options(op)
 #'
 #' @export
-r8_method <- function(...) {
+r8method <- function(...) {
   types <- list(...)
   if (
     length(types) < 2L ||
@@ -933,8 +933,8 @@ r8_method <- function(...) {
       !is.function(types[[1L]])
   ) {
     r8_abort(
-      "r8_method() takes a generic, without an argument name, then the types ",
-      "of one of its methods: r8_method(describe, GBM).",
+      "r8method() takes a generic, without an argument name, then the types ",
+      "of one of its methods: r8method(describe, GBM).",
       class = "r8_dispatch_error"
     )
   }
@@ -1024,7 +1024,7 @@ r8_method <- function(...) {
   }
   attr(fn, "r8_provider") <- NULL
   fn
-} # /R8::r8_method
+} # /R8::r8method
 
 
 # %% usage_line ----

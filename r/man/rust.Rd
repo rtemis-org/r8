@@ -16,7 +16,7 @@ is in the declaring package's Rust code: a Rust function of the same name,
 marked \verb{#[r8::function]} and listed in \code{functions} of the package's
 \verb{r8::exports!}. The declaration in R holds the parameters, their types,
 defaults, and descriptions, the rules, and the return type; the Rust function
-computes the result. \code{\link[=r8_rust_signature]{r8_rust_signature()}} writes the Rust function's
+computes the result. \code{\link[=r8rust_signature]{r8rust_signature()}} writes the Rust function's
 signature from the declaration.
 }
 \examples{

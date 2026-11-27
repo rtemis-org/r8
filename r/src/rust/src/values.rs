@@ -92,7 +92,7 @@ impl Encoder<'_> {
         self.err(
             "r_attributes",
             path,
-            format!("the value carries the attributes {extra:?}, which this field's type does not hold; r8_conform() removes them"),
+            format!("the value carries the attributes {extra:?}, which this field's type does not hold; r8conform() removes them"),
         );
         false
     }
@@ -614,7 +614,7 @@ impl Encoder<'_> {
                     return self.err(
                         "r_row_names",
                         path,
-                        "a table has automatic row names; r8_conform() resets them".to_string(),
+                        "a table has automatic row names; r8conform() resets them".to_string(),
                     );
                 }
             },
@@ -1820,7 +1820,7 @@ fn r8_value_to_document(x: Robj, declarations: bool) -> Result<List> {
         let json = rtemis_r8::canonical::document_with(v, &q, lookup, declarations, &hash);
         if json.len() > i32::MAX as usize {
             return Err(fail(format!(
-                "the document takes {}, and R holds at most 2 GiB in one string; write the value with r8_write_rds()",
+                "the document takes {}, and R holds at most 2 GiB in one string; write the value with r8write_rds()",
                 rtemis_r8::text::format_size(json.len() as u64)
             )));
         }

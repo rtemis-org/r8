@@ -18,7 +18,7 @@ JSON text that a declaration carries into its IR as written: a rule's
 \code{invariant} or \code{when} as JSONLogic, or a field's \code{default} as the value's
 JSON form. It holds what the R forms do not express, such as an \code{and} of
 three operands, a default that is an enum variant with fields or a struct,
-and a number that a double does not hold exactly. \code{r8_document_rust()}
+and a number that a double does not hold exactly. \code{r8document_rust()}
 writes it where a Rust declaration has no R form.
 }
 \examples{

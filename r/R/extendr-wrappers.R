@@ -653,7 +653,7 @@ r8_date_literals <- function(x, datetime) .Call(wrap__r8_date_literals, x, datet
 #' @noRd
 r8_rule_operators <- function() .Call(wrap__r8_rule_operators)
 
-#' The parts of a Rust-stored value that `r8_size()` adds up: the bytes of
+#' The parts of a Rust-stored value that `r8size()` adds up: the bytes of
 #' its state and the cached fields that are not views of the state.
 #'
 #' @param x An R8 value.
@@ -1046,7 +1046,7 @@ r8_sha256 <- function(x) .Call(wrap__r8_sha256, x)
 #'
 #' @param x An R8 value.
 #' @return List: `message`, character; `changes`, character, what differs;
-#'   `keeps_meaning`, logical, whether `r8_update()` converts the value; or
+#'   `keeps_meaning`, logical, whether `r8update()` converts the value; or
 #'   `NULL` for a value of the registered declaration and for one whose type is
 #'   not registered.
 #' @keywords internal
@@ -1152,9 +1152,9 @@ r8_value_from_document <- function(text, type_name, any) .Call(wrap__r8_value_fr
 #' @return Character: The version, for example `"0.1.0"`.
 #'
 #' @examples
-#' r8_runtime_version()
+#' r8runtime_version()
 #'
 #' @export
-r8_runtime_version <- function() .Call(wrap__r8_runtime_version)
+r8runtime_version <- function() .Call(wrap__r8runtime_version)
 
 # nolint end

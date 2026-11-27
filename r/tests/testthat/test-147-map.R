@@ -42,7 +42,7 @@ test_that("a map of a list gives the container of the return type, with its name
   models <- r8map(folds, fit, args = list(data = scores))
   expect_type(models, "list")
   expect_identical(names(models), c("one", "two"))
-  expect_true(r8_equal(models$two, Model(n = 2L, m = 0.865)))
+  expect_true(r8equal(models$two, Model(n = 2L, m = 0.865)))
   # An empty list gives an empty container of the type.
   expect_identical(
     r8map(list(), fold_auc, args = list(data = scores)),

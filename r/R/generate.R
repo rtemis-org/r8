@@ -10,7 +10,7 @@
 # declaration hash of every type with the exports' hash.
 # spec: R8/class-system#types-declared-in-rust
 
-# %% r8_document_rust ----
+# %% r8document_rust ----
 #' Generate the R declarations of types declared in Rust
 #'
 #' Writes `R/r8-types.R`, the R declaration of each type and trait that a
@@ -20,7 +20,7 @@
 #' a binding for each of a trait's generics, with roxygen comments from the
 #' Rust doc comments. The R code of the package then has the type objects,
 #' their constructors, the generics, and their declarations at install, before
-#' the shared object loads, and `r8_register()` checks at load that each R
+#' the shared object loads, and `r8register()` checks at load that each R
 #' declaration has the hash of its Rust declaration.
 #'
 #' A `dyn()` field names its trait's object. A trait that the package declares
@@ -35,7 +35,7 @@
 #' writes, it declares the rendered file in the session and compares the
 #' declaration hash of every type with the exports' hash, so it runs in an R
 #' session of its own, without the package loaded:
-#' `Rscript -e "R8::r8_document_rust()"`, after `pkgbuild::compile_dll()`
+#' `Rscript -e "R8::r8document_rust()"`, after `pkgbuild::compile_dll()`
 #' and before roxygen.
 #'
 #' @param path Character: The package's root directory.
@@ -51,12 +51,12 @@
 #' @examples
 #' \dontrun{
 #' pkgbuild::compile_dll()
-#' system2("Rscript", c("-e", shQuote("R8::r8_document_rust()")))
+#' system2("Rscript", c("-e", shQuote("R8::r8document_rust()")))
 #' roxygen2::roxygenise()
 #' }
 #'
 #' @export
-r8_document_rust <- function(path = ".", check = FALSE) {
+r8document_rust <- function(path = ".", check = FALSE) {
   desc <- read.dcf(
     file.path(path, "DESCRIPTION"),
     fields = c("Package", "Config/R8/namespace")
@@ -68,9 +68,9 @@ r8_document_rust <- function(path = ".", check = FALSE) {
   }
   if (isNamespaceLoaded(pkg)) {
     r8_abort(
-      "r8_document_rust() runs in an R session without '",
+      "r8document_rust() runs in an R session without '",
       pkg,
-      "' loaded: Rscript -e \"R8::r8_document_rust()\".",
+      "' loaded: Rscript -e \"R8::r8document_rust()\".",
       class = "r8_declaration_error"
     )
   }
@@ -147,7 +147,7 @@ r8_document_rust <- function(path = ".", check = FALSE) {
         file,
         " differs from the declarations in the compiled exports of '",
         pkg,
-        "'; R8::r8_document_rust() regenerates it.",
+        "'; R8::r8document_rust() regenerates it.",
         class = "r8_declaration_error"
       )
     }
@@ -155,10 +155,10 @@ r8_document_rust <- function(path = ".", check = FALSE) {
     writeLines(lines, file)
   }
   invisible(file)
-} # /R8::r8_document_rust
+} # /R8::r8document_rust
 
 
-# While r8_document_rust() renders: `map`, the R objects of the types and
+# While r8document_rust() renders: `map`, the R objects of the types and
 # traits of other namespaces that the rendered file names and those of its
 # replacement generics, and `types`, the IR of the document's types, both by
 # qualified name. `bare` is TRUE while a message renders a declaration, which
@@ -359,7 +359,7 @@ render_document <- function(doc, pkg, codecs) {
   text <- c(
     "# r8-types.R",
     paste0("# ::", pkg, "::"),
-    "# R8::r8_document_rust() writes this file from the R8 declarations in",
+    "# R8::r8document_rust() writes this file from the R8 declarations in",
     "# the package's Rust code, and replaces it when they change.",
     unlist(lapply(blocks, function(b) c("", b)))
   )
@@ -1333,7 +1333,7 @@ type_ref <- function(qname, ns) {
   r8_abort(
     "`",
     qname,
-    "` belongs to another namespace, whose package r8_document_rust() ",
+    "` belongs to another namespace, whose package r8document_rust() ",
     "finds among the Imports of the package's DESCRIPTION.",
     class = "r8_declaration_error"
   )

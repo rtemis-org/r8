@@ -351,10 +351,10 @@ test_that("a declaration read back from the registry as R lists declares the sam
     list(K, S)
   })
   for (t in types) {
-    before <- r8_declaration(t)
+    before <- r8declaration(t)
     problems <- R8:::r8_declare_type(R8:::type_ir(t), "ir_lists")
     expect_length(problems[["code"]], 0L)
-    expect_identical(r8_declaration(t), before)
+    expect_identical(r8declaration(t), before)
   }
 })
 
@@ -471,7 +471,7 @@ test_that("a Rust-stored type constructs values once its codec is registered", {
   })
   expect_identical(attr(S, "r8_storage"), "rust")
   expect_error(S(x = 1), class = "r8_codec_missing_error")
-  expect_error(r8_from_json(S, '{"x": 1}'), class = "r8_codec_missing_error")
+  expect_error(r8from_json(S, '{"x": 1}'), class = "r8_codec_missing_error")
 })
 
 test_that("registration lists every difference between R declarations and the exports", {
@@ -501,7 +501,7 @@ test_that("registration lists every difference between R declarations and the ex
     "`p::D` is declared with storage = \"rust\"; the compiled exports carry no codec for it.",
     fixed = TRUE
   )
-  expect_match(msg, "R8::r8_document_rust()", fixed = TRUE)
+  expect_match(msg, "R8::r8document_rust()", fixed = TRUE)
   expect_null(R8:::check_exports(
     "p",
     list(type_name = "p::A", status = "same", codec = TRUE),

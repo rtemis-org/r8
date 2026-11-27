@@ -38,15 +38,15 @@
 #' @section Copies:
 #' The columns of a data frame and of a list are not copied. The columns of a
 #' data.table are, since data.table changes a column in place. An operation on the
-#' columns shares them; one on the rows makes new columns. `r8_validate()` checks a
+#' columns shares them; one on the rows makes new columns. `r8validate()` checks a
 #' value again.
 #'
 #' @section Operations:
 #' `x[i, j]` gives the rows `i` and the columns `j`, always as a table, and `x[j]`
 #' gives columns. `i` is a [rule()], whose names are columns, `x[rule(age > 40), ]`, or
 #' holds positions, all positive or all negative, or is a logical vector with one value
-#' per row; `j` holds names or positions. [r8_filter()] and [r8_select()] are functions
-#' for the two; [r8_sort()] orders rows, and [r8_set()] and the functions with it change
+#' per row; `j` holds names or positions. [r8filter()] and [r8select()] are functions
+#' for the two; [r8sort()] orders rows, and [r8set()] and the functions with it change
 #' columns. `x$a <- value`
 #' replaces a column, adds one to an open table, and, with `NULL`, removes one;
 #' the new column is checked, with the rules that read it. A result without a column
@@ -220,7 +220,7 @@ table_columns <- function(args, name) {
           name,
           "(cbind(name = rownames(x), x, row.names = NULL)), or remove them, ",
           name,
-          "(r8_conform(x)).",
+          "(r8conform(x)).",
           class = "r8_value_error"
         )
       }
@@ -492,11 +492,11 @@ row_index <- function(x, i, e) {
 } # /R8::row_index
 
 
-# %% r8_filter ----
+# %% r8filter ----
 #' Choose rows and columns of a table
 #'
-#' `r8_filter()` gives the rows of a table ([new_table()]) where a [rule()] is true,
-#' and `r8_select()` gives columns. Neither changes `x`, and `r8_select()` copies no
+#' `r8filter()` gives the rows of a table ([new_table()]) where a [rule()] is true,
+#' and `r8select()` gives columns. Neither changes `x`, and `r8select()` copies no
 #' column. `x[rule, ]` and `x[rule, columns]` are the same.
 #'
 #' A rule is a value: one rule filters every table that has the columns it names.
@@ -531,19 +531,19 @@ row_index <- function(x, i, e) {
 #' @param columns Character or numeric: The columns, by name or by position, each
 #'   once.
 #'
-#' @return A value of the type of `x`. `r8_select()` without a column that the type
+#' @return A value of the type of `x`. `r8select()` without a column that the type
 #'   requires gives a [Raven].
 #'
 #' @examples
 #' r <- Raven(iris)
 #' wide <- rule(Petal.Width > mean(Petal.Width))
-#' r8_filter(r, wide)
-#' r8_filter(r, wide & rule(Species == "versicolor"))
-#' r8_select(r, c("Species", "Petal.Width"))
+#' r8filter(r, wide)
+#' r8filter(r, wide & rule(Species == "versicolor"))
+#' r8select(r, c("Species", "Petal.Width"))
 #' r[!wide, c("Species", "Petal.Width")]
 #'
 #' @export
-r8_filter <- function(x, rule, n_threads = NULL) {
+r8filter <- function(x, rule, n_threads = NULL) {
   check_table(x)
   rule <- index_value(rule, x, substitute(rule), parent.frame(), "rule")
   if (!inherits(rule, "r8_rule")) {
@@ -553,17 +553,17 @@ r8_filter <- function(x, rule, n_threads = NULL) {
     )
   }
   table_result(r8_table_get(x, list(rule), NULL, threads_of(n_threads)), x)
-} # /R8::r8_filter
+} # /R8::r8filter
 
 
-# %% r8_select ----
-#' @rdname r8_filter
+# %% r8select ----
+#' @rdname r8filter
 #' @export
-r8_select <- function(x, columns) {
+r8select <- function(x, columns) {
   check_table(x)
   columns <- table_columns_arg(x, columns, substitute(columns), parent.frame())
   table_result(r8_table_get(x, NULL, columns, 1L), x)
-} # /R8::r8_select
+} # /R8::r8select
 
 
 # %% [<-.r8_table ----
@@ -616,7 +616,7 @@ as.data.frame.r8_table <- function(
 } # /R8::as.data.frame.r8_table
 
 
-# %% r8_to_data_frame ----
+# %% r8to_data_frame ----
 #' A table as a data frame
 #'
 #' The columns of a table ([new_table()]) as a data frame, which shares them.
@@ -628,13 +628,13 @@ as.data.frame.r8_table <- function(
 #' @return A data frame.
 #'
 #' @examples
-#' r8_to_data_frame(Raven(a = 1:3))
+#' r8to_data_frame(Raven(a = 1:3))
 #'
 #' @export
-r8_to_data_frame <- function(x) {
+r8to_data_frame <- function(x) {
   check_table(x)
   as.data.frame(x)
-} # /R8::r8_to_data_frame
+} # /R8::r8to_data_frame
 
 
 # %% head.r8_table ----
@@ -728,7 +728,7 @@ na.omit.r8_table <- function(object, ...) {
 #' @export
 cbind.r8_table <- function(..., deparse.level = 1) {
   r8_abort(
-    "r8_set(x, list(name = value)) adds columns to a table, and r8_set(x, y) those ",
+    "r8set(x, list(name = value)) adds columns to a table, and r8set(x, y) those ",
     "of another table.",
     class = "r8_value_error"
   )
@@ -737,7 +737,7 @@ cbind.r8_table <- function(..., deparse.level = 1) {
 #' @export
 transform.r8_table <- function(`_data`, ...) {
   r8_abort(
-    "r8_set(x, list(name = value)) adds and replaces columns of a table.",
+    "r8set(x, list(name = value)) adds and replaces columns of a table.",
     class = "r8_value_error"
   )
 }
@@ -745,7 +745,7 @@ transform.r8_table <- function(`_data`, ...) {
 #' @export
 within.r8_table <- function(data, expr, ...) {
   r8_abort(
-    "r8_set(x, list(name = value)) adds and replaces columns of a table.",
+    "r8set(x, list(name = value)) adds and replaces columns of a table.",
     class = "r8_value_error"
   )
 }
@@ -753,7 +753,7 @@ within.r8_table <- function(data, expr, ...) {
 #' @export
 sort.r8_table <- function(x, decreasing = FALSE, ...) {
   r8_abort(
-    "r8_sort(x, by) orders the rows of a table.",
+    "r8sort(x, by) orders the rows of a table.",
     class = "r8_value_error"
   )
 }
@@ -761,12 +761,12 @@ sort.r8_table <- function(x, decreasing = FALSE, ...) {
 #' @export
 xtfrm.r8_table <- function(x) {
   r8_abort(
-    "r8_sort(x, by) orders the rows of a table.",
+    "r8sort(x, by) orders the rows of a table.",
     class = "r8_value_error"
   )
 }
 
-#' @export
+#' @exportS3Method stats::aggregate
 aggregate.r8_table <- function(x, ...) {
   r8_abort(
     "r8summarize(x, list(name = calc(...)), by) summarizes the groups of a ",
@@ -778,17 +778,17 @@ aggregate.r8_table <- function(x, ...) {
 #' @export
 subset.r8_table <- function(x, ...) {
   r8_abort(
-    "r8_filter(x, rule(...)) chooses rows of a table, and r8_select(x, names) columns.",
+    "r8filter(x, rule(...)) chooses rows of a table, and r8select(x, names) columns.",
     class = "r8_value_error"
   )
 }
 
 
-# %% r8_set ----
+# %% r8set ----
 #' Change the columns of a table
 #'
-#' `r8_set()` gives a table ([new_table()]) with columns added or replaced,
-#' `r8_drop()` without columns, and `r8_rename()` with columns under other names. Each
+#' `r8set()` gives a table ([new_table()]) with columns added or replaced,
+#' `r8drop()` without columns, and `r8rename()` with columns under other names. Each
 #' gives a new value, which shares the columns it keeps, and leaves `x` as it is.
 #'
 #' @section Columns of a declared table:
@@ -799,7 +799,7 @@ subset.r8_table <- function(x, ...) {
 #' @section Computed columns:
 #' An entry of `columns` that is a [calc()] is computed in Rust over the rows of
 #' `x` as given, before any column changes. An aggregate in it is over all rows,
-#' or, with `by`, over the rows of each row's group: `r8_set(x, list(n_ward =
+#' or, with `by`, over the rows of each row's group: `r8set(x, list(n_ward =
 #' calc(n())), by = "ward")` writes the size of each row's ward into the row.
 #'
 #' @section Units and descriptions:
@@ -808,8 +808,8 @@ subset.r8_table <- function(x, ...) {
 #' column keeps its own.
 #'
 #' @param x A value of a table.
-#' @param columns `r8_set()`: Named list, data frame, or table: The columns, each a
-#'   vector with one element for each row, or a [calc()]. `r8_drop()`: Character or
+#' @param columns `r8set()`: Named list, data frame, or table: The columns, each a
+#'   vector with one element for each row, or a [calc()]. `r8drop()`: Character or
 #'   numeric: The columns, by name or by position, each once.
 #' @param by Optional Character or numeric: The key columns whose groups the
 #'   aggregates of [calc()] entries are over, by name or by position.
@@ -824,13 +824,13 @@ subset.r8_table <- function(x, ...) {
 #'
 #' @examples
 #' r <- Raven(weight = c(60, 82), height = c(1.62, 1.80))
-#' r <- r8_set(r, list(bmi = r$weight / r$height^2))
-#' r <- r8_set(r, list(bmi2 = calc(weight / height^2)))
-#' r <- r8_rename(r, "weight", "mass")
-#' r8_drop(r, "height")
+#' r <- r8set(r, list(bmi = r$weight / r$height^2))
+#' r <- r8set(r, list(bmi2 = calc(weight / height^2)))
+#' r <- r8rename(r, "weight", "mass")
+#' r8drop(r, "height")
 #'
 #' @export
-r8_set <- function(x, columns, by = NULL, n_threads = NULL) {
+r8set <- function(x, columns, by = NULL, n_threads = NULL) {
   check_table(x)
   if (is_value(columns) && inherits(columns, "r8_table")) {
     columns <- as.list(columns)
@@ -844,7 +844,7 @@ r8_set <- function(x, columns, by = NULL, n_threads = NULL) {
       !all(nzchar(keys))
   ) {
     r8_abort(
-      "`columns` is a named list: r8_set(x, list(bmi = w / h^2)).",
+      "`columns` is a named list: r8set(x, list(bmi = w / h^2)).",
       class = "r8_argument_error"
     )
   }
@@ -864,7 +864,7 @@ r8_set <- function(x, columns, by = NULL, n_threads = NULL) {
     r8_abort(
       "Column `",
       keys[absent][[1L]],
-      "` is NULL; r8_drop() gives the table without a column.",
+      "` is NULL; r8drop() gives the table without a column.",
       class = "r8_argument_error"
     )
   }
@@ -884,7 +884,7 @@ r8_set <- function(x, columns, by = NULL, n_threads = NULL) {
     if (!any(computed)) {
       r8_abort(
         "`by` groups the rows that the aggregates of calc() entries read: ",
-        "r8_set(x, list(n = calc(n())), by = \"ward\").",
+        "r8set(x, list(n = calc(n())), by = \"ward\").",
         class = "r8_argument_error"
       )
     }
@@ -912,7 +912,7 @@ r8_set <- function(x, columns, by = NULL, n_threads = NULL) {
         value_type(x),
         "",
         inputs = columns,
-        assignment = "r8_set()",
+        assignment = "r8set()",
         closing = if (length(keys) == 1L) {
           column_closing(x, keys, res[["errors"]])
         }
@@ -921,7 +921,7 @@ r8_set <- function(x, columns, by = NULL, n_threads = NULL) {
     fields_refused(x, keys, columns, res)
   }
   with_units(res, units)
-} # /R8::r8_set
+} # /R8::r8set
 
 
 # %% threads_of ----
@@ -975,7 +975,7 @@ with_units <- function(x, units) {
   if (length(units) == 0L) {
     return(x)
   }
-  r8_annotate(x, unit = units)
+  r8annotate(x, unit = units)
 } # /R8::with_units
 
 
@@ -1026,7 +1026,7 @@ key_columns <- function(x, by, e, env) {
 #'
 #' @section Groups:
 #' A group is one combination of the values of the keys that a row has. Groups are
-#' in the order of [r8_sort()] of the keys: ascending, missing last, strings by code
+#' in the order of [r8sort()] of the keys: ascending, missing last, strings by code
 #' point, and factors by level. A missing key is one group; a level of a factor
 #' without a row has no group. The key columns keep their kinds, levels, units, and
 #' descriptions.
@@ -1255,9 +1255,14 @@ r8map <- NULL
 #' @keywords internal
 #' @noRd
 declare_map <- function(ns) {
+  # The arguments of `params()` as a quoted call, which R CMD check does not
+  # read as variables.
+  declared <- quote(
+    params(x, f, columns = NULL, by = NULL, args = NULL, n_threads = NULL)
+  )
   r8map <- generic(
     "r8map",
-    params(x, f, columns = NULL, by = NULL, args = NULL, n_threads = NULL),
+    read_params(as.list(declared)[-1L], environment()),
     description = "`f` of each item of `x`, in the container of its return type.",
     dispatch = c("x", "f")
   )
@@ -1758,25 +1763,25 @@ map_function <- function(x, f, columns, by, args, n_threads) {
 } # /R8::map_function
 
 
-# %% r8_drop ----
-#' @rdname r8_set
+# %% r8drop ----
+#' @rdname r8set
 #' @export
-r8_drop <- function(x, columns) {
+r8drop <- function(x, columns) {
   check_table(x)
   columns <- table_columns_arg(x, columns, substitute(columns), parent.frame())
-  # Positions and names are read as r8_select() reads them.
+  # Positions and names are read as r8select() reads them.
   at <- match(
     names(table_result(r8_table_get(x, NULL, columns, 1L), x)),
     names(x)
   )
   table_result(r8_table_get(x, NULL, setdiff(seq_along(x), at), 1L), x)
-} # /R8::r8_drop
+} # /R8::r8drop
 
 
-# %% r8_rename ----
-#' @rdname r8_set
+# %% r8rename ----
+#' @rdname r8set
 #' @export
-r8_rename <- function(x, from, to) {
+r8rename <- function(x, from, to) {
   check_table(x)
   from <- table_columns_arg(x, from, substitute(from), parent.frame(), "from")
   if (!is.character(to) || is.object(to) || anyNA(to)) {
@@ -1786,10 +1791,10 @@ r8_rename <- function(x, from, to) {
     )
   }
   table_result(r8_table_rename(x, from, to), x)
-} # /R8::r8_rename
+} # /R8::r8rename
 
 
-# %% r8_sort ----
+# %% r8sort ----
 #' Order the rows of a table
 #'
 #' Rows in the order of one or more columns: numbers, dates, and date-times by
@@ -1811,10 +1816,10 @@ r8_rename <- function(x, from, to) {
 #'
 #' @examples
 #' r <- Raven(site = c("b", "a", "b"), age = c(40, 52, 61))
-#' r8_sort(r, c("site", "age"), descending = "age")
+#' r8sort(r, c("site", "age"), descending = "age")
 #'
 #' @export
-r8_sort <- function(x, by, descending = NULL, n_threads = NULL) {
+r8sort <- function(x, by, descending = NULL, n_threads = NULL) {
   check_table(x)
   by <- table_columns_arg(x, by, substitute(by), parent.frame(), "by")
   if (!is.null(descending)) {
@@ -1830,7 +1835,7 @@ r8_sort <- function(x, by, descending = NULL, n_threads = NULL) {
     r8_table_sort(x, by, descending %||% character(), threads_of(n_threads)),
     x
   )
-} # /R8::r8_sort
+} # /R8::r8sort
 
 
 # %% table_columns_arg ----
@@ -1864,11 +1869,11 @@ table_columns_arg <- function(x, value, e, env, arg = "columns") {
 } # /R8::table_columns_arg
 
 
-# %% r8_columns ----
+# %% r8columns ----
 #' The columns of a table
 #'
-#' `r8_columns()` describes the columns of a value of a table ([new_table()]), and
-#' `r8_annotate()` gives a value with the units or the descriptions of columns that
+#' `r8columns()` describes the columns of a value of a table ([new_table()]), and
+#' `r8annotate()` gives a value with the units or the descriptions of columns that
 #' its type does not declare. Those of a declared column are its type's. A column that
 #' is replaced has neither.
 #'
@@ -1876,33 +1881,33 @@ table_columns_arg <- function(x, value, e, env, arg = "columns") {
 #' @param unit,description Optional named character: The units, UCUM codes by
 #'   convention, and the descriptions, by the names of columns; `NA` removes one.
 #'
-#' @return `r8_columns()`, a data frame with the variables `name`, `type`, `unit`,
-#'   `description`, and `declared`. `r8_annotate()`, the new value.
+#' @return `r8columns()`, a data frame with the variables `name`, `type`, `unit`,
+#'   `description`, and `declared`. `r8annotate()`, the new value.
 #'
 #' @examples
 #' r <- Raven(age = c(40, 52), sex = c("f", "m"))
-#' r <- r8_annotate(
+#' r <- r8annotate(
 #'   r,
 #'   unit = c(age = "a"),
 #'   description = c(age = "Age at admission")
 #' )
 #' r
-#' r8_columns(r)
+#' r8columns(r)
 #'
 #' @export
-r8_columns <- function(x) {
+r8columns <- function(x) {
   check_table(x)
   out <- r8_table_columns(x)
   attr(out, "row.names") <- .set_row_names(length(out[["name"]]))
   class(out) <- "data.frame"
   out
-} # /R8::r8_columns
+} # /R8::r8columns
 
 
-# %% r8_annotate ----
-#' @rdname r8_columns
+# %% r8annotate ----
+#' @rdname r8columns
 #' @export
-r8_annotate <- function(x, unit = NULL, description = NULL) {
+r8annotate <- function(x, unit = NULL, description = NULL) {
   check_table(x)
   about <- r8_table_columns(x)
   facts <- list()
@@ -1919,7 +1924,7 @@ r8_annotate <- function(x, unit = NULL, description = NULL) {
   }
   facts <- facts[lengths(facts) > 0L]
   r8_table_set_facts(x, if (length(facts) > 0L) facts)
-} # /R8::r8_annotate
+} # /R8::r8annotate
 
 
 # %% column_facts ----

@@ -13,7 +13,7 @@ refuses <- function(expr, text, class = "r8_value_error") {
 }
 
 vitals <- function() {
-  r8_annotate(
+  r8annotate(
     Raven(
       ward = factor(
         c(
@@ -40,7 +40,7 @@ vitals <- function() {
 }
 
 units_of <- function(x) {
-  a <- r8_columns(x)
+  a <- r8columns(x)
   stats::setNames(a[["unit"]], a[["name"]])
 }
 
@@ -179,9 +179,9 @@ test_that("a summary reads cells within aggregates, and is named apart from its 
   refuses(aggregate(x), "r8summarize(")
 })
 
-test_that("r8_set() stores the columns that calc() computes, over groups with `by`", {
+test_that("r8set() stores the columns that calc() computes, over groups with `by`", {
   x <- vitals()
-  y <- r8_set(
+  y <- r8set(
     x,
     list(
       bmi = calc(weight / height^2),
@@ -203,19 +203,19 @@ test_that("r8_set() stores the columns that calc() computes, over groups with `b
   expect_true(is.na(u[["bmi"]]))
   expect_identical(u[["excess"]], "mmHg")
   # Without `by`, an aggregate is over all rows.
-  z <- r8_set(x, list(share = calc(weight / sum(weight))))
+  z <- r8set(x, list(share = calc(weight / sum(weight))))
   expect_equal(sum(z$share), 1)
   refuses(
-    r8_set(x, list(d = calc(weight / (age - age)))),
+    r8set(x, list(d = calc(weight / (age - age)))),
     "`d` has no value in row 1: division by zero; nor in 7 other rows"
   )
   refuses(
-    r8_set(x, list(r = calc((-weight)^0.5))),
+    r8set(x, list(r = calc((-weight)^0.5))),
     "a negative number to a power that is not a whole number"
   )
   refuses(calc(sbp == NA), "compares with NA", class = "r8_declaration_error")
   refuses(
-    r8_set(x, list(a = x$age), by = "ward"),
+    r8set(x, list(a = x$age), by = "ward"),
     "`by` groups the rows",
     class = "r8_argument_error"
   )
@@ -237,7 +237,7 @@ test_that("r8map() maps calc() over columns, with col() as each column", {
     list(age = calc(median(age)), weight = calc(median(weight))),
     by = "ward"
   )
-  expect_true(r8_equal(m, s))
+  expect_true(r8equal(m, s))
   # Without `columns`, every column that is not a key.
   all <- r8map(
     x[c("ward", "age", "weight", "sbp")],
@@ -316,7 +316,7 @@ test_that("a computed field takes calc()", {
       g = field(option(type_double()), compute = calc(mg / 1000))
     )
   )
-  expect_identical(r8_resolve(Dose(mg = 250))$g, 0.25)
+  expect_identical(r8resolve(Dose(mg = 250))$g, 0.25)
   refuses(
     field(option(type_double()), compute = mg / 1000),
     "compute = calc(mg/1000)",
@@ -340,7 +340,7 @@ test_that("summaries do not depend on the order of the rows", {
   )
   a <- r8summarize(x, sums, by = c("g", "k"))
   b <- r8summarize(x[sample.int(n), ], sums, by = c("g", "k"))
-  expect_true(r8_equal(a, b))
+  expect_true(r8equal(a, b))
   # The counts are those of base R, and the medians.
   expect_identical(sum(a$n), n)
   key <- paste(x$g, x$k)
@@ -366,7 +366,7 @@ test_that("sums over many groups do not depend on the order of the rows", {
   sums <- list(s = calc(sum(v)), m = calc(mean(v)))
   a <- r8summarize(x, sums, by = "k")
   b <- r8summarize(x[rev(seq_len(n)), ], sums, by = "k")
-  expect_true(r8_equal(a, b))
+  expect_true(r8equal(a, b))
   expect_equal(a$s, as.vector(tapply(x$v, x$k, sum)))
 })
 
@@ -381,7 +381,7 @@ test_that("a summary of a group is the summary of the table filtered to it", {
   )
   s <- r8summarize(x, sums, by = "sex")
   for (k in seq_len(nrow(s))) {
-    one <- r8summarize(r8_filter(x, rule(sex == val(s$sex[[k]]))), sums)
+    one <- r8summarize(r8filter(x, rule(sex == val(s$sex[[k]]))), sums)
     expect_identical(as.list(s[k, names(sums)]), as.list(one))
   }
 })
@@ -403,10 +403,10 @@ test_that("a summary is the same for any number of threads", {
   )
   one <- r8summarize(x, sums, by = "k", n_threads = 1L)
   for (t in c(2L, 3L, 7L)) {
-    expect_true(r8_equal(one, r8summarize(x, sums, by = "k", n_threads = t)))
+    expect_true(r8equal(one, r8summarize(x, sums, by = "k", n_threads = t)))
   }
   whole <- r8summarize(x, sums, n_threads = 1L)
-  expect_true(r8_equal(whole, r8summarize(x, sums, n_threads = 4L)))
+  expect_true(r8equal(whole, r8summarize(x, sums, n_threads = 4L)))
   expect_equal(one$s, as.vector(tapply(x$v, x$k, sum)), tolerance = 1e-12)
   refuses(
     r8summarize(x, sums, n_threads = 0L),

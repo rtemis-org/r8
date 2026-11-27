@@ -517,7 +517,7 @@ void r8_continue_unwind(void) { R_ContinueUnwind(continuation); }
 int r8_inherited_fields(const char *type_name, const char *ancestor);
 SEXP r8_value_of_fields(const char *type_name, SEXP fields, R8Error *err);
 
-// `r8_upcast()` for the value `x` of a descendant of the struct `type`, a
+// `r8upcast()` for the value `x` of a descendant of the struct `type`, a
 // qualified name: a value over `x`'s first fields, which precede those that
 // its descendants add, read here, in a C frame, since a Rust-stored value's
 // field read may raise an R error. The fields are `x`'s own objects and are

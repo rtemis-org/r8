@@ -38,7 +38,7 @@ write_namespace_package <- function(system, dir, n = 200L, bench_dir = "bench") 
   )
   writeLines(c("# The types of the namespace rows.", "", decls), file.path(root, "R", "zz-types.R"))
   if (system == "R8") {
-    writeLines(c(".onLoad <- function(libname, pkgname) {", "  R8::r8_register()", "}"), file.path(root, "R", "zzz.R"))
+    writeLines(c(".onLoad <- function(libname, pkgname) {", "  R8::r8register()", "}"), file.path(root, "R", "zzz.R"))
   }
   root
 }

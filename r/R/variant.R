@@ -9,7 +9,7 @@
 .r8_c_is_variant <- NULL
 
 
-# %% r8_variant ----
+# %% r8variant ----
 #' The name of an enum value's variant
 #'
 #' The variant of an R8 enum value, to branch on with `switch()` or to show.
@@ -22,7 +22,7 @@
 #'
 #' @return Character: The variant's name, one value.
 #'
-#' @seealso [r8_is_variant()], which tests for one variant.
+#' @seealso [r8is_variant()], which tests for one variant.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -35,23 +35,23 @@
 #' )
 #' area <- function(x) {
 #'   switch(
-#'     r8_variant(x),
+#'     r8variant(x),
 #'     Circle = pi * x$r^2,
 #'     Square = x$side^2,
-#'     stop("unsupported shape: ", r8_variant(x))
+#'     stop("unsupported shape: ", r8variant(x))
 #'   )
 #' }
 #' area(Shape@Square(side = 2))
-#' r8_variant(Shape@Circle(r = 1)) %in% c("Circle", "Square")
+#' r8variant(Shape@Circle(r = 1)) %in% c("Circle", "Square")
 #' options(op)
 #'
 #' @export
-r8_variant <- function(x) {
+r8variant <- function(x) {
   .Call(.r8_c_variant, x)
-} # /R8::r8_variant
+} # /R8::r8variant
 
 
-# %% r8_is_variant ----
+# %% r8is_variant ----
 #' Test an enum value's variant
 #'
 #' `TRUE` when `x` is a value of an R8 enum whose variant is `variant`, a
@@ -67,19 +67,19 @@ r8_variant <- function(x) {
 #'
 #' @return Logical: One value.
 #'
-#' @seealso [r8_variant()], the variant's name.
+#' @seealso [r8variant()], the variant's name.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Shape <- new_enum("Shape", variants = list(Circle = variant(), Square = variant()))
-#' r8_is_variant(Shape@Circle, "Circle")
-#' try(r8_is_variant(Shape@Circle, "Circel"))
+#' r8is_variant(Shape@Circle, "Circle")
+#' try(r8is_variant(Shape@Circle, "Circel"))
 #' options(op)
 #'
 #' @export
-r8_is_variant <- function(x, variant) {
+r8is_variant <- function(x, variant) {
   .Call(.r8_c_is_variant, x, variant, .r8_variants)
-} # /R8::r8_is_variant
+} # /R8::r8is_variant
 
 
 # %% other_variant ----
@@ -98,11 +98,11 @@ r8_is_variant <- function(x, variant) {
 #' @keywords internal
 #' @noRd
 other_variant <- function(x, variant) {
-  r8_variant(x)
+  r8variant(x)
   if (!is.character(variant) || length(variant) != 1L || is.na(variant)) {
     r8_abort(
       "`variant` is the name of one variant; ",
-      "`r8_variant(x) %in% c(...)` tests for several.",
+      "`r8variant(x) %in% c(...)` tests for several.",
       class = "r8_type_error"
     )
   }

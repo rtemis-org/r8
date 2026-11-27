@@ -11,17 +11,18 @@ with other host languages.
 }
 \section{Runtime}{
 
-\code{\link[=r8_runtime_version]{r8_runtime_version()}}.
+\code{\link[=r8runtime_version]{r8runtime_version()}}.
 }
 
 \section{Names}{
 
 A function that a declaration is written with takes no prefix:
 \code{\link[=new_struct]{new_struct()}}, \code{\link[=type_double]{type_double()}}, \code{\link[=field]{field()}}, \code{\link[=rule]{rule()}}, \code{\link[=impl]{impl()}},
-\code{\link[=generic]{generic()}}, \code{\link[=params]{params()}}, \code{\link[=arg]{arg()}}, and the standard traits. A function that operates on values,
-types, or packages takes the prefix \code{r8_}: \code{\link[=r8_to_json]{r8_to_json()}}, \code{\link[=r8_hash]{r8_hash()}},
-\code{\link[=r8_validate]{r8_validate()}}, \code{\link[=r8_register]{r8_register()}}. S3 classes, condition classes, and value
-attributes take the prefix \code{r8_}; \code{R8_} prefixes the environment
+\code{\link[=generic]{generic()}}, \code{\link[=params]{params()}}, \code{\link[=arg]{arg()}}, and the standard traits. A function that
+operates on values, types, tables, or packages begins with \code{r8} joined to
+its first word, with underscores between the later words: \code{\link[=r8filter]{r8filter()}},
+\code{\link[=r8hash]{r8hash()}}, \code{\link[=r8to_json]{r8to_json()}}, \code{\link[=r8register]{r8register()}}. S3 classes, condition classes,
+and value attributes take the prefix \code{r8_}; \code{R8_} prefixes the environment
 variable \code{R8_OUTPUT_TYPE}.
 }
 
@@ -42,16 +43,16 @@ satisfy their types, \code{r8_codec_missing_error}, a Rust-stored type whose
 codec is not registered, and \code{r8_unknown_type_error}, a document that
 names a type no loaded package declares.
 \item \code{r8_dispatch_error}: a generic or trait method with no impl for the
-value's type, a conversion without a \code{From} impl, or \code{r8_next_impl()}
+value's type, a conversion without a \code{From} impl, or \code{r8next_impl()}
 without a next impl.
 \item \code{r8_other_declaration_error}, beside \code{r8_value_error} or
 \code{r8_dispatch_error}: a value made under another declaration of its type
-than the registered one, which \code{\link[=r8_update]{r8_update()}} converts or refuses.
+than the registered one, which \code{\link[=r8update]{r8update()}} converts or refuses.
 \item \code{r8_compiled_error}: an error that a package's compiled code returned, a
 compiled method or the body of a function whose body is \code{\link[=rust]{rust()}}, with its
 code in the field \code{code} and the call of the generic or the function; its
 subclass \code{r8_panic} is a panic of the compiled code.
-\item \code{r8_file_error}: a damaged file (\code{\link[=r8_read_rds]{r8_read_rds()}}).
+\item \code{r8_file_error}: a damaged file (\code{\link[=r8read_rds]{r8read_rds()}}).
 \item \code{r8_text_error}: text output given invalid arguments.
 }
 
@@ -61,7 +62,7 @@ Every warning R8 signals has the class \code{r8_warning}:
 earlier declaration of their parent.
 \item \code{r8_declaration_warning}: a package whose compiled code was compiled against
 another declaration of a type of another package, and may not read it
-(\code{\link[=r8_register]{r8_register()}}).
+(\code{\link[=r8register]{r8register()}}).
 }
 }
 
@@ -76,6 +77,7 @@ the change with them, with a minimum version of the declaring package in their
 \seealso{
 Useful links:
 \itemize{
+  \item \url{https://docs.rtemis.org/r/r8-api/}
   \item \url{https://www.rtemis.org}
   \item \url{https://github.com/rtemis-org/r8}
   \item Report bugs at \url{https://github.com/rtemis-org/r8/issues}

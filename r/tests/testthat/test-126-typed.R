@@ -229,7 +229,7 @@ test_that("R8 types, subtype(), and dyn() are checked exactly", {
     expect_error(expr, pattern, class = "r8_argument_error")
   }
   expect_identical(f(a, exact = range), "ok")
-  refused(f(a, exact = window), "r8_upcast")
+  refused(f(a, exact = window), "r8upcast")
   refused(f(a, exact = 1), "`exact` must be a value of `ty6::Range`")
   # Each twice: through the validator, then by the admitted type.
   for (i in 1:2) {
@@ -430,16 +430,16 @@ test_that("the contract belongs to the generic's call", {
     implement(f, A) <- function(x, n) "not an integer"
     implement(f, B) <- function(x, n) {
       n <- -5L
-      inner <- r8_next_impl()
+      inner <- r8next_impl()
       nchar(inner) + n
     }
     list(f = f, A = A, B = B)
   })
   f <- t[["f"]]
-  # r8_next_impl() passes a value outside the type and returns a result
+  # r8next_impl() passes a value outside the type and returns a result
   # outside the return type; the call's own result is checked.
   expect_identical(f(t[["B"]](), 1L), 9L)
-  expect_identical(r8_method(f, t[["A"]])(t[["A"]](), -1L), "not an integer")
+  expect_identical(r8method(f, t[["A"]])(t[["A"]](), -1L), "not an integer")
   expect_error(f(t[["A"]](), 1L), class = "r8_result_error")
 })
 
@@ -768,7 +768,7 @@ test_that("a From impl's result of another type is a result error", {
     impl(From("numeric"), A, methods = list(from = function(x) B()))
     A
   })
-  expect_error(r8_convert(1, t), "From", class = "r8_result_error")
+  expect_error(r8convert(1, t), "From", class = "r8_result_error")
 })
 
 test_that("print() of a generic and of a trait shows types, defaults, and return types", {

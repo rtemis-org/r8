@@ -69,11 +69,11 @@ test_that("Kernel and Svm declared in R produce the IR of the fixture", {
     list(Kernel = Kernel, Svm = Svm)
   })
   expect_identical(
-    R8:::r8_canonical_json(r8_declaration(types[["Kernel"]])),
+    R8:::r8_canonical_json(r8declaration(types[["Kernel"]])),
     fixture_canonical("kernel.ir.json")
   )
   expect_identical(
-    R8:::r8_canonical_json(r8_declaration(types[["Svm"]])),
+    R8:::r8_canonical_json(r8declaration(types[["Svm"]])),
     fixture_canonical("svm.ir.json")
   )
   expect_s3_class(types[["Svm"]], c("r8_struct_type", "r8_type"))
@@ -274,9 +274,9 @@ test_that("a type object outside a package carries its record, which registers i
     "package 'somepkg' do not read: the record's checksum does not match its content; reinstall 'somepkg'"
   )
   # Registering the record again changes nothing.
-  before <- r8_declaration(P)
+  before <- r8declaration(P)
   R8:::register_records(list(record))
-  expect_identical(r8_declaration(P), before)
+  expect_identical(r8declaration(P), before)
 })
 
 test_that("a restored registry takes back the declarations made after its save", {
@@ -307,7 +307,7 @@ test_that("re-declaring a type replaces it", {
     "demo",
     new_struct("Again", fields = list(x = type_double(), y = type_logical()))
   )
-  expect_match(r8_declaration(T2), "\"y\"")
+  expect_match(r8declaration(T2), "\"y\"")
 })
 
 test_that("a computed field compiles its expression", {
@@ -325,7 +325,7 @@ test_that("a computed field compiles its expression", {
       )
     )
   )
-  expect_match(r8_declaration(T), "\"policy\":\"computed\"")
+  expect_match(r8declaration(T), "\"policy\":\"computed\"")
   expect_error(
     declare_in(
       "demo",
@@ -404,7 +404,7 @@ test_that("member lists are named and their names are distinct", {
   )
 })
 
-test_that("qualified rule functions compile like bare ones, and r8_is_variant() tests R values", {
+test_that("qualified rule functions compile like bare ones, and r8is_variant() tests R values", {
   expect_identical(
     R8:::r8_logic(quote(base::is.null(a))),
     list(is_null = list(list(var = "a")))
@@ -413,9 +413,9 @@ test_that("qualified rule functions compile like bare ones, and r8_is_variant() 
     "demo",
     new_enum("Ks", variants = list(A = variant(), B = variant()))
   )
-  expect_true(r8_is_variant(K@A, "A"))
-  expect_false(r8_is_variant(K@A, "B"))
-  expect_error(r8_is_variant(1, "A"), class = "r8_type_error")
+  expect_true(r8is_variant(K@A, "A"))
+  expect_false(r8is_variant(K@A, "B"))
+  expect_error(r8is_variant(1, "A"), class = "r8_type_error")
   expect_false(exists(
     "is_variant",
     envir = asNamespace("R8"),
@@ -428,7 +428,7 @@ test_that("a failed declaration leaves the registry unchanged", {
     "regfail",
     new_struct("Point", fields = list(x = type_double(min = 0)))
   )
-  before <- r8_declaration(Point)
+  before <- r8declaration(Point)
   # A failed replacement keeps the registered declaration.
   expect_error(
     declare_in(
@@ -440,7 +440,7 @@ test_that("a failed declaration leaves the registry unchanged", {
     ),
     class = "r8_declaration_error"
   )
-  expect_identical(r8_declaration(Point), before)
+  expect_identical(r8declaration(Point), before)
   expect_s3_class(Point(x = 1), "regfail::Point")
   # A failed new declaration registers nothing.
   expect_error(
@@ -472,7 +472,7 @@ test_that("a failed declaration leaves the registry unchanged", {
     "regfail",
     new_struct("Point", fields = list(x = type_double(min = 0)))
   ))
-  expect_identical(r8_declaration(Point), before)
+  expect_identical(r8declaration(Point), before)
 })
 
 test_that("a type and a trait of one name are refused in either order", {
@@ -649,7 +649,7 @@ test_that("a default of an R8 type takes a value with fields, in construction an
   expect_identical(R8:::value_variant(s$kernel), "Rbf")
   expect_identical(s$kernel$gamma, 0.1)
   expect_identical(s$origin$y, 2)
-  r <- r8_from_json(
+  r <- r8from_json(
     out[["Svm"]],
     '{"$type": "dft::Svm", "$types": {"dft::Svm": 1, "dft::Kernel": 1, "dft::Point": 1}, "cost": 3}'
   )
@@ -694,12 +694,12 @@ test_that("a default is an R value of its type, written in its JSON form", {
   expect_identical(names(x$steps), c("b", "a"))
   expect_identical(x$m, diag(2))
   # A document without the members takes the same defaults.
-  r <- r8_from_json(
+  r <- r8from_json(
     Defaults,
     '{"$type": "dftr::Defaults", "$types": {"dftr::Defaults": 1}}'
   )
-  expect_true(r8_equal(r, x))
-  expect_identical(r8_hash(r), r8_hash(x))
+  expect_true(r8equal(r, x))
+  expect_identical(r8hash(r), r8hash(x))
 })
 
 test_that("a default outside its type in R is a declaration error", {
@@ -801,7 +801,7 @@ test_that("a fill policy is a struct field's, of type option()", {
         g = field(option(type_double()), compute = calc(mg / 1000))
       )
     )
-    expect_identical(r8_resolve(C(mg = 500))$g, 0.5)
+    expect_identical(r8resolve(C(mg = 500))$g, 0.5)
   })
 })
 

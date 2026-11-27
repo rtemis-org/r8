@@ -61,7 +61,7 @@ test_that("a constraint names the field in R, the requirement, and the value fou
     expect_identical(p$where, c("x", "s", "w[[2]]", "m[[\"b\"]]"))
     expect_identical(p$path, c("/x", "/s", "/w/1", "/m/b"))
     expect_identical(p$suggestion, c(NA, "rbf", NA, NA))
-    json <- r8_to_json(P(
+    json <- r8to_json(P(
       x = 0,
       s = "rbf",
       w = 1,
@@ -69,7 +69,7 @@ test_that("a constraint names the field in R, the requirement, and the value fou
       k = K@Rbf(gamma = 1)
     ))
     bad <- sub('"type":"Rbf"', '"type":"Rbff"', json, fixed = TRUE)
-    e <- tryCatch(r8_from_json(P, bad), error = identity)
+    e <- tryCatch(r8from_json(P, bad), error = identity)
     expect_match(
       conditionMessage(e),
       "`k` must be a variant of `msgform::K`: \"Linear\" or \"Rbf\"; found \"Rbff\"; the nearest value is \"Rbf\".",
@@ -84,9 +84,9 @@ test_that("an unknown field names the nearest field, or lists the fields", {
       "P",
       fields = list(values = vec(type_double()), lo = type_double())
     )
-    json <- r8_to_json(P(values = 1, lo = 1))
+    json <- r8to_json(P(values = 1, lo = 1))
     e <- tryCatch(
-      r8_from_json(P, sub('"values"', '"valeus"', json, fixed = TRUE)),
+      r8from_json(P, sub('"values"', '"valeus"', json, fixed = TRUE)),
       error = identity
     )
     expect_match(
@@ -95,7 +95,7 @@ test_that("an unknown field names the nearest field, or lists the fields", {
       fixed = TRUE
     )
     e <- tryCatch(
-      r8_from_json(P, sub('"lo":1', '"lo":1,"zz":2', json, fixed = TRUE)),
+      r8from_json(P, sub('"lo":1', '"lo":1,"zz":2', json, fixed = TRUE)),
       error = identity
     )
     expect_match(
@@ -244,7 +244,7 @@ test_that("list() is the empty map, and NULL stays absent", {
     expect_length(v$h, 0L)
     expect_identical(names(v$o), character())
     expect_null(v$oh)
-    expect_true(r8_equal(v, r8_from_json(M, r8_to_json(v))))
+    expect_true(r8equal(v, r8from_json(M, r8to_json(v))))
     v$h <- list()
     expect_length(v$h, 0L)
     for (x in list(numeric(), character())) {

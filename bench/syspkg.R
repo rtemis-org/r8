@@ -42,7 +42,7 @@ write_system_package <- function(system, dir, bench_dir = "bench") {
     sprintf(".ops <- declare_system(\"%s\", where = environment())", system)
   ), file.path(root, "R", "zz-declare.R"))
   if (system == "R8") {
-    writeLines(c(".onLoad <- function(libname, pkgname) {", "  R8::r8_register()", "}"), file.path(root, "R", "zzz.R"))
+    writeLines(c(".onLoad <- function(libname, pkgname) {", "  R8::r8register()", "}"), file.path(root, "R", "zzz.R"))
   }
   root
 }

@@ -130,7 +130,7 @@ arg_shorthand <- function(constructor) {
 #'   the elements or of a present value.
 #' @param default Optional expression: The default.
 #' @param description Character: What the parameter is, one string, which the
-#'   declaration keeps: [r8_schema()] writes it, and the roclet [r8_rd()]
+#'   declaration keeps: [r8schema()] writes it, and the roclet [r8rd()]
 #'   writes it as the parameter's `@param`.
 #' @param min,max,exclusive_min,exclusive_max,values Optional Numeric: The
 #'   bounds and admitted values, as [type_integer()] and [type_double()] take

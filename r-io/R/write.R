@@ -2,11 +2,11 @@
 # ::R8.io::
 # 2026- EDG rtemis.org
 
-# %% r8_write_table ----
+# %% r8write_table ----
 #' Write a table to a file
 #'
 #' Writes the columns of a table as a CSV, TSV, or Parquet file, so that
-#' [r8_read_table()] with the type of the table reads the same values. Units and
+#' [r8read_table()] with the type of the table reads the same values. Units and
 #' descriptions are not written.
 #'
 #' A CSV or TSV file is UTF-8. A missing cell is empty. A text is quoted where it needs
@@ -31,18 +31,18 @@
 #'
 #' @examples
 #' file <- tempfile(fileext = ".csv")
-#' r8_write_table(R8::Raven(a = c(1.5, NA), b = c("x", "NA")), file)
+#' r8write_table(R8::Raven(a = c(1.5, NA), b = c("x", "NA")), file)
 #' readLines(file)
-#' r8_read_table(file)
+#' r8read_table(file)
 #' unlink(file)
 #'
 #' file <- tempfile(fileext = ".parquet")
-#' r8_write_table(R8::Raven(a = c(1.5, NA), b = c("x", "NA")), file)
-#' r8_read_table(file)
+#' r8write_table(R8::Raven(a = c(1.5, NA), b = c("x", "NA")), file)
+#' r8read_table(file)
 #' unlink(file)
 #'
 #' @export
-r8_write_table <- function(x, file, format = NULL, delimiter = NULL) {
+r8write_table <- function(x, file, format = NULL, delimiter = NULL) {
   if (is.data.frame(x)) {
     x <- R8::Raven(x)
   }
@@ -59,7 +59,7 @@ r8_write_table <- function(x, file, format = NULL, delimiter = NULL) {
       class = "r8_argument_error"
     )
   }
-  columns <- as.list(R8::r8_to_data_frame(x))
+  columns <- as.list(R8::r8to_data_frame(x))
   columns <- lapply(columns, function(v) {
     if (is.character(v)) {
       return(enc2utf8(v))
@@ -85,4 +85,4 @@ r8_write_table <- function(x, file, format = NULL, delimiter = NULL) {
     io_abort("`", file, "` is not written: ", res, ".", class = "r8_file_error")
   }
   invisible(file)
-} # /R8.io::r8_write_table
+} # /R8.io::r8write_table

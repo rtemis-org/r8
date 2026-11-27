@@ -10,15 +10,15 @@ use extendr_api::prelude::*;
 /// @return Character: The version, for example `"0.1.0"`.
 ///
 /// @examples
-/// r8_runtime_version()
+/// r8runtime_version()
 ///
 /// @export
 #[extendr]
-fn r8_runtime_version() -> &'static str {
+fn r8runtime_version() -> &'static str {
     rtemis_r8::VERSION
 }
 
 extendr_module! {
     mod version;
-    fn r8_runtime_version;
+    fn r8runtime_version;
 }

@@ -24,7 +24,7 @@ declare_in <- function(ns, expr) {
 }
 
 # `pkgr::Probe` declared in R, in the namespace `conf`: the declaration
-# that r8_document_rust() writes for r8pkgR, without `storage = "rust"`; and
+# that r8document_rust() writes for r8pkgR, without `storage = "rust"`; and
 # `conf::Every`, a field of each type that has no Rust field type. Its
 # impls give the results of r8pkgR's Rust impls.
 conformance_r_types <- function() {

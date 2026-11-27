@@ -377,12 +377,12 @@ pub struct CharacterType {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "policy", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Resolve {
-    /// `r8_resolve()` fills the value from an expression over other fields.
+    /// `r8resolve()` fills the value from an expression over other fields.
     Computed {
         /// The expression over the other fields.
         expr: Logic,
     },
-    /// `r8_resolve(x, context)` fills the value from its `context`.
+    /// `r8resolve(x, context)` fills the value from its `context`.
     Context,
 }
 

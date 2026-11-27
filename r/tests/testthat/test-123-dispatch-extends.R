@@ -69,7 +69,7 @@ test_that("an impl is the unit of precedence through extends", {
   })
 })
 
-test_that("r8_next_impl() continues from the provider, level by level", {
+test_that("r8next_impl() continues from the provider, level by level", {
   ty <- chain_types("dx3")
   A <- ty[["A"]]
   B <- ty[["B"]]
@@ -77,42 +77,42 @@ test_that("r8_next_impl() continues from the provider, level by level", {
   declare_in("dx3", {
     path <- generic("path", params(x, sep))
     implement(path, A) <- function(x, sep) "A"
-    implement(path, B) <- function(x, sep) paste("B", r8_next_impl(), sep = sep)
-    implement(path, C) <- function(x, sep) paste("C", r8_next_impl(), sep = sep)
+    implement(path, B) <- function(x, sep) paste("B", r8next_impl(), sep = sep)
+    implement(path, C) <- function(x, sep) paste("C", r8next_impl(), sep = sep)
     expect_identical(path(C(a = 1, b = 2, c = 3), sep = "/"), "C/B/A")
     expect_identical(path(B(a = 1, b = 2), sep = "-"), "B-A")
-    implement(path, A) <- function(x, sep) r8_next_impl()
+    implement(path, A) <- function(x, sep) r8next_impl()
     expect_error(
       path(A(a = 1), sep = "/"),
       "has no next impl",
       class = "r8_dispatch_error"
     )
     expect_error(
-      r8_next_impl(),
+      r8next_impl(),
       "from the body of an impl",
       class = "r8_dispatch_error"
     )
   })
 })
 
-test_that("r8_upcast() and r8_convert() return the value of an ancestor", {
+test_that("r8upcast() and r8convert() return the value of an ancestor", {
   ty <- chain_types("dx4")
   A <- ty[["A"]]
   B <- ty[["B"]]
   C <- ty[["C"]]
   declare_in("dx4", {
     x <- C(a = 1, b = 2, c = 3)
-    a <- r8_upcast(x, A)
+    a <- r8upcast(x, A)
     expect_identical(class(a), c("dx4::A", "r8_value"))
-    expect_true(r8_equal(a, A(a = 1)))
-    expect_no_error(r8_validate(a))
-    b <- r8_convert(x, B)
+    expect_true(r8equal(a, A(a = 1)))
+    expect_no_error(r8validate(a))
+    b <- r8convert(x, B)
     expect_identical(names(unclass(b)), c("a", "b"))
-    expect_identical(r8_upcast(x, C), x)
-    expect_identical(r8_ancestors(C), c("dx4::B", "dx4::A"))
-    expect_identical(r8_ancestors(x), c("dx4::B", "dx4::A"))
-    expect_identical(r8_ancestors(A), character())
-    expect_error(r8_upcast(a, C), "not an ancestor", class = "r8_type_error")
+    expect_identical(r8upcast(x, C), x)
+    expect_identical(r8ancestors(C), c("dx4::B", "dx4::A"))
+    expect_identical(r8ancestors(x), c("dx4::B", "dx4::A"))
+    expect_identical(r8ancestors(A), character())
+    expect_error(r8upcast(a, C), "not an ancestor", class = "r8_type_error")
     expect_error(
       impl(From(C), A, methods = list(from = function(x) A(a = x$a))),
       "reserved",
@@ -132,8 +132,8 @@ test_that("a stale child refuses ancestors, upcast, and forwarded dispatch", {
       A <- new_struct("A", fields = list(a = type_double(), z = type_double())),
       class = "r8_stale_warning"
     )
-    expect_error(r8_ancestors(B), "type_stale", class = "r8_type_error")
-    expect_error(r8_upcast(b, A), "type_stale", class = "r8_type_error")
+    expect_error(r8ancestors(B), "type_stale", class = "r8_type_error")
+    expect_error(r8upcast(b, A), "type_stale", class = "r8_type_error")
     expect_error(label(b), "type_stale", class = "r8_dispatch_error")
   })
 })

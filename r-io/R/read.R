@@ -6,11 +6,11 @@
 #
 # spec: R8/io
 
-# %% r8_read_table ----
+# %% r8read_table ----
 #' Read a table from a file
 #'
-#' `r8_read_table()` reads a CSV, TSV, or Parquet file as a value of a table type, and
-#' `r8_check_file()` reports what in the file does not read as the type or does not
+#' `r8read_table()` reads a CSV, TSV, or Parquet file as a value of a table type, and
+#' `r8check_file()` reports what in the file does not read as the type or does not
 #' satisfy its rules. Reading requires: it gives a value of the type, or an error that
 #' lists what does not read. Checking looks: it raises no error for what it finds.
 #'
@@ -93,7 +93,7 @@
 #' @param time_zone Character: The IANA name of the time zone of the date-times without
 #'   an offset, such as `"America/New_York"`.
 #'
-#' @return `r8_read_table()`: A value of `type`, or a [R8::Raven]; raises
+#' @return `r8read_table()`: A value of `type`, or a [R8::Raven]; raises
 #'   `r8_value_error` with the report, in the field `report`, where a cell does not
 #'   read, and `r8_file_error` for a malformed file.
 #'
@@ -101,20 +101,20 @@
 #' op <- options(r8.namespace = "demo")
 #' file <- tempfile(fileext = ".csv")
 #' writeLines(c("id,lab", "1,0.4", "2,<0.1", "3,12"), file)
-#' r8_read_table(file)
+#' r8read_table(file)
 #'
 #' Labs <- R8::new_table("Labs", columns = list(
 #'   id = R8::type_integer(),
 #'   lab = R8::type_double(min = 0)
 #' ))
-#' try(r8_read_table(file, Labs))
-#' r8_check_file(file, Labs)$unread
-#' r8_read_table(file, Labs, recode_in = list(lab = c("<0.1" = 0.1)))
+#' try(r8read_table(file, Labs))
+#' r8check_file(file, Labs)$unread
+#' r8read_table(file, Labs, recode_in = list(lab = c("<0.1" = 0.1)))
 #' unlink(file)
 #' options(op)
 #'
 #' @export
-r8_read_table <- function(
+r8read_table <- function(
   file,
   type = NULL,
   infer_types = "strict",
@@ -155,22 +155,22 @@ r8_read_table <- function(
   if (is.null(type) || !inherits(type, "r8_type")) {
     out <- R8::Raven(read[["columns"]])
     if (!is.null(type)) {
-      R8::r8_validate(out, type)
+      R8::r8validate(out, type)
     }
     return(out)
   }
   type(read[["columns"]])
-} # /R8.io::r8_read_table
+} # /R8.io::r8read_table
 
 
-# %% r8_check_file ----
-#' @rdname r8_read_table
+# %% r8check_file ----
+#' @rdname r8read_table
 #'
 #' @param against A table type: an R8 table type, or an [R8::type_table()].
 #' @param limit Integer: The problems listed for each column and rule.
 #'
-#' @return `r8_check_file()`: A value of the struct `R8io::FileReport`, which extends
-#'   `R8::Report` ([R8::r8_check()]) with `file`; `unread`, a table of the texts that do
+#' @return `r8check_file()`: A value of the struct `R8io::FileReport`, which extends
+#'   `R8::Report` ([R8::r8check()]) with `file`; `unread`, a table of the texts that do
 #'   not read, with the number of their cells and the first row; `recoded`, a table of
 #'   the texts that `recode_in` names, with their values and the number of their cells;
 #'   and `lines`, the lines that have another number of cells than the header. The
@@ -178,7 +178,7 @@ r8_read_table <- function(
 #'   no answer in their rows.
 #'
 #' @export
-r8_check_file <- function(
+r8check_file <- function(
   file,
   against,
   limit = 1000L,
@@ -222,7 +222,7 @@ r8_check_file <- function(
     limit = as.integer(limit)
   )
   file_report(file, read, against, columns, as.integer(limit))
-} # /R8.io::r8_check_file
+} # /R8.io::r8check_file
 
 
 # %% declared_columns ----
@@ -486,7 +486,7 @@ file_format <- function(file, format, delimiter, encoding = NULL) {
 #' Read the columns of a file
 #'
 #' @param file,infer_types,na_strings,na_strings_in,recode_in,format,delimiter,encoding,time_zone
-#'   As [r8_read_table()] takes them.
+#'   As [r8read_table()] takes them.
 #' @param declared What `declared_columns()` gives.
 #' @param limit Integer: The cells that do not read that each column lists.
 #'
@@ -668,7 +668,7 @@ check_recoded_values <- function(recoded, recode_in, declared) {
       value <- unname(recode_in[[key]][text])
       ok <- tryCatch(
         {
-          R8::r8_validate(value, type)
+          R8::r8validate(value, type)
           NULL
         },
         r8_value_error = conditionMessage
@@ -782,7 +782,7 @@ unread_message <- function(file, read, type, file_expr, type_expr) {
       ),
       paste0("  recode_in = list(", paste(form, collapse = ", "), ")"),
       paste0(
-        "r8_check_file(",
+        "r8check_file(",
         written_as(file_expr, "file"),
         ", ",
         written_as(type_expr, "type"),

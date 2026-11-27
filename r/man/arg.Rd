@@ -111,7 +111,7 @@ the elements or of a present value.}
 \item{default}{Optional expression: The default.}
 
 \item{description}{Character: What the parameter is, one string, which the
-declaration keeps: \code{\link[=r8_schema]{r8_schema()}} writes it, and the roclet \code{\link[=r8_rd]{r8_rd()}}
+declaration keeps: \code{\link[=r8schema]{r8schema()}} writes it, and the roclet \code{\link[=r8rd]{r8rd()}}
 writes it as the parameter's \verb{@param}.}
 
 \item{min, max, exclusive_min, exclusive_max, values}{Optional Numeric: The

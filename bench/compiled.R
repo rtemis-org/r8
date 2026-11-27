@@ -41,8 +41,8 @@ panel <- Panel(
   figure = square
 )
 grid <- Grid(cell = iv, method = kfold, extent = band, figure = square)
-iv_json <- r8_to_json(iv)
-panel_json <- r8_to_json(panel)
+iv_json <- r8to_json(iv)
+panel_json <- r8to_json(panel)
 
 # Each row: an expression, and the number of calls of a round.
 rows <- list(
@@ -54,7 +54,7 @@ rows <- list(
   method_two_positions = list(quote(meets(iv, band, 1)), 5e4),
   method_open_args = list(quote(refit(panel, strip, square)), 2e4),
   replacement = list(quote(upper(iv) <- 9), 5e4),
-  conversion = list(quote(r8_convert(signal, Interval)), 2e4),
+  conversion = list(quote(r8convert(signal, Interval)), 2e4),
   result_own = list(quote(middle(iv)), 5e4),
   result_other_package = list(quote(lower(tile)), 5e4),
   open_downcast = list(quote(cells(grid)), 5e4),
@@ -62,7 +62,7 @@ rows <- list(
   open_replaced = list(quote(moved(panel, 1, 2)), 5e4),
   open_replaced_read = list(quote(moved(panel, 1, 2)[["range"]]), 2e4),
   nested_read = list(quote(moved(panel, 1, 2)[["frame"]]), 2e4),
-  upcast = list(quote(r8_upcast(band, Interval)), 2e4),
+  upcast = list(quote(r8upcast(band, Interval)), 2e4),
   construct = list(quote(Interval(lo = 0, hi = 4)), 5e4),
   construct_open = list(
     quote(Panel(range = strip, frame = iv, figure = square)),
@@ -71,9 +71,9 @@ rows <- list(
   field_write = list(quote(band[["lo"]] <- 0), 2e4),
   serialize = list(quote(unserialize(serialize(band, NULL))), 1e4),
   serialize_open = list(quote(unserialize(serialize(panel, NULL))), 5e3),
-  json_read = list(quote(r8_from_json(Interval, iv_json)), 1e4),
-  json_read_open = list(quote(r8_from_json(Panel, panel_json)), 5e3),
-  hash = list(quote(r8_hash(iv)), 1e4)
+  json_read = list(quote(r8from_json(Interval, iv_json)), 1e4),
+  json_read_open = list(quote(r8from_json(Panel, panel_json)), 5e3),
+  hash = list(quote(r8hash(iv)), 1e4)
 )
 if (!is.null(only)) {
   rows <- rows[only]

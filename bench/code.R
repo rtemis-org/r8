@@ -123,7 +123,7 @@ out <- list(
     c("chk_double", "chk_int", "chk_opt_int", "chk_string", "chk_flag", "chk_dvec", "chk_ivec",
       "GBM_CHECKS", "check_fields", "rules_gbm", "check_gbm", "check_gbm_field")
   ),
-  json_read = expr_text(quote(R8::r8_from_json(GBM, json))),
+  json_read = expr_text(quote(R8::r8from_json(GBM, json))),
   systems = stats::setNames(lapply(systems, system_code), systems)
 )
 dir.create("bench/results", showWarnings = FALSE)

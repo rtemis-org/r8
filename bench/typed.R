@@ -196,13 +196,13 @@ loop_direct <- compiler::cmpfun(function(k) {
   for (i in seq_len(k)) t_doc(c(1, 2, 3), 0, 1)
 })
 loop_from <- compiler::cmpfun(function(k) {
-  for (i in seq_len(k)) r8_call_from_json(t_doc, doc)
+  for (i in seq_len(k)) r8call_from_json(t_doc, doc)
 })
 loop_check <- compiler::cmpfun(function(k) {
-  for (i in seq_len(k)) r8_check_call(t_doc, doc)
+  for (i in seq_len(k)) r8check_call(t_doc, doc)
 })
 loop_to <- compiler::cmpfun(function(k) {
-  for (i in seq_len(k)) r8_call_to_json(t_doc, c(1, 2, 3), 0, 1)
+  for (i in seq_len(k)) r8call_to_json(t_doc, c(1, 2, 3), 0, 1)
 })
 best <- function(f, k) {
   invisible(time(f(k), k))
@@ -210,9 +210,9 @@ best <- function(f, k) {
 }
 direct <- best(loop_direct, 1e4)
 for (d in list(
-  list("r8_call_from_json()", loop_from),
-  list("r8_check_call()", loop_check),
-  list("r8_call_to_json()", loop_to)
+  list("r8call_from_json()", loop_from),
+  list("r8check_call()", loop_check),
+  list("r8call_to_json()", loop_to)
 )) {
   ns <- best(d[[2L]], 2e3)
   out <- c(

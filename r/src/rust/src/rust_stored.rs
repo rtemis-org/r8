@@ -68,7 +68,7 @@ fn take(x: SEXP) {
     unsafe { f(x) }
 }
 
-/// The parts of a Rust-stored value that `r8_size()` adds up: the bytes of
+/// The parts of a Rust-stored value that `r8size()` adds up: the bytes of
 /// its state and the cached fields that are not views of the state.
 ///
 /// @param x An R8 value.

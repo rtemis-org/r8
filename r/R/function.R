@@ -39,13 +39,13 @@
 #' package's Rust code: a function marked `#[r8::function]` of the same name,
 #' listed in `functions` of the package's `r8::exports!`. The declaration stays
 #' the function's: its parameters, types, defaults, descriptions, rules, return
-#' type, help page, and [r8_schema()]. Each call checks and converts the
+#' type, help page, and [r8schema()]. Each call checks and converts the
 #' arguments, evaluates every parameter, a default written in R included, and
 #' passes the values to the Rust function in the order of the parameters, `...`
 #' as a list; the result is checked as an R body's is. An error that the Rust
 #' function returns is an `r8_compiled_error`. When the package loads, R8
 #' compares the Rust function's signature with the declaration
-#' ([r8_rust_signature()] writes it).
+#' ([r8rust_signature()] writes it).
 #'
 #' @section Outside R8:
 #' The function given is plain R: `arg()` gives its default, or R's error for a
@@ -356,7 +356,7 @@ returns_checked <- function(e, check) {
 #' marked `#[r8::function]` and listed in `functions` of the package's
 #' `r8::exports!`. The declaration in R holds the parameters, their types,
 #' defaults, and descriptions, the rules, and the return type; the Rust function
-#' computes the result. [r8_rust_signature()] writes the Rust function's
+#' computes the result. [r8rust_signature()] writes the Rust function's
 #' signature from the declaration.
 #'
 #' @return Does not return: called outside a typed function, it signals
@@ -442,10 +442,10 @@ rust_body <- function(fn) {
 } # /R8::rust_body
 
 
-# %% r8_rust_signature ----
+# %% r8rust_signature ----
 #' The Rust signature of a typed function
 #'
-#' `r8_rust_signature()` writes the Rust function that the body of a typed
+#' `r8rust_signature()` writes the Rust function that the body of a typed
 #' function moves into: `#[r8::function]`, the function's name, each parameter
 #' with the Rust type of its declared type, the result's type, the description
 #' as a doc comment, the checks that R8 makes before and after the body as a
@@ -477,11 +477,11 @@ rust_body <- function(fn) {
 #'   return_type = vec(type_double()),
 #'   description = "Holds a running level between `lo` and `hi`."
 #' )
-#' r8_rust_signature(level)
+#' r8rust_signature(level)
 #' options(op)
 #'
 #' @export
-r8_rust_signature <- function(f) {
+r8rust_signature <- function(f) {
   if (!inherits(f, "r8_function")) {
     r8_abort(
       "`f` is a typed function of new_function().",
@@ -493,11 +493,11 @@ r8_rust_signature <- function(f) {
     register_records(list(attr(f, "r8_record")))
   }
   structure(r8_rust_signature_text(qname), class = "r8_rust_text")
-} # /R8::r8_rust_signature
+} # /R8::r8rust_signature
 
 
 # %% print.r8_rust_text ----
-#' @rdname r8_rust_signature
+#' @rdname r8rust_signature
 #' @param x Character: Rust text.
 #' @param ... Not used.
 #' @export

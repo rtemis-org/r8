@@ -18,15 +18,15 @@ test_that("a value crosses to mirai and future workers and back", {
   m <- mirai::mirai(
     {
       eval(parse(text = setup))
-      list(x$count, x$weights * 2, x, R8::r8_hash(x))
+      list(x$count, x$weights * 2, x, R8::r8hash(x))
     },
     x = x,
     setup = p[["worker_setup"]]
   )[]
   expect_identical(m[[1L]], 3L)
   expect_identical(m[[2L]], c(1, 3))
-  expect_true(r8_equal(m[[3L]], x))
-  expect_identical(m[[4L]], r8_hash(x))
+  expect_true(r8equal(m[[3L]], x))
+  expect_identical(m[[4L]], r8hash(x))
   future::plan(future::multisession, workers = 1)
   on.exit(future::plan(future::sequential), add = TRUE)
   f <- future::value(future::future(
@@ -41,5 +41,5 @@ test_that("a value crosses to mirai and future workers and back", {
   ))
   expect_identical(f$count, 2L)
   expect_identical(x$count, 3L)
-  expect_true(r8_equal(f, conform_value(p, count = 2L)))
+  expect_true(r8equal(f, conform_value(p, count = 2L)))
 })

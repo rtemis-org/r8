@@ -26,7 +26,7 @@ scenario(
         "say('data', unlist(unclass(p)[c('x', 'y')]))",
         "library(pa)",
         "say('then', c(mag(p), p$y))",
-        "say('equal', R8::r8_equal(p, Point(x = 3, y = 2)))"
+        "say('equal', R8::r8equal(p, Point(x = 3, y = 2)))"
       )
     )
     expect_said(
@@ -54,12 +54,12 @@ scenario(
         "library(pb)",
         sprintf("h <- readRDS(%s)", deparse(first$h_rds)),
         sprintf(
-          "j <- R8::r8_from_json(Holder, readLines(%s))",
+          "j <- R8::r8from_json(Holder, readLines(%s))",
           deparse(first$h_json)
         ),
         "n <- Holder(p = pa::Point(x = 3, y = 2), label = 'a')",
-        "say('equal', c(R8::r8_equal(h, n), R8::r8_equal(j, n)))",
-        "say('hash', length(unique(c(R8::r8_hash(h), R8::r8_hash(j), R8::r8_hash(n)))))"
+        "say('equal', c(R8::r8equal(h, n), R8::r8equal(j, n)))",
+        "say('hash', length(unique(c(R8::r8hash(h), R8::r8hash(j), R8::r8hash(n)))))"
       )
     )
     expect_said(out, equal = "^TRUE TRUE$", hash = "^1$")
@@ -71,7 +71,7 @@ scenario(
   "a worker has another version of a package than the session",
   situation = "A cluster has pa 2.0.0, with the fields in another order, and the session that sends it a value has pa 1.0.0.",
   risk = "The worker reads another field, or changes one.",
-  result = "The worker reads each field by its name, and refuses to use the value or to change it until r8_update() gives its value of the worker's declaration.",
+  result = "The worker reads each field by its name, and refuses to use the value or to change it until r8update() gives its value of the worker's declaration.",
   how = "installed",
   code = {
     out <- with_pa(
@@ -82,7 +82,7 @@ scenario(
         "say('read', c(q$x, q$y))",
         "say('use', pa::mag(q))",
         "say('write', { q$y <- 9; q })",
-        "say('updated', { u <- R8::r8_update(q); u$y <- 9; c(pa::mag(u), unlist(as.list(u))) })"
+        "say('updated', { u <- R8::r8update(q); u$y <- 9; c(pa::mag(u), unlist(as.list(u))) })"
       )
     )
     expect_said(

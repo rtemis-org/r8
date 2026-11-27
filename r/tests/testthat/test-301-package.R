@@ -102,10 +102,10 @@ scenario(
         "cat('class', class(x)[1], '\\n')",
         "r <- tryCatch(Rect(w = 1, h = 2), error = function(e) conditionMessage(e))",
         "cat('rule', grepl('WIDE', r), '\\n')",
-        "y <- R8::r8_from_json(Rect, R8::r8_to_json(x))",
+        "y <- R8::r8from_json(Rect, R8::r8to_json(x))",
         "cat('roundtrip', identical(x, y), '\\n')",
         sprintf("saveRDS(x, %s)", deparse(rds)),
-        "cat('hash', R8::r8_hash(x), '\\n')"
+        "cat('hash', R8::r8hash(x), '\\n')"
       )
     )
     expect_true("area 6 " %in% out, info = paste(out, collapse = "\n"))
@@ -135,7 +135,7 @@ scenario(
       c(
         "suppressPackageStartupMessages(library(r8pkgA))",
         sprintf("x <- readRDS(%s)", deparse(rds)),
-        "cat('hash', R8::r8_hash(x), '\\n')",
+        "cat('hash', R8::r8hash(x), '\\n')",
         "cat('area', area(x), '\\n')"
       )
     )
@@ -166,7 +166,7 @@ scenario(
         sprintf("pkgload::load_all(%s, quiet = TRUE)", deparse(path)),
         "x <- Rect(w = 3, h = 2)",
         "cat('area', area(x), '\\n')",
-        "cat('json', nchar(R8::r8_to_json(x)) > 0, '\\n')"
+        "cat('json', nchar(R8::r8to_json(x)) > 0, '\\n')"
       )
     )
     info <- paste(out, collapse = "\n")
@@ -227,7 +227,7 @@ scenario(
       "pa",
       c(
         sprintf(type, "x"),
-        ".onLoad <- function(libname, pkgname) { R8::r8_register(); stop('the load fails') }",
+        ".onLoad <- function(libname, pkgname) { R8::r8register(); stop('the load fails') }",
         "invisible(NULL)"
       ),
       "Point"
@@ -324,11 +324,11 @@ scenario(
         "x <- c(2, 3, -9, 4, 1)",
         "say('same', identical(level(x, hi = 4), level_r(x, hi = 4)))",
         "say('formals', paste(names(formals(level)), collapse = ','))",
-        "s <- jsonlite::fromJSON(r8_schema(level), simplifyVector = FALSE)",
+        "s <- jsonlite::fromJSON(r8schema(level), simplifyVector = FALSE)",
         "say('schema', s$title, paste(names(s$properties), collapse = ','), s$properties$x$description)",
         "e <- tryCatch(level(x, lo = 5, hi = 4), error = identity)",
         "say('refused', class(e)[1], e$problems$code)",
-        "say('document', identical(r8_call_from_json(level, '{\"$function\": \"pkgr::level\", \"arguments\": {\"x\": [2, 3, -9, 4, 1], \"hi\": 4}}'), level_r(x, hi = 4)))"
+        "say('document', identical(r8call_from_json(level, '{\"$function\": \"pkgr::level\", \"arguments\": {\"x\": [2, 3, -9, 4, 1], \"hi\": 4}}'), level_r(x, hi = 4)))"
       )
     )
     info <- paste(out, collapse = "\n")

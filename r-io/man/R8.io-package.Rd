@@ -6,8 +6,8 @@
 \alias{R8.io-package}
 \title{R8.io: table files and R8 types}
 \description{
-\code{\link[=r8_read_table]{r8_read_table()}} reads a file as a value of a table type, \code{\link[=r8_check_file]{r8_check_file()}} reports
-what in a file does not read as a type, and \code{\link[=r8_write_table]{r8_write_table()}} writes a table.
+\code{\link[=r8read_table]{r8read_table()}} reads a file as a value of a table type, \code{\link[=r8check_file]{r8check_file()}} reports
+what in a file does not read as a type, and \code{\link[=r8write_table]{r8write_table()}} writes a table.
 }
 \seealso{
 Useful links:

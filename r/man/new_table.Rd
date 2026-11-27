@@ -51,7 +51,7 @@ column types. \link{Raven} is the open table without declared columns.
 
 The columns of a data frame and of a list are not copied. The columns of a
 data.table are, since data.table changes a column in place. An operation on the
-columns shares them; one on the rows makes new columns. \code{r8_validate()} checks a
+columns shares them; one on the rows makes new columns. \code{r8validate()} checks a
 value again.
 }
 
@@ -60,8 +60,8 @@ value again.
 \code{x[i, j]} gives the rows \code{i} and the columns \code{j}, always as a table, and \code{x[j]}
 gives columns. \code{i} is a \code{\link[=rule]{rule()}}, whose names are columns, \code{x[rule(age > 40), ]}, or
 holds positions, all positive or all negative, or is a logical vector with one value
-per row; \code{j} holds names or positions. \code{\link[=r8_filter]{r8_filter()}} and \code{\link[=r8_select]{r8_select()}} are functions
-for the two; \code{\link[=r8_sort]{r8_sort()}} orders rows, and \code{\link[=r8_set]{r8_set()}} and the functions with it change
+per row; \code{j} holds names or positions. \code{\link[=r8filter]{r8filter()}} and \code{\link[=r8select]{r8select()}} are functions
+for the two; \code{\link[=r8sort]{r8sort()}} orders rows, and \code{\link[=r8set]{r8set()}} and the functions with it change
 columns. \code{x$a <- value}
 replaces a column, adds one to an open table, and, with \code{NULL}, removes one;
 the new column is checked, with the rules that read it. A result without a column

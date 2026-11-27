@@ -8,7 +8,7 @@
 # spec: R8/class-system#text-output
 
 # The output type, color depth, and theme of the running print(), which
-# r8_output_type() reports to a Print impl.
+# r8output_type() reports to a Print impl.
 .r8_print <- new.env(parent = emptyenv())
 
 # %% new_r8_text ----
@@ -186,11 +186,11 @@ stack_parts <- function(parts) {
 } # /R8::stack_parts
 
 
-# %% r8_span ----
+# %% r8span ----
 #' Text with a role
 #'
-#' Marks text with a role, which the theme styles: `r8_span()` makes one line
-#' of one span, which `r8_text()` joins with other text and `c()` stacks.
+#' Marks text with a role, which the theme styles: `r8span()` makes one line
+#' of one span, which `r8text()` joins with other text and `c()` stacks.
 #' Text output names roles, never colors, so the theme restyles every
 #' encoding: ANSI, HTML, and markdown, which keeps `strong` and `emphasis`.
 #'
@@ -211,8 +211,8 @@ stack_parts <- function(parts) {
 #' @export
 #'
 #' @examples
-#' r8_text("GBM ", r8_span("trained", "highlight"), " in 12 s")
-r8_span <- function(text, role) {
+#' r8text("GBM ", r8span("trained", "highlight"), " in 12 s")
+r8span <- function(text, role) {
   if (!is.character(text) || length(text) != 1L || is.na(text)) {
     r8_abort("`text` is one string.", class = "r8_text_error")
   }
@@ -240,13 +240,13 @@ r8_span <- function(text, role) {
     role = if (styled) role else character(),
     depth = 0L
   ))
-} # /R8::r8_span
+} # /R8::r8span
 
 
-# %% r8_text ----
+# %% r8text ----
 #' Text for output
 #'
-#' Joins pieces into text: character as user text, spans from `r8_span()`,
+#' Joins pieces into text: character as user text, spans from `r8span()`,
 #' R8 values as their text, and other `r8_text` objects. Pieces join on one
 #' line: the first line of each piece continues the last line of the text
 #' before it, and its other lines follow. `c()` stacks `r8_text` objects as
@@ -258,7 +258,7 @@ r8_span <- function(text, role) {
 #' lines; text that `sub()` or `toupper()` changes encodes without roles.
 #' `format()` encodes it as plain text unless its caller names another
 #' output type, and `print()` writes it in the output type that
-#' `r8_output_type()` determines.
+#' `r8output_type()` determines.
 #'
 #' @param ... Pieces: character, `r8_text` objects, and R8 values.
 #'
@@ -268,10 +268,10 @@ r8_span <- function(text, role) {
 #' @export
 #'
 #' @examples
-#' t <- r8_text("GBM ", r8_span("trained", "highlight"))
-#' c(t, r8_text(r8_span("12 s", "summary")))
+#' t <- r8text("GBM ", r8span("trained", "highlight"))
+#' c(t, r8text(r8span("12 s", "summary")))
 #' format(t, output_type = "html")
-r8_text <- function(...) {
+r8text <- function(...) {
   pieces <- list(...)
   parts <- list(
     lines = character(),
@@ -287,11 +287,11 @@ r8_text <- function(...) {
     }
   }
   new_r8_text(parts)
-} # /R8::r8_text
+} # /R8::r8text
 
 
 # %% c.r8_text ----
-#' @rdname r8_text
+#' @rdname r8text
 #' @export
 c.r8_text <- function(...) {
   pieces <- Filter(Negate(is.null), list(...))
@@ -356,11 +356,11 @@ value_text <- function(x, summary = NULL) {
     # The fields of a saved Rust-stored value read under its own declaration only.
     layout <- tryCatch(
       layout_value(x, summary = summary),
-      error = function(e) r8_text("<", value_type(x), ">")
+      error = function(e) r8text("<", value_type(x), ">")
     )
     return(c(
       layout,
-      r8_text(r8_span(paste0(note, "."), "summary"))
+      r8text(r8span(paste0(note, "."), "summary"))
     ))
   }
   f <- display_impl(x)
@@ -410,7 +410,7 @@ layout_value <- function(x, summary = NULL, head = 8L) {
 } # /R8::layout_value
 
 
-# %% r8_layout ----
+# %% r8layout ----
 #' The default layout of an R8 value, a list, or a data frame
 #'
 #' The text that `print()` shows for a value whose type has no `Display` or
@@ -430,7 +430,7 @@ layout_value <- function(x, summary = NULL, head = 8L) {
 #' its position, `[[2]]`. A level shows at most 32 elements, and the layout
 #' at most 128 lines.
 #'
-#' A `Display` or `Print` impl can build on the layout with `r8_text()` and
+#' A `Display` or `Print` impl can build on the layout with `r8text()` and
 #' `c()`.
 #'
 #' @param x An R8 value, a list, or a data frame.
@@ -446,10 +446,10 @@ layout_value <- function(x, summary = NULL, head = 8L) {
 #'   n_trees = field(type_integer()),
 #'   shrinkage = field(type_double())
 #' ))
-#' r8_layout(GBM(n_trees = 500L, shrinkage = 0.01))
-#' r8_layout(list(model = "GBM", n_trees = 500L, auc = c(0.81, 0.84, 0.79)))
-#' r8_layout(iris)
-r8_layout <- function(x, head = 8L) {
+#' r8layout(GBM(n_trees = 500L, shrinkage = 0.01))
+#' r8layout(list(model = "GBM", n_trees = 500L, auc = c(0.81, 0.84, 0.79)))
+#' r8layout(iris)
+r8layout <- function(x, head = 8L) {
   if (!is.numeric(head) || length(head) != 1L || is.na(head) || head < 0) {
     r8_abort("`head` is one non-negative integer.", class = "r8_text_error")
   }
@@ -468,7 +468,7 @@ r8_layout <- function(x, head = 8L) {
     "`x` is an R8 value, a list, or a data frame.",
     class = "r8_text_error"
   )
-} # /R8::r8_layout
+} # /R8::r8layout
 
 
 # %% display_parts ----
@@ -562,7 +562,7 @@ determine_output <- function(output_type = NULL) {
 } # /R8::determine_output
 
 
-# %% r8_output_type ----
+# %% r8output_type ----
 #' The output type of print()
 #'
 #' Determines the output type as `print()` does, in this order: the
@@ -583,17 +583,17 @@ determine_output <- function(output_type = NULL) {
 #' @export
 #'
 #' @examples
-#' r8_output_type()
-#' r8_output_type("html")
-r8_output_type <- function(output_type = NULL) {
+#' r8output_type()
+#' r8output_type("html")
+r8output_type <- function(output_type = NULL) {
   if (is.null(output_type) && !is.null(.r8_print[["output_type"]])) {
     return(.r8_print[["output_type"]])
   }
   determine_output(output_type)[[1L]]
-} # /R8::r8_output_type
+} # /R8::r8output_type
 
 
-# %% r8_theme ----
+# %% r8theme ----
 #' A theme for text output
 #'
 #' R8's theme with the styles of the named roles replaced. Each argument is
@@ -620,16 +620,16 @@ r8_output_type <- function(output_type = NULL) {
 #' @export
 #'
 #' @examples
-#' th <- r8_theme(type_name = list(color = "#0F6A66"), muted = list(italic = TRUE))
+#' th <- r8theme(type_name = list(color = "#0F6A66"), muted = list(italic = TRUE))
 #' th[["type_name"]]
-r8_theme <- function(...) {
+r8theme <- function(...) {
   overrides <- list(...)
   if (
     length(overrides) > 0L &&
       (is.null(names(overrides)) || any(!nzchar(names(overrides))))
   ) {
     r8_abort(
-      "Each argument of r8_theme() names a role.",
+      "Each argument of r8theme() names a role.",
       class = "r8_text_error"
     )
   }
@@ -638,11 +638,11 @@ r8_theme <- function(...) {
     class = "r8_theme",
     r8_named = as.character(names(overrides))
   )
-} # /R8::r8_theme
+} # /R8::r8theme
 
 
 # %% format.r8_theme ----
-#' @rdname r8_theme
+#' @rdname r8theme
 #' @param x An `r8_theme` object.
 #' @export
 format.r8_theme <- function(x, ...) {
@@ -673,7 +673,7 @@ format.r8_theme <- function(x, ...) {
 
 
 # %% print.r8_theme ----
-#' @rdname r8_theme
+#' @rdname r8theme
 #' @export
 print.r8_theme <- function(x, ...) {
   cat("<r8 theme>", format(x), sep = "\n")
@@ -681,7 +681,7 @@ print.r8_theme <- function(x, ...) {
 } # /R8::print.r8_theme
 
 
-# %% r8_css ----
+# %% r8css ----
 #' The stylesheet of R8's html classes mode
 #'
 #' HTML that `format(x, output_type = "html", html_style = "classes")`
@@ -703,16 +703,16 @@ print.r8_theme <- function(x, ...) {
 #' @export
 #'
 #' @examples
-#' cat(r8_css())
-#' cat(r8_css(
-#'   r8_theme(type_name = list(color = "#0F6A66")),
+#' cat(r8css())
+#' cat(r8css(
+#'   r8theme(type_name = list(color = "#0F6A66")),
 #'   style_element = TRUE
 #' ))
-r8_css <- function(theme = NULL, style_element = FALSE) {
+r8css <- function(theme = NULL, style_element = FALSE) {
   theme <- theme %||% getOption("r8.theme")
   if (!is.null(theme) && !inherits(theme, "r8_theme")) {
     r8_abort(
-      "A theme is an `r8_theme` object, from r8_theme().",
+      "A theme is an `r8_theme` object, from r8theme().",
       class = "r8_text_error"
     )
   }
@@ -723,7 +723,7 @@ r8_css <- function(theme = NULL, style_element = FALSE) {
   }
   out <- r8_css_text(if (is.null(theme)) NULL else unclass(theme), named)
   if (isTRUE(style_element)) paste0("<style>\n", out, "\n</style>") else out
-} # /R8::r8_css
+} # /R8::r8css
 
 
 # %% determine_theme ----
@@ -742,7 +742,7 @@ determine_theme <- function(theme) {
   }
   if (!inherits(theme, "r8_theme")) {
     r8_abort(
-      "A theme is an `r8_theme` object, from r8_theme().",
+      "A theme is an `r8_theme` object, from r8theme().",
       class = "r8_text_error"
     )
   }
@@ -851,23 +851,23 @@ with_print_state <- function(determined, theme, expr) {
 #'
 #' `format()` encodes text as plain text unless its caller names another
 #' output type, so that files, snapshots, and `paste()` receive no markup.
-#' `print()` writes the output type that `r8_output_type()` determines. The
+#' `print()` writes the output type that `r8output_type()` determines. The
 #' text of an R8 value is its type's `Display` impl's, or its default layout
-#' (`r8_layout()`); a `Print` impl replaces the output of `print()`, and a
+#' (`r8layout()`); a `Print` impl replaces the output of `print()`, and a
 #' `Debug` impl the output of `str()`. The default `str()` adds to the size
 #' of a Rust-stored value the fields read into R that are not views of its
-#' state, which together make `r8_size(x)`: `<pkgr::Signal> 7.63 MiB + 112 B
+#' state, which together make `r8size(x)`: `<pkgr::Signal> 7.63 MiB + 112 B
 #' read`.
 #'
 #' @param x,object An R8 value or an `r8_text` object.
 #' @param output_type Character: `"plain"`, `"ansi"`, `"html"`, or
-#'   `"markdown"`; `NULL` in `print()` determines it with `r8_output_type()`.
+#'   `"markdown"`; `NULL` in `print()` determines it with `r8output_type()`.
 #' @param theme An `r8_theme` object, or `NULL` for `getOption("r8.theme")`
 #'   or R8's theme.
 #' @param inline Logical: markdown writes one line.
 #' @param html_style Character or `NULL`: `"inline"`, which styles each span
 #'   through its own `style` attribute, or `"classes"`, which marks spans by
-#'   class only, for the stylesheet of `r8_css()`, where the theme then
+#'   class only, for the stylesheet of `r8css()`, where the theme then
 #'   applies. `NULL` reads `getOption("r8.html_style")`, then `"inline"`;
 #'   `print()`, knitr, and Jupyter read the option. Only for the output type
 #'   `"html"`.
@@ -1020,7 +1020,7 @@ display_method <- function(f) {
 # %% print_method ----
 #' The S3 print method of a `Print` impl
 #'
-#' Determines the output type, which `r8_output_type()` reports while the impl
+#' Determines the output type, which `r8output_type()` reports while the impl
 #' runs, calls the impl, writes the `r8_text` object it returns in that
 #' type, and returns the value invisibly. An impl that writes with `cat()`
 #' and returns anything else writes once.

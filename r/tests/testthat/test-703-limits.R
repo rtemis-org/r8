@@ -47,10 +47,10 @@ scenario(
       x
     }
     x <- chain(99L)
-    expect_identical(r8_validate(x), x)
+    expect_identical(r8validate(x), x)
     expect_length(format(x), 201L)
-    expect_true(r8_equal(r8_from_json(Node, r8_to_json(x)), x))
-    expect_identical(r8_hash(unserialize(serialize(x, NULL))), r8_hash(x))
+    expect_true(r8equal(r8from_json(Node, r8to_json(x)), x))
+    expect_identical(r8hash(unserialize(serialize(x, NULL))), r8hash(x))
     expect_error(
       chain(200L),
       "at most 100 levels deep.*vec\\(\\)",
@@ -60,12 +60,12 @@ scenario(
     for (n in c(200L, 1e5L)) {
       expect_error(J(j = nested_list(n)), "too_deep", class = "r8_value_error")
       expect_error(
-        r8_update(nested_list(n)),
+        r8update(nested_list(n)),
         "too_deep",
         class = "r8_value_error"
       )
       expect_error(
-        r8_from_json(
+        r8from_json(
           J,
           paste0(
             "{\"$type\":\"f7::J\",\"$types\":{\"f7::J\":1},\"j\":",
@@ -140,7 +140,7 @@ scenario(
     expect_identical(caught(format(p)), "error")
     expect_identical(caught(out$again(p, p)), "error")
     expect_identical(p$x, 1)
-    expect_identical(r8_validate(p), p)
+    expect_identical(r8validate(p), p)
   }
 )
 
@@ -185,9 +185,9 @@ scenario(
       m = c("caf\u00e9" = 1),
       f = factor("caf\u00e9")
     )
-    expect_true(r8_equal(x, y))
-    expect_identical(r8_hash(x), r8_hash(y))
-    expect_identical(r8_to_json(x), r8_to_json(y))
+    expect_true(r8equal(x, y))
+    expect_identical(r8hash(x), r8hash(y))
+    expect_identical(r8to_json(x), r8to_json(y))
     for (bad in list(cut, bytes, unmarked)) {
       text <- "valid UTF-8"
       expect_error(T(s = bad, j = 1), text, class = "r8_value_error")
@@ -208,7 +208,7 @@ scenario(
         class = "r8_value_error"
       )
       expect_error(Raven(a = c("a", bad)), text, class = "r8_value_error")
-      expect_error(r8_is_variant(E@Warm, bad), text)
+      expect_error(r8is_variant(E@Warm, bad), text)
     }
     doc <- paste0(
       "{\"$type\":\"f9::T\",\"$types\":{\"f9::T\":1},\"",
@@ -216,12 +216,12 @@ scenario(
       "\":1}"
     )
     expect_error(
-      r8_from_json(T, doc),
+      r8from_json(T, doc),
       "latin1.*enc2utf8",
       class = "r8_type_error"
     )
     expect_error(
-      r8_from_json(T, globalenv()),
+      r8from_json(T, globalenv()),
       "readLines",
       class = "r8_type_error"
     )
@@ -244,16 +244,16 @@ scenario(
     h <- out$H(ps = rep(list(out$P(x = 1)), 8e5))
     r <- Raven(x = runif(3e6), s = as.character(seq_len(3e6)))
     for (f in list(
-      r8_validate,
-      r8_hash,
-      r8_to_json,
+      r8validate,
+      r8hash,
+      r8to_json,
       function(h) out$H(ps = h$ps),
       function(h) {
-        r8_filter(r, rule(log(x + exp(x)) > 1 && nchar(paste0("", x)) > 2))
+        r8filter(r, rule(log(x + exp(x)) > 1 && nchar(paste0("", x)) > 2))
       },
-      function(h) r8_sort(r, "s"),
+      function(h) r8sort(r, "s"),
       function(h) rbind(r, r),
-      function(h) r8_to_json(r)
+      function(h) r8to_json(r)
     )) {
       message <- tryCatch(
         {
@@ -266,7 +266,7 @@ scenario(
       setTimeLimit()
       expect_match(message, "time limit")
     }
-    expect_identical(r8_validate(out$P(x = 1)), out$P(x = 1))
+    expect_identical(r8validate(out$P(x = 1)), out$P(x = 1))
   }
 )
 
@@ -281,7 +281,7 @@ scenario(
     W <- sharing_table("f11")
     dt <- data.table::data.table(a = as.numeric(1:1000))
     w <- W(tab = dt)
-    before <- r8_hash(w)
+    before <- r8hash(w)
     data.table::set(dt, 1L, "a", -1)
     data.table::setnames(dt, "a", "q")
     x <- w$tab
@@ -289,8 +289,8 @@ scenario(
     data.table::set(x, 1L, "a", -1)
     y <- data.table::as.data.table(w$tab)
     data.table::set(y, j = "a", value = NULL)
-    expect_identical(r8_hash(w), before)
-    expect_identical(r8_validate(w), w)
+    expect_identical(r8hash(w), before)
+    expect_identical(r8validate(w), w)
   }
 )
 
@@ -299,7 +299,7 @@ scenario(
   "a vector that data.table changes in place is found on demand",
   situation = "A user gives a data frame to a field, turns that data frame into a data.table with setDT(), and changes a column in place. Or the user calls set() on the data frame that a field gives.",
   risk = "The value changes without a check: the vectors are shared, since a copy of each would double the memory, and data.table does not ask R before it changes one.",
-  result = "The value holds the change, and r8_validate() reports it. A large data.table that is changed in place is held in a field of host_class(), which R8 does not check, and r8_validate() checks it against a type where the code asks.",
+  result = "The value holds the change, and r8validate() reports it. A large data.table that is changed in place is held in a field of host_class(), which R8 does not check, and r8validate() checks it against a type where the code asks.",
   code = {
     skip_if_not_installed("data.table")
     W <- sharing_table("f12")
@@ -307,10 +307,10 @@ scenario(
     w <- W(tab = df)
     data.table::setDT(df)
     data.table::set(df, 1L, "a", -1)
-    expect_error(r8_validate(w), "0", class = "r8_value_error")
+    expect_error(r8validate(w), "0", class = "r8_value_error")
     w <- W(tab = data.frame(a = runif(1000)))
     data.table::set(w$tab, 1L, "a", -1)
-    expect_error(r8_validate(w), "0", class = "r8_value_error")
+    expect_error(r8validate(w), "0", class = "r8_value_error")
     D <- declare_in("f12b", {
       new_struct("D", fields = list(data = option(host_class("data.table"))))
     })
@@ -318,6 +318,6 @@ scenario(
     data.table::set(d$data, 1L, "a", 2)
     expect_identical(d$data$a, c(2, -1))
     type <- type_table(columns = list(a = column(type_double(min = 0))))
-    expect_error(r8_validate(d$data, type), "0", class = "r8_value_error")
+    expect_error(r8validate(d$data, type), "0", class = "r8_value_error")
   }
 )

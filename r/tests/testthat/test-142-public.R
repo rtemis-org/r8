@@ -47,7 +47,7 @@ test_that("the patterns find each internal", {
       "R8:::type_ir(x)",
       "unclass(x)$a",
       "inherits(x, \"r8_value\")",
-      "r8_variant(x)"
+      "r8variant(x)"
     ),
     "here"
   )

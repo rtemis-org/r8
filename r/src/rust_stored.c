@@ -302,7 +302,7 @@ void r8_rust_stored_take(SEXP x) {
 int r8_is_view(SEXP x);
 
 // The state's bytes and the cached fields that are not views, which
-// r8_size() adds up: list(state = <bytes>, fields = <list>); NULL for an
+// r8size() adds up: list(state = <bytes>, fields = <list>); NULL for an
 // object that is not a Rust-stored value.
 SEXP r8_rust_stored_parts(SEXP x) {
   if (!ALTREP(x) || !R_altrep_inherits(x, rust_stored_class) ||

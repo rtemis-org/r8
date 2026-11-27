@@ -422,7 +422,7 @@ test_that("the name of a rule in a list is its ID", {
   T <- declare_in("rn6", {
     new_struct("T", fields = fields, rules = list(order = rule(lo <= hi)))
   })
-  expect_true(r8_equal(x, T(lo = 1, hi = 2)))
+  expect_true(r8equal(x, T(lo = 1, hi = 2)))
 })
 
 

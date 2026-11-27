@@ -30,9 +30,9 @@ differences.}
 
 \item{compute}{Optional \code{r8_calc}: For a field of type \code{option()}, its
 value as an expression over the other fields, a \code{\link[=calc]{calc()}}, which
-\code{r8_resolve()} fills.}
+\code{r8resolve()} fills.}
 
-\item{context}{Logical: For a field of type \code{option()}, \code{r8_resolve(x, context)} fills the value from \code{context}. At most one of \code{compute} and
+\item{context}{Logical: For a field of type \code{option()}, \code{r8resolve(x, context)} fills the value from \code{context}. At most one of \code{compute} and
 \code{context} is given.}
 
 \item{extensions}{Optional named list: Namespaced extensions, such as

@@ -23,9 +23,9 @@ scenario(
     }
     p <- point()(x = 1, y = 2)
     q <- point()(x = 1, y = 2)
-    expect_identical(r8_validate(p), p)
-    expect_true(r8_equal(p, q))
-    expect_identical(r8_hash(p), r8_hash(q))
+    expect_identical(r8validate(p), p)
+    expect_true(r8equal(p, q))
+    expect_identical(r8hash(p), r8hash(q))
   }
 )
 
@@ -34,7 +34,7 @@ scenario(
   "a value of an earlier declaration can be looked at, and is used once it is updated",
   situation = "A user declares a type again with its fields in another order, and then reads, changes, and compares a value built before.",
   risk = "A write replaces another field than the one it names, since each field has another position.",
-  result = "The value prints and gives its fields by name. A write, a comparison, and a document are errors that say what differs. r8_update() gives the value under the new declaration.",
+  result = "The value prints and gives its fields by name. A write, a comparison, and a document are errors that say what differs. r8update() gives the value under the new declaration.",
   code = {
     p <- declare_in("a2", {
       new_struct(
@@ -53,22 +53,22 @@ scenario(
     shown <- paste(format(p), collapse = " ")
     expect_match(shown, "x: 6")
     expect_match(shown, "in the order x, y, and are in the order y, x")
-    other <- "another declaration.*in the order x, y.*r8_update\\(\\) gives"
+    other <- "another declaration.*in the order x, y.*r8update\\(\\) gives"
     expect_error(p$y <- 9, other, class = "r8_value_error")
     expect_error(p["y"] <- list(9), other, class = "r8_value_error")
     expect_error(p[["y"]] <- 9, other, class = "r8_value_error")
     expect_error(
-      r8_equal(p, Point(x = 6, y = 2)),
+      r8equal(p, Point(x = 6, y = 2)),
       other,
       class = "r8_other_declaration_error"
     )
-    expect_error(r8_to_json(p), other, class = "r8_value_error")
-    q <- r8_update(p)
-    expect_true(r8_equal(q, Point(x = 6, y = 2)))
+    expect_error(r8to_json(p), other, class = "r8_value_error")
+    q <- r8update(p)
+    expect_true(r8equal(q, Point(x = 6, y = 2)))
     expect_identical(q, Point(x = 6, y = 2))
     q$y <- 9
     expect_identical(as.list(q), list(y = 9, x = 6))
-    expect_identical(r8_update(q), q)
+    expect_identical(r8update(q), q)
   }
 )
 
@@ -77,7 +77,7 @@ scenario(
   "a value that the new declaration does not admit is not updated",
   situation = "A user declares a type again with a tighter bound, or with a new field that has no default. A value built before is outside the bound, and lacks the field.",
   risk = "The value is written or hashed as one of the new declaration, or becomes a field of another value.",
-  result = "Every use of the value is an error, and so is r8_update(), which names what the value lacks or violates.",
+  result = "Every use of the value is an error, and so is r8update(), which names what the value lacks or violates.",
   code = {
     p <- declare_in("a3", {
       new_struct("Point", fields = list(x = type_double(min = 0)))
@@ -92,16 +92,16 @@ scenario(
       new_struct("Holder", fields = list(p = Point))
     })
     expect_error(
-      r8_validate(p),
+      r8validate(p),
       "declaration_changed",
       class = "r8_value_error"
     )
-    expect_error(r8_to_json(p), "declaration_changed", class = "r8_value_error")
-    expect_error(r8_hash(p), "declaration_changed", class = "r8_value_error")
+    expect_error(r8to_json(p), "declaration_changed", class = "r8_value_error")
+    expect_error(r8hash(p), "declaration_changed", class = "r8_value_error")
     expect_error(Holder(p = p), "declaration_changed", class = "r8_value_error")
     expect_error(p$x <- 6, "declaration_changed", class = "r8_value_error")
     expect_error(
-      r8_update(p),
+      r8update(p),
       "`z` was added without a default.*lacks a field",
       class = "r8_other_declaration_error"
     )
@@ -112,7 +112,7 @@ scenario(
       )
     })
     expect_error(
-      r8_update(p),
+      r8update(p),
       "`x` must be at least 5",
       class = "r8_value_error"
     )
@@ -151,7 +151,7 @@ scenario(
     expect_error(out$size(d), other, class = "r8_other_declaration_error")
     expect_error(summary(d), other, class = "r8_other_declaration_error")
     # A value of the new declaration, and the earlier declaration again.
-    expect_error(r8_update(d), "at most 100", class = "r8_value_error")
+    expect_error(r8update(d), "at most 100", class = "r8_value_error")
     d2 <- out$Dose(mg = 50)
     expect_identical(
       c(out$give(2, d2), out$size(d2), summary(d2)),
@@ -192,7 +192,7 @@ scenario(
       class = "r8_stale_warning"
     )
     expect_error(ty$Child(a = 1, b = 2), "type_stale", class = "r8_error")
-    expect_error(r8_validate(x), "type_stale", class = "r8_error")
+    expect_error(r8validate(x), "type_stale", class = "r8_error")
   }
 )
 
@@ -201,7 +201,7 @@ scenario(
   "a value of a variant that is gone is refused where R8 checks it",
   situation = "A user declares an enum again without one of its variants. A value of that variant was built before.",
   risk = "Code that handles every variant meets one that it does not know.",
-  result = "Validation, a document, and r8_update() are errors that name the variant.",
+  result = "Validation, a document, and r8update() are errors that name the variant.",
   code = {
     Kind <- declare_in("a6", {
       new_enum(
@@ -213,11 +213,11 @@ scenario(
     declare_in("a6", {
       new_enum("Kind", variants = list(A = variant(), B = variant()))
     })
-    expect_identical(r8_variant(k), "C")
+    expect_identical(r8variant(k), "C")
     gone <- "the variant `C` was removed"
-    expect_error(r8_validate(k), gone, class = "r8_value_error")
-    expect_error(r8_to_json(k), gone, class = "r8_value_error")
-    expect_error(r8_update(k), gone, class = "r8_other_declaration_error")
+    expect_error(r8validate(k), gone, class = "r8_value_error")
+    expect_error(r8to_json(k), gone, class = "r8_value_error")
+    expect_error(r8update(k), gone, class = "r8_other_declaration_error")
   }
 )
 
@@ -226,7 +226,7 @@ scenario(
   "a changed rule applies to a value once it is updated",
   situation = "A user declares a type again with a stricter rule, and uses values built before, of which one violates the rule.",
   risk = "The earlier rule still runs, or no rule does.",
-  result = "The values are refused until r8_update(), which runs the new rule.",
+  result = "The values are refused until r8update(), which runs the new rule.",
   code = {
     I <- declare_in("a7", {
       new_struct("I", fields = list(lo = type_double(), hi = type_double()))
@@ -241,10 +241,10 @@ scenario(
       )
     })
     differ <- "the rules of `a7::I` differ"
-    expect_error(r8_validate(good), differ, class = "r8_value_error")
+    expect_error(r8validate(good), differ, class = "r8_value_error")
     expect_error(good$hi <- 9, differ, class = "r8_value_error")
-    expect_error(r8_update(bad), "rule_violation", class = "r8_value_error")
-    x <- r8_update(list(a = good, b = 1))
+    expect_error(r8update(bad), "rule_violation", class = "r8_value_error")
+    x <- r8update(list(a = good, b = 1))
     expect_identical(x$b, 1)
     expect_error(x$a$hi <- 0, "rule_violation", class = "r8_value_error")
     x$a$hi <- 9
@@ -292,7 +292,7 @@ scenario(
         rules = list(order = rule(lo <= hi))
       )
     })
-    schema <- gsub("[[:space:]]+", " ", r8_schema(clip))
+    schema <- gsub("[[:space:]]+", " ", r8schema(clip))
     expect_match(
       schema,
       '"hi": { "type": "number", "description": "The upper bound." }',
@@ -300,14 +300,14 @@ scenario(
     )
     expect_match(schema, '"required": [ "x", "hi" ]', fixed = TRUE)
     expect_identical(
-      r8_call_from_json(
+      r8call_from_json(
         clip,
         '{"$function": "a9::clip", "arguments": {"x": [-1, 2], "hi": 1}}'
       ),
       c(0, 1)
     )
     e <- expect_error(
-      r8_call_from_json(
+      r8call_from_json(
         clip,
         '{"$function": "a9::clip", "arguments": {"x": ["a"], "lo": 2, "hi": "b"}}'
       ),
@@ -318,7 +318,7 @@ scenario(
       c("/arguments/x/0", "/arguments/hi")
     )
     expect_identical(
-      r8_check_call(clip, '{"$function": "base::system", "arguments": {}}')[[
+      r8check_call(clip, '{"$function": "base::system", "arguments": {}}')[[
         "code"
       ]],
       "unknown_function"

@@ -280,7 +280,7 @@ IMPLICIT_CLASSES <- c(
 #' `option()`. A dispatched position matches an object whose class vector,
 #' as [.class2()] reports it, contains the class; the nearer the class is to
 #' the front of that vector, the more specific the impl. In `implement()`,
-#' `impl()`, `r8_method()`, and `r8_next_impl()`, a string is shorthand for
+#' `impl()`, `r8method()`, and `r8next_impl()`, a string is shorthand for
 #' `host_class()` of an S3 or implicit class, and an S4 class object, as
 #' `methods::getClass()` returns it, for `host_class()` of that S4 class.
 #'
@@ -297,7 +297,7 @@ IMPLICIT_CLASSES <- c(
 #'   `complex`, `raw`, `list`, `function`, `matrix`, `array`,
 #'   `environment`, `name`, or `call`; a string naming one of these is
 #'   implicit. `"s4"`: a class defined with `methods::setClass()`, which
-#'   requires `package`; `r8_register()` checks at load that the package
+#'   requires `package`; `r8register()` checks at load that the package
 #'   defines an S4 class of that name. `"s7"`: a class of `S7::new_class()`,
 #'   with `package` the package that defines it, or `""` for a class defined
 #'   outside a package; an S7 class object given as `class` names its own
@@ -669,7 +669,7 @@ dispatch_key <- function(x) {
 #' @param method Character: The method name.
 #' @param args List: The values of the dispatched arguments.
 #' @param above Optional Character: The tuple key of the running impl, for
-#'   `r8_next_impl()`.
+#'   `r8next_impl()`.
 #'
 #' @return The impl function, or `NULL` when neither an impl nor a default
 #'   applies. An ambiguous call or a stale argument raises
@@ -765,7 +765,7 @@ select_tuple <- function(trait_name, method, args, above = NULL) {
       if (is.null(above)) {
         paste0("implement it for (", paste(r[["meet"]], collapse = ", "), ")")
       } else {
-        "name the impl to continue to, as r8_next_impl(Type, ...)"
+        "name the impl to continue to, as r8next_impl(Type, ...)"
       },
       " [dispatch_ambiguous].",
       class = "r8_dispatch_error"
@@ -779,7 +779,7 @@ select_tuple <- function(trait_name, method, args, above = NULL) {
 } # /R8::select_tuple
 
 
-# %% r8_ambiguities ----
+# %% r8ambiguities ----
 #' The ambiguous pairs of impls of a generic or trait
 #'
 #' Lists the pairs of registered impls of a generic or trait that are each
@@ -801,11 +801,11 @@ select_tuple <- function(trait_name, method, args, above = NULL) {
 #' combine <- generic("combine", params(x, y), dispatch = c("x", "y"))
 #' implement(combine, A1, A) <- function(x, y) "A1, A"
 #' implement(combine, A, A1) <- function(x, y) "A, A1"
-#' r8_ambiguities(combine)
+#' r8ambiguities(combine)
 #' options(op)
 #'
 #' @export
-r8_ambiguities <- function(x) {
+r8ambiguities <- function(x) {
   trait_name <- if (inherits(x, "r8_generic")) {
     attr(x, "r8_trait")
   } else if (inherits(x, "r8_trait")) {
@@ -817,4 +817,4 @@ r8_ambiguities <- function(x) {
     )
   }
   r8_dispatch_ambiguities(trait_name)
-} # /R8::r8_ambiguities
+} # /R8::r8ambiguities

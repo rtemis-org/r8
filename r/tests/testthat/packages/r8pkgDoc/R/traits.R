@@ -99,4 +99,4 @@ R8::impl(
 #' @examples
 #' as_resampler(3)
 #' @export
-as_resampler <- R8::r8_converter(Resampler)
+as_resampler <- R8::r8converter(Resampler)

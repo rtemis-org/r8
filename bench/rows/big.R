@@ -27,8 +27,8 @@ if (!compact) {
 }
 mark(type, "validate", ops$validate, min_iterations = 20L)
 if (!compact && SYSTEM %in% c("R8", "R8 Rust")) {
-  json <- R8::r8_to_json(x)
-  mark(type, "json_write", quote(R8::r8_to_json(x)), min_iterations = 10L)
-  mark(type, "json_read", quote(R8::r8_from_json(GBM, json)), min_iterations = 10L)
+  json <- R8::r8to_json(x)
+  mark(type, "json_write", quote(R8::r8to_json(x)), min_iterations = 10L)
+  mark(type, "json_read", quote(R8::r8from_json(GBM, json)), min_iterations = 10L)
   emit(type, "json_size", nchar(json, type = "bytes"), "B")
 }

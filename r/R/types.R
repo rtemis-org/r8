@@ -258,7 +258,7 @@ type_json <- function() {
 #' for a generic from [generic()] that dispatches on one argument, holds a
 #' value of any type with a method of the generic. A value of a class of
 #' another class system is not held, even when the class has an impl of the
-#' trait; [r8_convert()] through a `From` impl turns it into an R8 value. A
+#' trait; [r8convert()] through a `From` impl turns it into an R8 value. A
 #' struct and the structs that extend it are [subtype()].
 #'
 #' @param trait A trait object from [new_trait()], or a generic from
@@ -330,7 +330,7 @@ dyn <- function(trait) {
 #' `subtype(Struct)` holds a value of `Struct` or of a struct that extends a
 #' subtype of it: a type is a subtype of itself and of every ancestor
 #' through `extends`. Such a value has the struct's fields and satisfies its
-#' rules, and [r8_upcast()] gives its value of `Struct`. A plain struct type
+#' rules, and [r8upcast()] gives its value of `Struct`. A plain struct type
 #' holds exactly that struct. Its JSON form names the value's type in
 #' `"$type"`. Any implementor of a trait, related by `extends` or not, is
 #' [dyn()].

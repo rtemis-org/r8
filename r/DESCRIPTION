@@ -14,7 +14,8 @@ Description: A type system for R whose runtime is the 'rtemis-r8' 'Rust'
     traits, declared in R or in 'Rust'; values are immutable and validated
     once per value, and one declaration drives validation, JSON encoding,
     and hashing.
-URL: https://www.rtemis.org, https://github.com/rtemis-org/r8
+URL: https://docs.rtemis.org/r/r8-api/,
+    https://www.rtemis.org, https://github.com/rtemis-org/r8
 BugReports: https://github.com/rtemis-org/r8/issues
 License: BSD_3_clause + file LICENSE
 Encoding: UTF-8

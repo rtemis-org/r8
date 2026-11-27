@@ -17,11 +17,11 @@ An expression of the rule dialect as a value, as \code{\link[=rule]{rule()}} is 
 captured unevaluated, compiled against the columns of the table it is given
 with, and evaluated in Rust. A bare name is a column, \code{val(expr)} is the
 value of an R expression, and \code{col(expr)} is the column whose name an R
-expression gives. \code{\link[=r8_set]{r8_set()}} stores the column that an expression computes
+expression gives. \code{\link[=r8set]{r8set()}} stores the column that an expression computes
 for every row, \code{\link[=r8summarize]{r8summarize()}} the value of an expression of aggregates for
 each group, and \code{\link[=r8map]{r8map()}} one expression over many columns, in which \code{col()}
 is each column in turn. \code{field(option(T), compute = calc(expr))} declares a
-field that \code{\link[=r8_resolve]{r8_resolve()}} computes from the others.
+field that \code{\link[=r8resolve]{r8resolve()}} computes from the others.
 }
 \section{Results}{
 

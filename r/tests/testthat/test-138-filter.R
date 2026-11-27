@@ -17,7 +17,7 @@ declared <- function(...) {
 }
 
 # The rows of `x` that `rule` keeps, by a column of their numbers.
-kept <- function(x, rule) r8_filter(x, rule)$row
+kept <- function(x, rule) r8filter(x, rule)$row
 
 visits <- function() {
   Raven(
@@ -32,7 +32,7 @@ visits <- function() {
   )
 }
 
-test_that("r8_filter() keeps the rows where a rule is true", {
+test_that("r8filter() keeps the rows where a rule is true", {
   x <- visits()
   expect_identical(kept(x, rule(age >= 18)), c(2L, 5L))
   expect_identical(kept(x, rule(!(age >= 18))), c(1L, 6L))
@@ -46,11 +46,11 @@ test_that("r8_filter() keeps the rows where a rule is true", {
   expect_identical(kept(x, rule(nchar(sex) == 1)), c(1:3, 5:6))
   expect_identical(kept(x, rule(pmin(n, 4) == 4)), 4:6)
   # Filters keep the type, the order, and every column.
-  expect_identical(names(r8_filter(x, rule(smoker))), names(x))
-  expect_s3_class(r8_filter(x, rule(smoker)), "R8::Raven")
-  expect_identical(nrow(r8_filter(x, rule(n > 100))), 0L)
+  expect_identical(names(r8filter(x, rule(smoker))), names(x))
+  expect_s3_class(r8filter(x, rule(smoker)), "R8::Raven")
+  expect_identical(nrow(r8filter(x, rule(n > 100))), 0L)
   empty <- x[integer(), ]
-  expect_identical(nrow(r8_filter(empty, rule(age > mean(age)))), 0L)
+  expect_identical(nrow(r8filter(empty, rule(age > mean(age)))), 0L)
 })
 
 test_that("a rule on numbers keeps what R's condition keeps", {
@@ -85,15 +85,15 @@ test_that("a rule on numbers keeps what R's condition keeps", {
   same(rule(if (x > 0) y > 0 else i > 0), ifelse(d$x > 0, d$y > 0, d$i > 0))
   # Strings of another encoding are the same text.
   latin <- Raven(s = iconv(c("\u00e9", "a"), "UTF-8", "latin1"))
-  expect_identical(nrow(r8_filter(latin, rule(s == "\u00e9"))), 1L)
+  expect_identical(nrow(r8filter(latin, rule(s == "\u00e9"))), 1L)
 })
 
 test_that("a column is an ALTREP vector, a view, or a vector", {
   x <- Raven(i = 1:1e5, d = as.numeric(1:1e5))
   expect_identical(kept(Raven(row = 1:1e5), rule(row > 99998)), 99999:100000)
-  expect_identical(nrow(r8_filter(x, rule(i == d && d > 99990))), 10L)
+  expect_identical(nrow(r8filter(x, rule(i == d && d > 99990))), 10L)
   y <- Raven(a = x$i, b = x$d)
-  expect_identical(nrow(r8_filter(y, rule(a == b && b > 99990))), 10L)
+  expect_identical(nrow(r8filter(y, rule(a == b && b > 99990))), 10L)
 })
 
 test_that("dates and date-times are compared with text and with R's values", {
@@ -110,9 +110,9 @@ test_that("dates and date-times are compared with text and with R's values", {
   at <- as.POSIXct("2020-01-01 00:00:04.25", tz = "UTC")
   expect_identical(kept(x, rule(at >= val(at))), 5:6)
   expect_identical(kept(x, rule(at > "2020-01-01T00:00:04Z")), 5:6)
-  refuses(r8_filter(x, rule(day >= "2020-13-01")), "is not one: YYYY-MM-DD")
+  refuses(r8filter(x, rule(day >= "2020-13-01")), "is not one: YYYY-MM-DD")
   refuses(
-    r8_filter(x, rule(at >= "2020-01-01")),
+    r8filter(x, rule(at >= "2020-01-01")),
     "is not one: YYYY-MM-DDTHH:MM:SSZ"
   )
   expect_error(rule(day >= val(as.Date(NA))), "not a constant of a rule")
@@ -120,7 +120,7 @@ test_that("dates and date-times are compared with text and with R's values", {
 
 test_that("val() is R's value, taken when rule() runs", {
   x <- visits()
-  older <- function(x, age) r8_filter(x, rule(age >= val(age)))
+  older <- function(x, age) r8filter(x, rule(age >= val(age)))
   expect_identical(older(x, 80)$row, 5L)
   rules <- lapply(c(18, 80), function(a) rule(age >= val(a)))
   expect_identical(lapply(rules, function(r) kept(x, r)), list(c(2L, 5L), 5L))
@@ -145,11 +145,11 @@ test_that("a rule is a value: it is saved, combined, and applied to other tables
   back <- unserialize(serialize(adult, NULL))
   expect_identical(kept(x, back), kept(x, adult))
   other <- Raven(age = c(3, 30), name = c("a", "b"))
-  expect_identical(r8_filter(other, adult)$name, "b")
+  expect_identical(r8filter(other, adult)$name, "b")
   # One rule checks the rows of a type and chooses those of another table.
   Adults <- declared("Adults", list(age = type_double()), rules = adult)
   expect_error(Adults(age = 3), "age >= 18")
-  expect_identical(r8_filter(other, adult)$age, 30)
+  expect_identical(r8filter(other, adult)$age, 30)
   # A negated rule states another requirement, so that it has no message.
   named <- rule(age >= 18, message = "age is 18 or more.", id = "ADULT")
   expect_identical(unclass(!named), unclass(!adult))
@@ -160,11 +160,11 @@ test_that("a rule is a value: it is saved, combined, and applied to other tables
 
 test_that("a number with a sign is a constant", {
   r <- Raven(y = c(-1, 0, 1), k = c(-2L, 0L, 2L))
-  expect_identical(r8_filter(r, rule(y == -1))$y, -1)
-  expect_identical(r8_filter(r, rule(y == +1))$y, 1)
-  expect_identical(r8_filter(r, rule(y == (-1)))$y, -1)
-  expect_identical(r8_filter(r, rule(k == -2L))$k, -2L)
-  expect_identical(r8_filter(r, rule(y %in% c(-1, 1)))$y, c(-1, 1))
+  expect_identical(r8filter(r, rule(y == -1))$y, -1)
+  expect_identical(r8filter(r, rule(y == +1))$y, 1)
+  expect_identical(r8filter(r, rule(y == (-1)))$y, -1)
+  expect_identical(r8filter(r, rule(k == -2L))$k, -2L)
+  expect_identical(r8filter(r, rule(y %in% c(-1, 1)))$y, c(-1, 1))
   expect_identical(rule(y == -1), rule(y == val(-1)))
   expect_output(print(rule(y %in% c(-1, 1))), "y %in% c(-1, 1)", fixed = TRUE)
   declares <- function(expr, text) {
@@ -176,7 +176,7 @@ test_that("a number with a sign is a constant", {
   declares(rule(y == NA), "compares with NA")
   declares(rule(y %in% c(1, NA)), "literal values")
   # An error of a rule is that error, whatever the names in it.
-  declares(r8_filter(r, rule(y == NA)), "compares with NA")
+  declares(r8filter(r, rule(y == NA)), "compares with NA")
   declares(r[rule(y == NA), ], "compares with NA")
 })
 
@@ -184,28 +184,28 @@ test_that("a number with a sign is a constant", {
 test_that("a rule is checked against the columns before a row is read", {
   x <- visits()
   refuses(
-    r8_filter(x, rule(Age >= 18)),
+    r8filter(x, rule(Age >= 18)),
     "`Age` is not a column of the table; the nearest column is `age`; if `Age` is an R variable, write `val(Age)`."
   )
-  refuses(r8_filter(x, rule(sex > 2)), "`>` compares")
-  refuses(r8_filter(x, rule(sex == 2)), "`==` compares a string with a number")
-  refuses(r8_filter(x, rule(age + 1)), "is a logical condition")
-  refuses(r8_filter(x, rule(age$x > 1)), "has none")
-  refuses(r8_filter(x, rule(is.null(age))), "`is.na` tests a cell")
-  refuses(r8_filter(x, rule(length(age) > 1)), "a row reads cells")
-  refuses(r8_filter(x, rule(age > 1, when = n > 2)), "join the parts with `&&`")
+  refuses(r8filter(x, rule(sex > 2)), "`>` compares")
+  refuses(r8filter(x, rule(sex == 2)), "`==` compares a string with a number")
+  refuses(r8filter(x, rule(age + 1)), "is a logical condition")
+  refuses(r8filter(x, rule(age$x > 1)), "has none")
+  refuses(r8filter(x, rule(is.null(age))), "`is.na` tests a cell")
+  refuses(r8filter(x, rule(length(age) > 1)), "a row reads cells")
+  refuses(r8filter(x, rule(age > 1, when = n > 2)), "join the parts with `&&`")
   expect_error(
-    r8_filter(x, age >= 18),
+    r8filter(x, age >= 18),
     "a condition on columns is a rule: rule(age >= 18)",
     fixed = TRUE
   )
   expect_error(
-    r8_filter(x, TRUE),
+    r8filter(x, TRUE),
     "`rule` is a rule",
     class = "r8_argument_error"
   )
   expect_error(
-    r8_filter(iris, rule(a > 1)),
+    r8filter(iris, rule(a > 1)),
     "value of a table",
     class = "r8_argument_error"
   )
@@ -215,17 +215,17 @@ test_that("a rule is checked against the columns before a row is read", {
     list(a = type_double(), b = column(type_double(), required = FALSE)),
     rules = rule(b > a)
   )
-  refuses(r8_filter(Labs(a = 1), rule(b > 1)), "`b` is not a column")
+  refuses(r8filter(Labs(a = 1), rule(b > 1)), "`b` is not a column")
 })
 
 test_that("an error in a row stops a filter, unless another part decides", {
   x <- Raven(row = 1:4, a = c(1, 0, NA, 4))
-  refuses(r8_filter(x, rule(1 / a > 0)), "in row 2: division by zero")
+  refuses(r8filter(x, rule(1 / a > 0)), "in row 2: division by zero")
   refuses(
-    r8_filter(x, rule(log(a - 1) > 0)),
+    r8filter(x, rule(log(a - 1) > 0)),
     "in row 1: `log` of a number that is not positive; nor in 1 other row"
   )
-  refuses(r8_filter(x, rule(sqrt(a - 2) > 0)), "`sqrt` of a negative number")
+  refuses(r8filter(x, rule(sqrt(a - 2) > 0)), "`sqrt` of a negative number")
   expect_identical(kept(x, rule(a != 0 && 1 / a > 0.5)), 1L)
   expect_identical(kept(x, rule(1 / a > 0.5 && a != 0)), 1L)
 })
@@ -305,17 +305,17 @@ test_that("the rows of a declared table are checked by column", {
   )
 })
 
-test_that("r8_select() gives columns by name or by position", {
+test_that("r8select() gives columns by name or by position", {
   x <- visits()
-  expect_identical(names(r8_select(x, c("sex", "age"))), c("sex", "age"))
-  expect_identical(names(r8_select(x, 2:1)), c("age", "row"))
-  refuses(r8_select(x, "Age"), "the nearest column is `age`")
-  refuses(r8_select(x, c("age", "age")), "twice")
-  refuses(r8_select(x, 99), "there are 8 columns")
+  expect_identical(names(r8select(x, c("sex", "age"))), c("sex", "age"))
+  expect_identical(names(r8select(x, 2:1)), c("age", "row"))
+  refuses(r8select(x, "Age"), "the nearest column is `age`")
+  refuses(r8select(x, c("age", "age")), "twice")
+  refuses(r8select(x, 99), "there are 8 columns")
   for (bad in list(-1, TRUE, NULL, NA_real_, factor("age"), rule(age > 1))) {
-    expect_error(r8_select(x, bad), "are names", class = "r8_argument_error")
+    expect_error(r8select(x, bad), "are names", class = "r8_argument_error")
   }
-  expect_error(r8_select(x, age), "c(\"age\")", fixed = TRUE)
+  expect_error(r8select(x, age), "c(\"age\")", fixed = TRUE)
   Labs <- declared("Labs4", list(a = type_double(), b = type_double()))
-  expect_s3_class(r8_select(Labs(a = 1, b = 2), "a"), "R8::Raven")
+  expect_s3_class(r8select(Labs(a = 1, b = 2), "a"), "R8::Raven")
 })

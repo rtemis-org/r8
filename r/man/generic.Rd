@@ -41,7 +41,7 @@ generic forces exactly these arguments to choose a method. The most
 specific method in every position applies; two methods each more
 specific in one position make a call on both ambiguous, an
 \code{r8_dispatch_error} that names the method to declare, and
-\code{\link[=r8_ambiguities]{r8_ambiguities()}} lists such pairs.}
+\code{\link[=r8ambiguities]{r8ambiguities()}} lists such pairs.}
 
 \item{return_type}{Optional: The type of the value that every method
 returns, an \code{r8_field_type}, an R8 type, or \code{"Self"}, the type of the
@@ -73,7 +73,7 @@ the order of the parameters, converts them as a constructor does, such as
 a whole double for an integer, and raises \code{r8_argument_error} with every
 problem of every argument. A result that does not satisfy the return type
 raises \code{r8_result_error}. An argument without a type stays lazy. The checks
-belong to the generic's call: \code{\link[=r8_method]{r8_method()}} and \code{\link[=r8_next_impl]{r8_next_impl()}} call a
+belong to the generic's call: \code{\link[=r8method]{r8method()}} and \code{\link[=r8next_impl]{r8next_impl()}} call a
 method without them.
 
 A replacement generic, \code{generic("labels<-", params(x, value))}, is called
@@ -110,5 +110,5 @@ options(op)
 }
 \seealso{
 \code{\link[=params]{params()}} declares the parameters; \link{implement<-} declares a
-method; \code{\link[=r8_method]{r8_method()}} returns one.
+method; \code{\link[=r8method]{r8method()}} returns one.
 }

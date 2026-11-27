@@ -15,7 +15,7 @@
  * 1. Exports, from a package to R8. A package with compiled exports calls
  *    `R_RegisterCCallable("<package>", "r8_exports", fn)` from its
  *    initialization routine, where `fn` is an `R8ExportsFn` returning its
- *    static `R8Exports`. `R8::r8_register()`, called from the package's
+ *    static `R8Exports`. `R8::r8register()`, called from the package's
  *    `.onLoad`, fetches `fn` with `R_GetCCallable()` and registers the table:
  *    the IR document, the codecs of Rust-stored types, and the impl
  *    functions. Registering a package again replaces its entries.

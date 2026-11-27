@@ -764,7 +764,7 @@ pub(crate) fn not_named_message(x: Option<SEXP>, name: &QualifiedName) -> String
     let classed = x.filter(|&x| inherits(x, "r8_value"));
     match classed.map(|x| (x, crate::value::type_name(x))) {
         Some((x, Some(child))) if inherits(x, &name.to_string()) => format!(
-            "expected a value of `{name}`, found one of its descendant `{child}`; r8_upcast() gives its value of `{name}`"
+            "expected a value of `{name}`, found one of its descendant `{child}`; r8upcast() gives its value of `{name}`"
         ),
         Some((_, None)) => format!(
             "expected a value of `{name}`, found a list with the class of one, as dput() and a write of its elements in C code give it; construct the value with its type"
@@ -1365,9 +1365,9 @@ impl<'a> Access<'a> for RView<'a> {
                 None => "is of another type".to_string(),
             };
             let as_one = match class.as_deref() {
-                Some("difftime") => "; as.numeric(x, units = \"hours\") gives numbers, whose unit r8_annotate() records",
+                Some("difftime") => "; as.numeric(x, units = \"hours\") gives numbers, whose unit r8annotate() records",
                 Some("integer64") => "; as.character() gives its digits, and as.numeric() its numbers up to 2^53",
-                Some("units") => "; as.numeric() gives its numbers, whose unit r8_annotate() records",
+                Some("units") => "; as.numeric() gives its numbers, whose unit r8annotate() records",
                 Some("POSIXlt") => "; as.POSIXct() gives a column",
                 Some("haven_labelled") => "; haven::as_factor() gives a factor",
                 _ => "",
@@ -1645,7 +1645,7 @@ pub(crate) fn table_rows(x: SEXP) -> Read<u64> {
     }
     Err(Form::new(
         "r_row_names",
-        "a table has automatic row names; r8_conform() resets them",
+        "a table has automatic row names; r8conform() resets them",
     ))
 }
 

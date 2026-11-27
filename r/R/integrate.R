@@ -10,7 +10,7 @@
 #' The text a value shows in a document or a notebook
 #'
 #' An `r8_text` object is its own text. An R8 value shows the text its
-#' `Print` impl returns, with `r8_output_type()` reporting `output_type`
+#' `Print` impl returns, with `r8output_type()` reporting `output_type`
 #' while the impl runs, or, from an impl that writes with `cat()`, the lines
 #' it writes; a value without a `Print` impl shows its `Display` text or its
 #' default layout.

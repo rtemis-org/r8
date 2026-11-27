@@ -88,14 +88,14 @@ pa_first <- function() {
         "h <- Holder(p = p, label = 'a')",
         sprintf("saveRDS(p, %s)", deparse(.pa_first$p_rds)),
         sprintf("saveRDS(h, %s)", deparse(.pa_first$h_rds)),
-        sprintf("writeLines(R8::r8_to_json(p), %s)", deparse(.pa_first$p_json)),
-        sprintf("writeLines(R8::r8_to_json(h), %s)", deparse(.pa_first$h_json)),
+        sprintf("writeLines(R8::r8to_json(p), %s)", deparse(.pa_first$p_json)),
+        sprintf("writeLines(R8::r8to_json(h), %s)", deparse(.pa_first$h_json)),
         sprintf(
-          "writeLines(R8::r8_to_json(p, declarations = TRUE), %s)",
+          "writeLines(R8::r8to_json(p, declarations = TRUE), %s)",
           deparse(.pa_first$pd_json)
         ),
         sprintf(
-          "writeLines(R8::r8_to_json(h, declarations = TRUE), %s)",
+          "writeLines(R8::r8to_json(h, declarations = TRUE), %s)",
           deparse(.pa_first$hd_json)
         ),
         "say('saved', TRUE)"

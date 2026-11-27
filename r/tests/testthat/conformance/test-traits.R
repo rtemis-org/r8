@@ -33,7 +33,7 @@ test_that("Display gives format(), print(), and a nested value's text", {
   x <- conform_value(p)
   expect_identical(format(x), "Probe abc (3)")
   expect_output(print(x, output_type = "plain"), "^Probe abc \\(3\\)$")
-  expect_identical(r8_layout(list(c = x))[[2L]], "  c: Probe abc (3)")
+  expect_identical(r8layout(list(c = x))[[2L]], "  c: Probe abc (3)")
 })
 
 test_that("PartialOrd orders values", {
@@ -43,9 +43,9 @@ test_that("PartialOrd orders values", {
   expect_true(x > y)
   expect_false(x < y)
   expect_true(x <= x)
-  expect_identical(r8_partial_cmp(x, y), 1L)
-  expect_identical(r8_partial_cmp(y, x), -1L)
-  expect_identical(r8_partial_cmp(x, 1), NA_integer_)
+  expect_identical(r8partial_cmp(x, y), 1L)
+  expect_identical(r8partial_cmp(y, x), -1L)
+  expect_identical(r8partial_cmp(x, 1), NA_integer_)
 })
 
 test_that("Shape gives dim(), nrow(), and ncol()", {

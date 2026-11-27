@@ -46,7 +46,7 @@ test_that("PartialOrd orders values; without it, ordering is an error", {
   expect_true(a < b)
   expect_true(b >= a)
   expect_false(a > b)
-  expect_identical(r8_partial_cmp(a, b), -1)
+  expect_identical(r8partial_cmp(a, b), -1)
 })
 
 test_that("PartialOrd's result is -1L, 0L, 1L, or NA, and NA orders nothing", {
@@ -101,7 +101,7 @@ test_that("Shape reports dimensions, which nrow() and ncol() follow", {
   expect_identical(length(g), 2L)
 })
 
-test_that("From converts through r8_convert(), Type@from(), and r8_converter()", {
+test_that("From converts through r8convert(), Type@from(), and r8converter()", {
   Money <- money()
   declare_in(
     "demo",
@@ -123,15 +123,15 @@ test_that("From converts through r8_convert(), Type@from(), and r8_converter()",
       })
     )
   )
-  expect_identical(r8_convert(1.5, Money)$cents, 150L)
-  expect_identical(r8_convert(2L, Money)$cents, 200L)
+  expect_identical(r8convert(1.5, Money)$cents, 150L)
+  expect_identical(r8convert(2L, Money)$cents, 200L)
   expect_identical(Money@from("75c")$cents, 75L)
-  as_money <- r8_converter(Money)
+  as_money <- r8converter(Money)
   expect_identical(as_money(0.1)$cents, 10L)
   m <- Money(cents = 5L)
-  expect_identical(r8_convert(m, Money), m)
+  expect_identical(r8convert(m, Money), m)
   expect_error(
-    r8_convert(TRUE, Money),
+    r8convert(TRUE, Money),
     "no From impl",
     class = "r8_dispatch_error"
   )
@@ -140,12 +140,12 @@ test_that("From converts through r8_convert(), Type@from(), and r8_converter()",
     new_struct("Count", fields = list(n = type_integer()))
   )
   expect_error(
-    r8_convert(5, Count),
+    r8convert(5, Count),
     'no From impl for "double", "numeric"\\.$',
     class = "r8_dispatch_error"
   )
   expect_error(Money@nothing, class = "r8_dispatch_error")
-  expect_match(r8_declaration(Money), "MoneyS")
+  expect_match(r8declaration(Money), "MoneyS")
 })
 
 test_that("a converter is the generic of the conversions to its target", {
@@ -155,22 +155,22 @@ test_that("a converter is the generic of the conversions to its target", {
       fields = list(lo = type_double(), hi = type_double())
     )
     Target <- new_struct("Target", fields = list(width = type_double()))
-    as_target <- r8_converter(Target)
+    as_target <- r8converter(Target)
     expect_s3_class(as_target, "r8_converter")
     implement(as_target, Range) <- function(x) Target(width = x$hi - x$lo)
     implement(as_target, "character") <- function(x) Target(width = nchar(x))
     expect_identical(as_target(Range(lo = 1, hi = 4))$width, 3)
-    expect_identical(r8_convert("abcd", Target)$width, 4)
+    expect_identical(r8convert("abcd", Target)$width, 4)
     expect_identical(Target@from("ab")$width, 2)
     expect_output(print(as_target), "<r8 converter cv1::Target>")
     expect_output(print(as_target), "Methods for: character, cv1::Range")
     expect_identical(
-      body(r8_method(as_target, "character")),
+      body(r8method(as_target, "character")),
       quote(Target(width = nchar(x)))
     )
     expect_error(
       implement(as_target, "integer") <- function(x, y) NULL,
-      "r8_converter\\(Target\\).*function\\(x\\)",
+      "r8converter\\(Target\\).*function\\(x\\)",
       class = "r8_declaration_error"
     )
     expect_error(
@@ -204,7 +204,7 @@ test_that("a From impl of an ancestor converts a descendant, which it receives u
       extends = Window
     )
     Target <- new_struct("Target", fields = list(what = type_character()))
-    as_target <- r8_converter(Target)
+    as_target <- r8converter(Target)
     implement(as_target, Range) <- function(x) Target(what = class(x)[1L])
     f <- Frame(lo = 1, hi = 2, label = "f", depth = 3)
     expect_identical(as_target(f)$what, "cv2::Frame")
@@ -217,20 +217,20 @@ test_that("a From impl of an ancestor converts a descendant, which it receives u
       methods = list(from = function(x) Range(lo = 0, hi = 1))
     )
     expect_error(
-      r8_convert("a", Window),
+      r8convert("a", Window),
       "no From impl",
       class = "r8_dispatch_error"
     )
-    implement(as_target, Frame) <- function(x) r8_next_impl()
+    implement(as_target, Frame) <- function(x) r8next_impl()
     expect_error(
       as_target(f),
-      "r8_convert\\(r8_upcast\\(x, Parent\\), Target\\)",
+      "r8convert\\(r8upcast\\(x, Parent\\), Target\\)",
       class = "r8_dispatch_error"
     )
     Holder <- new_struct("Holder", fields = list(r = Range))
     expect_error(
       Holder(r = f),
-      "descendant `cv2::Frame`; r8_upcast\\(\\)",
+      "descendant `cv2::Frame`; r8upcast\\(\\)",
       class = "r8_value_error"
     )
   })
@@ -261,7 +261,7 @@ test_that("a From impl names its source by type object and follows the orphan ru
       methods = list(from = function(x) Target(n = x$n))
     )
   ))
-  expect_identical(r8_convert(Local(n = 2), Target)$n, 2)
+  expect_identical(r8convert(Local(n = 2), Target)$n, 2)
   expect_error(
     declare_in(
       "cv5",
@@ -279,7 +279,7 @@ test_that("a From impl names its source by type object and follows the orphan ru
 test_that("Enum@from converts, and from is a reserved variant name", {
   declare_in("cv6", {
     Kind <- new_enum("Kind", variants = list(A = variant(), B = variant()))
-    as_kind <- r8_converter(Kind)
+    as_kind <- r8converter(Kind)
     implement(as_kind, "character") <- function(x) {
       if (x == "a") Kind@A else Kind@B
     }

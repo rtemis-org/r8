@@ -16,7 +16,7 @@ An \code{r8_field_type}.
 \code{subtype(Struct)} holds a value of \code{Struct} or of a struct that extends a
 subtype of it: a type is a subtype of itself and of every ancestor
 through \code{extends}. Such a value has the struct's fields and satisfies its
-rules, and \code{\link[=r8_upcast]{r8_upcast()}} gives its value of \code{Struct}. A plain struct type
+rules, and \code{\link[=r8upcast]{r8upcast()}} gives its value of \code{Struct}. A plain struct type
 holds exactly that struct. Its JSON form names the value's type in
 \code{"$type"}. Any implementor of a trait, related by \code{extends} or not, is
 \code{\link[=dyn]{dyn()}}.

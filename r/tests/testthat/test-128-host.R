@@ -69,7 +69,7 @@ test_that("an R8 generic dispatches on S3 and implicit classes", {
       "does not implement",
       class = "r8_dispatch_error"
     )
-    expect_identical(r8_method(describe, "tbl")(tbl), "a tibble")
+    expect_identical(r8method(describe, "tbl")(tbl), "a tibble")
     positions <- R8:::impl_tuple(list("data.frame"), "x", "describe")
     expect_identical(as.vector(positions), "\"data.frame\"")
     expect_identical(
@@ -103,7 +103,7 @@ test_that("the dispatch cache keys a value by its whole chain", {
       "class:a\x1fb"
     )
     expect_null(R8:::dispatch_key(quote(f(x))))
-    expect_null(r8_clear_dispatch())
+    expect_null(r8clear_dispatch())
     expect_false(exists("hc2::which_one|which_one", envir = R8:::.r8_dispatch))
   })
 })
@@ -130,7 +130,7 @@ test_that("host classes take part in multiple dispatch", {
     expect_named(exc(df, NULL), c("a", "b", "c"))
     expect_named(exc(as.list(df), NULL), c("a", "b", "c"))
     expect_identical(
-      r8_method(exc, "data.frame", Sel)(df, Sel(cols = "a")),
+      r8method(exc, "data.frame", Sel)(df, Sel(cols = "a")),
       df[, c("b", "c"), drop = FALSE]
     )
     # Each impl more specific in one position, at the call.
@@ -244,12 +244,12 @@ test_that("an impl on a host class takes an existing S3 method", {
       Summ,
       "hc7frame",
       methods = list(
-        summary = function(object, ...) c("hc7frame", r8_next_impl()),
+        summary = function(object, ...) c("hc7frame", r8next_impl()),
         label = function(x) "hc7frame"
       )
     )
     x <- structure(list(a = 1:3), class = c("hc7frame", "list"))
-    # r8_next_impl() continues to the next S3 method, summary.default.
+    # r8next_impl() continues to the next S3 method, summary.default.
     expect_identical(
       summary(x),
       c("hc7frame", summary(unclass(x)))
@@ -261,7 +261,7 @@ test_that("an impl on a host class reaches the next R8 impl of its chain", {
   declare_in("hc8", {
     describe <- generic("describe", params(x))
     implement(describe, "data.frame") <- function(x) "df"
-    implement(describe, "tbl") <- function(x) paste("tbl of", r8_next_impl())
+    implement(describe, "tbl") <- function(x) paste("tbl of", r8next_impl())
     tbl <- structure(list(a = 1), class = c("tbl", "data.frame"))
     expect_identical(describe(tbl), "tbl of df")
   })
@@ -282,7 +282,7 @@ test_that("a dyn() field admits R8 values only", {
   })
 })
 
-test_that("r8_convert() reads the class vector as .class2() gives it", {
+test_that("r8convert() reads the class vector as .class2() gives it", {
   declare_in("hc10", {
     Pct <- new_struct("Pct", fields = list(p = type_double()))
     impl(
@@ -290,9 +290,9 @@ test_that("r8_convert() reads the class vector as .class2() gives it", {
       Pct,
       methods = list(from = function(x) Pct(p = as.vector(x) * 100))
     )
-    expect_identical(r8_convert(0.5, Pct)$p, 50)
-    expect_identical(r8_convert(1L, Pct)$p, 100)
-    expect_identical(r8_convert(matrix(1), Pct)$p, 100)
+    expect_identical(r8convert(0.5, Pct)$p, 50)
+    expect_identical(r8convert(1L, Pct)$p, 100)
+    expect_identical(r8convert(matrix(1), Pct)$p, 100)
   })
 })
 
@@ -343,8 +343,8 @@ test_that("dyn() of a generic holds a value with a method of it", {
     expect_identical(describe(r$body), "A")
     expect_error(Report(body = B(b = 1)), class = "r8_value_error")
     expect_error(Report(body = data.frame()), class = "r8_value_error")
-    back <- r8_from_json(Report, r8_to_json(r))
-    expect_true(r8_equal(back, r))
+    back <- r8from_json(Report, r8to_json(r))
+    expect_true(r8equal(back, r))
     pair <- generic("pair", params(x, y), dispatch = c("x", "y"))
     expect_error(
       dyn(pair),
@@ -367,7 +367,7 @@ test_that("an impl on a host class continues to an internal generic's default", 
       Len,
       "hc13frame",
       methods = list(
-        length = function(x) 100L + r8_next_impl(),
+        length = function(x) 100L + r8next_impl(),
         label = function(x) "frame"
       )
     )

@@ -30,3 +30,6 @@
 ^src/rust/Cargo\.lock\.saved$
 ^tests/testthat/packages/[^/]+/src/.*\.(o|so|dll)$
 ^tests/testthat/packages/[^/]+/src/rust/target$
+^_pkgdown\.yml$
+^pkgdown$
+^docs$

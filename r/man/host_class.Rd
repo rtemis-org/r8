@@ -19,7 +19,7 @@ an object without a class attribute, from its type and \code{dim} attribute:
 \code{complex}, \code{raw}, \code{list}, \code{function}, \code{matrix}, \code{array},
 \code{environment}, \code{name}, or \code{call}; a string naming one of these is
 implicit. \code{"s4"}: a class defined with \code{methods::setClass()}, which
-requires \code{package}; \code{r8_register()} checks at load that the package
+requires \code{package}; \code{r8register()} checks at load that the package
 defines an S4 class of that name. \code{"s7"}: a class of \code{S7::new_class()},
 with \code{package} the package that defines it, or \code{""} for a class defined
 outside a package; an S7 class object given as \code{class} names its own
@@ -38,7 +38,7 @@ position of an impl of an R8 generic or trait, and a field type inside
 \code{option()}. A dispatched position matches an object whose class vector,
 as \code{\link[=.class2]{.class2()}} reports it, contains the class; the nearer the class is to
 the front of that vector, the more specific the impl. In \code{implement()},
-\code{impl()}, \code{r8_method()}, and \code{r8_next_impl()}, a string is shorthand for
+\code{impl()}, \code{r8method()}, and \code{r8next_impl()}, a string is shorthand for
 \code{host_class()} of an S3 or implicit class, and an S4 class object, as
 \code{methods::getClass()} returns it, for \code{host_class()} of that S4 class.
 }

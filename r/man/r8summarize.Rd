@@ -35,7 +35,7 @@ expression, such as \code{sum(w * x) / sum(w)}.
 \section{Groups}{
 
 A group is one combination of the values of the keys that a row has. Groups are
-in the order of \code{\link[=r8_sort]{r8_sort()}} of the keys: ascending, missing last, strings by code
+in the order of \code{\link[=r8sort]{r8sort()}} of the keys: ascending, missing last, strings by code
 point, and factors by level. A missing key is one group; a level of a factor
 without a row has no group. The key columns keep their kinds, levels, units, and
 descriptions.

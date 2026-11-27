@@ -168,7 +168,7 @@ conform_struct <- function(x, qname, path, changes) {
 } # /R8::conform_struct
 
 
-# %% r8_conform ----
+# %% r8conform ----
 #' Conform an R object to a type
 #'
 #' Turns an ordinary R object into a valid input for a struct type and
@@ -177,7 +177,7 @@ conform_struct <- function(x, qname, path, changes) {
 #' levels, `POSIXlt` to `POSIXct`, a tibble or data.table to a data.frame,
 #' resets row names, expands an `Rle`, constructs a nested struct from a
 #' named list, and drops members that are not fields. It reports each change
-#' in one message. Construction itself stays strict: a value `r8_conform()`
+#' in one message. Construction itself stays strict: a value `r8conform()`
 #' cannot make valid raises the same errors as the type's constructor.
 #'
 #' @param x Named list: The fields of a value.
@@ -189,11 +189,11 @@ conform_struct <- function(x, qname, path, changes) {
 #' op <- options(r8.namespace = "demo")
 #' Weights <- new_struct("Weights", fields = list(w = vec(type_double(min = 0))))
 #' q <- stats::quantile(c(1, 2, 3))
-#' x <- r8_conform(list(w = q), Weights)
+#' x <- r8conform(list(w = q), Weights)
 #' options(op)
 #'
 #' @export
-r8_conform <- function(x, type) {
+r8conform <- function(x, type) {
   if (!inherits(type, "r8_struct_type")) {
     r8_abort("`type` is an R8 struct type object.", class = "r8_type_error")
   }
@@ -205,7 +205,7 @@ r8_conform <- function(x, type) {
   value <- conform_struct(x, attr(type, "r8_name"), "", changes)
   if (length(changes[["log"]]) > 0L) {
     message(
-      "r8_conform() made ",
+      "r8conform() made ",
       length(changes[["log"]]),
       " change(s) for `",
       attr(type, "r8_name"),
@@ -214,4 +214,4 @@ r8_conform <- function(x, type) {
     )
   }
   value
-} # /R8::r8_conform
+} # /R8::r8conform

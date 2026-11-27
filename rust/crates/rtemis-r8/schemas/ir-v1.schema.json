@@ -308,7 +308,7 @@
           "description": "The field's type."
         },
         "default": {
-          "description": "A literal default in the field's JSON form as a tree, its numbers\nkept as written, filled by the constructor and by `r8_from_json()`."
+          "description": "A literal default in the field's JSON form as a tree, its numbers\nkept as written, filled by the constructor and by `r8from_json()`."
         },
         "description": {
           "type": "string",
@@ -1162,7 +1162,7 @@
             "policy",
             "expr"
           ],
-          "description": "`r8_resolve()` fills the value from an expression over other fields."
+          "description": "`r8resolve()` fills the value from an expression over other fields."
         },
         {
           "type": "object",
@@ -1176,7 +1176,7 @@
             "policy"
           ],
           "additionalProperties": false,
-          "description": "`r8_resolve(x, context)` fills the value from its `context`."
+          "description": "`r8resolve(x, context)` fills the value from its `context`."
         }
       ],
       "description": "Who fills an absent value of a struct field of type `option()`; a field\nwithout a policy keeps its absent value."

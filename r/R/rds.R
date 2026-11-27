@@ -10,36 +10,36 @@
 # The bytes between the serialized object and its SHA-256.
 RDS_MAGIC <- as.raw(c(0x52, 0x38, 0x53, 0x00)) # "R8S\0"
 
-# %% r8_write_rds ----
+# %% r8write_rds ----
 #' Write and read an object with a checksum
 #'
-#' `r8_write_rds()` writes an RDS file that ends in the SHA-256 of its content, and
-#' `r8_read_rds()` compares the two before R reads the object. `readRDS()` reads
+#' `r8write_rds()` writes an RDS file that ends in the SHA-256 of its content, and
+#' `r8read_rds()` compares the two before R reads the object. `readRDS()` reads
 #' the file too.
 #'
 #' R reads a serialized object without a check: a file that a disk or a transfer
 #' damaged gives another object, an error of R's own, or a crash of the session.
-#' `r8_read_rds()` raises an error that names the file.
+#' `r8read_rds()` raises an error that names the file.
 #'
 #' @param x An object: an R8 value, or any other.
 #' @param file Character: The path of the file.
 #' @param compress Logical or Character \{"gzip", "bzip2", "xz"\}: The
 #'   compression, as that of `saveRDS()`.
 #'
-#' @return `r8_write_rds()`: `file`, invisibly. `r8_read_rds()`: The object. A file
-#'   that is damaged, or that `r8_write_rds()` did not write, raises `r8_file_error`.
+#' @return `r8write_rds()`: `file`, invisibly. `r8read_rds()`: The object. A file
+#'   that is damaged, or that `r8write_rds()` did not write, raises `r8_file_error`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
 #' Point <- new_struct("Point", fields = list(x = type_double(), y = type_double()))
 #' file <- tempfile(fileext = ".rds")
-#' r8_write_rds(Point(x = 1, y = 2), file)
-#' r8_read_rds(file)
+#' r8write_rds(Point(x = 1, y = 2), file)
+#' r8read_rds(file)
 #' unlink(file)
 #' options(op)
 #'
 #' @export
-r8_write_rds <- function(x, file, compress = TRUE) {
+r8write_rds <- function(x, file, compress = TRUE) {
   check_path(file)
   open <- if (isFALSE(compress)) {
     base::file
@@ -62,13 +62,13 @@ r8_write_rds <- function(x, file, compress = TRUE) {
     writeBin(part, con)
   }
   invisible(file)
-} # /R8::r8_write_rds
+} # /R8::r8write_rds
 
 
-# %% r8_read_rds ----
-#' @rdname r8_write_rds
+# %% r8read_rds ----
+#' @rdname r8write_rds
 #' @export
-r8_read_rds <- function(file) {
+r8read_rds <- function(file) {
   check_path(file)
   if (!file.exists(file) || dir.exists(file)) {
     r8_abort("`", file, "` is not a file.", class = "r8_file_error")
@@ -81,7 +81,7 @@ r8_read_rds <- function(file) {
     r8_abort(
       "`",
       file,
-      "` has no checksum: it is damaged at its end, or r8_write_rds() did not ",
+      "` has no checksum: it is damaged at its end, or r8write_rds() did not ",
       "write it. Restore it from a copy, or write it again; readRDS() reads a ",
       "file of saveRDS() without a check.",
       class = "r8_file_error"
@@ -98,7 +98,7 @@ r8_read_rds <- function(file) {
     )
   }
   unserialize(content)
-} # /R8::r8_read_rds
+} # /R8::r8read_rds
 
 
 # %% check_path ----

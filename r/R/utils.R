@@ -203,7 +203,7 @@ namespace_taken <- function(namespace, package, owner) {
 #' Record a declaration in the declaring package's namespace
 #'
 #' A package's top-level declarations run when the package is installed, in
-#' another R session; `r8_register()` replays the record when the package
+#' another R session; `r8register()` replays the record when the package
 #' loads. Declarations outside a package, or after the namespace is locked,
 #' are not recorded.
 #'

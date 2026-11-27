@@ -34,7 +34,7 @@ pub trait Shape {
 }
 
 /// `R8::PartialOrd`: the order of two values, the trait's method
-/// `partial_cmp(x, y)`, which `r8_partial_cmp()`, `<`, `<=`, `>`, and `>=`
+/// `partial_cmp(x, y)`, which `r8partial_cmp()`, `<`, `<=`, `>`, and `>=`
 /// call in R, `None` when they are not ordered, which R receives as `NA`.
 /// R8 calls the method by its qualified path, so a type that also
 /// implements `std::cmp::PartialOrd` keeps both.
@@ -45,7 +45,7 @@ pub trait PartialOrd {
 }
 
 /// `R8::From(Source)`: the conversion of a `Source` to the type, which
-/// `r8_convert(x, Type)` and `Type@from(x)` call. A value of a struct that
+/// `r8convert(x, Type)` and `Type@from(x)` call. A value of a struct that
 /// extends `Source` converts through the `Source` that it holds, when its own
 /// type has no conversion. It is `std::convert::From` with the source by
 /// reference, as R8 lends it, and with an error.

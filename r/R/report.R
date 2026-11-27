@@ -2,17 +2,17 @@
 # ::R8::
 # 2026- EDG rtemis.org
 
-# Checks: r8_check() looks and reports, and r8_validate() requires.
+# Checks: r8check() looks and reports, and r8validate() requires.
 #
 # spec: R8/raven#checks
 
-# %% r8_check ----
+# %% r8check ----
 #' Check a table against rules or a type
 #'
-#' `r8_check()` holds every row of a table against rules, or against the columns and
+#' `r8check()` holds every row of a table against rules, or against the columns and
 #' the rules of a type, and reports what it finds. It refuses nothing: data that were
 #' read from a file are checked as they are, before they are converted or cleaned.
-#' [r8_validate()] requires, and raises an error.
+#' [r8validate()] requires, and raises an error.
 #'
 #' @section The report:
 #' The report is an R8 value of two tables. `rules` has a row for each rule, or each
@@ -48,16 +48,16 @@
 #'   dbp = c(80, 85, 130),
 #'   sbp = c(120, NA, 118)
 #' )
-#' report <- r8_check(
+#' report <- r8check(
 #'   visits,
 #'   list(pressures = rule(dbp < sbp), age = rule(age <= 130))
 #' )
 #' report
 #' report$problems
-#' r8_filter(report$problems, rule(rule == "age"))
+#' r8filter(report$problems, rule(rule == "age"))
 #'
 #' @export
-r8_check <- function(x, against, limit = 1000L, n_threads = NULL) {
+r8check <- function(x, against, limit = 1000L, n_threads = NULL) {
   threads_of(n_threads)
   if (
     !is.numeric(limit) ||
@@ -100,16 +100,16 @@ r8_check <- function(x, against, limit = 1000L, n_threads = NULL) {
     )
   }
   table_report(res, against)
-} # /R8::r8_check
+} # /R8::r8check
 
 
-# %% r8_validate ----
+# %% r8validate ----
 #' Require that a value is valid
 #'
-#' `r8_validate(x)` checks an R8 value against its own type again, rules included: a
+#' `r8validate(x)` checks an R8 value against its own type again, rules included: a
 #' value built by its constructor is valid, and one that other code changed in place
 #' may not be. With `against`, any object is held against a type or rules. What does
-#' not satisfy them is an error; [r8_check()] reports it instead.
+#' not satisfy them is an error; [r8check()] reports it instead.
 #'
 #' @param x An R8 value, or, with `against`, any object.
 #' @param against Optional: A field type, such as `type_table(...)` or
@@ -124,21 +124,21 @@ r8_check <- function(x, against, limit = 1000L, n_threads = NULL) {
 #' Fit <- new_struct("FitSettings", fields = list(
 #'   mtry = field(option(type_integer(min = 1L)), context = TRUE)
 #' ))
-#' r8_validate(Fit())
-#' try(r8_validate(Fit(), complete = TRUE))
-#' try(r8_validate(c(1, -1), vec(type_double(min = 0))))
-#' try(r8_validate(data.frame(lo = 2, hi = 1), rule(lo <= hi)))
+#' r8validate(Fit())
+#' try(r8validate(Fit(), complete = TRUE))
+#' try(r8validate(c(1, -1), vec(type_double(min = 0))))
+#' try(r8validate(data.frame(lo = 2, hi = 1), rule(lo <= hi)))
 #' options(op)
 #'
 #' @export
-r8_validate <- function(x, against = NULL, complete = FALSE) {
+r8validate <- function(x, against = NULL, complete = FALSE) {
   check_flag(complete, "complete", "r8_argument_error")
   if (!is.null(against)) {
     name <- substitute(x)
     name <- if (is.symbol(name)) as.character(name) else "x"
     held <- checked_against(against)
     if (is.null(held[["type"]])) {
-      report <- r8_check(x, against, limit = 5L)
+      report <- r8check(x, against, limit = 5L)
       if (!report_holds(report)) {
         r8_abort(
           "Invalid `",
@@ -178,13 +178,13 @@ r8_validate <- function(x, against = NULL, complete = FALSE) {
         value_type(x),
         "` has pending fields: ",
         paste0("`", names(pending), "` (", pending, ")", collapse = ", "),
-        ". r8_resolve() fills them.",
+        ". r8resolve() fills them.",
         class = "r8_value_error"
       )
     }
   }
   invisible(x)
-} # /R8::r8_validate
+} # /R8::r8validate
 
 
 # %% checked_against ----
@@ -670,7 +670,7 @@ report_text <- function(x) {
   do.call(
     c,
     c(
-      list(r8_text(r8_span(lines[[1L]], "type_name"))),
+      list(r8text(r8span(lines[[1L]], "type_name"))),
       lapply(lines[-1L], as_r8_text)
     )
   )
