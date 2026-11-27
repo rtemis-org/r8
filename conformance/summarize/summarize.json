@@ -1,0 +1,1806 @@
+{
+  "$corpus": 1,
+  "description": "Columns that expressions compute over the rows of a table, summaries of the groups of its rows by key columns, and maps of one expression over columns.",
+  "ir": {
+    "$ir": 1,
+    "namespace": "ns",
+    "types": [
+      {
+        "kind": "table",
+        "name": "Visits",
+        "description": "",
+        "version": 1,
+        "open": true,
+        "columns": [
+          {
+            "name": "ward",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "factor",
+                "levels": [
+                  "ICU",
+                  "Cardiology",
+                  "Oncology"
+                ]
+              }
+            },
+            "description": ""
+          },
+          {
+            "name": "sex",
+            "type": {
+              "kind": "character"
+            },
+            "description": ""
+          },
+          {
+            "name": "age",
+            "type": {
+              "kind": "integer"
+            },
+            "description": "",
+            "unit": "year"
+          },
+          {
+            "name": "weight",
+            "type": {
+              "kind": "double"
+            },
+            "description": "",
+            "unit": "kg"
+          },
+          {
+            "name": "height",
+            "type": {
+              "kind": "double"
+            },
+            "description": "",
+            "unit": "m"
+          },
+          {
+            "name": "sbp",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "double"
+              }
+            },
+            "description": "",
+            "unit": "mmHg"
+          },
+          {
+            "name": "day",
+            "type": {
+              "kind": "option",
+              "inner": {
+                "kind": "date"
+              }
+            },
+            "description": ""
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "summary-by-a-factor",
+      "description": "Groups in the order of the levels, the missing key last; `na_rm` leaves out missing cells, and a mean over one is missing without it.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "by": [
+          "ward"
+        ],
+        "columns": {
+          "n": {
+            "n": []
+          },
+          "sbp_mean": {
+            "mean": {
+              "na_rm": {
+                "var": "sbp"
+              }
+            }
+          },
+          "sbp_mean_strict": {
+            "mean": {
+              "var": "sbp"
+            }
+          },
+          "age_median": {
+            "median": {
+              "var": "age"
+            }
+          }
+        }
+      },
+      "expect": {
+        "first": [
+          0,
+          1,
+          3,
+          5
+        ],
+        "columns": {
+          "n": {
+            "kind": "integer",
+            "cells": [
+              3,
+              2,
+              2,
+              1
+            ]
+          },
+          "sbp_mean": {
+            "kind": "double",
+            "cells": [
+              151.0,
+              139.5,
+              118.0,
+              122.0
+            ],
+            "unit": "mmHg"
+          },
+          "sbp_mean_strict": {
+            "kind": "double",
+            "cells": [
+              null,
+              139.5,
+              null,
+              122.0
+            ],
+            "unit": "mmHg"
+          },
+          "age_median": {
+            "kind": "double",
+            "cells": [
+              71.0,
+              67.5,
+              54.5,
+              35.0
+            ],
+            "unit": "year"
+          }
+        }
+      }
+    },
+    {
+      "id": "summary-by-two-keys",
+      "description": "Groups ordered by the first key, then the second; strings by code point.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "by": [
+          "sex",
+          "ward"
+        ],
+        "columns": {
+          "n": {
+            "n": []
+          },
+          "weight_max": {
+            "max": {
+              "var": "weight"
+            }
+          }
+        }
+      },
+      "expect": {
+        "first": [
+          0,
+          4,
+          3,
+          2,
+          1,
+          7,
+          5
+        ],
+        "columns": {
+          "n": {
+            "kind": "integer",
+            "cells": [
+              2,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "weight_max": {
+            "kind": "double",
+            "cells": [
+              62.0,
+              70.0,
+              55.0,
+              79.0,
+              88.0,
+              81.0,
+              92.0
+            ],
+            "unit": "kg"
+          }
+        }
+      }
+    },
+    {
+      "id": "summary-of-the-table",
+      "description": "Without keys, one row; a count over a missing condition is missing without `na_rm`; `min` of dates is a date.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "n": {
+            "n": []
+          },
+          "weight_sum": {
+            "sum": {
+              "var": "weight"
+            }
+          },
+          "first_day": {
+            "min": {
+              "na_rm": {
+                "var": "day"
+              }
+            }
+          },
+          "high": {
+            "count": {
+              ">": [
+                {
+                  "var": "sbp"
+                },
+                130
+              ]
+            }
+          },
+          "high_present": {
+            "count": {
+              "na_rm": {
+                ">": [
+                  {
+                    "var": "sbp"
+                  },
+                  130
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "columns": {
+          "n": {
+            "kind": "integer",
+            "cells": [
+              8
+            ]
+          },
+          "weight_sum": {
+            "kind": "double",
+            "cells": [
+              585.0
+            ],
+            "unit": "kg"
+          },
+          "first_day": {
+            "kind": "date",
+            "cells": [
+              "2020-01-01"
+            ]
+          },
+          "high": {
+            "kind": "integer",
+            "cells": [
+              null
+            ]
+          },
+          "high_present": {
+            "kind": "integer",
+            "cells": [
+              3
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "summary-of-no-rows",
+      "description": "A table of no rows without keys gives one row: `n()` and `sum()` are 0, a mean is missing; with keys, no row.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 0,
+        "ward": [],
+        "sex": [],
+        "age": [],
+        "weight": [],
+        "height": [],
+        "sbp": [],
+        "day": []
+      },
+      "options": {
+        "columns": {
+          "n": {
+            "n": []
+          },
+          "weight_sum": {
+            "sum": {
+              "var": "weight"
+            }
+          },
+          "weight_mean": {
+            "mean": {
+              "var": "weight"
+            }
+          }
+        }
+      },
+      "expect": {
+        "columns": {
+          "n": {
+            "kind": "integer",
+            "cells": [
+              0
+            ]
+          },
+          "weight_sum": {
+            "kind": "double",
+            "cells": [
+              0.0
+            ],
+            "unit": "kg"
+          },
+          "weight_mean": {
+            "kind": "double",
+            "cells": [
+              null
+            ],
+            "unit": "kg"
+          }
+        }
+      }
+    },
+    {
+      "id": "summary-of-no-rows-by-a-key",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 0,
+        "ward": [],
+        "sex": [],
+        "age": [],
+        "weight": [],
+        "height": [],
+        "sbp": [],
+        "day": []
+      },
+      "options": {
+        "by": [
+          "ward"
+        ],
+        "columns": {
+          "n": {
+            "n": []
+          }
+        }
+      },
+      "expect": {
+        "first": [],
+        "columns": {
+          "n": {
+            "kind": "integer",
+            "cells": []
+          }
+        }
+      }
+    },
+    {
+      "id": "summary-reads-cells-in-aggregates",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "older": {
+            "+": [
+              {
+                "var": "age"
+              },
+              1
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "calc_summary",
+            "path": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "columns-of-every-row",
+      "description": "A power has no unit; with keys, an aggregate is over the row's group, and a difference keeps the unit.",
+      "op": "calc",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "by": [
+          "ward"
+        ],
+        "columns": {
+          "bmi": {
+            "/": [
+              {
+                "var": "weight"
+              },
+              {
+                "^": [
+                  {
+                    "var": "height"
+                  },
+                  2
+                ]
+              }
+            ]
+          },
+          "n_ward": {
+            "n": []
+          },
+          "sbp_excess": {
+            "-": [
+              {
+                "var": "sbp"
+              },
+              {
+                "mean": {
+                  "na_rm": {
+                    "var": "sbp"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "first": [
+          0,
+          1,
+          3,
+          5
+        ],
+        "columns": {
+          "bmi": {
+            "kind": "double",
+            "cells": [
+              27.555555555555557,
+              22.0,
+              25.79591836734694,
+              24.444444444444443,
+              44.8,
+              23.0,
+              25.77777777777778,
+              26.448979591836736
+            ]
+          },
+          "n_ward": {
+            "kind": "integer",
+            "cells": [
+              3,
+              2,
+              3,
+              2,
+              2,
+              1,
+              3,
+              2
+            ]
+          },
+          "sbp_excess": {
+            "kind": "double",
+            "cells": [
+              -9.0,
+              -11.5,
+              null,
+              0.0,
+              11.5,
+              0.0,
+              9.0,
+              null
+            ],
+            "unit": "mmHg"
+          }
+        }
+      }
+    },
+    {
+      "id": "a-missing-constant",
+      "description": "`NA` in a choice among integers gives an integer column.",
+      "op": "calc",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "age_or_na": {
+            "if": [
+              {
+                "===": [
+                  {
+                    "var": "age"
+                  },
+                  35
+                ]
+              },
+              null,
+              {
+                "var": "age"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "columns": {
+          "age_or_na": {
+            "kind": "integer",
+            "cells": [
+              71,
+              58,
+              64,
+              49,
+              77,
+              null,
+              82,
+              60
+            ],
+            "unit": "year"
+          }
+        }
+      }
+    },
+    {
+      "id": "an-error-in-every-row",
+      "op": "calc",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "d": {
+            "/": [
+              {
+                "var": "weight"
+              },
+              {
+                "-": [
+                  {
+                    "var": "age"
+                  },
+                  {
+                    "var": "age"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "row_error": {
+          "column": "d",
+          "row": 0,
+          "count": 8
+        }
+      }
+    },
+    {
+      "id": "a-power-without-a-real-value",
+      "op": "calc",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "r": {
+            "^": [
+              {
+                "-": {
+                  "var": "weight"
+                }
+              },
+              0.5
+            ]
+          }
+        }
+      },
+      "expect": {
+        "row_error": {
+          "column": "r",
+          "row": 0,
+          "count": 8
+        }
+      }
+    },
+    {
+      "id": "n-takes-no-na-rm",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "n": {
+            "n": {
+              "na_rm": []
+            }
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_na_rm",
+            "path": "/n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "an-unknown-key",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "by": [
+          "wards"
+        ],
+        "columns": {
+          "n": {
+            "n": []
+          }
+        }
+      },
+      "expect": {
+        "key_error": "`wards` is not a column of the table; the nearest column is `ward`"
+      }
+    },
+    {
+      "id": "a-map-over-columns",
+      "description": "`col()` is each column in turn; the result columns take the columns' names and units.",
+      "op": "map",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "by": [
+          "ward"
+        ],
+        "f": {
+          "median": {
+            "col": []
+          }
+        },
+        "columns": [
+          "age",
+          "weight"
+        ]
+      },
+      "expect": {
+        "first": [
+          0,
+          1,
+          3,
+          5
+        ],
+        "columns": {
+          "age": {
+            "kind": "double",
+            "cells": [
+              71.0,
+              67.5,
+              54.5,
+              35.0
+            ],
+            "unit": "year"
+          },
+          "weight": {
+            "kind": "double",
+            "cells": [
+              62.0,
+              79.0,
+              68.0,
+              92.0
+            ],
+            "unit": "kg"
+          }
+        }
+      }
+    },
+    {
+      "id": "a-map-reads-its-column",
+      "op": "map",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "f": {
+          "mean": {
+            "var": "age"
+          }
+        },
+        "columns": [
+          "age"
+        ]
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "map_column",
+            "path": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "col-outside-a-map",
+      "op": "calc",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "c": {
+            "col": []
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_col",
+            "path": "/col"
+          }
+        ]
+      }
+    },
+    {
+      "id": "a-comparison-with-the-missing-constant",
+      "op": "calc",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "m": {
+            "===": [
+              {
+                "var": "sbp"
+              },
+              null
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_missing_constant",
+            "path": "/==="
+          }
+        ]
+      }
+    }
+  ]
+}

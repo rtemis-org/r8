@@ -14,15 +14,19 @@
 //! [`RowRule::choose`] gives the rows where a rule is true.
 //!
 //! Operators: `var`, `path`, `if`, `and`, `or`, `!`, `===`, `!==`, `<`, `<=`,
-//! `>`, `>=`, `+`, `-`, `*`, `/`, `%`, `min`, `max`, `in`, and `cat`.
+//! `>`, `>=`, `+`, `-`, `*`, `/`, `%`, `^`, `min`, `max`, `in`, and `cat`.
 //! Intrinsics: `length`, `subset`, `non_increasing`, `non_decreasing`, `abs`,
-//! `floor`, `ceiling`, `round`, `sqrt`, `log`, `exp`, `sum`, `mean`, `pmin`,
-//! `pmax`, `nchar`, `is_null`, `is_na`, `is_variant`, `levels`, `nrow`,
-//! `ncol`, `dim`, `all`, and `any`; inside `all()` and `any()`, `.x` is the
-//! element. In a rule over rows, a name is the cell of the row, and the whole
-//! column in an operand of `mean`, `sum`, `min`, and `max`, which a rule that
-//! chooses rows takes, and a rule of a table's declaration does not.
+//! `floor`, `ceiling`, `round`, `sqrt`, `log`, `exp`, `sum`, `mean`, `median`,
+//! `pmin`, `pmax`, `nchar`, `is_null`, `is_na`, `is_variant`, `levels`,
+//! `nrow`, `ncol`, `dim`, `all`, and `any`; inside `all()` and `any()`, `.x`
+//! is the element. In a rule over rows, a name is the cell of the row, and the
+//! whole column in an operand of `mean`, `sum`, `median`, `min`, `max`, `n`,
+//! and `count`, which a rule that chooses rows takes, and a rule of a table's
+//! declaration does not; `na_rm` around the operand of an aggregate leaves out
+//! its missing cells. [`calc`] computes columns and summaries of groups, in
+//! which `col` is the column that a map sets.
 
+pub mod calc;
 mod compile;
 mod diagnose;
 mod eval;
@@ -38,7 +42,7 @@ use crate::access::{Access, Json};
 pub use compile::{Cell, RowScope, RuleError};
 pub use diagnose::{Diagnosis, SHOWN_CHARS, Shown};
 pub(crate) use rows::Held;
-pub use rows::{NotChosen, RowError, RowRule, Tally, choose_rows};
+pub use rows::{Groups, NotChosen, RowError, RowRule, Tally, choose_rows};
 pub(crate) use ty::dollar_type;
 pub use ty::implementors;
 pub use ty::{DocumentSet, Ty, TypeLookup};

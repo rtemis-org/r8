@@ -1721,6 +1721,245 @@ fn append(parts: &[SEXP], n: usize) -> Robj {
     }
 }
 
+/// The R vector of a computed column of the table value `x`; a date-time
+/// takes the time zone of the first date-time column that its expression
+/// reads, or `"UTC"`.
+fn computed_vector(c: &rtemis_r8::rules::calc::Computed, x: &Held) -> Robj {
+    use rtemis_r8::rules::calc::Data;
+    match &c.data {
+        Data::Logical(v) => Logicals::from_values(v.iter().map(|b| match b {
+            Some(true) => Rbool::true_value(),
+            Some(false) => Rbool::false_value(),
+            None => Rbool::na_value(),
+        }))
+        .into(),
+        Data::Integer(v) => {
+            Integers::from_values(v.iter().map(|i| i.map_or(Rint::na(), Rint::from))).into()
+        }
+        Data::Double(v) => Robj::from(v.as_slice()),
+        Data::Character(v) => Strings::from_values(v.iter().map(|t| match t {
+            Some(t) => Rstr::from(t.as_str()),
+            None => Rstr::na(),
+        }))
+        .into(),
+        Data::Date(v) => {
+            let mut d: Robj = Doubles::from_values(
+                v.iter()
+                    .map(|t| t.map_or(Rfloat::na(), |t| Rfloat::from(t as f64))),
+            )
+            .into();
+            let _ = d.set_class(["Date"]);
+            d
+        }
+        Data::DateTime(v) => {
+            let mut d: Robj = Doubles::from_values(
+                v.iter()
+                    .map(|t| t.map_or(Rfloat::na(), |t| Rfloat::from(t as f64 / 1e6))),
+            )
+            .into();
+            let _ = d.set_class(["POSIXct", "POSIXt"]);
+            let zone = c
+                .zone_of
+                .as_deref()
+                .and_then(|name| x.names.iter().position(|n| n == name))
+                .and_then(|k| {
+                    let z = attr(x.column(k), crate::rview::sym_tzone());
+                    string_elt(z, 0).map(|s| s.into_owned())
+                })
+                .unwrap_or_else(|| "UTC".to_string());
+            let _ = d.set_attrib("tzone", zone);
+            d
+        }
+    }
+}
+
+/// A message of an expression of `names` that computes no column.
+fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summary: bool) -> String {
+    use rtemis_r8::rules::calc::NotComputed as N;
+    match e {
+        N::Rule { at, errors } => format!(
+            "`{}` does not fit the table: {}",
+            names[at],
+            errors
+                .iter()
+                .map(|e| {
+                    let mut text = crate::fieldtype::in_r(&e.message);
+                    if e.code == "rule_field" {
+                        let name = text.split('`').nth(1).unwrap_or_default().to_string();
+                        text.push_str(&format!(
+                            "; if `{name}` is an R variable, write `val({name})`"
+                        ));
+                    }
+                    text
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+        N::Row { at, error } => format!(
+            "`{}` has no value in {} {}: {}{}",
+            names[at],
+            if summary { "group" } else { "row" },
+            error.row + 1,
+            error.message,
+            match error.count {
+                1 => String::new(),
+                n => format!(
+                    "; nor in {} other {}{}",
+                    n - 1,
+                    if summary { "group" } else { "row" },
+                    if n == 2 { "" } else { "s" }
+                ),
+            }
+        ),
+        N::Key(m) => format!("`by`: {m}"),
+        N::Table(m) => m,
+    }
+}
+
+/// The columns that expressions compute over the table value `x`.
+///
+/// @param x The table value.
+/// @param exprs List: The expressions, as `calc()` holds them, by the names
+///   of the columns.
+/// @param by Character: The key columns, or a vector of length 0.
+/// @param summary Logical: One value for each group.
+/// @return A list of `first`, the first row of each group from 1 or `NULL`
+///   without keys, `columns`, the computed vectors, and `units`, or an
+///   `r8_refused`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_table_calc(x: Robj, exprs: List, by: Robj, summary: bool) -> Result<Robj> {
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let h = match Held::of(unsafe { x.get() }) {
+            Ok(h) => h,
+            Err(m) => return Ok(refused(m)),
+        };
+        let names: Vec<String> = exprs
+            .names()
+            .map(|n| n.map(str::to_string).collect())
+            .unwrap_or_default();
+        let mut logic = Vec::with_capacity(exprs.len());
+        for (i, (_, e)) in exprs.iter().enumerate() {
+            match crate::irde::from_r::<rtemis_r8::ir::Logic>(unsafe { e.get() }) {
+                Ok(l) => logic.push(l),
+                Err(m) => return Ok(refused(format!("`{}` does not read: {}", names[i], m.0))),
+            }
+        }
+        let keys: Vec<String> = strings(unsafe { by.get() })
+            .into_iter()
+            .map(|k| k.map(|k| k.into_owned()).unwrap_or_default())
+            .collect();
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+        let refs: Vec<&rtemis_r8::ir::Logic> = logic.iter().collect();
+        let out = match rtemis_r8::rules::calc::computed(
+            RView::Whole(unsafe { x.get() }),
+            h.def(),
+            &keys,
+            &refs,
+            &*h.docs,
+            summary,
+        ) {
+            Ok(o) => o,
+            Err(e) => return Ok(refused(not_computed(e, &names, summary))),
+        };
+        let columns: Vec<Robj> = out.columns.iter().map(|c| computed_vector(c, &h)).collect();
+        let units: Vec<Option<String>> = out.columns.iter().map(|c| c.unit.clone()).collect();
+        let first: Robj = match &out.groups {
+            Some(g) => g
+                .first
+                .iter()
+                .map(|&r| r as i32 + 1)
+                .collect::<Vec<i32>>()
+                .into(),
+            None => ().into(),
+        };
+        let units: Robj = Strings::from_values(units.iter().map(|u| match u {
+            Some(u) => Rstr::from(u.as_str()),
+            None => Rstr::na(),
+        }))
+        .into();
+        Ok(list!(
+            first = first,
+            columns = List::from_values(columns),
+            units = units
+        )
+        .into())
+    })
+}
+
+/// The groups of the rows of the table value `x` by the key columns `by`.
+///
+/// @param x The table value.
+/// @param by Character: The key columns.
+/// @return A list of `ids`, the group of each row from 1, and `first`, the
+///   first row of each group from 1, or an `r8_refused`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_table_groups(x: Robj, by: Robj) -> Result<Robj> {
+    crate::interrupt::interruptible(unsafe { x.get() }, || {
+        let h = match Held::of(unsafe { x.get() }) {
+            Ok(h) => h,
+            Err(m) => return Ok(refused(m)),
+        };
+        let keys: Vec<String> = strings(unsafe { by.get() })
+            .into_iter()
+            .map(|k| k.map(|k| k.into_owned()).unwrap_or_default())
+            .collect();
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+        let out = match rtemis_r8::rules::calc::computed(
+            RView::Whole(unsafe { x.get() }),
+            h.def(),
+            &keys,
+            &[],
+            &*h.docs,
+            true,
+        ) {
+            Ok(o) => o,
+            Err(e) => return Ok(refused(not_computed(e, &[], true))),
+        };
+        let g = out.groups.expect("keys give groups");
+        let ids: Vec<i32> = g.ids.iter().map(|&k| k as i32 + 1).collect();
+        let first: Vec<i32> = g.first.iter().map(|&r| r as i32 + 1).collect();
+        Ok(list!(ids = ids, first = first).into())
+    })
+}
+
+/// The expressions of a map of `f` over `columns`: `f` with `col()` set to
+/// each column.
+///
+/// @param f The expression, as `calc()` holds it.
+/// @param columns Character: The columns.
+/// @return A list of the expressions, named by the columns, or an
+///   `r8_refused`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_calc_mapped(f: Robj, columns: Robj) -> Robj {
+    let f = match crate::irde::from_r::<rtemis_r8::ir::Logic>(unsafe { f.get() }) {
+        Ok(l) => l,
+        Err(m) => return refused(m.0),
+    };
+    let names: Vec<String> = strings(unsafe { columns.get() })
+        .into_iter()
+        .map(|k| k.map(|k| k.into_owned()).unwrap_or_default())
+        .collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    match rtemis_r8::rules::calc::mapped(&f, &refs) {
+        Ok(exprs) => {
+            let items: Vec<Robj> = exprs
+                .iter()
+                .map(|e| crate::irser::to_r(e).unwrap_or_else(|e| Robj::from(e.to_string())))
+                .collect();
+            let mut out: Robj = List::from_values(items).into();
+            let _ = out.set_names(names);
+            out
+        }
+        Err(e) => refused(crate::fieldtype::in_r(&e.message)),
+    }
+}
+
 extendr_module! {
     mod table;
     fn r8_table_new;
@@ -1730,4 +1969,7 @@ extendr_module! {
     fn r8_table_rename;
     fn r8_table_sort;
     fn r8_table_bind;
+    fn r8_table_calc;
+    fn r8_table_groups;
+    fn r8_calc_mapped;
 }

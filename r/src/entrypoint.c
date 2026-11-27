@@ -22,6 +22,8 @@ void r8_set_attrib_functions(void *count, void *raw, void *payload);
 int r8_check_interrupt(void);
 void r8_continue_unwind(void);
 void r8_set_interrupt_functions(void *check, void *resume);
+void r8_drop_unwind(void);
+void r8_set_drop_unwind(void *drop);
 void r8_pin_library(const void *address);
 void r8_init_values(DllInfo *dll);
 SEXP r8_identity(SEXP type, SEXP variant, SEXP names, SEXP cls, SEXP declaration, SEXP record,
@@ -69,6 +71,7 @@ void R_init_R8(DllInfo *dll) {
                            (void *) r8_field_viewed, (void *) r8_field_bare,
                            (void *) r8_table_identity);
     r8_set_interrupt_functions((void *) r8_check_interrupt, (void *) r8_continue_unwind);
+    r8_set_drop_unwind((void *) r8_drop_unwind);
     r8_init_values(dll);
     r8_init_fields(dll);
     r8_init_rust_stored(dll);

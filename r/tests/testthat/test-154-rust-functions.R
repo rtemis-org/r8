@@ -43,6 +43,10 @@ test_that("a function whose body is in Rust computes, checks, and errs as its de
       "say('panic', class(e)[1], e$code)",
       "e <- tryCatch(fraction(3, 2), error = identity)",
       "say('result', class(e)[1], e$problems$code)",
+      # The code of a jump without a jump is an error, and R8 continues no jump.
+      "e <- tryCatch(unwound(), error = conditionMessage)",
+      "say('unwound', grepl('[unwind_without_jump]', e, fixed = TRUE))",
+      "say('after', fraction(1, 4))",
       "say('print', any(grepl(\"body in Rust, package 'r8pkgR'\", utils::capture.output(print(clip)), fixed = TRUE)))",
       # Calls from documents reach the body.
       "say('document', identical(R8::r8_call_from_json(level, '{\"$function\": \"pkgr::level\", \"arguments\": {\"x\": [1, 2, 3], \"hi\": 2.5}}'), c(1, 2.5, 2.5)))",
@@ -64,6 +68,8 @@ test_that("a function whose body is in Rust computes, checks, and errs as its de
     "error r8_compiled_error,r8_error,error,condition zero_whole fraction(1, 0) `whole` is not 0 [zero_whole] ",
     "panic r8_panic panic ",
     "result r8_result_error above_max ",
+    "unwound TRUE ",
+    "after 0.25 ",
     "print TRUE ",
     "document TRUE ",
     "written {\"$function\":\"pkgr::level\",\"$types\":{},\"arguments\":{\"hi\":3,\"x\":[1,2]}} "
@@ -140,12 +146,13 @@ test_that("load compares each Rust body with its declaration", {
       sprintf("source(%s)", deparse(file.path(pkg, "R", "r8-types.R"))),
       # The declarations of R/functions.R with bodies in R, as a session
       # outside the package declares them.
-      "rust_names <- c('pkgr::clip', 'pkgr::level', 'pkgr::tally', 'pkgr::fraction')",
+      "rust_names <- c('pkgr::clip', 'pkgr::level', 'pkgr::tally', 'pkgr::fraction', 'pkgr::unwound')",
       "check <- function(in_rust = rust_names, in_r = character()) tryCatch({ R8:::check_functions('r8pkgR', R8:::r8_exports_functions(ptr, 'pkgr'), in_rust, in_r); 'agree' }, error = conditionMessage)",
       "clip <- new_function('clip', function(x = arg_vec(type_double()), lo = arg_double(), hi = arg_double()) x)",
       "level <- new_function('level', function(x = arg_vec(type_double()), lo = arg_double(default = 0), hi = arg_double()) x)",
       "tally <- new_function('tally', function(x = arg_vec(type_integer()), label = arg_character(default = 'n'), flags = arg_option(vec(type_logical())), bytes = arg_raw(default = as.raw(1:3)), na.rm = arg_logical(default = FALSE), data = NULL, k = arg_integer(default = length(x)), ...) x)",
       "fraction <- new_function('fraction', function(part = arg_double(), whole = arg_double()) part)",
+      "unwound <- new_function('unwound', function() 1)",
       "say('first', check())",
       "e <- check(c(rust_names, 'pkgr::spread'))",
       "say('absent', grepl('`pkgr::spread()` has the body rust(), and the package\\'s Rust code exports no function `spread`', e, fixed = TRUE))",

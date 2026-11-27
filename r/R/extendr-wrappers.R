@@ -760,6 +760,41 @@ r8_table_sort <- function(x, by, descending) .Call(wrap__r8_table_sort, x, by, d
 #' @noRd
 r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 
+#' The columns that expressions compute over the table value `x`.
+#'
+#' @param x The table value.
+#' @param exprs List: The expressions, as `calc()` holds them, by the names
+#'   of the columns.
+#' @param by Character: The key columns, or a vector of length 0.
+#' @param summary Logical: One value for each group.
+#' @return A list of `first`, the first row of each group from 1 or `NULL`
+#'   without keys, `columns`, the computed vectors, and `units`, or an
+#'   `r8_refused`.
+#' @keywords internal
+#' @noRd
+r8_table_calc <- function(x, exprs, by, summary) .Call(wrap__r8_table_calc, x, exprs, by, summary)
+
+#' The groups of the rows of the table value `x` by the key columns `by`.
+#'
+#' @param x The table value.
+#' @param by Character: The key columns.
+#' @return A list of `ids`, the group of each row from 1, and `first`, the
+#'   first row of each group from 1, or an `r8_refused`.
+#' @keywords internal
+#' @noRd
+r8_table_groups <- function(x, by) .Call(wrap__r8_table_groups, x, by)
+
+#' The expressions of a map of `f` over `columns`: `f` with `col()` set to
+#' each column.
+#'
+#' @param f The expression, as `calc()` holds it.
+#' @param columns Character: The columns.
+#' @return A list of the expressions, named by the columns, or an
+#'   `r8_refused`.
+#' @keywords internal
+#' @noRd
+r8_calc_mapped <- function(f, columns) .Call(wrap__r8_calc_mapped, f, columns)
+
 #' The IR parameters of a generic or trait method, from `params()`.
 #'
 #' @param names Character: The parameters' names.

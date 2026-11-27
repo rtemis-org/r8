@@ -502,6 +502,18 @@ format.r8_rule <- function(x, ...) {
 print.r8_rule <- function(x, ...) print_lines(x)
 
 
+# %% format.r8_calc ----
+#' @rdname r8_format
+#' @export
+format.r8_calc <- function(x, ...) {
+  paste0("<r8 calc> ", logic_text(unclass(x)[["expr"]]))
+} # /R8::format.r8_calc
+
+#' @rdname r8_format
+#' @export
+print.r8_calc <- function(x, ...) print_lines(x)
+
+
 # %% format.r8_variant ----
 #' @rdname r8_format
 #' @export

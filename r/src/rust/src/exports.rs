@@ -227,8 +227,10 @@ fn positions(entry: &ImplEntry, package: &str) -> Result<Vec<TypeRef>> {
 }
 
 /// The `R8Exports` an external pointer holds, checked: the tag, the ABI
-/// version, and the size.
-fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
+/// version, and the size. The table is copied, its members past the end of a
+/// smaller table of an earlier R8 zero, so that no reference spans memory that
+/// the table does not hold.
+fn exports_of(ptr: &Robj) -> Result<Exports> {
     let x = unsafe { ptr.get() };
     if ptr.rtype() != Rtype::ExternalPtr {
         return Err(fail(
@@ -248,20 +250,27 @@ fn exports_of<'a>(ptr: &Robj) -> Result<&'a Exports> {
             "the package's compiled code built no table of R8 exports; the console holds the message of its declarations",
         ));
     }
-    let e = unsafe { &*p };
-    if e.abi_version != ABI_VERSION {
+    // The two first members, which every table of this ABI holds.
+    let (version, size) = unsafe { ((*p).abi_version, (*p).size) };
+    if version != ABI_VERSION {
         return Err(fail(format!(
             "the package was built against R8 ABI version {}, and this R8 provides version {ABI_VERSION}; reinstall the package",
-            e.abi_version
+            version
         )));
     }
-    if e.size < EXPORTS_SIZE {
+    if size < EXPORTS_SIZE {
         return Err(fail(format!(
             "the exports table has {} bytes, fewer than the {EXPORTS_SIZE} of ABI version {ABI_VERSION}; reinstall the package against the installed R8",
-            e.size
+            size
         )));
     }
-    Ok(e)
+    let n = (size as usize).min(std::mem::size_of::<Exports>());
+    let mut e = std::mem::MaybeUninit::<Exports>::zeroed();
+    // Every member is a number or a pointer, for which zero is a value.
+    unsafe {
+        std::ptr::copy_nonoverlapping(p.cast::<u8>(), e.as_mut_ptr().cast::<u8>(), n);
+        Ok(e.assume_init())
+    }
 }
 
 /// The declarations of an exports table's declaration record.
@@ -434,7 +443,7 @@ fn read_rows(
 #[extendr]
 fn r8_exports_signatures(ptr: Robj, package: crate::utf8::Utf8) -> Result<List> {
     let package: &str = &package;
-    let e = exports_of(&ptr)?;
+    let e = &exports_of(&ptr)?;
     let reg = crate::declare::snapshot()?;
     let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
     let (rows, problems) = read_rows(e, package, &reg)?;
@@ -489,7 +498,7 @@ fn r8_exports_signatures(ptr: Robj, package: crate::utf8::Utf8) -> Result<List> 
 #[extendr]
 fn r8_exports_document(ptr: Robj, ns: crate::utf8::Utf8) -> Result<Robj> {
     let ns: &str = &ns;
-    let e = exports_of(&ptr)?;
+    let e = &exports_of(&ptr)?;
     let Declarations { types, traits, .. } = record_declarations(e, ns)?;
     let doc = IrDocument {
         ir_version: rtemis_r8::ir::IR_VERSION,
@@ -528,7 +537,7 @@ fn parent_of(t: &TypeDef) -> Option<&QualifiedName> {
 #[extendr]
 fn r8_exports_compare(ptr: Robj, ns: crate::utf8::Utf8) -> Result<List> {
     let ns: &str = &ns;
-    let e = exports_of(&ptr)?;
+    let e = &exports_of(&ptr)?;
     let Declarations { types, traits, .. } = record_declarations(e, ns)?;
     let namespace = Name::new(ns).map_err(|e| fail(e.to_string()))?;
     let mut codecs = Vec::new();
@@ -617,7 +626,7 @@ fn r8_register_exports(
 ) -> Result<List> {
     let package: &str = &package;
     let ns: &str = &ns;
-    let e = exports_of(&ptr)?;
+    let e = &exports_of(&ptr)?;
     let declared = text(e.package, "package name")?;
     if declared != package {
         return Err(fail(format!(
@@ -739,7 +748,7 @@ fn r8_register_exports(
 /// @noRd
 #[extendr]
 fn r8_exports_traits(ptr: Robj) -> Result<Vec<String>> {
-    let e = exports_of(&ptr)?;
+    let e = &exports_of(&ptr)?;
     let mut out: Vec<String> = Vec::new();
     for entry in impl_entries(e)? {
         let name = text(entry.trait_name, "trait name")?;
@@ -891,15 +900,20 @@ fn entry_function(entry: &FunctionEntry, ns: &str) -> Result<(String, rtemis_r8:
 #[extendr]
 fn r8_exports_functions(ptr: Robj, ns: crate::utf8::Utf8) -> Result<List> {
     let ns: &str = &ns;
-    let e = exports_of(&ptr)?;
+    let e = &exports_of(&ptr)?;
     let reg = crate::declare::snapshot()?;
     let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
-    let mut names = Vec::new();
+    let mut names: Vec<String> = Vec::new();
     let mut declared = Vec::new();
     let mut messages: Vec<Robj> = Vec::new();
     for entry in function_entries(e)? {
         let (name, have) = entry_function(entry, ns)?;
         let q = format!("{ns}::{name}");
+        if names.contains(&q) {
+            return Err(fail(format!(
+                "the exports table holds two bodies of `{q}()`; `functions` of `r8::exports!` lists one function of each name"
+            )));
+        }
         let want = QualifiedName::parse(&q)
             .ok()
             .and_then(|q| lookup.function_of(&q));
@@ -956,7 +970,7 @@ fn r8_register_functions(
 ) -> Result<Vec<String>> {
     let package: &str = &package;
     let ns: &str = &ns;
-    let e = exports_of(&ptr)?;
+    let e = &exports_of(&ptr)?;
     let reg = crate::declare::snapshot()?;
     let lookup: &dyn rtemis_r8::rules::TypeLookup = &*reg;
     let mut rows = Vec::new();
@@ -978,10 +992,11 @@ fn r8_register_functions(
             .params
             .iter()
             .map(|p| {
-                let n = std::ffi::CString::new(p.name()).unwrap_or_default();
-                unsafe { Rf_install(n.as_ptr()) }
+                let n = std::ffi::CString::new(p.name())
+                    .map_err(|_| fail(format!("a parameter of `{q}()` holds a NUL")))?;
+                Ok(unsafe { Rf_install(n.as_ptr()) })
             })
-            .collect();
+            .collect::<Result<_>>()?;
         rows.push((symbol as usize, q, call, params));
     }
     clear_native(package);

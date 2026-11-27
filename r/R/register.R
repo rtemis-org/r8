@@ -84,7 +84,15 @@ r8_register <- function(pkgname = NULL) {
   # claims included.
   token <- r8_registry_save()
   done <- FALSE
-  on.exit(if (done) r8_registry_release(token) else r8_registry_restore(token))
+  # A failed registration also leaves no function bodies of the package.
+  on.exit(
+    if (done) {
+      r8_registry_release(token)
+    } else {
+      r8_registry_restore(token)
+      r8_clear_functions(pkg)
+    }
+  )
   for (ns_name in unique(vapply(entries, function(e) e[["namespace"]], ""))) {
     claim_namespace(ns_name, pkg)
   }
@@ -249,6 +257,9 @@ register_exports <- function(pkg, entries = list()) {
   in_r <- as.character(unlist(lapply(functions, function(e) {
     if (!isTRUE(e[["rust"]])) e[["name"]]
   })))
+  # The bodies of an earlier registration go before the checks, so that a
+  # registration that fails, or a package without exports, keeps none.
+  r8_clear_functions(pkg)
   # R_GetCCallable() raises an error for a package that registered no
   # exports.
   ptr <- tryCatch(

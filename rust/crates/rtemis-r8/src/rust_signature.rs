@@ -101,6 +101,7 @@ pub fn function_signature(f: &FunctionDef) -> String {
     let mut checks = Vec::new();
     let mut host = Vec::new();
     let mut params = Vec::new();
+    let mut taken: Vec<String> = Vec::new();
     for p in &f.params {
         let name = p.name();
         if name == "..." {
@@ -108,7 +109,17 @@ pub fn function_signature(f: &FunctionDef) -> String {
             params.push("    dots: r8::Dots,".to_string());
             continue;
         }
-        let (id, renamed) = identifier(name);
+        let (mut id, mut renamed) = identifier(name);
+        // Two R names of one identifier, such as `a.b` and `a_b`, take a suffix.
+        if taken.contains(&id) {
+            let mut k = 2;
+            while taken.contains(&format!("{id}_{k}")) {
+                k += 1;
+            }
+            id = format!("{id}_{k}");
+            renamed = true;
+        }
+        taken.push(id.clone());
         let ty = p.ty().and_then(|t| rust_type(t, Place::Param));
         if let Some(t) = p.ty() {
             checks.push(format!("`{name}` is {}", notation(t)));
@@ -304,6 +315,23 @@ mod tests {
             "{text}"
         );
         assert!(text.contains(") -> r8::Sexp {"));
+    }
+
+    #[test]
+    fn two_names_of_one_identifier_take_a_suffix() {
+        let f = function(
+            vec![
+                typed("a_b", FieldType::Logical),
+                typed("a.b", FieldType::Logical),
+            ],
+            None,
+        );
+        let text = function_signature(&f);
+        assert!(text.contains("    a_b: bool,\n"), "{text}");
+        assert!(
+            text.contains("    #[r8(name = \"a.b\")] a_b_2: bool,\n"),
+            "{text}"
+        );
     }
 
     #[test]

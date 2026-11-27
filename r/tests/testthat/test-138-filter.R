@@ -173,11 +173,11 @@ test_that("a number with a sign is a constant", {
   declares(rule(y == -Inf), "A number in a rule is finite.")
   declares(rule(y < 1e400), "A number in a rule is finite.")
   declares(rule(y %in% c(1, Inf)), "A number in a rule is finite.")
-  declares(rule(y == NA), "not NA")
+  declares(rule(y == NA), "compares with NA")
   declares(rule(y %in% c(1, NA)), "literal values")
   # An error of a rule is that error, whatever the names in it.
-  declares(r8_filter(r, rule(y == NA)), "not NA")
-  declares(r[rule(y == NA), ], "not NA")
+  declares(r8_filter(r, rule(y == NA)), "compares with NA")
+  declares(r[rule(y == NA), ], "compares with NA")
 })
 
 

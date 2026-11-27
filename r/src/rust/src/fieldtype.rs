@@ -10,7 +10,7 @@
 //! spec: R8/class-system#declaring-types
 
 use extendr_api::prelude::*;
-use extendr_ffi::{CAR, CDR, INTEGER, LOGICAL, PRINTNAME, R_CHAR, REAL, SEXP, SEXPTYPE};
+use extendr_ffi::{CAR, CDR, INTEGER, LOGICAL, PRINTNAME, R_CHAR, REAL, SEXP, SEXPTYPE, TAG};
 use rtemis_r8::ir::build::{self, Bounds, BuildError};
 use rtemis_r8::ir::{FieldType, Logic, Number, Operator};
 use rtemis_r8::name::QualifiedName;
@@ -518,6 +518,7 @@ const OPERATORS: &[(&str, Operator)] = &[
     ("*", Operator::Mul),
     ("/", Operator::Div),
     ("%%", Operator::Mod),
+    ("^", Operator::Pow),
     ("&&", Operator::And),
     ("&", Operator::And),
     ("||", Operator::Or),
@@ -543,6 +544,10 @@ const OPERATORS: &[(&str, Operator)] = &[
     ("exp", Operator::Exp),
     ("sum", Operator::Sum),
     ("mean", Operator::Mean),
+    ("median", Operator::Median),
+    ("n", Operator::N),
+    ("count", Operator::Count),
+    ("col", Operator::Col),
     ("pmin", Operator::Pmin),
     ("pmax", Operator::Pmax),
     ("is.na", Operator::IsNa),
@@ -615,8 +620,9 @@ fn r8_rule_operators() -> Robj {
 /// The functions of the dialect, as R writes them, for a message.
 const KNOWN_FUNCTIONS: &str = "comparisons, arithmetic, logical operators, %in%, if, is.na(), \
 is.null(), is_variant(), length(), nchar(), nrow(), ncol(), dim(), levels(), abs(), sqrt(), log(), \
-exp(), floor(), ceiling(), round(), min(), max(), pmin(), pmax(), sum(), mean(), all(), any(), \
-subset(), non_increasing(), non_decreasing(), and val() for a constant from R";
+exp(), floor(), ceiling(), round(), min(), max(), pmin(), pmax(), sum(), mean(), median(), n(), \
+count(), all(), any(), subset(), non_increasing(), non_decreasing(), col(), NA, and val() for a \
+constant from R";
 
 /// The function of rules nearest to `name`, as R writes it.
 fn nearest_function(name: &str) -> Option<String> {
@@ -672,6 +678,22 @@ fn deparsed(x: SEXP) -> String {
         .unwrap_or_default()
 }
 
+/// The names of the arguments of a call, in order: `""` for an unnamed one.
+fn arg_names(x: SEXP) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut a = unsafe { CDR(x) };
+    while !is_null(a) {
+        let tag = unsafe { TAG(a) };
+        out.push(if is_null(tag) {
+            String::new()
+        } else {
+            symbol_name(tag)
+        });
+        a = unsafe { CDR(a) };
+    }
+    out
+}
+
 /// The arguments of a call, in order.
 fn args(x: SEXP) -> Vec<SEXP> {
     let mut out = Vec::new();
@@ -696,6 +718,8 @@ fn signed(x: SEXP, negative: bool) -> Built<Logic> {
     let number = |d: f64| {
         if d.is_infinite() {
             Err(BuildError::InfiniteConstant)
+        } else if crate::rview::is_na_real(d) {
+            Ok(Logic::Null)
         } else if d.is_nan() {
             Err(BuildError::Constant)
         } else {
@@ -705,6 +729,7 @@ fn signed(x: SEXP, negative: bool) -> Built<Logic> {
     unsafe {
         match sexptype(x) {
             SEXPTYPE::INTSXP => match *INTEGER(x) {
+                NA_INTEGER if !negative => Ok(Logic::Null),
                 NA_INTEGER => Err(BuildError::Constant),
                 i => {
                     let i = if negative { -i } else { i };
@@ -718,12 +743,12 @@ fn signed(x: SEXP, negative: bool) -> Built<Logic> {
             SEXPTYPE::REALSXP if negative => number(-*REAL(x)),
             SEXPTYPE::REALSXP => number(*REAL(x)),
             SEXPTYPE::LGLSXP if !negative => match *LOGICAL(x) {
-                NA_INTEGER => Err(BuildError::Constant),
+                NA_INTEGER => Ok(Logic::Null),
                 b => Ok(Logic::Bool(b != 0)),
             },
-            SEXPTYPE::STRSXP if !negative => string_elt(x, 0)
+            SEXPTYPE::STRSXP if !negative => Ok(string_elt(x, 0)
                 .map(|s| Logic::String(s.as_ref().into()))
-                .ok_or(BuildError::Constant),
+                .unwrap_or(Logic::Null)),
             _ => Err(BuildError::Constant),
         }
     }
@@ -879,10 +904,55 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
         },
         "[[" | "[" => Err(BuildError::RuleIndex { expr: deparsed(x) }),
         _ => match operator(&name) {
-            Some(op) => Ok(build::call(
-                op,
-                a.iter().map(|&v| logic(v)).collect::<Built<Vec<_>>>()?,
-            )),
+            Some(op) => {
+                let names = arg_names(x);
+                let mut operands = Vec::with_capacity(a.len());
+                let mut skip = false;
+                for (v, n) in a.iter().zip(&names) {
+                    match n.as_str() {
+                        "" => operands.push(logic(*v)?),
+                        "na.rm"
+                            if matches!(
+                                op,
+                                Operator::Sum
+                                    | Operator::Mean
+                                    | Operator::Median
+                                    | Operator::Min
+                                    | Operator::Max
+                                    | Operator::Count
+                            ) =>
+                        {
+                            skip = match literal(*v) {
+                                Some(Ok(Logic::Bool(b))) => b,
+                                _ => return Err(BuildError::NaRm { function: name }),
+                            };
+                        }
+                        other => {
+                            return Err(BuildError::RuleArgument {
+                                function: name.clone(),
+                                argument: other.to_string(),
+                            });
+                        }
+                    }
+                }
+                if skip {
+                    operands = vec![build::call(Operator::NaRm, operands)];
+                }
+                let compares = matches!(
+                    op,
+                    Operator::StrictEq
+                        | Operator::StrictNe
+                        | Operator::Lt
+                        | Operator::Le
+                        | Operator::Gt
+                        | Operator::Ge
+                        | Operator::In
+                );
+                if compares && operands.iter().any(|o| matches!(o, Logic::Null)) {
+                    return Err(BuildError::MissingComparison { expr: deparsed(x) });
+                }
+                Ok(build::call(op, operands))
+            }
             None => Err(BuildError::UnknownFunction {
                 nearest: nearest_function(&name),
                 name,

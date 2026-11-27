@@ -43,8 +43,8 @@ pub struct ImplSet {
     pub register: fn(&mut DocumentSet),
 }
 
-/// A function whose body is compiled code, which the hidden module that
-/// `#[r8::function]` writes beside the function gives.
+/// A function whose body is compiled code, which the function
+/// `__r8_fn_<name>()` that `#[r8::function]` writes beside it gives.
 pub struct FunctionRow {
     /// The function's name in the package's namespace.
     pub name: &'static CStr,

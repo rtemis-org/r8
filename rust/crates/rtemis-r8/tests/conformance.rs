@@ -320,6 +320,7 @@ fn conformance_corpus() {
                 }
                 "update" => run_update(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 "filter" => run_filter(ir.as_ref(), case),
+                op @ ("calc" | "summarize" | "map") => run_calc(op, ir.as_ref(), case),
                 "check" => run_check(ir.as_ref(), case),
                 "call" => run_call(ir.as_ref(), case),
                 "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
@@ -525,6 +526,127 @@ fn run_filter(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
         }
         Err(NotChosen::Table(m)) => return Some(m),
     };
+    (got != case["expect"]).then(|| format!("{got}, expected {}", case["expect"]))
+}
+
+/// Runs one `calc`, `summarize`, or `map` case: the columns that the
+/// expressions of `options.columns` compute over the rows, or over the groups
+/// by `options.by`; a `map` sets `col()` of `options.f` to each column of
+/// `options.columns`.
+fn run_calc(op: &str, ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
+    use rtemis_r8::canonical::{date_text, datetime_text};
+    use rtemis_r8::ir::{Logic, TypeDef};
+    use rtemis_r8::rules::TypeLookup;
+    use rtemis_r8::rules::calc::{Data, Kind, NotComputed, computed, mapped};
+    let Some(docs) = ir else {
+        return Some(format!("a `{op}` case needs the suite's `ir`"));
+    };
+    let ty = QualifiedName::parse(case["type"].as_str()?).ok()?;
+    let Some(TypeDef::Table(def)) = docs.find(&ty) else {
+        return Some(format!("`{ty}` is not a table of the suite's `ir`"));
+    };
+    let problems = validate(&case["input"], &ty, docs);
+    if !problems.is_empty() {
+        return Some(format!("the input is invalid: {problems:?}"));
+    }
+    let options = &case["options"];
+    let by: Vec<&str> = options["by"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let (names, exprs): (Vec<String>, Vec<Logic>) = if op == "map" {
+        let columns: Vec<&str> = options["columns"]
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        match mapped(&Logic::from_value(&options["f"]), &columns) {
+            Ok(e) => (columns.iter().map(|c| c.to_string()).collect(), e),
+            Err(e) => {
+                let got = serde_json::json!({"errors": [{"code": e.code, "path": e.path}]});
+                return (got != case["expect"])
+                    .then(|| format!("{got}, expected {}", case["expect"]));
+            }
+        }
+    } else {
+        options["columns"]
+            .as_object()?
+            .iter()
+            .map(|(k, v)| (k.clone(), Logic::from_value(v)))
+            .unzip()
+    };
+    let refs: Vec<&Logic> = exprs.iter().collect();
+    let table = rtemis_r8::access::Json::new(&case["input"]);
+    let got = match computed(table, def, &by, &refs, docs, op != "calc") {
+        Ok(out) => {
+            let mut columns = serde_json::Map::new();
+            for (name, c) in names.iter().zip(&out.columns) {
+                let kind = match c.kind {
+                    Kind::Logical => "logical",
+                    Kind::Integer => "integer",
+                    Kind::Double => "double",
+                    Kind::Character => "character",
+                    Kind::Date => "date",
+                    Kind::DateTime => "posixct",
+                };
+                let cells: Vec<Value> = match &c.data {
+                    Data::Logical(v) => v.iter().map(|x| serde_json::json!(x)).collect(),
+                    Data::Integer(v) => v.iter().map(|x| serde_json::json!(x)).collect(),
+                    Data::Double(v) => v
+                        .iter()
+                        .map(|&x| {
+                            if x.is_nan() {
+                                Value::Null
+                            } else {
+                                serde_json::json!(x)
+                            }
+                        })
+                        .collect(),
+                    Data::Character(v) => v.iter().map(|x| serde_json::json!(x)).collect(),
+                    Data::Date(v) => v
+                        .iter()
+                        .map(|x| serde_json::json!(x.map(date_text)))
+                        .collect(),
+                    Data::DateTime(v) => v
+                        .iter()
+                        .map(|x| serde_json::json!(x.map(datetime_text)))
+                        .collect(),
+                };
+                let mut entry = serde_json::json!({"kind": kind, "cells": cells});
+                if let Some(u) = &c.unit {
+                    entry["unit"] = Value::String(u.clone());
+                }
+                columns.insert(name.clone(), entry);
+            }
+            let mut got = serde_json::json!({"columns": columns});
+            if let Some(g) = &out.groups {
+                got["first"] = serde_json::json!(g.first);
+            }
+            got
+        }
+        Err(NotComputed::Row { at, error }) => serde_json::json!({
+            "row_error": {"column": names[at], "row": error.row, "count": error.count}
+        }),
+        Err(NotComputed::Rule { at, errors }) => {
+            let got = sorted_errors(errors.into_iter().map(|e| (e.path, e.code.into(), None)));
+            if case["expect"].get("errors").is_none() {
+                return Some(format!(
+                    "errors of `{}` {got:?}, expected {}",
+                    names[at], case["expect"]
+                ));
+            }
+            let want = expected_errors(&case["expect"]);
+            return (got != want).then(|| format!("errors {got:?}, expected {want:?}"));
+        }
+        Err(NotComputed::Key(m)) => serde_json::json!({"key_error": m}),
+        Err(NotComputed::Table(m)) => return Some(m),
+    };
+    if let Some(Value::String(_)) = case["expect"].get("key_error") {
+        return got
+            .get("key_error")
+            .is_none()
+            .then(|| format!("{got}, expected a key error"));
+    }
     (got != case["expect"]).then(|| format!("{got}, expected {}", case["expect"]))
 }
 

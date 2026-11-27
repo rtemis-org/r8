@@ -28,9 +28,9 @@ differences.}
 \item{unit}{Optional Character: A unit code, by convention UCUM, such as
 \code{"mg"}.}
 
-\item{compute}{Optional expression: For a field of type \code{option()}, its
-value as an expression over the other fields, captured unevaluated and
-written in the rule dialect, which \code{r8_resolve()} fills.}
+\item{compute}{Optional \code{r8_calc}: For a field of type \code{option()}, its
+value as an expression over the other fields, a \code{\link[=calc]{calc()}}, which
+\code{r8_resolve()} fills.}
 
 \item{context}{Logical: For a field of type \code{option()}, \code{r8_resolve(x, context)} fills the value from \code{context}. At most one of \code{compute} and
 \code{context} is given.}
@@ -47,7 +47,7 @@ field type is the short form of \code{field(type)}.
 }
 \examples{
 field(type_double(exclusive_min = 0), default = 1, description = "Cost.")
-field(option(type_double()), compute = dose_mg / 1000)
+field(option(type_double()), compute = calc(dose_mg / 1000))
 field(option(type_integer(min = 1L)), context = TRUE)
 
 }

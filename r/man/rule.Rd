@@ -61,8 +61,9 @@ whenever \code{a} is present.
 
 A rule of a \code{\link[=new_table]{new_table()}} or a \code{type_table()} reads the cells of one row by the
 names of the columns; the cell of a factor is its label. A rule also chooses the
-rows of a table (\code{\link[=r8_filter]{r8_filter()}}), and then \code{mean()}, \code{sum()}, \code{min()}, and \code{max()}
-read whole columns. \code{pmin()} and \code{pmax()} are of the cells of a row.
+rows of a table (\code{\link[=r8_filter]{r8_filter()}}), and then \code{mean()}, \code{sum()}, \code{median()}, \code{min()},
+\code{max()}, \code{n()}, and \code{count()} read whole columns, as in \code{\link[=calc]{calc()}}. \code{pmin()} and
+\code{pmax()} are of the cells of a row.
 }
 
 \section{Missing values}{
@@ -88,25 +89,33 @@ copying it. Paired elements of two vectors are columns of a
 
 A bare name in a rule is always a field. \code{val(expr)} is the value of the
 R expression \code{expr}, evaluated once when \code{rule()} runs: \code{cost <= val(max_cost)}.
+\code{col(expr)} is the field or column whose name the R expression \code{expr} gives:
+\code{col(m) > 0} with \code{m <- "auc"} is \code{auc > 0}. The arguments of \code{val()} and \code{col()}
+are R; every other bare name is a field or a column. \code{NA} is the missing
+constant, as a value of \code{if}; a comparison with \code{NA} is an error that names
+\code{is.na()}.
 }
 
 \section{Operators and functions}{
 
 Comparisons (\code{==}, \code{!=}, \code{<}, \code{<=}, \code{>}, \code{>=}), arithmetic (\code{+}, \code{-},
-\code{*}, \code{/}, \code{\%\%}), logical operators (\code{&&}, \code{||}, \code{!}; \code{&} and \code{|} are the
+\code{*}, \code{/}, \code{\%\%}, \code{^}), logical operators (\code{&&}, \code{||}, \code{!}; \code{&} and \code{|} are the
 same as \code{&&} and \code{||}), \code{\%in\%}, \code{if}, \code{is.na()}, \code{is.null()}, \code{is_variant()},
 \code{length()}, \code{nchar()}, \code{nrow()}, \code{ncol()}, \code{dim()}, \code{levels()},
 \code{abs()}, \code{sqrt()}, \code{log()}, \code{exp()}, \code{floor()}, \code{ceiling()}, \code{round()}, \code{min()},
-\code{max()}, \code{pmin()}, \code{pmax()}, \code{sum()}, \code{mean()},
+\code{max()}, \code{pmin()}, \code{pmax()}, \code{sum()}, \code{mean()}, \code{median()}, \code{n()}, \code{count()},
 \code{all()}, \code{any()}, \code{subset()}, \code{non_decreasing()}, \code{non_increasing()},
-\code{paste0()}, \code{c()} of constants, and \code{val()}.
+\code{paste0()}, \code{c()} of constants, \code{NA}, \code{val()}, and \code{col()}. \code{na.rm = TRUE} in
+\code{sum()}, \code{mean()}, \code{median()}, \code{min()}, \code{max()}, and \code{count()} leaves out the
+missing cells of a table's column.
 
 Rules follow the strict semantics of R8's rule language, which is the
 same in every host: \code{==} is strict equality, so an integer never equals a
 string; strings do not order; a string compared with a date or a date-time is
 one, \code{"2020-01-31"} or \code{"2020-01-31T12:00:00Z"}; a division by zero, \code{sqrt()} of
-a negative number, and \code{log()} of a number that is not positive are errors;
-\code{sum()} is the exact sum, rounded once, and \code{mean()} that sum over the count; and
+a negative number, \code{log()} of a number that is not positive, and a negative
+number to a power that is not a whole number are errors; \code{sum()} is the exact
+sum, rounded once, and \code{mean()} that sum over the count; and
 \code{==} on a double computed by arithmetic, \code{sum()}, or \code{mean()} is a declaration
 error, since rounding makes it inexact: \code{abs(sum(p) - 1) <= 1e-9} states the
 tolerance.
@@ -137,6 +146,8 @@ the R functions of the same name, or exist in rules only:\tabular{ll}{
    \code{&}, \verb{\|} \tab The same as \code{&&} and \verb{\|\|}. \cr
    \code{==} \tab Strict equality: values of different types are never equal. \cr
    \code{val(expr)} \tab The value of the R expression \code{expr}, a constant. \cr
+   \code{col(expr)} \tab The field or column whose name the R expression \code{expr} gives; \code{col()} is the column that \code{\link[=r8map]{r8map()}} maps. \cr
+   \code{n()}, \code{count(cond)} \tab The rows of a table or of a group, and those where \code{cond} is true. \cr
 }
 }
 

@@ -12,14 +12,16 @@
 //! its rule is false, and a filter keeps the rows where it is true.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell as Flag, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::compile::{Cell, Expr, Op, RowScope, Rows, RuleError, compile_rows};
+use super::compile::{Cell, Expr, Op, RowScope, Rows, RuleError, compile_rows, reads_cell_outside};
 use super::diagnose::{Diagnosis, comparison, shown_scalar};
-use super::eval::{LOGARITHM, ROOT, Reduce, Scalar, ZERO, extreme, unwrap_option};
+use super::eval::{LOGARITHM, POWER, ROOT, Scalar, ZERO, extreme, median, power, unwrap_option};
+use super::exact::{BoundedSum, ExactSum};
 use super::{Shown, TypeLookup};
 use crate::access::{Access, Factor, Json, Read, is_na_real};
 use crate::emit::number_text;
@@ -31,22 +33,23 @@ use crate::problem::Segment;
 const BLOCK: usize = 1024;
 
 /// The states of a cell without a value: missing, and the errors.
-const MISSING: u8 = 1;
-const STATES: [&str; 5] = ["", "", ZERO, ROOT, LOGARITHM];
+pub(super) const MISSING: u8 = 1;
+pub(super) const STATES: [&str; 6] = ["", "", ZERO, ROOT, LOGARITHM, POWER];
 const ZERO_STATE: u8 = 2;
 const ROOT_STATE: u8 = 3;
 const LOG_STATE: u8 = 4;
+const POWER_STATE: u8 = 5;
 
 /// The logical of a cell in state `s`: 0 is false and 1 true, so that the
 /// result of an `and` without a false operand, and of an `or` without a true
 /// one, is the greatest.
-const fn stated(s: u8) -> u8 {
+pub(super) const fn stated(s: u8) -> u8 {
     s + 1
 }
-const NA: u8 = stated(MISSING);
+pub(super) const NA: u8 = stated(MISSING);
 
 /// A missing number, a `NaN`.
-const NA_NUMBER: f64 = f64::from_bits(crate::abi::NA_DOUBLE_BITS);
+pub(super) const NA_NUMBER: f64 = f64::from_bits(crate::abi::NA_DOUBLE_BITS);
 
 /// A row whose rule is an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +133,7 @@ impl RowRule {
         if rows == 0 {
             return Ok(out);
         }
-        let eval = Eval::new(&self.rows, table, rows)?;
+        let eval = Eval::new(&self.rows, table, rows, None)?;
         for lo in (0..rows).step_by(BLOCK) {
             let hi = (lo + BLOCK).min(rows);
             for (i, &v) in eval.holds(&self.rows, lo, hi)?.iter().enumerate() {
@@ -164,7 +167,7 @@ impl RowRule {
             ));
         }
         let mut error: Option<RowError> = None;
-        let eval = Eval::new(&self.rows, table, rows)?;
+        let eval = Eval::new(&self.rows, table, rows, None)?;
         for lo in (0..rows).step_by(BLOCK) {
             let hi = (lo + BLOCK).min(rows);
             let found = eval.holds(&self.rows, lo, hi)?;
@@ -232,7 +235,7 @@ impl RowRule {
         if rows == 0 {
             return Ok(out);
         }
-        let eval = Eval::new(&self.rows, table, rows)?;
+        let eval = Eval::new(&self.rows, table, rows, None)?;
         let by_row =
             reads_row(&self.rows.invariant) || self.rows.when.as_ref().is_some_and(reads_row);
         let last = if by_row { rows } else { 1 };
@@ -286,7 +289,7 @@ impl RowRule {
     /// The values that the rule reads in the row `row`, and the computed
     /// operands of the comparison that it tests.
     pub fn diagnose<'a, A: Access<'a>>(&self, table: A, rows: usize, row: usize) -> Diagnosis {
-        match Eval::new(&self.rows, table, rows) {
+        match Eval::new(&self.rows, table, rows, None) {
             Ok(eval) => self.diagnosis(&eval, row),
             Err(_) => Diagnosis::default(),
         }
@@ -440,11 +443,11 @@ pub fn choose_rows<'a, A: Access<'a>>(
 }
 
 /// The states of the cells of a block; `None` where each has a value.
-type States = Option<Vec<u8>>;
+pub(super) type States = Option<Vec<u8>>;
 
 /// What the instants of a block are.
-#[derive(Clone, Copy, PartialEq)]
-enum Instant {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Instant {
     Date,
     DateTime,
 }
@@ -459,13 +462,13 @@ impl Instant {
 }
 
 /// The numbers of a block; `NaN` is missing.
-enum Numbers<'a> {
+pub(super) enum Numbers<'a> {
     Host(&'a [f64]),
     Own(Vec<f64>),
 }
 
 impl Numbers<'_> {
-    fn all(&self) -> &[f64] {
+    pub(super) fn all(&self) -> &[f64] {
         match self {
             Numbers::Host(x) => x,
             Numbers::Own(x) => x,
@@ -474,7 +477,7 @@ impl Numbers<'_> {
 }
 
 /// The cells of one expression in a block of rows.
-enum Block<'e, 'a> {
+pub(super) enum Block<'e, 'a> {
     /// Logicals, by `stated()`.
     Bool(Vec<u8>),
     /// The number of a cell whose state is missing is `NaN`.
@@ -512,7 +515,7 @@ impl<'e, 'a> Block<'e, 'a> {
     }
 
     /// The logicals of a condition.
-    fn logicals(self, n: usize) -> Result<Vec<u8>, String> {
+    pub(super) fn logicals(self, n: usize) -> Result<Vec<u8>, String> {
         match self {
             Block::Bool(x) => Ok(x),
             Block::One(Scalar::Bool(b)) => Ok(vec![u8::from(b); n]),
@@ -532,7 +535,7 @@ impl<'e, 'a> Block<'e, 'a> {
     }
 
     /// The text of cell `i`, `Err` its state.
-    fn text(&self, i: usize) -> Result<&str, u8> {
+    pub(super) fn text(&self, i: usize) -> Result<&str, u8> {
         match self {
             Block::Text(x, s) => match s.as_ref().map_or(0, |s| s[i]) {
                 0 => Ok(&x[i]),
@@ -546,7 +549,7 @@ impl<'e, 'a> Block<'e, 'a> {
     }
 
     /// The instant of cell `i`, `Err` its state.
-    fn time(&self, i: usize) -> Result<i64, u8> {
+    pub(super) fn time(&self, i: usize) -> Result<i64, u8> {
         match self {
             Block::Time(x, s, _) => match s.as_ref().map_or(0, |s| s[i]) {
                 0 => Ok(x[i]),
@@ -745,12 +748,96 @@ enum Column<'a, A> {
     Absent,
 }
 
+/// The rows of a table in groups, which the order of their keys numbers from
+/// 0.
+#[derive(Debug, Clone)]
+pub struct Groups {
+    /// The group of each row.
+    pub ids: Vec<u32>,
+    /// The number of groups.
+    pub count: usize,
+    /// The first row of each group.
+    pub first: Vec<u32>,
+    /// The number of rows of each group.
+    sizes: Vec<u32>,
+    /// The rows of each group in order, made when a median asks for them:
+    /// those of group `k` are `rows[starts[k]..starts[k + 1]]`.
+    order: std::sync::OnceLock<(Vec<u32>, Vec<u32>)>,
+}
+
+impl Groups {
+    /// The groups of `ids`, which number `count` groups from 0, each with a
+    /// row.
+    pub fn new(ids: Vec<u32>, count: usize) -> Groups {
+        let mut sizes = vec![0u32; count];
+        let mut first = vec![u32::MAX; count];
+        for (r, &k) in ids.iter().enumerate() {
+            let k = k as usize;
+            if sizes[k] == 0 {
+                first[k] = r as u32;
+            }
+            sizes[k] += 1;
+        }
+        Groups {
+            ids,
+            count,
+            first,
+            sizes,
+            order: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The rows of group `k`, in order.
+    pub fn rows_of(&self, k: usize) -> &[u32] {
+        let (starts, rows) = self.order.get_or_init(|| {
+            let mut starts = vec![0u32; self.count + 1];
+            for k in 0..self.count {
+                starts[k + 1] = starts[k] + self.sizes[k];
+            }
+            let mut next = starts[..self.count].to_vec();
+            let mut rows = vec![0u32; self.ids.len()];
+            for (r, &k) in self.ids.iter().enumerate() {
+                rows[next[k as usize] as usize] = r as u32;
+                next[k as usize] += 1;
+            }
+            (starts, rows)
+        });
+        &rows[starts[k] as usize..starts[k + 1] as usize]
+    }
+
+    /// The number of rows of each group.
+    pub fn sizes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.sizes.iter().map(|&n| n as usize)
+    }
+}
+
+/// The values of an aggregate for each group, or for the table.
+pub(super) enum Values {
+    Numbers(Vec<f64>),
+    Times(Vec<i64>, Instant),
+}
+
+/// An aggregate's value for each group, and its state, 0 where it has a value.
+pub(super) struct Aggregated {
+    pub(super) values: Values,
+    pub(super) states: Vec<u8>,
+}
+
+/// The groups above which a sum keeps a bounded sum of each group, and sums
+/// exactly only the groups whose bound does not decide the rounding: above
+/// them, one exact sum for each group leaves the cache.
+const BOUNDED_ABOVE: usize = 2048;
+
 /// The columns of a table, and the results of the aggregates over them.
-struct Eval<'a, A> {
+pub(super) struct Eval<'a, A> {
     columns: Vec<Column<'a, A>>,
     rows: usize,
-    /// Each aggregate's value, or its state.
-    aggregates: Vec<Result<Scalar, u8>>,
+    /// The groups of the rows, if they are in groups.
+    groups: Option<Arc<Groups>>,
+    /// Each aggregate's value for each group, or for the table.
+    aggregates: Vec<Aggregated>,
+    /// The rows of a block are groups, whose cells are the aggregates'.
+    over_groups: Flag<bool>,
     /// By the address of a comparison with literals, what it is for each level
     /// of the factor compared.
     levels: RefCell<HashMap<usize, Vec<u8>>>,
@@ -759,11 +846,61 @@ struct Eval<'a, A> {
     met: RefCell<HashMap<usize, Vec<(usize, u8)>>>,
 }
 
+/// The values of an aggregate as its rows are read.
+struct Acc {
+    op: Op,
+    skip: bool,
+    least: bool,
+    /// The cells with a value, of each group.
+    count: Vec<u64>,
+    sums: Vec<ExactSum>,
+    bounded: Vec<BoundedSum>,
+    extremes: Vec<f64>,
+    states: Vec<u8>,
+    /// The value of each row, for a gathered aggregate: `NaN` where it has
+    /// none.
+    by_row: Vec<f64>,
+}
+
+impl Acc {
+    /// A missing cell of group `k`, which `skip` leaves out, or an error.
+    fn note(&mut self, k: usize, s: u8) {
+        if s > MISSING || !self.skip {
+            self.states[k] = self.states[k].max(s);
+        }
+    }
+
+    /// A value of group `k`, of the row `r` for a gathered aggregate.
+    fn push(&mut self, k: usize, x: f64, r: Option<usize>) {
+        // A bounded sum counts its numbers.
+        if !self.bounded.is_empty() {
+            self.bounded[k].add(x);
+            return;
+        }
+        self.count[k] += 1;
+        match self.op {
+            Op::Sum | Op::Mean => self.sums[k].add(x),
+            Op::Count => {}
+            Op::Min | Op::Max => self.extremes[k] = extreme(self.least, self.extremes[k], x),
+            _ => {
+                if let Some(r) = r {
+                    self.by_row[r] = x;
+                }
+            }
+        }
+    }
+}
+
 /// The strings that a comparison with literals keeps the result of.
 const MET: usize = 4096;
 
 impl<'a, A: Access<'a>> Eval<'a, A> {
-    fn new(of: &Rows, table: A, rows: usize) -> Result<Self, String> {
+    pub(super) fn new(
+        of: &Rows,
+        table: A,
+        rows: usize,
+        groups: Option<Arc<Groups>>,
+    ) -> Result<Self, String> {
         let columns = of
             .cells
             .iter()
@@ -772,22 +909,67 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
         let mut eval = Eval {
             columns,
             rows,
+            groups,
             aggregates: Vec::with_capacity(of.aggregates),
+            over_groups: Flag::new(false),
             levels: RefCell::default(),
             met: RefCell::default(),
         };
-        let mut found = Vec::with_capacity(of.aggregates);
+        let mut found: Vec<(usize, Op, &[Expr], bool)> = Vec::with_capacity(of.aggregates);
         aggregates(&of.invariant, &mut found);
         if let Some(w) = &of.when {
             aggregates(w, &mut found);
         }
         // One within the operand of another comes before it.
-        found.sort_by_key(|(at, _, _)| *at);
-        for (_, op, operands) in found {
-            let v = eval.aggregate(op, operands)?;
+        found.sort_by_key(|(at, _, _, _)| *at);
+        for (_, op, operands, skip) in found {
+            let v = eval.aggregate(op, operands, skip)?;
             eval.aggregates.push(v);
         }
         Ok(eval)
+    }
+
+    /// The number of groups: 1 for rows without groups.
+    pub(super) fn group_count(&self) -> usize {
+        self.groups.as_ref().map_or(1, |g| g.count)
+    }
+
+    /// Evaluates blocks whose rows are groups, or rows of the table.
+    pub(super) fn set_over_groups(&self, on: bool) {
+        self.over_groups.set(on);
+    }
+
+    /// The text of the row `r` of the column `k` of strings, `None` where it
+    /// is missing.
+    pub(super) fn text_at(&self, k: usize, r: usize) -> Option<String> {
+        let Column::Character(a) = &self.columns[k] else {
+            return None;
+        };
+        let mut out = None;
+        a.each_character_in(r, r + 1, |_, t| {
+            if let Ok(Some(t)) = t {
+                out = Some(t.into_owned());
+            }
+        });
+        out
+    }
+
+    /// The integers of the column `k`, where the host holds them as one
+    /// array, `i32::MIN` missing.
+    pub(super) fn integers(&self, k: usize) -> Option<&'a [i32]> {
+        match &self.columns[k] {
+            Column::Integer(_, Some(x)) if x.len() >= self.rows => Some(x),
+            _ => None,
+        }
+    }
+
+    /// The host's keys of the strings of the column `k` from the row `lo`, of
+    /// which equal ones have equal texts, where the host has them.
+    pub(super) fn text_keys(&self, k: usize, lo: usize, out: &mut [usize]) -> bool {
+        match &self.columns[k] {
+            Column::Character(a) => a.text_keys(lo, out),
+            _ => false,
+        }
     }
 
     fn column(c: &Cell, a: A) -> Column<'a, A> {
@@ -838,7 +1020,7 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
     }
 
     /// The cells of column `k` in the rows `lo..hi`.
-    fn cells(&self, k: usize, lo: usize, hi: usize) -> Block<'_, 'a> {
+    pub(super) fn cells(&self, k: usize, lo: usize, hi: usize) -> Block<'_, 'a> {
         let n = hi - lo;
         match &self.columns[k] {
             Column::Absent => Block::Nothing(MISSING),
@@ -938,73 +1120,271 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
         }
     }
 
-    /// The value of an aggregate, or its state.
-    fn aggregate(&self, op: Op, operands: &[Expr]) -> Result<Result<Scalar, u8>, String> {
-        let mut state = 0u8;
-        let mut reduce = Reduce::new(op);
-        let mut time: Option<(i64, Instant)> = None;
+    /// The value of an aggregate for each group, or for the table, and its
+    /// state. An operand that reads no cell outside an aggregate has one
+    /// value for each group, which counts once.
+    fn aggregate(&self, op: Op, operands: &[Expr], skip: bool) -> Result<Aggregated, String> {
+        let g = self.group_count();
+        let groups = self.groups.clone();
+        let group = |r: usize| groups.as_ref().map_or(0, |x| x.ids[r] as usize);
+        if op == Op::N {
+            let counts = match &groups {
+                Some(x) => x.sizes().map(|n| n as f64).collect(),
+                None => vec![self.rows as f64],
+            };
+            return Ok(Aggregated {
+                values: Values::Numbers(counts),
+                states: vec![0; g],
+            });
+        }
+        let gather = op == Op::Median;
+        let summed = matches!(op, Op::Sum | Op::Mean);
         let least = op == Op::Min;
+        let mut acc = Acc {
+            op,
+            skip,
+            least,
+            count: vec![0; g],
+            sums: if summed && g <= BOUNDED_ABOVE {
+                vec![ExactSum::default(); g]
+            } else {
+                Vec::new()
+            },
+            bounded: if summed && g > BOUNDED_ABOVE {
+                vec![BoundedSum::default(); g]
+            } else {
+                Vec::new()
+            },
+            extremes: vec![
+                if least {
+                    f64::INFINITY
+                } else {
+                    f64::NEG_INFINITY
+                };
+                g
+            ],
+            states: vec![0; g],
+            by_row: if gather {
+                vec![f64::NAN; self.rows]
+            } else {
+                Vec::new()
+            },
+        };
+        let mut times: Option<(Vec<i64>, Instant)> = None;
         for e in operands {
-            for lo in (0..self.rows).step_by(BLOCK) {
+            let once = !reads_cell_outside(e);
+            let (n_rows, at_group): (usize, bool) =
+                if once { (g, true) } else { (self.rows, false) };
+            self.over_groups.set(at_group);
+            for lo in (0..n_rows).step_by(BLOCK) {
                 crate::progress::tick_block();
-                let hi = (lo + BLOCK).min(self.rows);
+                let hi = (lo + BLOCK).min(n_rows);
                 let n = hi - lo;
-                let b = self.block(e, lo, hi)?;
-                if let Some(of) = b.instant() {
-                    for i in 0..n {
-                        match b.time(i) {
-                            Ok(t) => {
-                                time = Some(match time {
-                                    None => (t, of),
-                                    Some((s, of)) => (if least { s.min(t) } else { s.max(t) }, of),
-                                })
-                            }
-                            Err(s) => state = state.max(s),
+                let b = self.block(e, lo, hi);
+                let b = match b {
+                    Ok(b) => b,
+                    Err(m) => {
+                        self.over_groups.set(false);
+                        return Err(m);
+                    }
+                };
+                let key = |i: usize| if at_group { lo + i } else { group(lo + i) };
+                if op == Op::Count {
+                    let x = b.logicals(n)?;
+                    for (i, &v) in x.iter().enumerate() {
+                        match v {
+                            1 => acc.push(key(i), 0.0, None),
+                            0 => {}
+                            v => acc.note(key(i), v - 1),
                         }
                     }
                     continue;
                 }
-                // One value for every row is one value.
-                let once = matches!(b, Block::One(_));
-                let (x, states) = b.numbers(n)?;
-                if let Some(s) = states {
-                    state = s.iter().copied().fold(state, u8::max);
-                }
-                match x {
-                    Operand::Many(xs) => {
-                        if xs.iter().any(|x| x.is_nan()) {
-                            state = state.max(MISSING);
-                        } else {
-                            xs.iter().for_each(|&x| reduce.push(x));
+                if let Some(of) = b.instant() {
+                    let (ts, _) = times.get_or_insert_with(|| {
+                        (vec![if least { i64::MAX } else { i64::MIN }; g], of)
+                    });
+                    for i in 0..n {
+                        match b.time(i) {
+                            Ok(t) => {
+                                let k = key(i);
+                                acc.count[k] += 1;
+                                ts[k] = if least { ts[k].min(t) } else { ts[k].max(t) };
+                            }
+                            Err(s) => acc.note(key(i), s),
                         }
                     }
-                    Operand::One(x) if x.is_nan() => state = state.max(MISSING),
-                    Operand::One(x) => reduce.push(x),
+                    continue;
                 }
-                if once {
-                    break;
+                let (x, st) = b.numbers(n)?;
+                for i in 0..n {
+                    let k = key(i);
+                    let s = st.as_ref().map_or(0, |s| s[i]);
+                    let v = match x {
+                        Operand::Many(xs) => xs[i],
+                        Operand::One(v) => v,
+                    };
+                    if s != 0 {
+                        acc.note(k, s);
+                    } else if v.is_nan() {
+                        acc.note(k, MISSING);
+                    } else {
+                        acc.push(k, v, (!at_group).then_some(lo + i));
+                    }
                 }
             }
+            self.over_groups.set(false);
         }
-        if state != 0 {
-            return Ok(Err(state));
+        if !acc.bounded.is_empty() {
+            for (c, b) in acc.count.iter_mut().zip(&acc.bounded) {
+                *c = b.count();
+            }
         }
-        Ok(Ok(match time {
-            Some((t, of)) => of.scalar(t),
-            None => reduce.finish()?,
-        }))
+        let Acc {
+            count,
+            sums,
+            bounded,
+            extremes,
+            mut states,
+            by_row,
+            ..
+        } = acc;
+        let missing_where_none = |values: &mut Vec<f64>, states: &mut Vec<u8>| {
+            for k in 0..g {
+                if count[k] == 0 && states[k] == 0 {
+                    states[k] = MISSING;
+                    values[k] = NA_NUMBER;
+                }
+            }
+        };
+        if let Some((mut ts, of)) = times {
+            for k in 0..g {
+                if count[k] == 0 && states[k] == 0 {
+                    states[k] = MISSING;
+                }
+                if states[k] != 0 {
+                    ts[k] = i64::MIN;
+                }
+            }
+            return Ok(Aggregated {
+                values: Values::Times(ts, of),
+                states,
+            });
+        }
+        let mut values: Vec<f64> = match op {
+            Op::Count => count.iter().map(|&c| c as f64).collect(),
+            Op::Min | Op::Max => {
+                let mut v = extremes;
+                missing_where_none(&mut v, &mut states);
+                v
+            }
+            Op::Sum | Op::Mean if !bounded.is_empty() => {
+                let mut v = vec![0.0; g];
+                // The groups whose bound does not decide the rounding, each
+                // with its exact sum.
+                let mut exact: Vec<u32> = vec![u32::MAX; g];
+                let mut again: Vec<ExactSum> = Vec::new();
+                for k in 0..g {
+                    match bounded[k].value() {
+                        Some(x) => v[k] = x,
+                        None if states[k] == 0 => {
+                            exact[k] = again.len() as u32;
+                            again.push(ExactSum::default());
+                        }
+                        None => {}
+                    }
+                }
+                if !again.is_empty() {
+                    self.each_number(&operands[0], |k, x| {
+                        if exact[k] != u32::MAX {
+                            again[exact[k] as usize].add(x);
+                        }
+                    })?;
+                    for k in 0..g {
+                        if exact[k] != u32::MAX {
+                            v[k] = again[exact[k] as usize].value();
+                        }
+                    }
+                }
+                if op == Op::Mean {
+                    for k in 0..g {
+                        v[k] /= count[k] as f64;
+                    }
+                    missing_where_none(&mut v, &mut states);
+                }
+                v
+            }
+            Op::Sum | Op::Mean => {
+                let mut v: Vec<f64> = sums.iter().map(ExactSum::value).collect();
+                if op == Op::Mean {
+                    for k in 0..g {
+                        v[k] /= count[k] as f64;
+                    }
+                    missing_where_none(&mut v, &mut states);
+                }
+                v
+            }
+            _ => {
+                // The median: the rows of each group, gathered in order.
+                let rows_of = |k: usize| -> &[u32] {
+                    match &groups {
+                        Some(x) => x.rows_of(k),
+                        None => &[],
+                    }
+                };
+                let whole = groups.is_none();
+                let all: Vec<u32> = if whole {
+                    (0..self.rows as u32).collect()
+                } else {
+                    Vec::new()
+                };
+                let mut v = vec![0.0; g];
+                let mut cells: Vec<f64> = Vec::new();
+                for k in 0..g {
+                    if states[k] != 0 {
+                        continue;
+                    }
+                    let rows = if whole { &all[..] } else { rows_of(k) };
+                    cells.clear();
+                    cells.extend(
+                        rows.iter()
+                            .map(|&r| by_row[r as usize])
+                            .filter(|x| !x.is_nan()),
+                    );
+                    v[k] = if cells.is_empty() {
+                        NA_NUMBER
+                    } else {
+                        median(std::mem::take(&mut cells))
+                    };
+                }
+                missing_where_none(&mut v, &mut states);
+                v
+            }
+        };
+        for k in 0..g {
+            if states[k] != 0 {
+                values[k] = NA_NUMBER;
+            }
+        }
+        Ok(Aggregated {
+            values: Values::Numbers(values),
+            states,
+        })
     }
 
     /// The cells of `e` in the rows `lo..hi`.
-    fn block<'e>(&'e self, e: &'e Expr, lo: usize, hi: usize) -> Result<Block<'e, 'a>, String> {
+    pub(super) fn block<'e>(
+        &'e self,
+        e: &'e Expr,
+        lo: usize,
+        hi: usize,
+    ) -> Result<Block<'e, 'a>, String> {
         let n = hi - lo;
         match e {
+            Expr::Lit(Scalar::Null) => Ok(Block::Nothing(MISSING)),
             Expr::Lit(s) => Ok(Block::One(s.clone())),
             Expr::Cell(k) => Ok(self.cells(*k, lo, hi)),
-            Expr::Aggregate { at, .. } => Ok(match &self.aggregates[*at] {
-                Ok(v) => Block::One(v.clone()),
-                Err(s) => Block::Nothing(*s),
-            }),
+            Expr::Aggregate { at, .. } => Ok(self.aggregated(&self.aggregates[*at], lo, hi)),
             Expr::And(parts) | Expr::Or(parts) => {
                 let decides = u8::from(matches!(e, Expr::Or(_)));
                 let mut out = vec![1 - decides; n];
@@ -1058,6 +1438,67 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             Expr::If(parts) => self.choice(parts, lo, hi),
             Expr::Op(op, args) => self.operation(e, *op, args, lo, hi),
             _ => Err("the expression reads a whole field".to_string()),
+        }
+    }
+
+    /// Calls `f` with the group and the number of each row of `e` that has
+    /// one.
+    fn each_number(&self, e: &Expr, mut f: impl FnMut(usize, f64)) -> Result<(), String> {
+        for lo in (0..self.rows).step_by(BLOCK) {
+            crate::progress::tick_block();
+            let hi = (lo + BLOCK).min(self.rows);
+            let b = self.block(e, lo, hi)?;
+            let (x, st) = b.numbers(hi - lo)?;
+            for i in 0..hi - lo {
+                let v = match x {
+                    Operand::Many(xs) => xs[i],
+                    Operand::One(v) => v,
+                };
+                if st.as_ref().is_none_or(|s| s[i] == 0) && !v.is_nan() {
+                    f(
+                        self.groups.as_ref().map_or(0, |g| g.ids[lo + i] as usize),
+                        v,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The cells of an aggregate in the rows `lo..hi`: its one value for rows
+    /// without groups, the value of each row's group, or, over groups, the
+    /// value of each group.
+    fn aggregated<'e>(&'e self, a: &'e Aggregated, lo: usize, hi: usize) -> Block<'e, 'a> {
+        let states = |at: &mut dyn Iterator<Item = usize>| -> States {
+            let s: Vec<u8> = at.map(|k| a.states[k]).collect();
+            s.iter().any(|&x| x != 0).then_some(s)
+        };
+        let over = self.over_groups.get();
+        match (&self.groups, over) {
+            (None, false) => match (&a.values, a.states[0]) {
+                (_, s) if s != 0 => Block::Nothing(s),
+                (Values::Numbers(v), _) => Block::One(Scalar::Num(v[0])),
+                (Values::Times(t, of), _) => Block::One(of.scalar(t[0])),
+            },
+            (_, true) => match &a.values {
+                Values::Numbers(v) => {
+                    Block::Number(Numbers::Own(v[lo..hi].to_vec()), states(&mut (lo..hi)))
+                }
+                Values::Times(t, of) => Block::Time(t[lo..hi].to_vec(), states(&mut (lo..hi)), *of),
+            },
+            (Some(g), false) => {
+                let ids = &g.ids[lo..hi];
+                let st = states(&mut ids.iter().map(|&k| k as usize));
+                match &a.values {
+                    Values::Numbers(v) => Block::Number(
+                        Numbers::Own(ids.iter().map(|&k| v[k as usize]).collect()),
+                        st,
+                    ),
+                    Values::Times(t, of) => {
+                        Block::Time(ids.iter().map(|&k| t[k as usize]).collect(), st, *of)
+                    }
+                }
+            }
         }
     }
 
@@ -1232,6 +1673,30 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
                     out.into_iter().map(Cow::Owned).collect(),
                     states,
                 ))
+            }
+            Op::Pow => {
+                let (x, s) = one(0)?.numbers(n).map(|(x, s)| (x.each(n, |v| v), s))?;
+                let (y, t) = one(1)?.numbers(n).map(|(y, t)| (y.each(n, |v| v), t))?;
+                let mut states = merge(s, t);
+                let mut out = vec![0.0; n];
+                let mut failed: Vec<(usize, &str)> = Vec::new();
+                for i in 0..n {
+                    out[i] = match power(x[i], y[i]) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            failed.push((i, e));
+                            f64::NAN
+                        }
+                    };
+                }
+                for (i, e) in failed {
+                    let st = if e == ZERO { ZERO_STATE } else { POWER_STATE };
+                    let s = &mut states.get_or_insert_with(|| vec![0; n])[i];
+                    if *s <= MISSING && !x[i].is_nan() && !y[i].is_nan() {
+                        *s = st;
+                    }
+                }
+                Ok(Block::Number(Numbers::Own(out), states))
             }
             Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod | Op::Min | Op::Max
                 if args.len() > 1 =>
@@ -1551,11 +2016,16 @@ fn instants<'e, 'a>(x: Vec<i64>, is_date: bool) -> Block<'e, 'a> {
 }
 
 /// The aggregates of `e`, with their places.
-fn aggregates<'e>(e: &'e Expr, out: &mut Vec<(usize, Op, &'e [Expr])>) {
+pub(super) fn aggregates<'e>(e: &'e Expr, out: &mut Vec<(usize, Op, &'e [Expr], bool)>) {
     match e {
-        Expr::Aggregate { op, operands, at } => {
+        Expr::Aggregate {
+            op,
+            operands,
+            at,
+            skip,
+        } => {
             operands.iter().for_each(|x| aggregates(x, out));
-            out.push((*at, *op, operands));
+            out.push((*at, *op, operands, *skip));
         }
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
             xs.iter().for_each(|x| aggregates(x, out));

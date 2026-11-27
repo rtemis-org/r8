@@ -902,7 +902,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
                 });
                 Some(Ok(Ok(Scalar::Bool(all))))
             }
-            (Op::Sum | Op::Mean | Op::Min | Op::Max, [Val::R(a, Some(ft))]) => {
+            (Op::Sum | Op::Mean | Op::Median | Op::Min | Op::Max, [Val::R(a, Some(ft))]) => {
                 let FieldType::Vec { element, .. } = unwrap_option(ft) else {
                     return None;
                 };
@@ -1209,6 +1209,8 @@ pub(super) struct Reduce {
     sum: ExactSum,
     n: u64,
     extreme: f64,
+    /// The numbers of a median.
+    values: Vec<f64>,
 }
 
 impl Reduce {
@@ -1222,6 +1224,7 @@ impl Reduce {
             } else {
                 f64::NEG_INFINITY
             },
+            values: Vec::new(),
         }
     }
     pub fn name(&self) -> &'static str {
@@ -1229,6 +1232,7 @@ impl Reduce {
             Op::Sum => "sum",
             Op::Mean => "mean",
             Op::Min => "min",
+            Op::Median => "median",
             _ => "max",
         }
     }
@@ -1236,9 +1240,10 @@ impl Reduce {
         self.n += 1;
         match self.op {
             Op::Sum | Op::Mean => self.sum.add(x),
+            Op::Median => self.values.push(x),
             _ if x.is_nan() || self.extreme.is_nan() => self.extreme = f64::NAN,
-            Op::Min => self.extreme = self.extreme.min(x),
-            _ => self.extreme = self.extreme.max(x),
+            Op::Min => self.extreme = extreme(true, self.extreme, x),
+            _ => self.extreme = extreme(false, self.extreme, x),
         }
     }
     pub fn finish(self) -> Result<Scalar, String> {
@@ -1248,20 +1253,56 @@ impl Reduce {
         Ok(Scalar::Num(match self.op {
             Op::Sum => self.sum.value(),
             Op::Mean => self.sum.value() / self.n as f64,
+            Op::Median => median(self.values),
             _ => self.extreme,
         }))
     }
 }
 
-/// The least or the greatest of numbers, `NaN` where one is.
+/// The middle number of `xs`, or the mean of the two middle ones: their sum,
+/// rounded once, over 2. `xs` is not empty and holds no `NaN`.
+pub(super) fn median(mut xs: Vec<f64>) -> f64 {
+    let n = xs.len();
+    let mid = n / 2;
+    let (_, &mut hi, _) = xs.select_nth_unstable_by(mid, f64::total_cmp);
+    if n % 2 == 1 {
+        return hi;
+    }
+    let lo = xs[..mid].iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    (lo + hi) / 2.0
+}
+
+/// The least or the greatest of numbers, `NaN` where one is; `-0` is below
+/// `0`, so that the result does not depend on the order of the numbers.
 pub(super) fn extreme(least: bool, a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
-    } else if least {
-        a.min(b)
+    } else if (a.total_cmp(&b) == Ordering::Less) == least {
+        a
     } else {
-        a.max(b)
+        b
     }
+}
+
+/// A negative number to a power that is not a whole number.
+pub(super) const POWER: &str = "a negative number to a power that is not a whole number";
+
+/// `x^y`, or the error of a power without a real value: a negative number to
+/// a power that is not a whole number, and 0 to a negative power, a division
+/// by zero. `x^2` is `x * x`, rounded once; another power is the platform's
+/// `pow()`.
+pub(super) fn power(x: f64, y: f64) -> Result<f64, &'static str> {
+    if x < 0.0 && y.is_finite() && y.fract() != 0.0 {
+        return Err(POWER);
+    }
+    if x == 0.0 && y < 0.0 {
+        return Err(ZERO);
+    }
+    // The square is one rounded product, as in R.
+    if y == 2.0 {
+        return Ok(x * x);
+    }
+    Ok(x.powf(y))
 }
 
 /// Division by zero.
@@ -1288,7 +1329,7 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             })
         }
         Op::Not => bool_(!want_bool(&a[0], "the operand of `!`")?),
-        Op::Sum | Op::Mean | Op::Min | Op::Max
+        Op::Sum | Op::Mean | Op::Median | Op::Min | Op::Max
             if a.len() == 1 && matches!(a[0], Scalar::Array(_)) =>
         {
             let Scalar::Array(xs) = &a[0] else {
@@ -1300,7 +1341,7 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             }
             r.finish()
         }
-        Op::Sum | Op::Mean => Err(format!(
+        Op::Sum | Op::Mean | Op::Median => Err(format!(
             "`{}` takes an array of numbers, found {}",
             Reduce::new(op).name(),
             a[0].shown()
@@ -1314,6 +1355,11 @@ fn apply(op: Op, a: &[Scalar]) -> Result<Scalar, String> {
             x => Ok(Scalar::Num(x.ln())),
         },
         Op::Exp => Ok(Scalar::Num(want_number(&a[0], "exp")?.exp())),
+        Op::Pow => {
+            let (x, y) = (want_number(&a[0], "^")?, want_number(&a[1], "^")?);
+            power(x, y).map(Scalar::Num).map_err(str::to_string)
+        }
+        Op::N | Op::Count => Err("`n` and `count` read the rows of a table".to_string()),
         Op::Abs => Ok(Scalar::Num(want_number(&a[0], "abs")?.abs())),
         Op::Nchar => match &a[0] {
             Scalar::Str(s) => Ok(Scalar::Num(s.chars().count() as f64)),

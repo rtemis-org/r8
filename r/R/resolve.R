@@ -22,7 +22,7 @@ pending_fields <- function(x) {
 #'
 #' Fills the absent fields of type `option()` that a struct declares with a
 #' fill policy: a field of `field(option(T), context = TRUE)` from
-#' `context`, and a field of `field(option(T), compute = expr)` from its
+#' `context`, and a field of `field(option(T), compute = calc(expr))` from its
 #' expression over the other fields, in dependency order. The result is a new
 #' value, validated; `x` is unchanged. A context field missing from
 #' `context` stays absent.
@@ -36,7 +36,7 @@ pending_fields <- function(x) {
 #' op <- options(r8.namespace = "demo")
 #' Dose <- new_struct("Dose", fields = list(
 #'   mg = field(option(type_double()), context = TRUE, unit = "mg"),
-#'   g = field(option(type_double()), compute = mg / 1000, unit = "g")
+#'   g = field(option(type_double()), compute = calc(mg / 1000), unit = "g")
 #' ))
 #' r8_resolve(Dose(), context = list(mg = 250))$g
 #' options(op)

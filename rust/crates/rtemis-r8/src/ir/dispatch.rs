@@ -477,6 +477,9 @@ pub enum Selection {
     Stale(QualifiedName),
 }
 
+/// The open table of no declared column, which every table is.
+pub const RAVEN: &str = "R8::Raven";
+
 /// The chain of an argument in one position: the R8 type and its
 /// ancestors, or a host object's class vector. A type position matches an
 /// R8 chain only and a host-class position a host chain only, so an object
@@ -518,9 +521,15 @@ pub fn select(
                 if lookup.is_stale(t) {
                     return Selection::Stale(t.clone());
                 }
+                // Every table is a raven, the open table of no declared
+                // column: an impl for `R8::Raven` applies to a value of
+                // any table type, after one for the value's own type.
+                let raven = QualifiedName::parse(RAVEN).expect("a qualified name");
+                let table = matches!(lookup.find(t), Some(crate::ir::TypeDef::Table(_)));
                 Chain::Type(
                     std::iter::once(t.clone())
                         .chain(lookup.ancestors(t))
+                        .chain((table && *t != raven).then_some(raven))
                         .collect(),
                 )
             }

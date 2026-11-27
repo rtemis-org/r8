@@ -117,6 +117,16 @@ new_function <- function(
   namespace <- declaring_namespace(env)
   claim_namespace(namespace, declaring_package(env))
   qname <- paste0(namespace, "::", name)
+  # Before the declaration, so that a refused body leaves none.
+  in_rust <- rust_body(fn)
+  if (in_rust && !nzchar(declaring_package(env))) {
+    r8_abort(
+      "A function whose body is rust() is declared in a package, whose Rust code holds the body; `",
+      qname,
+      "()` is declared outside a package.",
+      class = "r8_declaration_error"
+    )
+  }
   p <- function_params(fn)
   ir <- list(
     name = name,
@@ -147,15 +157,6 @@ new_function <- function(
       fixed = TRUE
     )
     declaration_failed(qname, problems, list(rules = ir[["rules"]]))
-  }
-  in_rust <- rust_body(fn)
-  if (in_rust && !nzchar(declaring_package(env))) {
-    r8_abort(
-      "A function whose body is rust() is declared in a package, whose Rust code holds the body; `",
-      qname,
-      "()` is declared outside a package.",
-      class = "r8_declaration_error"
-    )
   }
   check_base_names(environment(fn), name)
   f <- make_function(qname, fn, stored_defaults(p), ir, rust = in_rust)
@@ -383,8 +384,10 @@ rust <- function() {
 # %% rust_body ----
 #' Whether a function's body is `rust()`
 #'
-#' The body is `rust()` or `R8::rust()`, alone or in braces. A call of `rust`
-#' anywhere else in the body is a declaration error.
+#' The body is `rust()` or `R8::rust()`, alone or in braces, where `rust` alone
+#' names R8's function, or no function, in the environment of `fn`. A call of
+#' R8's `rust()` anywhere else in the body, outside `quote()`, `bquote()`, a
+#' function, and a formula, is a declaration error.
 #'
 #' @param fn Function: The function given to `new_function()`.
 #'
@@ -393,10 +396,15 @@ rust <- function() {
 #' @keywords internal
 #' @noRd
 rust_body <- function(fn) {
-  heads <- list(
-    quote(rust),
-    quote(R8::rust),
-    call(":::", as.name("R8"), as.name("rust"))
+  # `rust` alone is R8's when it names R8's function, or no function, where
+  # `fn` is defined; a package may define a function of its own of that name.
+  bare <- get0("rust", envir = environment(fn), mode = "function")
+  heads <- c(
+    list(
+      quote(R8::rust),
+      call(":::", as.name("R8"), as.name("rust"))
+    ),
+    if (is.null(bare) || identical(bare, rust)) list(quote(rust))
   )
   is_rust <- function(e) {
     is.call(e) && any(vapply(heads, identical, NA, e[[1L]]))
@@ -414,6 +422,13 @@ rust_body <- function(fn) {
     }
     if (is_rust(e)) {
       return(TRUE)
+    }
+    # Code that is not evaluated as the body's own.
+    if (
+      is.name(e[[1L]]) &&
+        as.character(e[[1L]]) %in% c("quote", "bquote", "function", "~")
+    ) {
+      return(FALSE)
     }
     any(vapply(as.list(e), calls_rust, NA))
   }

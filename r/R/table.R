@@ -55,8 +55,8 @@
 #'
 #' `as.matrix()`, `t()`, `is.na()`, `summary()`, `duplicated()`, and other functions of
 #' R read a table as a data frame; `unique()`, `split()`, and `na.omit()` give tables.
-#' `cbind()`, `transform()`, `within()`, `subset()`, and `sort()` are errors that name
-#' the function of R8. `merge()` gives a data frame.
+#' `cbind()`, `transform()`, `within()`, `subset()`, `sort()`, and `aggregate()` are
+#' errors that name the function of R8. `merge()` gives a data frame.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -763,6 +763,15 @@ xtfrm.r8_table <- function(x) {
 }
 
 #' @export
+aggregate.r8_table <- function(x, ...) {
+  r8_abort(
+    "r8summarize(x, list(name = calc(...)), by) summarizes the groups of a ",
+    "table's rows.",
+    class = "r8_value_error"
+  )
+}
+
+#' @export
 subset.r8_table <- function(x, ...) {
   r8_abort(
     "r8_filter(x, rule(...)) chooses rows of a table, and r8_select(x, names) columns.",
@@ -783,13 +792,23 @@ subset.r8_table <- function(x, ...) {
 #' with the rules that read it. A table without a column that its type requires is a
 #' [Raven], with the units and descriptions of the declaration.
 #'
+#' @section Computed columns:
+#' An entry of `columns` that is a [calc()] is computed in Rust over the rows of
+#' `x` as given, before any column changes. An aggregate in it is over all rows,
+#' or, with `by`, over the rows of each row's group: `r8_set(x, list(n_ward =
+#' calc(n())), by = "ward")` writes the size of each row's ward into the row.
+#'
 #' @section Units and descriptions:
-#' A column that is added or replaced has none. A renamed column keeps its own.
+#' A column that is added or replaced from a vector has none; one computed by
+#' [calc()] has the unit that the expression infers, and no description. A renamed
+#' column keeps its own.
 #'
 #' @param x A value of a table.
 #' @param columns `r8_set()`: Named list, data frame, or table: The columns, each a
-#'   vector with one element for each row. `r8_drop()`: Character or numeric: The
-#'   columns, by name or by position, each once.
+#'   vector with one element for each row, or a [calc()]. `r8_drop()`: Character or
+#'   numeric: The columns, by name or by position, each once.
+#' @param by Optional Character or numeric: The key columns whose groups the
+#'   aggregates of [calc()] entries are over, by name or by position.
 #' @param from Character or numeric: The columns, by name or by position, each once.
 #' @param to Character: The new names, one for each column of `from`.
 #'
@@ -798,11 +817,12 @@ subset.r8_table <- function(x, ...) {
 #' @examples
 #' r <- Raven(weight = c(60, 82), height = c(1.62, 1.80))
 #' r <- r8_set(r, list(bmi = r$weight / r$height^2))
+#' r <- r8_set(r, list(bmi2 = calc(weight / height^2)))
 #' r <- r8_rename(r, "weight", "mass")
 #' r8_drop(r, "height")
 #'
 #' @export
-r8_set <- function(x, columns) {
+r8_set <- function(x, columns, by = NULL) {
   check_table(x)
   if (is_value(columns) && inherits(columns, "r8_table")) {
     columns <- as.list(columns)
@@ -850,6 +870,31 @@ r8_set <- function(x, columns) {
   if (length(columns) == 0L) {
     return(x)
   }
+  computed <- vapply(columns, inherits, NA, "r8_calc")
+  if (!is.null(by)) {
+    by <- key_columns(x, by, substitute(by), parent.frame())
+    if (!any(computed)) {
+      r8_abort(
+        "`by` groups the rows that the aggregates of calc() entries read: ",
+        "r8_set(x, list(n = calc(n())), by = \"ward\").",
+        class = "r8_argument_error"
+      )
+    }
+  }
+  units <- NULL
+  if (any(computed)) {
+    res <- table_result(
+      r8_table_calc(
+        x,
+        lapply(columns[computed], function(e) unclass(e)[["expr"]]),
+        by %||% character(),
+        FALSE
+      ),
+      x
+    )
+    columns[computed] <- res[["columns"]]
+    units <- stats::setNames(res[["units"]], keys[computed])
+  }
   res <- .Call(wrap__r8_set_fields, x, keys, columns)
   if (!is_value(res)) {
     if (inherits(res, "r8_problems")) {
@@ -866,8 +911,434 @@ r8_set <- function(x, columns) {
     }
     fields_refused(x, keys, columns, res)
   }
-  res
+  with_units(res, units)
 } # /R8::r8_set
+
+
+# %% with_units ----
+#' A table with the units of computed columns
+#'
+#' @param x A value of a table.
+#' @param units Named character: The unit of each computed column, `NA` for
+#'   none; `NULL` for no computed column.
+#'
+#' @return `x`, with the units of its extra columns that `units` names.
+#'
+#' @keywords internal
+#' @noRd
+with_units <- function(x, units) {
+  if (is.null(units)) {
+    return(x)
+  }
+  about <- r8_table_columns(x)
+  extra <- about[["name"]][!about[["declared"]]]
+  units <- units[!is.na(units) & names(units) %in% extra]
+  if (length(units) == 0L) {
+    return(x)
+  }
+  r8_annotate(x, unit = units)
+} # /R8::with_units
+
+
+# %% key_columns ----
+#' The names of the key columns of a table
+#'
+#' @param x A value of a table.
+#' @param by Character or numeric: The keys, by name or by position.
+#' @param e The unevaluated argument.
+#' @param env Environment: Where the function is called.
+#'
+#' @return Character: The names, each once.
+#'
+#' @keywords internal
+#' @noRd
+key_columns <- function(x, by, e, env) {
+  by <- table_columns_arg(x, by, e, env, "by")
+  if (is.numeric(by)) {
+    if (any(by > length(names(x))) || any(by != round(by))) {
+      r8_abort(
+        "`by` holds positions from 1 to ",
+        length(names(x)),
+        ".",
+        class = "r8_argument_error"
+      )
+    }
+    by <- names(x)[by]
+  }
+  if (anyNA(by) || anyDuplicated(by) > 0L) {
+    r8_abort(
+      "`by` names each key column once.",
+      class = "r8_argument_error"
+    )
+  }
+  by
+} # /R8::key_columns
+
+
+# %% r8summarize ----
+#' Summarize the groups of a table's rows
+#'
+#' `r8summarize()` gives one row for each group of the rows of `x` by the key
+#' columns `by`, or one row for the table without them: the keys, then the value
+#' of each expression of `columns` for the group. Each expression is a [calc()] that
+#' reads the cells of its columns within aggregates, evaluated in Rust: `n()`,
+#' `count()`, `sum()`, `mean()`, `median()`, `min()`, and `max()`, alone or in an
+#' expression, such as `sum(w * x) / sum(w)`.
+#'
+#' @section Groups:
+#' A group is one combination of the values of the keys that a row has. Groups are
+#' in the order of [r8_sort()] of the keys: ascending, missing last, strings by code
+#' point, and factors by level. A missing key is one group; a level of a factor
+#' without a row has no group. The key columns keep their kinds, levels, units, and
+#' descriptions.
+#'
+#' @section Missing cells:
+#' An aggregate over a missing cell is missing, as in R; `na.rm = TRUE` in the
+#' aggregate leaves the missing cells out: `mean(sbp, na.rm = TRUE)`.
+#'
+#' @param x A value of a table.
+#' @param columns Named list of [calc()] values: The summaries, by the names of the
+#'   result's columns.
+#' @param by Optional Character or numeric: The key columns, by name or by
+#'   position.
+#'
+#' @return A [Raven] of the key columns and the summaries, with the units that
+#'   the expressions infer.
+#'
+#' @examples
+#' v <- Raven(
+#'   ward = c("ICU", "ICU", "Cardiology"),
+#'   sbp = c(142, NA, 128)
+#' )
+#' r8summarize(
+#'   v,
+#'   list(n = calc(n()), sbp = calc(mean(sbp, na.rm = TRUE))),
+#'   by = "ward"
+#' )
+#'
+#' @export
+r8summarize <- function(x, columns, by = NULL) {
+  check_table(x)
+  check_calcs(columns, "r8summarize")
+  by <- if (is.null(by)) {
+    character()
+  } else {
+    key_columns(x, by, substitute(by), parent.frame())
+  }
+  res <- table_result(
+    r8_table_calc(
+      x,
+      lapply(columns, function(e) unclass(e)[["expr"]]),
+      by,
+      TRUE
+    ),
+    x
+  )
+  summary_table(
+    x,
+    by,
+    res[["first"]],
+    res[["columns"]],
+    res[["units"]],
+    names(columns)
+  )
+} # /R8::r8summarize
+
+
+# %% summary_table ----
+#' The raven of a summary
+#'
+#' @param x A value of a table.
+#' @param by Character: The key columns.
+#' @param first Integer: The first row of each group, or `NULL` without keys.
+#' @param columns List: The computed vectors.
+#' @param units Character: Their units, `NA` for none.
+#' @param names Character: Their names.
+#'
+#' @return A [Raven].
+#'
+#' @keywords internal
+#' @noRd
+summary_table <- function(x, by, first, columns, units, names) {
+  clash <- intersect(names, by)
+  if (length(clash) > 0L) {
+    r8_abort(
+      "The summary `",
+      clash[[1L]],
+      "` is named as a key column; name it otherwise.",
+      class = "r8_argument_error"
+    )
+  }
+  names(columns) <- names
+  keys <- if (length(by) > 0L) {
+    as.list(table_result(r8_table_get(x, first, by), x))
+  }
+  out <- Raven(c(keys, columns))
+  # The facts of the keys, and the units of the summaries.
+  facts <- list()
+  if (length(by) > 0L) {
+    about <- r8_table_columns(x)
+    for (k in match(by, about[["name"]])) {
+      f <- list(
+        unit = about[["unit"]][[k]],
+        description = about[["description"]][[k]]
+      )
+      f <- f[!vapply(f, function(v) is.na(v) || !nzchar(v), NA)]
+      if (length(f) > 0L) {
+        facts[[about[["name"]][[k]]]] <- f
+      }
+    }
+  }
+  for (k in which(!is.na(units))) {
+    facts[[names[[k]]]] <- list(unit = units[[k]])
+  }
+  if (length(facts) == 0L) {
+    return(out)
+  }
+  table_result(r8_table_set_facts(out, facts), out)
+} # /R8::summary_table
+
+
+# %% r8map ----
+# R8 declares the generic when it loads (`declare_map()`).
+
+#' Map an expression or a typed function over columns
+#'
+#' `r8map(x, f, columns, by)` gives one row for each group of the rows of `x` by
+#' the key columns `by`, or one row for the table: the keys, then `f` of each column
+#' of `columns`, under the column's name. Without `columns`, every column that is
+#' not a key is mapped. `r8map()` is a generic of R8 that dispatches on `x` and on
+#' what `f` is: a method for [Raven] applies to every table.
+#'
+#' @section Typed functions:
+#' A typed function of R8 ([new_function()]), with a body in R or in Rust, is
+#' called on the cells of each column in each group, as a direct call is, and
+#' returns one value of its declared return type:
+#' `r8map(metrics, trimmed_mean, columns = metric_names, by = "param_combo_id")`.
+#' Its arguments are checked as those of a direct call: a group with a missing cell
+#' is an error unless the parameter's type is `option()`. Moving its body from R to
+#' Rust changes no call.
+#'
+#' @section Expressions:
+#' A [calc()] in which `col()` is the column mapped is evaluated in Rust, as the
+#' summaries of [r8summarize()] are: `r8map(metrics, calc(median(col())), by =
+#' "param_combo_id")`. Its results have the units that the expression infers.
+#'
+#' A plain R function is an error that names `new_function()`: `lapply(x[columns],
+#' f)` applies one to whole columns, and `split()` gives the groups' tables.
+#'
+#' @param x A value of a table.
+#' @param f A typed function of one column, or a [calc()] that reads `col()`.
+#' @param columns Optional Character or numeric: The columns mapped, by name or by
+#'   position, each once.
+#' @param by Optional Character or numeric: The key columns, by name or by
+#'   position.
+#'
+#' @return A [Raven] of the key columns and one column for each column mapped.
+#'
+#' @examples
+#' op <- options(r8.namespace = "demo")
+#' m <- Raven(
+#'   combo = c(1L, 1L, 2L, 2L),
+#'   auc = c(0.81, 0.79, 0.85, 0.88),
+#'   brier = c(0.16, 0.18, 0.14, 0.12)
+#' )
+#' r8map(m, calc(median(col())), by = "combo")
+#' spread <- new_function(
+#'   "spread",
+#'   function(x = arg_vec(type_double())) max(x) - min(x),
+#'   return_type = type_double()
+#' )
+#' r8map(m, spread, columns = "auc", by = "combo")
+#' options(op)
+#'
+#' @name r8map
+#' @export
+r8map <- NULL
+
+
+# %% declare_map ----
+#' Declare the generic r8map() and its methods for tables
+#'
+#' @param ns Environment: R8's namespace.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+declare_map <- function(ns) {
+  r8map <- generic(
+    "r8map",
+    params(x, f, columns = NULL, by = NULL),
+    description = "One row for each group: the keys, then `f` of each column.",
+    dispatch = c("x", "f")
+  )
+  implement(r8map, Raven, host_class("r8_calc")) <- map_calc
+  implement(r8map, Raven, host_class("r8_function")) <- map_typed
+  implement(r8map, Raven, host_class("function")) <- map_function
+  assign("r8map", r8map, envir = ns)
+  invisible(NULL)
+} # /R8::declare_map
+
+
+# %% map_columns ----
+#' The columns that a map maps
+#'
+#' @param x A value of a table.
+#' @param columns Character, numeric, or `NULL`: The columns.
+#' @param by Character: The key columns.
+#'
+#' @return Character: The names.
+#'
+#' @keywords internal
+#' @noRd
+map_columns <- function(x, columns, by) {
+  if (is.null(columns)) {
+    return(setdiff(names(x), by))
+  }
+  columns <- key_columns(x, columns, quote(columns), environment())
+  keyed <- intersect(columns, by)
+  if (length(keyed) > 0L) {
+    r8_abort(
+      "`",
+      keyed[[1L]],
+      "` is a key column and a column mapped.",
+      class = "r8_argument_error"
+    )
+  }
+  columns
+} # /R8::map_columns
+
+
+# %% map_calc ----
+#' The method of r8map() for a table and a calc()
+#'
+#' @keywords internal
+#' @noRd
+map_calc <- function(x, f, columns, by) {
+  by <- if (is.null(by)) {
+    character()
+  } else {
+    key_columns(x, by, quote(by), environment())
+  }
+  columns <- map_columns(x, columns, by)
+  exprs <- r8_calc_mapped(unclass(f)[["expr"]], columns)
+  if (inherits(exprs, "r8_refused")) {
+    r8_abort(exprs[["message"]], ".", class = "r8_value_error")
+  }
+  res <- table_result(r8_table_calc(x, exprs, by, TRUE), x)
+  summary_table(
+    x,
+    by,
+    res[["first"]],
+    res[["columns"]],
+    res[["units"]],
+    columns
+  )
+} # /R8::map_calc
+
+
+# %% map_typed ----
+#' The method of r8map() for a table and a typed function
+#'
+#' @keywords internal
+#' @noRd
+map_typed <- function(x, f, columns, by) {
+  by <- if (is.null(by)) {
+    character()
+  } else {
+    key_columns(x, by, quote(by), environment())
+  }
+  columns <- map_columns(x, columns, by)
+  if (length(by) > 0L) {
+    g <- table_result(r8_table_groups(x, by), x)
+    ids <- g[["ids"]]
+    first <- g[["first"]]
+  } else {
+    ids <- rep.int(1L, nrow(x))
+    first <- NULL
+  }
+  n_groups <- if (is.null(first)) 1L else length(first)
+  name <- attr(f, "r8_function", exact = TRUE) %||% "f"
+  # The keys of group `k`, for a message.
+  group_text <- function(k) {
+    if (is.null(first)) {
+      return("")
+    }
+    shown <- vapply(
+      by,
+      function(b) {
+        v <- x[[b]][[first[[k]]]]
+        paste0(
+          b,
+          " = ",
+          if (is.character(v) || is.factor(v)) {
+            if (is.na(v)) "NA" else paste0("\"", as.character(v), "\"")
+          } else {
+            format(v)
+          }
+        )
+      },
+      ""
+    )
+    paste0(" in the group ", paste(shown, collapse = ", "))
+  }
+  out <- lapply(columns, function(column) {
+    parts <- split(x[[column]], factor(ids, levels = seq_len(n_groups)))
+    values <- lapply(seq_along(parts), function(k) {
+      v <- withCallingHandlers(
+        f(parts[[k]]),
+        error = function(cnd) {
+          r8_abort(
+            "r8map(): `",
+            name,
+            "` of column `",
+            column,
+            "`",
+            group_text(k),
+            ": ",
+            conditionMessage(cnd),
+            class = "r8_value_error",
+            data = list(parent = cnd)
+          )
+        }
+      )
+      if (length(v) != 1L || !is.atomic(v)) {
+        r8_abort(
+          "r8map(): `",
+          name,
+          "` of column `",
+          column,
+          "`",
+          group_text(k),
+          " gives ",
+          length(v),
+          " values; a function that r8map() maps gives one.",
+          class = "r8_value_error"
+        )
+      }
+      v
+    })
+    do.call(c, values)
+  })
+  summary_table(x, by, first, out, rep(NA_character_, length(columns)), columns)
+} # /R8::map_typed
+
+
+# %% map_function ----
+#' The method of r8map() for a table and an R function
+#'
+#' @keywords internal
+#' @noRd
+map_function <- function(x, f, columns, by) {
+  r8_abort(
+    "r8map() maps a typed function of R8, declared with new_function(), or ",
+    "calc() with col(): r8map(x, calc(median(col())), by = \"g\"). ",
+    "lapply(x[columns], f) applies an R function to whole columns, and ",
+    "split() gives the groups' tables.",
+    class = "r8_value_error"
+  )
+} # /R8::map_function
 
 
 # %% r8_drop ----

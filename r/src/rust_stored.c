@@ -77,7 +77,8 @@ static void rust_stored_finalize(SEXP data1) {
   R_ClearExternalPtr(data1);
 }
 
-void r8_continue_unwind(void);
+void r8_compiled_enter(void);
+void r8_compiled_returned(R8Status status);
 
 // The fields of a value without a state, which a stream gave, or NULL.
 static SEXP fields_read(SEXP x) {
@@ -104,12 +105,11 @@ static SEXP read_field(SEXP x, R_xlen_t i) {
   SEXP names = VECTOR_ELT(R_ExternalPtrTag(data1), ID_NAMES);
   R8Error err = {{0}, {0}};
   SEXP value = R_NilValue;
+  r8_compiled_enter();
   R8Status status = vt->get_field(state, data1, CHAR(STRING_ELT(names, i)), &value, &err);
-  if (status == R8_UNWIND) {
-    // A jump of R that the codec's R8Api.protect caught: an interrupt stays
-    // an interrupt, and an error's message is written once.
-    r8_continue_unwind();
-  }
+  // A jump of R that the codec's R8Api.protect caught continues: an interrupt
+  // stays an interrupt, and an error's message is written once.
+  r8_compiled_returned(status);
   if (status != R8_OK) {
     Rf_error("%s [%s]", err.message, err.code);
   }

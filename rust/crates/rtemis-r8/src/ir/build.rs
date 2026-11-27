@@ -129,6 +129,23 @@ pub enum BuildError {
         /// The functions of the dialect.
         known: &'static str,
     },
+    /// A comparison with the missing constant.
+    MissingComparison {
+        /// The comparison, as the host writes it.
+        expr: String,
+    },
+    /// `na.rm` of an aggregate that is not `TRUE` or `FALSE`.
+    NaRm {
+        /// The aggregate.
+        function: String,
+    },
+    /// A named argument that a function of rules does not take.
+    RuleArgument {
+        /// The function.
+        function: String,
+        /// The argument's name.
+        argument: String,
+    },
     /// The default of a field of a named type that is not a value of an R8
     /// enum.
     DefaultNotValue,
@@ -221,6 +238,21 @@ impl fmt::Display for BuildError {
                     write!(f, "; the nearest is `{n}()`")?;
                 }
                 write!(f, ". Rules use {known}.")
+            }
+            BuildError::MissingComparison { expr } => write!(
+                f,
+                "`{expr}` compares with NA, which is missing for every value; is.na() tests a missing value."
+            ),
+            BuildError::NaRm { function } => write!(
+                f,
+                "`na.rm` of `{function}()` is TRUE or FALSE: {function}(x, na.rm = TRUE) leaves out the missing cells."
+            ),
+            BuildError::RuleArgument { function, argument } => {
+                if function == "mean" || function == "sum" || function == "median" || function == "min" || function == "max" || function == "count" {
+                    write!(f, "`{function}()` of rules takes `na.rm` and no argument `{argument}`.")
+                } else {
+                    write!(f, "`{function}()` of rules takes no argument `{argument}`.")
+                }
             }
             BuildError::DefaultNotValue => {
                 f.write_str("The default of a field of an R8 type is a value of that type.")

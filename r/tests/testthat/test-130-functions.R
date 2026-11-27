@@ -432,7 +432,23 @@ test_that("a body of rust() is the whole body, in a package", {
     fixed = TRUE,
     class = "r8_declaration_error"
   )
+  # A refused declaration leaves no function.
+  expect_null(r8_function_ir("fn_rust::f"))
+  expect_null(r8_function_ir("fn_rust::g"))
   expect_error(rust(), "called by itself", class = "r8_declaration_error")
+  # A function of another package of the name `rust`, and rust() in quoted code,
+  # are R code of the body.
+  own <- declare_in("fn_rust", {
+    rust <- function(x) x * 2
+    list(
+      calls = new_function("calls", function(x = arg_double()) rust(x)),
+      quoted = new_function("quoted", function(x = arg_double()) {
+        list(x, quote(R8::rust()))
+      })
+    )
+  })
+  expect_identical(own$calls(2), 4)
+  expect_identical(own$quoted(1)[[2L]], quote(R8::rust()))
   expect_false(rust_body(function(x) x))
   expect_true(rust_body(function(x) rust()))
   expect_true(rust_body(function(x) {
@@ -462,10 +478,14 @@ test_that("r8_rust_signature() writes the Rust function of a declaration", {
   text <- r8_rust_signature(level)
   expect_s3_class(text, "r8_rust_text")
   lines <- strsplit(text, "\n", fixed = TRUE)[[1L]]
-  expect_identical(lines[[1L]], "/// Holds a running sum between `lo` and `hi`.")
+  expect_identical(
+    lines[[1L]],
+    "/// Holds a running sum between `lo` and `hi`."
+  )
   expect_true("/// - lo <= hi" %in% lines)
   expect_true(
-    "/// `data` and `...` are R values, so this body runs in R alone." %in% lines
+    "/// `data` and `...` are R values, so this body runs in R alone." %in%
+      lines
   )
   expect_identical(
     lines[match("#[r8::function]", lines) + 0:9],

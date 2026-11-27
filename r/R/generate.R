@@ -1125,7 +1125,11 @@ render_field <- function(f, ns) {
     if (!is.null(f[["unit"]])) paste0("unit = ", deparse_string(f[["unit"]])),
     switch(
       f[["resolve"]][["policy"]] %||% "",
-      computed = paste0("compute = ", render_logic(f[["resolve"]][["expr"]])),
+      computed = paste0(
+        "compute = calc(",
+        render_logic(f[["resolve"]][["expr"]]),
+        ")"
+      ),
       context = "context = TRUE"
     ),
     if (isTRUE(f[["unique"]])) "unique = TRUE",
@@ -1425,6 +1429,10 @@ render_logic <- function(x) {
 logic_to_r <- function(x) {
   fail <- function() stop("no R form", call. = FALSE)
   to_r <- function(x) {
+    # The missing constant.
+    if (is.null(x)) {
+      return(NA)
+    }
     if (inherits(x, "r8_int64")) {
       return(as.call(list(
         call("::", as.name("R8"), as.name("int64")),
@@ -1477,6 +1485,26 @@ logic_to_r <- function(x) {
     }
     if (!is.list(operands) || !is.null(names(operands))) {
       operands <- list(operands)
+    }
+    # An aggregate of the cells that are not missing: `na.rm = TRUE`.
+    if (
+      length(operands) == 1L &&
+        is.list(operands[[1L]]) &&
+        identical(names(operands[[1L]]), "na_rm")
+    ) {
+      fn <- r_spelling()[op]
+      inner <- operands[[1L]][[1L]]
+      if (!is.list(inner) || !is.null(names(inner))) {
+        inner <- list(inner)
+      }
+      if (is.na(fn)) {
+        fail()
+      }
+      return(as.call(c(
+        as.name(unname(fn)),
+        lapply(inner, to_r),
+        list(na.rm = TRUE)
+      )))
     }
     if (op == "path") {
       parts <- if (is.list(operands)) operands else list(operands)

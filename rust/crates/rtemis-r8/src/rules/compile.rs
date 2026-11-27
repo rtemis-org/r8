@@ -109,6 +109,12 @@ pub enum Op {
     Sqrt,
     Log,
     Exp,
+    Pow,
+    Median,
+    /// `n()`: the rows of a table or of a group.
+    N,
+    /// `count(cond)`: the rows where the condition is true.
+    Count,
 }
 
 /// A column of the table whose rows an expression reads.
@@ -164,12 +170,14 @@ pub enum Expr {
     Op(Op, Vec<Expr>),
     /// A cell of the row: the column's place among those that the rule reads.
     Cell(usize),
-    /// `mean`, `sum`, `min`, or `max` over all rows of every operand; `at` is
-    /// its place among the rule's.
+    /// `mean`, `sum`, `median`, `min`, `max`, `n`, or `count` over all rows of
+    /// every operand, or over the rows of each group; `at` is its place among
+    /// the rule's. `skip` leaves out the missing cells (`na.rm = TRUE`).
     Aggregate {
         op: Op,
         operands: Vec<Expr>,
         at: usize,
+        skip: bool,
     },
     /// `is.null(x)`: a presence test, which does not count as a read.
     IsNull(Box<Expr>),
@@ -223,6 +231,19 @@ fn reads_cell(e: &Expr) -> bool {
         Expr::Cell(_) | Expr::Aggregate { .. } => true,
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => xs.iter().any(reads_cell),
         Expr::IsNa(x) | Expr::IsNull(x) => reads_cell(x),
+        _ => false,
+    }
+}
+
+/// Whether an expression reads a cell outside an aggregate.
+pub(crate) fn reads_cell_outside(e: &Expr) -> bool {
+    match e {
+        Expr::Cell(_) => true,
+        Expr::Aggregate { .. } => false,
+        Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
+            xs.iter().any(reads_cell_outside)
+        }
+        Expr::IsNa(x) | Expr::IsNull(x) => reads_cell_outside(x),
         _ => false,
     }
 }
@@ -327,6 +348,8 @@ fn evaluated(op: Operator) -> Option<(Op, std::ops::RangeInclusive<usize>)> {
         O::Sqrt => (Op::Sqrt, 1..=1),
         O::Log => (Op::Log, 1..=1),
         O::Exp => (Op::Exp, 1..=1),
+        O::Pow => (Op::Pow, 2..=2),
+        O::Median => (Op::Median, 1..=1),
         O::Var
         | O::Path
         | O::IsNa
@@ -339,7 +362,11 @@ fn evaluated(op: Operator) -> Option<(Op, std::ops::RangeInclusive<usize>)> {
         | O::Any
         | O::If
         | O::And
-        | O::Or => return None,
+        | O::Or
+        | O::N
+        | O::Count
+        | O::NaRm
+        | O::Col => return None,
     })
 }
 
@@ -796,8 +823,9 @@ impl Compiler<'_> {
         }
     }
 
-    /// `mean`, `sum`, `min`, or `max` in a rule that reads rows: over all rows
-    /// of every operand.
+    /// `mean`, `sum`, `median`, `min`, `max`, `n`, or `count` in a rule that
+    /// reads rows: over all rows of every operand, or over the rows of each
+    /// group. `na_rm` around the operands leaves out their missing cells.
     fn aggregate(
         &mut self,
         code: Op,
@@ -822,25 +850,78 @@ impl Compiler<'_> {
                 format!("a rule of a table reads one row, and `{op}` reads whole columns{cells}; a rule that filters takes it"),
             );
         }
-        let range = if many { 1..=usize::MAX } else { 1..=1 };
-        if !self.arity(op, args, range, path) {
+        // `na.rm = TRUE`: the operands within `na_rm`.
+        let (args, skip): (Vec<&Logic>, bool) = match args {
+            [
+                Logic::Call {
+                    op: Operator::NaRm,
+                    args: inner,
+                    ..
+                },
+            ] => {
+                if code == Op::N {
+                    return self.error(
+                        "rule_na_rm",
+                        path,
+                        "`n()` counts rows, and takes no `na.rm`".to_string(),
+                    );
+                }
+                (inner.iter().collect(), true)
+            }
+            _ => (args.to_vec(), false),
+        };
+        let path = &if skip {
+            format!("{path}/0/na_rm")
+        } else {
+            path.to_string()
+        };
+        let range = match code {
+            Op::N => 0..=0,
+            _ if many => 1..=usize::MAX,
+            _ => 1..=1,
+        };
+        if !self.arity(op, &args, range, path) {
             return (Expr::Lit(Scalar::Null), Ty::Any);
         }
-        let parts = self.operands(args, path);
+        let parts = self.operands(&args, path);
         if !self.errors.is_empty() {
             return (Expr::Lit(Scalar::Null), Ty::Any);
         }
-        if !parts.iter().any(|(e, _)| reads_cell(e)) {
+        if code != Op::N && !parts.iter().any(|(e, _)| reads_cell(e)) {
             return self.error(
                 "rule_aggregate",
                 path,
                 format!("`{op}` reads whole columns, and its operands read none"),
             );
         }
+        // An operand of one value for each group, such as `mean(x)`, is that
+        // value; `min()` and `max()` of several operands compare it with
+        // others.
+        if !many && code != Op::N && !reads_cell_outside(&parts[0].0) {
+            return self.error(
+                "rule_aggregate",
+                path,
+                format!(
+                    "`{op}` reads the cells of a column, and its operand is one value for the rows"
+                ),
+            );
+        }
         let dates = many
             && matches!(parts[0].1, Ty::Date | Ty::Posixct)
             && parts.iter().all(|(_, t)| *t == parts[0].1);
-        let ty = if dates {
+        let ty = if matches!(code, Op::N | Op::Count) {
+            if code == Op::Count {
+                self.expect_bool(
+                    &parts[0].1,
+                    &format!("{path}/0"),
+                    "the condition of `count`",
+                );
+            }
+            Ty::Number {
+                unit: None,
+                exact: true,
+            }
+        } else if dates {
             parts[0].1.clone()
         } else {
             let mut unit = unit_of(&parts[0].1).map(str::to_string);
@@ -854,7 +935,8 @@ impl Compiler<'_> {
             }
             Ty::Number {
                 unit,
-                exact: code != Op::Mean && parts.iter().all(|(_, t)| exact_of(t)),
+                exact: !matches!(code, Op::Mean | Op::Median)
+                    && parts.iter().all(|(_, t)| exact_of(t)),
             }
         };
         let at = self.aggregates;
@@ -864,6 +946,7 @@ impl Compiler<'_> {
                 op: code,
                 operands: parts.into_iter().map(|(e, _)| e).collect(),
                 at,
+                skip,
             },
             ty,
         )
@@ -978,6 +1061,9 @@ impl Compiler<'_> {
                 O::Sum => return self.aggregate(Op::Sum, op, args, aggregates, path),
                 O::Min => return self.aggregate(Op::Min, op, args, aggregates, path),
                 O::Max => return self.aggregate(Op::Max, op, args, aggregates, path),
+                O::Median => return self.aggregate(Op::Median, op, args, aggregates, path),
+                O::N => return self.aggregate(Op::N, op, args, aggregates, path),
+                O::Count => return self.aggregate(Op::Count, op, args, aggregates, path),
                 O::IsNull => {
                     return self.error(
                         "rule_type",
@@ -1007,6 +1093,27 @@ impl Compiler<'_> {
             }
         }
         match operator {
+            Operator::N | Operator::Count => {
+                return self.error(
+                    "rule_aggregate",
+                    path,
+                    format!("`{op}` counts the rows of a table, and a rule of a value has none"),
+                );
+            }
+            Operator::NaRm => {
+                return self.error(
+                    "rule_na_rm",
+                    path,
+                    "`na.rm = TRUE` leaves out the missing cells of the column that an aggregate reads, as in `mean(x, na.rm = TRUE)`".to_string(),
+                );
+            }
+            Operator::Col => {
+                return self.error(
+                    "rule_col",
+                    path,
+                    "`col()` is the column that `r8map()` maps; another expression names its columns, or `col(name)` for a name held in R".to_string(),
+                );
+            }
             Operator::Var => return self.var(args, path),
             Operator::Path => return self.path(args, path),
             Operator::IsNa => {
@@ -1133,7 +1240,27 @@ impl Compiler<'_> {
         if !self.arity(op, args, range, path) {
             return (Expr::Lit(Scalar::Null), Ty::Any);
         }
+        let before = self.errors.len();
         let mut parts = self.operands(args, path);
+        // In a table, a comparison with the missing constant is missing in
+        // every row; in a value, `null` is an absent field. An operand with an
+        // error compiles as the constant too.
+        if self.errors.len() == before
+            && matches!(self.names, Names::Columns { .. })
+            && matches!(
+                code,
+                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::In
+            )
+            && parts
+                .iter()
+                .any(|(e, _)| matches!(e, Expr::Lit(Scalar::Null)))
+        {
+            return self.error(
+                "rule_missing_constant",
+                path,
+                format!("`{op}` with `NA` is missing in every row; `is_na` tests a missing cell"),
+            );
+        }
         if matches!(
             code,
             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::In
@@ -1248,6 +1375,16 @@ impl Compiler<'_> {
                     exact: exact_of(&t[0]),
                 }
             }
+            // The unit of a power is not one of the field's.
+            Op::Pow => {
+                for (i, x) in t.iter().enumerate() {
+                    self.expect_number(x, &format!("{path}/{i}"), op);
+                }
+                Ty::Number {
+                    unit: None,
+                    exact: false,
+                }
+            }
             // The unit of a root or a logarithm is not one of the field's.
             Op::Sqrt | Op::Log | Op::Exp => {
                 self.expect_number(&t[0], &format!("{path}/0"), op);
@@ -1256,7 +1393,7 @@ impl Compiler<'_> {
                     exact: false,
                 }
             }
-            Op::Sum | Op::Mean => match &t[0] {
+            Op::Sum | Op::Mean | Op::Median => match &t[0] {
                 Ty::Array(e) => {
                     self.expect_number(e, &format!("{path}/0"), op);
                     match &**e {
@@ -1381,6 +1518,7 @@ impl Compiler<'_> {
                 }
                 Ty::Bool
             }
+            Op::N | Op::Count => num,
             Op::Nrow | Op::Ncol => {
                 if !matches!(t[0], Ty::Table { .. } | Ty::Matrix(_) | Ty::Any | Ty::Json) {
                     self.error(
@@ -1584,6 +1722,69 @@ pub fn compile_rows(
             when,
             cells: c.cells,
             aggregates: c.aggregates,
+        })
+    } else {
+        Err(c.errors)
+    }
+}
+
+/// An expression compiled against the columns of a table: a column of its
+/// rows, or of the groups of its rows where `summary`.
+pub struct Calc {
+    /// The expression, as `invariant`.
+    pub rows: Rows,
+    /// Its static type.
+    pub ty: Ty,
+}
+
+/// Compiles an expression that computes a column of a table. A summary reads
+/// cells within aggregates only. The paths of errors are into the
+/// expression.
+pub fn compile_calc(
+    logic: &Logic,
+    columns: &dyn RowScope,
+    lookup: &dyn TypeLookup,
+    summary: bool,
+) -> Result<Calc, Vec<RuleError>> {
+    let mut c = compiler(
+        Names::Columns {
+            columns,
+            aggregates: true,
+        },
+        lookup,
+    );
+    let (expr, ty) = c.compile(logic, "");
+    if c.errors.is_empty() {
+        if summary && reads_cell_outside(&expr) {
+            c.error(
+                "calc_summary",
+                "",
+                "a summary reads the cells of its columns within aggregates, such as `mean(x)`; `r8_set()` computes a column of every row".to_string(),
+            );
+        }
+        if !matches!(
+            ty,
+            Ty::Bool | Ty::Number { .. } | Ty::String | Ty::Date | Ty::Posixct | Ty::Any
+        ) {
+            c.error(
+                "calc_type",
+                "",
+                format!(
+                    "a computed column holds logicals, numbers, strings, dates, or date-times, and the expression gives {}",
+                    ty.describe()
+                ),
+            );
+        }
+    }
+    if c.errors.is_empty() {
+        Ok(Calc {
+            rows: Rows {
+                invariant: expr,
+                when: None,
+                cells: c.cells,
+                aggregates: c.aggregates,
+            },
+            ty,
         })
     } else {
         Err(c.errors)

@@ -143,6 +143,21 @@ operators! {
     Exp = "exp",
     /// `is_na`: the value is missing, or is `NaN`.
     IsNa = "is_na",
+    /// `^`: a power of a number.
+    Pow = "^",
+    /// `n`: the number of rows of a table, or of a group of its rows.
+    N = "n",
+    /// `count`: the number of rows of a table, or of a group, where a condition
+    /// is true.
+    Count = "count",
+    /// `median`: the middle number of a column, or the mean of the two middle
+    /// ones.
+    Median = "median",
+    /// `na_rm`: the cells of the operand of an aggregate that are not
+    /// missing, which R writes as the argument `na.rm = TRUE`.
+    NaRm = "na_rm",
+    /// `col`: the column that a map over columns gives an expression.
+    Col = "col",
 }
 
 /// A JSONLogic expression of the rule dialect, as declared.

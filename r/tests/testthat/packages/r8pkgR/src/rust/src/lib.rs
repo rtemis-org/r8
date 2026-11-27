@@ -222,5 +222,6 @@ r8::exports! {
         functions::level,
         functions::tally,
         functions::fraction,
+        functions::unwound,
     ],
 }

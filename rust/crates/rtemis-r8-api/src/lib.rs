@@ -196,10 +196,30 @@
 //!     format!("{}: {s}", label.unwrap_or("total"))
 //! }
 //!
+//! /// A name that a module of `std` has too, and a named lifetime.
+//! #[r8::function]
+//! fn log<'a>(x: &'a [f64], base: Option<f64>) -> Vec<f64> {
+//!     let b = base.unwrap_or(std::f64::consts::E);
+//!     x.iter().map(|v| v.log(b)).collect()
+//! }
+//!
+//! mod stats {
+//!     use rtemis_r8_api as r8;
+//!
+//!     /// A function of a module, which `functions` lists by its path.
+//!     #[r8::function]
+//!     pub fn spread(x: &[f64]) -> f64 {
+//!         let (lo, hi) = x.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| {
+//!             (a.min(*v), b.max(*v))
+//!         });
+//!         hi - lo
+//!     }
+//! }
+//!
 //! r8::exports! {
 //!     package = "demo",
 //!     namespace = "demo",
-//!     functions = [level, total],
+//!     functions = [level, total, log, stats::spread],
 //! }
 //! # fn main() {}
 //! ```

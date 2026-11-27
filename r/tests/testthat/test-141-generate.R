@@ -79,7 +79,7 @@ test_that("every field type renders as R that declares the same IR", {
         ),
         o = option(type_integer()),
         o_context = field(option(type_double()), context = TRUE),
-        o_computed = field(option(type_double()), compute = d * 2),
+        o_computed = field(option(type_double()), compute = calc(d * 2)),
         h = btree_map(type_double(), keys = type_character(pattern = "^k")),
         om = index_map(type_character()),
         p = P,

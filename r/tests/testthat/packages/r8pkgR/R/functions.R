@@ -54,3 +54,9 @@ fraction <- R8::new_function(
   function(part = R8::arg_double(), whole = R8::arg_double()) R8::rust(),
   return_type = R8::type_double(max = 1)
 )
+
+unwound <- R8::new_function(
+  "unwound",
+  function() R8::rust(),
+  return_type = R8::type_double()
+)

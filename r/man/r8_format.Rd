@@ -12,6 +12,8 @@
 \alias{print.r8_field}
 \alias{format.r8_rule}
 \alias{print.r8_rule}
+\alias{format.r8_calc}
+\alias{print.r8_calc}
 \alias{format.r8_variant}
 \alias{print.r8_variant}
 \alias{format.r8_params}
@@ -41,6 +43,10 @@
 \method{format}{r8_rule}(x, ...)
 
 \method{print}{r8_rule}(x, ...)
+
+\method{format}{r8_calc}(x, ...)
+
+\method{print}{r8_calc}(x, ...)
 
 \method{format}{r8_variant}(x, ...)
 

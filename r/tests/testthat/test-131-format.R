@@ -88,7 +88,7 @@ test_that("a field and a column print their type, default, and facts", {
   expect_identical(
     lines(field(
       option(type_double()),
-      compute = a / 2,
+      compute = calc(a / 2),
       unit = "g",
       sensitive = TRUE
     )),

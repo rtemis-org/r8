@@ -6,7 +6,7 @@
 \alias{r8_rename}
 \title{Change the columns of a table}
 \usage{
-r8_set(x, columns)
+r8_set(x, columns, by = NULL)
 
 r8_drop(x, columns)
 
@@ -16,8 +16,11 @@ r8_rename(x, from, to)
 \item{x}{A value of a table.}
 
 \item{columns}{\code{r8_set()}: Named list, data frame, or table: The columns, each a
-vector with one element for each row. \code{r8_drop()}: Character or numeric: The
-columns, by name or by position, each once.}
+vector with one element for each row, or a \code{\link[=calc]{calc()}}. \code{r8_drop()}: Character or
+numeric: The columns, by name or by position, each once.}
+
+\item{by}{Optional Character or numeric: The key columns whose groups the
+aggregates of \code{\link[=calc]{calc()}} entries are over, by name or by position.}
 
 \item{from}{Character or numeric: The columns, by name or by position, each once.}
 
@@ -38,14 +41,24 @@ with the rules that read it. A table without a column that its type requires is 
 \link{Raven}, with the units and descriptions of the declaration.
 }
 
+\section{Computed columns}{
+
+An entry of \code{columns} that is a \code{\link[=calc]{calc()}} is computed in Rust over the rows of
+\code{x} as given, before any column changes. An aggregate in it is over all rows,
+or, with \code{by}, over the rows of each row's group: \code{r8_set(x, list(n_ward = calc(n())), by = "ward")} writes the size of each row's ward into the row.
+}
+
 \section{Units and descriptions}{
 
-A column that is added or replaced has none. A renamed column keeps its own.
+A column that is added or replaced from a vector has none; one computed by
+\code{\link[=calc]{calc()}} has the unit that the expression infers, and no description. A renamed
+column keeps its own.
 }
 
 \examples{
 r <- Raven(weight = c(60, 82), height = c(1.62, 1.80))
 r <- r8_set(r, list(bmi = r$weight / r$height^2))
+r <- r8_set(r, list(bmi2 = calc(weight / height^2)))
 r <- r8_rename(r, "weight", "mass")
 r8_drop(r, "height")
 

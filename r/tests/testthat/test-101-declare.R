@@ -126,7 +126,7 @@ test_that("rules compile from R expressions to JSONLogic", {
       )
     )
   )
-  expect_error(compile(quote(median(x) > 1)), class = "r8_declaration_error")
+  expect_error(compile(quote(sd(x) > 1)), class = "r8_declaration_error")
   expect_error(compile(quote(x == NA)), class = "r8_declaration_error")
 })
 
@@ -319,7 +319,7 @@ test_that("a computed field compiles its expression", {
         dose_mg = field(type_double(), unit = "mg"),
         dose_g = field(
           option(type_double()),
-          compute = dose_mg / 1000,
+          compute = calc(dose_mg / 1000),
           unit = "g"
         )
       )
@@ -335,7 +335,7 @@ test_that("a computed field compiles its expression", {
           dose_mg = field(type_double(), unit = "mg"),
           dose_g = field(
             option(type_double()),
-            compute = dose_mg + 1,
+            compute = calc(dose_mg + 1),
             unit = "g"
           )
         )
@@ -579,7 +579,7 @@ test_that("field-type arguments are checked at their call, with the core's messa
     class = "r8_declaration_error"
   )
   expect_error(
-    field(option(type_logical()), compute = x + 1, context = TRUE),
+    field(option(type_logical()), compute = calc(x + 1), context = TRUE),
     "not both",
     class = "r8_declaration_error"
   )
@@ -798,7 +798,7 @@ test_that("a fill policy is a struct field's, of type option()", {
       "C",
       fields = list(
         mg = type_double(),
-        g = field(option(type_double()), compute = mg / 1000)
+        g = field(option(type_double()), compute = calc(mg / 1000))
       )
     )
     expect_identical(r8_resolve(C(mg = 500))$g, 0.5)

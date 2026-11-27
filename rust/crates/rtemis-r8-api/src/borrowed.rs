@@ -154,8 +154,8 @@ impl Borrowed for [bool] {
     }
 }
 
-/// The text of a string: the bytes of R's string where R holds it as UTF-8,
-/// or a translation.
+/// The text of a string: the bytes of R's string where it is ASCII or R marks
+/// it as UTF-8, or a translation.
 pub enum Text {
     /// The bytes of the R string, which the call's frame keeps alive.
     R(*const u8, usize),
@@ -164,7 +164,8 @@ pub enum Text {
 }
 
 unsafe extern "C" {
-    fn Rf_charIsUTF8(x: SEXP) -> c_int;
+    // R's C API since R 2.7.0.
+    fn Rf_getCharCE(x: SEXP) -> c_int;
     fn LENGTH(x: SEXP) -> c_int;
 }
 
@@ -184,10 +185,11 @@ impl Borrowed for str {
         if c == unsafe { sys::R_NaString } {
             return Err(invalid(name, Error::new("na_value", "the string is NA")));
         }
-        if unsafe { Rf_charIsUTF8(c) } != 0 {
-            let p = unsafe { sys::R_CHAR(c) }.cast::<u8>();
-            let n = unsafe { LENGTH(c) } as usize;
-            let bytes = unsafe { std::slice::from_raw_parts(p, n) };
+        let p = unsafe { sys::R_CHAR(c) }.cast::<u8>();
+        let n = unsafe { LENGTH(c) } as usize;
+        let bytes = unsafe { std::slice::from_raw_parts(p, n) };
+        // An ASCII string, and one that R marks as UTF-8, are their bytes.
+        if bytes.is_ascii() || unsafe { Rf_getCharCE(c) } == sys::CE_UTF8 {
             if std::str::from_utf8(bytes).is_ok() {
                 return Ok(Text::R(p, n));
             }

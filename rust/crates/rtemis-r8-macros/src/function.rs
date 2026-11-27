@@ -4,6 +4,7 @@
 
 use proc_macro2::{Ident, TokenStream as Tokens};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
+use syn::ext::IdentExt;
 use syn::spanned::Spanned;
 use syn::{Error, FnArg, Pat, Result, Type};
 
@@ -133,7 +134,7 @@ pub fn expand(args: &Args, mut item: syn::ItemFn) -> Result<Tokens> {
                         "a reference parameter is `&T` of a Rust-stored type `T`, `&[T]`, or `&str`",
                     ));
                 }
-                let elem = &r.elem;
+                let elem = unbound(r.elem.to_token_stream());
                 let field = quote! { <#elem as #api::rtemis_r8::derive::Encode>::field_type() };
                 if optional {
                     convert.push(quote! {
@@ -169,11 +170,13 @@ pub fn expand(args: &Args, mut item: syn::ItemFn) -> Result<Tokens> {
                 ));
             }
             ty => {
+                // A named lifetime of the signature is bound in neither the
+                // conversion nor the declaration.
+                let ty = unbound(ty.to_token_stream());
                 convert.push(quote! {
                     let #arg = unsafe { <#ty as #api::FromR>::from_arg(__r8_args[#k], #name) }?;
                 });
                 call_args.push(quote! { #arg });
-                let ty = unbound(ty.to_token_stream());
                 params.push(quote! {
                     #sign::param(#name, <#ty as #api::FromR>::param_type(), #facts)
                 });
@@ -194,7 +197,7 @@ pub fn expand(args: &Args, mut item: syn::ItemFn) -> Result<Tokens> {
         register.push(quote! { <#t as #api::IntoR>::register(__r8_set); });
     }
     let result = quote_spanned! { output =>
-        #api::IntoR::into_r(super::#ident(#(#call_args),*))
+        #api::IntoR::into_r(#ident(#(#call_args),*))
     };
     let desc = description(&item.attrs);
     let name_c = c_str(&r_name);
@@ -209,46 +212,57 @@ pub fn expand(args: &Args, mut item: syn::ItemFn) -> Result<Tokens> {
         syn::Visibility::Public(_) => quote! { pub },
         _ => quote! { pub(crate) },
     };
-    let module: Ident = ident.clone();
+    let cfg: Vec<_> = item
+        .attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg"))
+        .collect();
+    let row = row_name(&ident);
+    let call = format_ident!("__r8_call_{}", ident.unraw());
+    let register_fn = format_ident!("__r8_register_{}", ident.unraw());
     Ok(quote! {
         #item
 
-        /// The R8 row of the function of the same name, which `r8::exports!`
-        /// lists in `functions`.
+        #(#cfg)*
         #[doc(hidden)]
-        #[allow(non_snake_case)]
-        #visibility mod #module {
-            #[allow(unused_imports)]
-            use super::*;
-
-            unsafe extern "C" fn __r8_call(
-                _inputs: *const #api::rtemis_r8::abi::CallInputs,
-                args: *const #api::rtemis_r8::abi::Sexp,
-                nargs: usize,
-                result: *mut #api::rtemis_r8::abi::Sexp,
-                err: *mut #api::rtemis_r8::abi::Error,
-            ) -> #api::rtemis_r8::abi::Status {
-                unsafe {
-                    #api::call::function(args, nargs, #n_params, result, err, |__r8_args| {
-                        #(#convert)*
-                        #result
-                    })
-                }
+        unsafe extern "C" fn #call(
+            _inputs: *const #api::rtemis_r8::abi::CallInputs,
+            args: *const #api::rtemis_r8::abi::Sexp,
+            nargs: usize,
+            result: *mut #api::rtemis_r8::abi::Sexp,
+            err: *mut #api::rtemis_r8::abi::Error,
+        ) -> #api::rtemis_r8::abi::Status {
+            unsafe {
+                #api::call::function(args, nargs, #n_params, result, err, |__r8_args| {
+                    #(#convert)*
+                    #result
+                })
             }
+        }
 
-            fn __r8_register(__r8_set: &mut #api::rtemis_r8::rules::DocumentSet) {
-                #(#register)*
-            }
+        #(#cfg)*
+        #[doc(hidden)]
+        fn #register_fn(__r8_set: &mut #api::rtemis_r8::rules::DocumentSet) {
+            #(#register)*
+        }
 
-            /// The row of the function.
-            pub fn __r8_function() -> #api::FunctionRow {
-                #api::FunctionRow {
-                    name: #name_c,
-                    call: __r8_call,
-                    declaration: #sign::function(#r_name, #desc, ::std::vec![#(#params),*], #returns),
-                    register: __r8_register,
-                }
+        /// The R8 row of the function of the same name without the prefix,
+        /// which `r8::exports!` lists in `functions`.
+        #(#cfg)*
+        #[doc(hidden)]
+        #visibility fn #row() -> #api::FunctionRow {
+            #api::FunctionRow {
+                name: #name_c,
+                call: #call,
+                declaration: #sign::function(#r_name, #desc, ::std::vec![#(#params),*], #returns),
+                register: #register_fn,
             }
         }
     })
+}
+
+/// The name of the function that gives the R8 row of the function `ident`,
+/// which `r8::exports!` names for a path that ends in `ident`.
+pub(crate) fn row_name(ident: &Ident) -> Ident {
+    format_ident!("__r8_fn_{}", ident.unraw())
 }

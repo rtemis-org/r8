@@ -1,8 +1,9 @@
 //! The bodies of the typed functions that `R/functions.R` declares with
 //! `rust()`: `clip()` and `level()`, which call `levels`, a module without
 //! R8; `tally()`, of each borrowed parameter type, an R value, a default
-//! written in R, and `...`; and `fraction()`, which returns an error, panics,
-//! and returns a result that its return type refuses.
+//! written in R, and `...`; `fraction()`, which returns an error, panics,
+//! and returns a result that its return type refuses; and `unwound()`, which
+//! returns the error code of a jump of R without one.
 
 use rtemis_r8_api as r8;
 
@@ -59,4 +60,11 @@ pub fn fraction(part: f64, whole: f64) -> r8::Result<f64> {
         return Err(r8::Error::new("zero_whole", "`whole` is not 0"));
     }
     Ok(part / whole)
+}
+
+/// An error whose code is that of a jump of R that `R8Api.protect` caught,
+/// without one.
+#[r8::function]
+pub fn unwound() -> r8::Result<f64> {
+    Err(r8::Error::new("unwind", "no jump of R was caught"))
 }

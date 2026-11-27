@@ -30,9 +30,9 @@
 #'   differences.
 #' @param unit Optional Character: A unit code, by convention UCUM, such as
 #'   `"mg"`.
-#' @param compute Optional expression: For a field of type `option()`, its
-#'   value as an expression over the other fields, captured unevaluated and
-#'   written in the rule dialect, which `r8_resolve()` fills.
+#' @param compute Optional `r8_calc`: For a field of type `option()`, its
+#'   value as an expression over the other fields, a [calc()], which
+#'   `r8_resolve()` fills.
 #' @param context Logical: For a field of type `option()`, `r8_resolve(x,
 #'   context)` fills the value from `context`. At most one of `compute` and
 #'   `context` is given.
@@ -43,7 +43,7 @@
 #'
 #' @examples
 #' field(type_double(exclusive_min = 0), default = 1, description = "Cost.")
-#' field(option(type_double()), compute = dose_mg / 1000)
+#' field(option(type_double()), compute = calc(dose_mg / 1000))
 #' field(option(type_integer(min = 1L)), context = TRUE)
 #'
 #' @export
@@ -64,11 +64,48 @@ field <- function(
     description,
     sensitive,
     unit,
-    substitute(compute),
+    calc_call(substitute(compute), parent.frame(), "compute"),
     context,
     extensions
   ))
 } # /R8::field
+
+
+# %% calc_call ----
+#' The expression of a calc() argument
+#'
+#' @param e The unevaluated argument.
+#' @param env Environment: Where the function that takes it is called.
+#' @param arg Character: The argument's name, for the message.
+#'
+#' @return The R expression that the `calc()` value holds, or `NULL`.
+#'
+#' @keywords internal
+#' @noRd
+calc_call <- function(e, env, arg) {
+  if (is.null(e)) {
+    return(NULL)
+  }
+  given <- NULL
+  if (is.call(e) && is_rule_fn(e[[1L]], "calc")) {
+    given <- eval(e, env)
+  } else if (is.name(e)) {
+    given <- tryCatch(eval(e, env), error = function(cnd) NULL)
+  }
+  if (!inherits(given, "r8_calc")) {
+    r8_abort(
+      "`",
+      arg,
+      "` takes an expression of calc(): ",
+      arg,
+      " = calc(",
+      paste(deparse(e), collapse = " "),
+      ").",
+      class = "r8_declaration_error"
+    )
+  }
+  unclass(given)[["call"]]
+} # /R8::calc_call
 
 
 # %% column ----

@@ -177,6 +177,7 @@ pub(crate) fn with_field(
             &mut err,
         )
     };
+    codec_returned();
     if status != OK || new_state.is_null() {
         return Err(error_text(&err));
     }
@@ -286,6 +287,32 @@ fn error_text(err: &Error) -> String {
     format!("{} [{}]", report_text(&err.message), report_text(&err.code))
 }
 
+/// `r8_drop_unwind()` of `view.c`, which drops the jump of R that a package's
+/// `R8Api.protect` caught, set by `R_init_R8()`.
+static DROP_UNWIND: std::sync::atomic::AtomicPtr<()> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Receives `r8_drop_unwind()` from `R_init_R8()`.
+///
+/// # Safety
+///
+/// `drop` is that function.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn r8_set_drop_unwind(drop: *mut ()) {
+    DROP_UNWIND.store(drop, std::sync::atomic::Ordering::Release);
+}
+
+/// After a codec function that R8 calls from a Rust frame: a jump of R that the
+/// codec's `R8Api.protect` caught does not continue through Rust frames, so it
+/// is dropped, and the call reports it as the error `unwind`.
+fn codec_returned() {
+    let f = DROP_UNWIND.load(std::sync::atomic::Ordering::Acquire);
+    if !f.is_null() {
+        let f: unsafe extern "C" fn() = unsafe { std::mem::transmute::<*mut (), _>(f) };
+        unsafe { f() };
+    }
+}
+
 /// A state built by the codec from the fields of `fields`, a list in
 /// declaration order whose fields are validated and in their stored forms.
 pub(crate) fn from_fields(vt: *const Codec, fields: SEXP) -> Result<*mut c_void, String> {
@@ -299,6 +326,7 @@ pub(crate) fn from_fields(vt: *const Codec, fields: SEXP) -> Result<*mut c_void,
     let mut state: *mut c_void = std::ptr::null_mut();
     let mut err = blank();
     let status = unsafe { f(items.as_ptr(), items.len(), &mut state, &mut err) };
+    codec_returned();
     if status != OK || state.is_null() {
         return Err(error_text(&err));
     }
@@ -346,6 +374,7 @@ pub(crate) fn from_reader(
     let mut state: *mut c_void = std::ptr::null_mut();
     let mut err = blank();
     let status = unsafe { f(reader, root, &mut state, &mut err) };
+    codec_returned();
     if status != OK || state.is_null() {
         return Err(error_text(&err));
     }
@@ -390,6 +419,7 @@ pub(crate) fn from_variant(
             &mut err,
         )
     };
+    codec_returned();
     if status != OK || state.is_null() {
         return Err(error_text(&err));
     }

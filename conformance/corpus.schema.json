@@ -114,7 +114,10 @@
             "update",
             "filter",
             "check",
-            "call"
+            "call",
+            "calc",
+            "summarize",
+            "map"
           ]
         },
         "type": {
@@ -650,6 +653,307 @@
                   }
                 },
                 "unchecked": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/error"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "type",
+            "options"
+          ],
+          "properties": {
+            "op": {
+              "const": "calc"
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "columns": {
+                  "type": "object"
+                },
+                "by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "expect": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "columns": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "cells"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "logical",
+                          "integer",
+                          "double",
+                          "character",
+                          "date",
+                          "posixct"
+                        ]
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "cells": {
+                        "type": "array"
+                      }
+                    }
+                  }
+                },
+                "first": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "row_error": {
+                  "type": "object",
+                  "required": [
+                    "column",
+                    "row",
+                    "count"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "column": {
+                      "type": "string"
+                    },
+                    "row": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "key_error": {
+                  "type": "string"
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/error"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "type",
+            "options"
+          ],
+          "properties": {
+            "op": {
+              "const": "summarize"
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "columns": {
+                  "type": "object"
+                },
+                "by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "expect": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "columns": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "cells"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "logical",
+                          "integer",
+                          "double",
+                          "character",
+                          "date",
+                          "posixct"
+                        ]
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "cells": {
+                        "type": "array"
+                      }
+                    }
+                  }
+                },
+                "first": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "row_error": {
+                  "type": "object",
+                  "required": [
+                    "column",
+                    "row",
+                    "count"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "column": {
+                      "type": "string"
+                    },
+                    "row": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "key_error": {
+                  "type": "string"
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/error"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "type",
+            "options"
+          ],
+          "properties": {
+            "op": {
+              "const": "map"
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "f": true,
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "expect": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "columns": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "cells"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "logical",
+                          "integer",
+                          "double",
+                          "character",
+                          "date",
+                          "posixct"
+                        ]
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "cells": {
+                        "type": "array"
+                      }
+                    }
+                  }
+                },
+                "first": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "row_error": {
+                  "type": "object",
+                  "required": [
+                    "column",
+                    "row",
+                    "count"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "column": {
+                      "type": "string"
+                    },
+                    "row": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "key_error": {
+                  "type": "string"
+                },
+                "errors": {
                   "type": "array",
                   "items": {
                     "$ref": "#/$defs/error"

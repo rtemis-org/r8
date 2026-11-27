@@ -18,6 +18,7 @@ pub fn text(e: &Logic) -> String {
 /// `?Syntax`: a larger value binds more tightly.
 fn precedence(op: Operator, unary: bool) -> Option<u8> {
     Some(match op {
+        Operator::Pow => 9,
         Operator::Sub if unary => 8,
         Operator::In => 7,
         Operator::Mod => 7,
@@ -53,6 +54,7 @@ fn infix(op: Operator) -> Option<&'static str> {
         Operator::And => "&&",
         Operator::Or => "||",
         Operator::In => "%in%",
+        Operator::Pow => "^",
         _ => return None,
     })
 }
@@ -88,8 +90,17 @@ fn function(op: Operator) -> Option<&'static str> {
         Operator::Subset => "subset",
         Operator::NonIncreasing => "non_increasing",
         Operator::NonDecreasing => "non_decreasing",
+        Operator::N => "n",
+        Operator::Count => "count",
+        Operator::Median => "median",
+        Operator::Col => "col",
         _ => return None,
     })
+}
+
+/// Whether `e` is `na_rm` of one operand.
+fn is_na_rm(e: &Logic) -> bool {
+    matches!(e, Logic::Call { op: Operator::NaRm, args, .. } if args.len() == 1)
 }
 
 /// A field path as `a$b`, `.x` the element of an enclosing `all()` or
@@ -143,7 +154,7 @@ fn operand(e: &Logic, outer: u8, right: bool) -> String {
 
 fn write(e: &Logic) -> String {
     match e {
-        Logic::Null => "NULL".to_string(),
+        Logic::Null => "NA".to_string(),
         Logic::Bool(true) => "TRUE".to_string(),
         Logic::Bool(false) => "FALSE".to_string(),
         Logic::Number(n) => number(n),
@@ -166,6 +177,31 @@ fn write(e: &Logic) -> String {
                     parts.map_or_else(|| json(e), |p| p.join("$"))
                 }
                 (Operator::Not, 1) => format!("!{}", operand(&args[0], 3, false)),
+                // `^` groups from the right: `a^b^c` is `a^(b^c)`.
+                (Operator::Pow, 2) => {
+                    // R reads `-2^2` as `-(2^2)`.
+                    let base = match &args[0] {
+                        Logic::Number(n) if number(n).starts_with('-') => {
+                            format!("({})", number(n))
+                        }
+                        x => operand(x, 10, false),
+                    };
+                    format!("{base}^{}", operand(&args[1], 9, false))
+                }
+                // An aggregate of the cells that are not missing.
+                (op, 1) if function(*op).is_some() && is_na_rm(&args[0]) => {
+                    let Logic::Call { args: inner, .. } = &args[0] else {
+                        unreachable!()
+                    };
+                    match &**inner {
+                        [x] => format!(
+                            "{}({}, na.rm = TRUE)",
+                            function(*op).unwrap_or_default(),
+                            write(x)
+                        ),
+                        _ => json(e),
+                    }
+                }
                 (Operator::Sub, 1) => format!("-{}", operand(&args[0], 8, false)),
                 (Operator::If, 2 | 3) => {
                     let mut t = format!("if ({}) {}", write(&args[0]), write(&args[1]));
@@ -243,5 +279,25 @@ mod tests {
             "(a || b) && c"
         );
         assert_eq!(t(json!({"if": [{"var": "a"}, 1, 2]})), "if (a) 1 else 2");
+        assert_eq!(
+            t(json!({"/": [{"var": "w"}, {"^": [{"var": "h"}, 2]}]})),
+            "w / h^2"
+        );
+        assert_eq!(t(json!({"^": [{"^": [{"var": "a"}, 2]}, 3]})), "(a^2)^3");
+        assert_eq!(t(json!({"^": [{"-": {"var": "a"}}, 2]})), "(-a)^2");
+        assert_eq!(t(json!({"^": [-2, 2]})), "(-2)^2");
+        assert_eq!(
+            t(json!({"mean": {"na_rm": {"var": "sbp"}}})),
+            "mean(sbp, na.rm = TRUE)"
+        );
+        assert_eq!(t(json!({"n": []})), "n()");
+        assert_eq!(
+            t(json!({"count": {">": [{"var": "x"}, 0]}})),
+            "count(x > 0)"
+        );
+        assert_eq!(
+            t(json!({"if": [{"===": [{"var": "d"}, 0]}, null, {"var": "d"}]})),
+            "if (d == 0) NA else d"
+        );
     }
 }

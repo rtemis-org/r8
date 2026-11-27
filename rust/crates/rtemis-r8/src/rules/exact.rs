@@ -175,3 +175,139 @@ mod tests {
         assert_eq!(-one, sum(&negated));
     }
 }
+
+/// A sum of doubles as a pair of doubles, with a bound on its error, which
+/// gives the exact sum, rounded once, where the bound decides it.
+///
+/// Each addition splits into the rounded sum `hi` and its exact error, which
+/// `lo` accumulates, so `hi` and the errors sum exactly to the numbers. Only
+/// the additions to `lo` round, by at most `2 n u` times the sum of the
+/// errors' magnitudes, `err`, for `n` additions and the unit roundoff `u`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BoundedSum {
+    hi: f64,
+    lo: f64,
+    err: f64,
+    n: u64,
+}
+
+/// The unit roundoff of a double, 2^-53.
+const UNIT: f64 = f64::EPSILON / 2.0;
+
+/// `a + b` and its exact error (Knuth's TwoSum).
+#[inline]
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let s = a + b;
+    let bb = s - a;
+    (s, (a - (s - bb)) + (b - bb))
+}
+
+impl BoundedSum {
+    /// Adds `x`.
+    #[inline]
+    pub fn add(&mut self, x: f64) {
+        let (s, e) = two_sum(self.hi, x);
+        self.hi = s;
+        self.lo += e;
+        self.err += e.abs();
+        self.n += 1;
+    }
+
+    /// The numbers added.
+    pub fn count(&self) -> u64 {
+        self.n
+    }
+
+    /// The exact sum, rounded once, ties to even; `None` where the bound does
+    /// not decide the rounding, or a number is not finite.
+    pub fn value(&self) -> Option<f64> {
+        if !(self.hi.is_finite() && self.lo.is_finite() && self.err.is_finite()) {
+            return None;
+        }
+        let (r, t) = two_sum(self.hi, self.lo);
+        if !r.is_finite() {
+            return None;
+        }
+        // Without a rounded addition to `lo`, `hi + lo` is the exact sum,
+        // which the addition `r` rounds once.
+        if self.err == 0.0 {
+            return Some(r);
+        }
+        // The exact sum is `r + t + d`, with `|d|` at most `bound`; it rounds
+        // to `r` where it lies strictly between the midpoints of `r` and its
+        // neighbors, whose gaps differ at a power of 2. The factors of 2
+        // cover the rounding of `bound` and of the margins.
+        let bound = 4.0 * self.n as f64 * UNIT * self.err;
+        let up = (r.next_up() - r) / 2.0 - t;
+        let down = (r - r.next_down()) / 2.0 + t;
+        (up > 2.0 * bound && down > 2.0 * bound).then_some(r)
+    }
+}
+
+#[cfg(test)]
+mod bounded_tests {
+    use super::{BoundedSum, ExactSum};
+
+    struct Random(u64);
+
+    impl Random {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn number(&mut self) -> f64 {
+            let unit = (self.next() >> 11) as f64 / (1u64 << 53) as f64 - 0.5;
+            let scale = 2f64.powi((self.next() % 80) as i32 - 40);
+            unit * scale
+        }
+    }
+
+    #[test]
+    fn a_bounded_sum_is_the_exact_sum_where_it_decides() {
+        let mut r = Random(0x9e37_79b9_7f4a_7c15);
+        let mut decided = 0;
+        for case in 0..4000usize {
+            let n = 1 + (r.next() % 200) as usize;
+            let mut xs: Vec<f64> = (0..n).map(|_| r.number()).collect();
+            // Cancellation: a large number and its negative.
+            if case % 3 == 0 {
+                xs.push(1e16);
+                xs.push(-1e16);
+            }
+            // Ties: halves of the last place.
+            if case % 5 == 0 {
+                xs = vec![
+                    1.0,
+                    f64::EPSILON / 2.0,
+                    f64::EPSILON / 4.0,
+                    -f64::EPSILON / 4.0,
+                ];
+            }
+            let mut exact = ExactSum::default();
+            let mut bounded = BoundedSum::default();
+            for &x in &xs {
+                exact.add(x);
+                bounded.add(x);
+            }
+            // A sum that lies on a midpoint, or that cancels, is not decided.
+            if let Some(v) = bounded.value() {
+                assert_eq!(v.to_bits(), exact.value().to_bits(), "{xs:?}");
+                decided += 1;
+            }
+        }
+        assert!(decided > 2000, "{decided}");
+    }
+
+    #[test]
+    fn a_bounded_sum_does_not_decide_what_overflows() {
+        let mut b = BoundedSum::default();
+        b.add(f64::MAX);
+        b.add(f64::MAX);
+        assert_eq!(b.value(), None);
+        let mut b = BoundedSum::default();
+        b.add(f64::INFINITY);
+        assert_eq!(b.value(), None);
+    }
+}

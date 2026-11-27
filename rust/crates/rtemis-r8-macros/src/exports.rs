@@ -125,9 +125,14 @@ pub fn expand(a: &Args) -> Result<Tokens> {
         quote_spanned! { of.span() => <#ty as #of>::__r8_methods }
     });
     let n_impls = a.impls.len();
-    // The hidden module of the function's name that `#[r8::function]` writes.
+    // The function that `#[r8::function]` writes beside the function, of its
+    // name with the prefix `__r8_fn_`.
     let function_rows = a.functions.iter().map(|f| {
-        quote_spanned! { f.span() => #f::__r8_function }
+        let mut row = f.clone();
+        if let Some(last) = row.segments.last_mut() {
+            last.ident = crate::function::row_name(&last.ident);
+        }
+        quote_spanned! { f.span() => #row }
     });
     let n_functions = a.functions.len();
     let traits = &a.traits;

@@ -41,8 +41,9 @@
 #' @section Rows:
 #' A rule of a [new_table()] or a `type_table()` reads the cells of one row by the
 #' names of the columns; the cell of a factor is its label. A rule also chooses the
-#' rows of a table ([r8_filter()]), and then `mean()`, `sum()`, `min()`, and `max()`
-#' read whole columns. `pmin()` and `pmax()` are of the cells of a row.
+#' rows of a table ([r8_filter()]), and then `mean()`, `sum()`, `median()`, `min()`,
+#' `max()`, `n()`, and `count()` read whole columns, as in [calc()]. `pmin()` and
+#' `pmax()` are of the cells of a row.
 #'
 #' @section Missing values:
 #' A comparison with a missing cell or with `NaN` is missing, and so is an operation
@@ -62,23 +63,31 @@
 #' @section Constants:
 #' A bare name in a rule is always a field. `val(expr)` is the value of the
 #' R expression `expr`, evaluated once when `rule()` runs: `cost <= val(max_cost)`.
+#' `col(expr)` is the field or column whose name the R expression `expr` gives:
+#' `col(m) > 0` with `m <- "auc"` is `auc > 0`. The arguments of `val()` and `col()`
+#' are R; every other bare name is a field or a column. `NA` is the missing
+#' constant, as a value of `if`; a comparison with `NA` is an error that names
+#' `is.na()`.
 #'
 #' @section Operators and functions:
 #' Comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`), arithmetic (`+`, `-`,
-#' `*`, `/`, `%%`), logical operators (`&&`, `||`, `!`; `&` and `|` are the
+#' `*`, `/`, `%%`, `^`), logical operators (`&&`, `||`, `!`; `&` and `|` are the
 #' same as `&&` and `||`), `%in%`, `if`, `is.na()`, `is.null()`, `is_variant()`,
 #' `length()`, `nchar()`, `nrow()`, `ncol()`, `dim()`, `levels()`,
 #' `abs()`, `sqrt()`, `log()`, `exp()`, `floor()`, `ceiling()`, `round()`, `min()`,
-#' `max()`, `pmin()`, `pmax()`, `sum()`, `mean()`,
+#' `max()`, `pmin()`, `pmax()`, `sum()`, `mean()`, `median()`, `n()`, `count()`,
 #' `all()`, `any()`, `subset()`, `non_decreasing()`, `non_increasing()`,
-#' `paste0()`, `c()` of constants, and `val()`.
+#' `paste0()`, `c()` of constants, `NA`, `val()`, and `col()`. `na.rm = TRUE` in
+#' `sum()`, `mean()`, `median()`, `min()`, `max()`, and `count()` leaves out the
+#' missing cells of a table's column.
 #'
 #' Rules follow the strict semantics of R8's rule language, which is the
 #' same in every host: `==` is strict equality, so an integer never equals a
 #' string; strings do not order; a string compared with a date or a date-time is
 #' one, `"2020-01-31"` or `"2020-01-31T12:00:00Z"`; a division by zero, `sqrt()` of
-#' a negative number, and `log()` of a number that is not positive are errors;
-#' `sum()` is the exact sum, rounded once, and `mean()` that sum over the count; and
+#' a negative number, `log()` of a number that is not positive, and a negative
+#' number to a power that is not a whole number are errors; `sum()` is the exact
+#' sum, rounded once, and `mean()` that sum over the count; and
 #' `==` on a double computed by arithmetic, `sum()`, or `mean()` is a declaration
 #' error, since rounding makes it inexact: `abs(sum(p) - 1) <= 1e-9` states the
 #' tolerance.
@@ -105,6 +114,8 @@
 #' | `&`, `\|` | The same as `&&` and `\|\|`. |
 #' | `==` | Strict equality: values of different types are never equal. |
 #' | `val(expr)` | The value of the R expression `expr`, a constant. |
+#' | `col(expr)` | The field or column whose name the R expression `expr` gives; `col()` is the column that [r8map()] maps. |
+#' | `n()`, `count(cond)` | The rows of a table or of a group, and those where `cond` is true. |
 #'
 #' @section Violations:
 #' A violation is an `r8_value_error` that shows the rule's ID and message,
@@ -287,6 +298,9 @@ rule_expr <- function(e, env) {
   if (is_rule_fn(head, "val")) {
     return(val_value(e, env))
   }
+  if (is_rule_fn(head, "col") && length(e) > 1L) {
+    return(col_name(e, env))
+  }
   for (fn in c("all", "any")) {
     if (is_rule_fn(head, fn) && length(e) == 2L) {
       elementwise_error(fn, rule_expr(e[[2L]], env))
@@ -299,6 +313,156 @@ rule_expr <- function(e, env) {
   }
   e
 } # /R8::rule_expr
+
+
+# %% col_name ----
+#' The column a col() call names
+#'
+#' @param e The `col(expr)` call.
+#' @param env Environment: Where `rule()` or `calc()` is called.
+#'
+#' @return A symbol: The column whose name `expr` gives.
+#'
+#' @keywords internal
+#' @noRd
+col_name <- function(e, env) {
+  text <- paste(deparse(e), collapse = " ")
+  if (length(e) != 2L || (!is.null(names(e)) && nzchar(names(e)[[2L]]))) {
+    r8_abort(
+      "`",
+      text,
+      "`: col() takes one unnamed argument, an R expression that gives a ",
+      "column's name.",
+      class = "r8_declaration_error"
+    )
+  }
+  arg <- e[[2L]]
+  v <- tryCatch(eval(arg, env), error = function(cnd) cnd)
+  if (!is.character(v) || length(v) != 1L || is.na(v) || !nzchar(v)) {
+    named <- if (is.name(arg)) as.character(arg) else NULL
+    r8_abort(
+      "`",
+      text,
+      "`: the argument of col() is an R expression that gives one column ",
+      "name, such as col(m) with m <- \"auc\"",
+      if (!is.null(named)) {
+        paste0(
+          "; the column `",
+          named,
+          "` itself is `",
+          named,
+          "`, or col(\"",
+          named,
+          "\")"
+        )
+      },
+      ".",
+      class = "r8_declaration_error"
+    )
+  }
+  as.name(v)
+} # /R8::col_name
+
+
+# %% calc ----
+#' Declare an expression
+#'
+#' An expression of the rule dialect as a value, as [rule()] is a condition:
+#' captured unevaluated, compiled against the columns of the table it is given
+#' with, and evaluated in Rust. A bare name is a column, `val(expr)` is the
+#' value of an R expression, and `col(expr)` is the column whose name an R
+#' expression gives. [r8_set()] stores the column that an expression computes
+#' for every row, [r8summarize()] the value of an expression of aggregates for
+#' each group, and [r8map()] one expression over many columns, in which `col()`
+#' is each column in turn. `field(option(T), compute = calc(expr))` declares a
+#' field that [r8_resolve()] computes from the others.
+#'
+#' @section Results:
+#' A number is a double, except `n()`, `count()`, and a choice among integers
+#' (`min()`, `max()`, `pmin()`, `pmax()`, and `if`), which are integers; a
+#' logical, a string, a date, and a date-time keep their kinds, and the cell of
+#' a factor is its label. A missing operand gives a missing cell, and `NA` is a
+#' missing constant: `if (d == 0) NA else n / d`. An error in a row, such as a
+#' division by zero, is an `r8_value_error` that counts the rows. The unit of a
+#' result is the one the compiler infers: `sum()`, `mean()`, `median()`,
+#' `min()`, `max()`, `+`, `-`, `abs()`, `round()`, `pmin()`, `pmax()`, and `if`
+#' keep the common unit of their operands; `*`, `/`, `^`, `sqrt()`, `log()`,
+#' `exp()`, `n()`, and `count()` give none.
+#'
+#' @section Aggregates:
+#' `n()` is the number of rows, `count(cond)` the rows where `cond` is true,
+#' and `sum()`, `mean()`, `median()`, `min()`, and `max()` read whole columns:
+#' over all rows, or over the rows of each group with `by`. `sum()` is the exact
+#' sum, rounded once; `mean()` that sum over the count; `median()` the middle
+#' value, or the mean of the two middle ones. An aggregate over a missing cell
+#' is missing; `na.rm = TRUE` leaves the missing cells out. With no cell left,
+#' `sum()` is 0 and the others are missing.
+#'
+#' @param expr Expression: The expression, over the columns of a table.
+#'
+#' @return An `r8_calc`.
+#'
+#' @examples
+#' calc(weight_kg / height_m^2)
+#' calc(mean(sbp, na.rm = TRUE))
+#' m <- "auc"
+#' calc(median(col(m)))
+#' calc(median(col()))
+#'
+#' @export
+calc <- function(expr) {
+  env <- parent.frame()
+  e <- substitute(expr)
+  if (is.call(e) && identical(e[[1L]], as.name("quote"))) {
+    e <- e[[2L]]
+  }
+  e <- rule_expr(e, env)
+  out <- r8_rule(e, NULL, NULL, NULL)
+  if (is.character(out)) {
+    r8_abort(out, class = "r8_declaration_error")
+  }
+  structure(list(expr = out[["invariant"]], call = e), class = "r8_calc")
+} # /R8::calc
+
+
+# %% check_calcs ----
+#' Refuse a list of expressions that is not a named list of calc() values
+#'
+#' @param columns The list.
+#' @param fn Character: The function that takes it, for the message.
+#'
+#' @return `NULL`, invisibly.
+#'
+#' @keywords internal
+#' @noRd
+check_calcs <- function(columns, fn) {
+  keys <- names(columns) %||% character()
+  if (
+    !is.list(columns) ||
+      is.object(columns) ||
+      length(columns) == 0L ||
+      length(keys) != length(columns) ||
+      anyNA(keys) ||
+      !all(nzchar(keys)) ||
+      !all(vapply(columns, inherits, NA, "r8_calc"))
+  ) {
+    r8_abort(
+      "`columns` is a named list of calc() values: ",
+      fn,
+      "(x, list(n = calc(n()), age = calc(mean(age)))).",
+      class = "r8_argument_error"
+    )
+  }
+  if (anyDuplicated(keys) > 0L) {
+    r8_abort(
+      "Two entries of `columns` are named `",
+      keys[[anyDuplicated(keys)]],
+      "`.",
+      class = "r8_argument_error"
+    )
+  }
+  invisible(NULL)
+} # /R8::check_calcs
 
 
 # %% is_rule_fn ----

@@ -479,4 +479,5 @@ declare_conversion <- function(converter, source, fn, env) {
     envir = ns
   )
   declare_report()
+  declare_map(ns)
 }

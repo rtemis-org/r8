@@ -434,7 +434,7 @@ test_that("a computed field of a matrix type is the matrix it names", {
       "Computed",
       fields = list(
         m = type_matrix(type_double()),
-        n = field(option(type_matrix(type_double())), compute = m)
+        n = field(option(type_matrix(type_double())), compute = calc(m))
       )
     )
   )

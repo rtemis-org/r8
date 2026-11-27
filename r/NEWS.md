@@ -21,6 +21,12 @@
 - A package with Rust code built against an earlier R8 of the same ABI version loads after R8 appends members to its C tables, which a reader finds absent.
 - An error that a package's compiled code returns, from a compiled method or the Rust body of a typed function, is an `r8_compiled_error`, with its code in the field `code`, and a panic an `r8_panic`.
 - A value that a package's Rust code makes is validated when its type has rules, constraints, or `subtype()` or `dyn()` fields, and the method that made it raises the error.
+- `calc(expr)` declares an expression of the rule dialect as a value. `r8_set(x, list(bmi = calc(weight / height^2)))` stores the column that it computes in Rust, with the unit that the expression infers, and `r8_set(x, columns, by)` evaluates its aggregates over each row's group.
+- `r8summarize(x, columns, by)` gives one row for each group of the rows of a table, in the order of the keys, with the summaries that `calc()` values of `n()`, `count()`, `sum()`, `mean()`, `median()`, `min()`, and `max()` compute; `na.rm = TRUE` leaves out missing cells.
+- `r8map(x, f, columns, by)`, a generic, maps a typed function of R8, or a `calc()` in which `col()` is the column, over the columns of a table, one row for each group. An impl for `Raven` applies to every table.
+- The rule dialect has `^`, `median()`, `n()`, `count()`, `NA`, `na.rm = TRUE` in aggregates, and `col(expr)`, the column whose name an R expression gives.
+- `field(compute =)` takes a `calc()`: `field(option(type_double()), compute = calc(mg / 1000))`.
+- `aggregate()` of a table is an error that names `r8summarize()`.
 
 # R8 0.5.0
 

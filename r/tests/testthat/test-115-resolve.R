@@ -18,12 +18,12 @@ dose_type <- function() {
         ),
         g = field(
           option(type_double()),
-          compute = mg / 1000,
+          compute = calc(mg / 1000),
           unit = "g"
         ),
         kg = field(
           option(type_double()),
-          compute = g / 1000,
+          compute = calc(g / 1000),
           unit = "kg"
         ),
         model = field(option(host_class("lm")), context = TRUE)

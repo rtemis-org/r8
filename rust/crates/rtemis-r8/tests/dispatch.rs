@@ -260,3 +260,58 @@ fn the_next_impl_is_the_unique_less_specific_one() {
         Selection::Default
     );
 }
+
+#[test]
+fn an_impl_for_a_raven_applies_to_every_table_after_its_own() {
+    let table = |name: &str| -> TypeDef {
+        serde_json::from_value(json!({"kind": "table", "name": name, "version": 1,
+            "open": true, "columns": []}))
+        .unwrap()
+    };
+    let r = Registry::new();
+    let r8 = name("R8");
+    assert!(
+        r.declare_type(&r8, table("Raven"))
+            .unwrap()
+            .problems
+            .is_empty()
+    );
+    assert!(r.declare_trait(&r8, combine()).unwrap().problems.is_empty());
+    assert!(
+        r.declare_type(&name("pa"), table("Visits"))
+            .unwrap()
+            .problems
+            .is_empty()
+    );
+    let impl_of = |target: &str| -> ImplDef {
+        serde_json::from_value(json!({"trait": "R8::Combine",
+            "target": {"kind": "named", "name": target}, "type_args": [{"kind": "any"}],
+            "methods": []}))
+        .unwrap()
+    };
+    assert!(codes(&r.declare_impl(&r8, impl_of("R8::Raven")).unwrap()).is_empty());
+    let docs = r.snapshot();
+    let tr = q("R8::Combine");
+    let found = impls_by_namespace(&docs, &tr);
+    let impls: Vec<&ImplDef> = found.iter().map(|(_, i)| *i).collect();
+    let arity = docs.trait_of(&tr).unwrap().dispatch_arity();
+    let call = |t: &str| select(&*docs, &impls, arity, &[Arg::Type(q(t)), Arg::Other], None);
+    // A table of another type is a raven.
+    assert!(matches!(call("pa::Visits"), Selection::Impl(_)));
+    assert!(matches!(call("R8::Raven"), Selection::Impl(_)));
+    // The table's own impl comes first.
+    assert!(codes(&r.declare_impl(&name("pa"), impl_of("pa::Visits")).unwrap()).is_empty());
+    let docs = r.snapshot();
+    let found = impls_by_namespace(&docs, &tr);
+    let impls: Vec<&ImplDef> = found.iter().map(|(_, i)| *i).collect();
+    let Selection::Impl(k) = select(
+        &*docs,
+        &impls,
+        arity,
+        &[Arg::Type(q("pa::Visits")), Arg::Other],
+        None,
+    ) else {
+        panic!("an impl applies");
+    };
+    assert_eq!(positions(impls[k], arity)[0].to_string(), "pa::Visits");
+}
