@@ -1885,11 +1885,15 @@ fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summar
 /// @param threads Integer: The threads that the aggregates of a column may use.
 /// @param functions List: The typed functions that the expressions call, by
 ///   their qualified names.
-/// @param caller Function: R8's `call_typed()`, or `NULL` without functions.
+/// @param callers List: R8's `call_typed()`, `call_settled()`, and the function
+///   that reports the calls done to the progress hook, or `NULL`, as `call`,
+///   `settle`, and `report`; or `NULL` without functions.
 /// @return A list of `first`, the first row of each group from 1 or `NULL`
 ///   without keys, `columns`, the computed vectors, and `units`, or an
 ///   `r8_refused`, which for an error of a call holds `call`, the function,
-///   the column, and the first row of the group, and `failed`, the condition.
+///   the column, and the first row of the group, and `failed`, the condition,
+///   and for an error of the progress hook holds `hook`, its condition. A jump
+///   of R that a compiled body caught continues instead.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -1900,7 +1904,7 @@ fn r8_table_calc(
     summary: bool,
     threads: i32,
     functions: Robj,
-    caller: Robj,
+    callers: Robj,
 ) -> Result<Robj> {
     // A call of R may jump, which the protection of a long walk carries past
     // the frames of Rust.
@@ -1927,9 +1931,15 @@ fn r8_table_calc(
             .collect();
         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
         let refs: Vec<&rtemis_r8::ir::Logic> = logic.iter().collect();
-        let host =
-            crate::typed_calls::RFunctions::new(&h.names, h.columns, &h.docs, &functions, &caller);
-        let out = match rtemis_r8::rules::calc::computed(
+        let host = crate::typed_calls::RFunctions::new(
+            &h.names,
+            h.columns,
+            &h.docs,
+            &functions,
+            &callers,
+            logic.len(),
+        );
+        let out = rtemis_r8::rules::calc::computed(
             RView::Whole(unsafe { x.get() }),
             h.def(),
             &keys,
@@ -1938,7 +1948,18 @@ fn r8_table_calc(
             &host,
             summary,
             usize::try_from(threads).unwrap_or(1).max(1),
-        ) {
+        );
+        // A held jump continues once the frames return, with no call of R
+        // before it (`interruptible_if()`).
+        if host.jumped() {
+            return Ok(().into());
+        }
+        if let Some(hook) = host.hook_failed.borrow_mut().take() {
+            let mut r: Robj = list!(message = "the progress hook failed", hook = hook).into();
+            let _ = r.set_class(["r8_refused"]);
+            return Ok(r);
+        }
+        let out = match out {
             Ok(o) => o,
             Err(rtemis_r8::rules::calc::NotComputed::Call {
                 at,
@@ -1988,46 +2009,6 @@ fn r8_table_calc(
     })
 }
 
-/// The groups of the rows of the table value `x` by the key columns `by`.
-///
-/// @param x The table value.
-/// @param by Character: The key columns.
-/// @return A list of `ids`, the group of each row from 1, and `first`, the
-///   first row of each group from 1, or an `r8_refused`.
-/// @keywords internal
-/// @noRd
-#[extendr]
-fn r8_table_groups(x: Robj, by: Robj) -> Result<Robj> {
-    crate::interrupt::interruptible(unsafe { x.get() }, || {
-        let h = match Held::of(unsafe { x.get() }) {
-            Ok(h) => h,
-            Err(m) => return Ok(refused(m)),
-        };
-        let keys: Vec<String> = strings(unsafe { by.get() })
-            .into_iter()
-            .map(|k| k.map(|k| k.into_owned()).unwrap_or_default())
-            .collect();
-        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
-        let out = match rtemis_r8::rules::calc::computed(
-            RView::Whole(unsafe { x.get() }),
-            h.def(),
-            &keys,
-            &[],
-            &*h.docs,
-            &rtemis_r8::rules::calc::NoFunctions,
-            true,
-            1,
-        ) {
-            Ok(o) => o,
-            Err(e) => return Ok(refused(not_computed(e, &[], true))),
-        };
-        let g = out.groups.expect("keys give groups");
-        let ids: Vec<i32> = g.ids.iter().map(|&k| k as i32 + 1).collect();
-        let first: Vec<i32> = g.first.iter().map(|&r| r as i32 + 1).collect();
-        Ok(list!(ids = ids, first = first).into())
-    })
-}
-
 /// The expressions of a map of `f` over `columns`: `f` with `col()` set to
 /// each column.
 ///
@@ -2073,6 +2054,5 @@ extendr_module! {
     fn r8_table_bind;
     fn r8_table_calc;
     fn r8_default_threads;
-    fn r8_table_groups;
     fn r8_calc_mapped;
 }

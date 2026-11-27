@@ -225,5 +225,8 @@ r8::exports! {
         functions::unwound,
         functions::spread,
         functions::portion,
+        functions::counted,
+        functions::count_of,
+        functions::filled,
     ],
 }

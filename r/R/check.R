@@ -202,8 +202,10 @@ self_abort <- function(key, x, out) {
 # %% compiled_abort ----
 #' Signal the error that compiled code returned
 #'
-#' @param code Character: The error's code, `"panic"` for a panic.
-#' @param message Character: The compiled code's message.
+#' @param code Character: The error's code, `"panic"` for a panic; `""`
+#'   gives `"no_code"`.
+#' @param message Character: The compiled code's message; `""` names the
+#'   missing message.
 #' @param call The call of the generic or the function, or `NULL`.
 #'
 #' @return Does not return; signals `r8_compiled_error`, or `r8_panic` for a
@@ -212,6 +214,12 @@ self_abort <- function(key, x, out) {
 #' @keywords internal
 #' @noRd
 compiled_abort <- function(code, message, call) {
+  if (!nzchar(code)) {
+    code <- "no_code"
+  }
+  if (!nzchar(message)) {
+    message <- "the compiled code returned an error without a message"
+  }
   panic <- identical(code, "panic")
   r8_abort(
     if (panic) {

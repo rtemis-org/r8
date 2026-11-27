@@ -19,7 +19,8 @@ position, each once.}
 position.}
 
 \item{args}{Optional named list: The constant arguments of every call of a typed
-function, by the names of its parameters other than the first.}
+function, by the names of its parameters other than the first; on a table,
+one value each.}
 
 \item{n_threads}{Optional Integer [1, Inf): The threads that the work in Rust may
 use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half the logical
@@ -55,9 +56,10 @@ A map of a typed function reports its progress to a host that sets the option
 \code{r8.progress} to a list of three functions: \code{begin(total, label, kind)}, which
 gives a handle, \code{update(handle, current)}, and \code{end(handle, status)}, with the
 status \code{"done"}, \code{"error"}, or \code{"aborted"}. The total is the calls of \code{f}, the
-label its name, and the kind \code{"r8map"}. \code{begin} is called once the map has run
-for 0.2 s, so that a shorter map reports nothing, and \code{update} at most about
-every 0.05 to 0.2 s. Without the option, its default, a map reports nothing.
+label its name, and the kind \code{"r8map"}; on a table, the total is the groups
+times the columns. \code{begin} is called once the map has run for 0.2 s, so that a
+shorter map reports nothing, and \code{update} about every 0.05 to 0.2 s. Without the
+option, its default, a map reports nothing.
 }
 
 \section{Tables}{
@@ -75,9 +77,12 @@ A typed function of R8 (\code{\link[=new_function]{new_function()}}), with a bod
 called on the cells of each column in each group, as a direct call is, and
 returns one value of its declared return type:
 \code{r8map(metrics, trimmed_mean, columns = metric_names, by = "param_combo_id")}.
-Its arguments are checked as those of a direct call: a group with a missing cell
-is an error unless the parameter's type is \code{option()}. Moving its body from R to
-Rust changes no call.
+The map is that of \code{calc(f(col()))}: a body in Rust is called from R8's Rust
+code, and a body in R in one loop of R for each column. Its arguments are
+checked as those of a direct call: a group with a missing cell is an error
+unless the parameter's type is \code{option()}. On a table, \code{args} gives one value
+to each of \code{f}'s other parameters, \code{args = list(trim = 0.2)}. Moving its body
+from R to Rust changes no call.
 }
 
 \section{Expressions}{

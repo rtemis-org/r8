@@ -302,6 +302,8 @@ table_result <- function(res, x) {
 #' @param fn Character: The table function, for a message.
 #' @param functions Optional list: The typed functions, by qualified name,
 #'   where `columns` holds expressions.
+#' @param report Optional function: Of the calls done and their total, which
+#'   reports them to the progress hook (`map_progress()`).
 #'
 #' @return The list that `r8_table_calc()` gives.
 #'
@@ -314,7 +316,8 @@ table_calc <- function(
   summary,
   n_threads,
   fn,
-  functions = NULL
+  functions = NULL,
+  report = NULL
 ) {
   exprs <- columns
   if (is.null(functions)) {
@@ -337,19 +340,55 @@ table_calc <- function(
         register_records(list(record))
       }
     }
-    caller <- call_typed
+    caller <- list(call = call_typed, settle = call_settled, report = report)
   } else {
     functions <- NULL
   }
-  res <- r8_table_calc(
-    x,
-    exprs,
-    by,
-    summary,
-    threads_of(n_threads),
-    functions,
-    caller
-  )
+  run <- function() {
+    r8_table_calc(
+      x,
+      exprs,
+      by,
+      summary,
+      threads_of(n_threads),
+      functions,
+      caller
+    )
+  }
+  res <- if (is.null(functions)) {
+    run()
+  } else {
+    # An error of R code that a compiled body calls names the column and the
+    # group of its call; the binding holds the jump and continues it.
+    withCallingHandlers(
+      run(),
+      error = function(cnd) {
+        site <- r8_call_site()
+        if (!is.null(site)) {
+          r8_abort(
+            fn,
+            "(): `",
+            names(exprs)[[site[["at"]]]],
+            "` calls `",
+            site[["function"]],
+            "()`",
+            group_text(x, by, site[["first_row"]]),
+            ": ",
+            conditionMessage(cnd),
+            class = "r8_value_error",
+            data = list(parent = cnd)
+          )
+        }
+      }
+    )
+  }
+  if (inherits(res, "r8_refused") && !is.null(res[["hook"]])) {
+    hook <- res[["hook"]]
+    if (inherits(hook, "condition")) {
+      stop(hook)
+    }
+    r8_abort(fn, "(): the progress hook: ", hook, class = "r8_value_error")
+  }
   if (inherits(res, "r8_refused") && !is.null(res[["call"]])) {
     call <- res[["call"]]
     failed <- res[["failed"]]
@@ -402,6 +441,48 @@ call_typed <- function(f, calls) {
     }
   )
 } # /R8::call_typed
+
+
+# %% call_settled ----
+#' The condition of a call of a typed function whose compiled body failed
+#'
+#' The condition that a direct call raises: for an error or a panic of the body,
+#' `compiled_abort()`'s; for a result that the return type refuses,
+#' `result_abort()`'s; for `R8_UNWIND` without a caught jump, the error of
+#' `r8_compiled_returned()`. The body does not run again.
+#'
+#' @param f Function: The typed function.
+#' @param qname Character: Its qualified name.
+#' @param kind Character \{"compiled", "result", "unwound"\}: What the body
+#'   returned.
+#' @param payload For `"compiled"`, a list of the body's `code` and `message`;
+#'   for `"result"`, the problems, of class `r8_problems`, or the text of an
+#'   error of the check; for `"unwound"`, the error's text.
+#'
+#' @return An `r8_call_failed` of the condition and its message.
+#'
+#' @keywords internal
+#' @noRd
+call_settled <- function(f, qname, kind, payload) {
+  call <- as.call(c(list(str2lang(qname)), lapply(names(formals(f)), as.name)))
+  cnd <- tryCatch(
+    switch(
+      kind,
+      compiled = compiled_abort(payload[["code"]], payload[["message"]], call),
+      result = if (is.character(payload)) {
+        r8_abort(payload, class = "r8_result_error", call = call)
+      } else {
+        result_abort(qname, "", payload)
+      },
+      stop(simpleError(payload, call))
+    ),
+    error = identity
+  )
+  structure(
+    list(condition = cnd, message = conditionMessage(cnd)),
+    class = "r8_call_failed"
+  )
+} # /R8::call_settled
 
 
 # %% group_text ----
@@ -1310,9 +1391,10 @@ summary_table <- function(x, by, first, columns, units, names) {
 #' `r8.progress` to a list of three functions: `begin(total, label, kind)`, which
 #' gives a handle, `update(handle, current)`, and `end(handle, status)`, with the
 #' status `"done"`, `"error"`, or `"aborted"`. The total is the calls of `f`, the
-#' label its name, and the kind `"r8map"`. `begin` is called once the map has run
-#' for 0.2 s, so that a shorter map reports nothing, and `update` at most about
-#' every 0.05 to 0.2 s. Without the option, its default, a map reports nothing.
+#' label its name, and the kind `"r8map"`; on a table, the total is the groups
+#' times the columns. `begin` is called once the map has run for 0.2 s, so that a
+#' shorter map reports nothing, and `update` about every 0.05 to 0.2 s. Without the
+#' option, its default, a map reports nothing.
 #'
 #' @section Tables:
 #' `r8map(x, f, columns, by)` gives one row for each group of the rows of `x` by
@@ -1326,9 +1408,12 @@ summary_table <- function(x, by, first, columns, units, names) {
 #' called on the cells of each column in each group, as a direct call is, and
 #' returns one value of its declared return type:
 #' `r8map(metrics, trimmed_mean, columns = metric_names, by = "param_combo_id")`.
-#' Its arguments are checked as those of a direct call: a group with a missing cell
-#' is an error unless the parameter's type is `option()`. Moving its body from R to
-#' Rust changes no call.
+#' The map is that of `calc(f(col()))`: a body in Rust is called from R8's Rust
+#' code, and a body in R in one loop of R for each column. Its arguments are
+#' checked as those of a direct call: a group with a missing cell is an error
+#' unless the parameter's type is `option()`. On a table, `args` gives one value
+#' to each of `f`'s other parameters, `args = list(trim = 0.2)`. Moving its body
+#' from R to Rust changes no call.
 #'
 #' @section Expressions:
 #' A [calc()] in which `col()` is the column mapped is evaluated in Rust, as the
@@ -1352,7 +1437,8 @@ summary_table <- function(x, by, first, columns, units, names) {
 #'   with its body in R runs on R's thread.
 #'
 #' @param args Optional named list: The constant arguments of every call of a typed
-#'   function, by the names of its parameters other than the first.
+#'   function, by the names of its parameters other than the first; on a table,
+#'   one value each.
 #'
 #' @return Of a table, a [Raven] of the key columns and one column for each column
 #'   mapped; of a list or a vector, an atomic vector or a list, with the names of
@@ -1464,6 +1550,24 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
       class = "r8_argument_error"
     )
   }
+  map_calc_run(x, f, columns, by, n_threads)
+} # /R8::map_calc
+
+
+# %% map_calc_run ----
+#' The map of a calc() over the columns of a table
+#'
+#' @param x The table.
+#' @param f A calc(), in which `col()` is each column.
+#' @param columns,by,n_threads The arguments of r8map().
+#' @param report Optional function: Of the calls done and their total, which
+#'   reports them to the progress hook (`map_progress()`).
+#'
+#' @return The table of the summaries.
+#'
+#' @keywords internal
+#' @noRd
+map_calc_run <- function(x, f, columns, by, n_threads, report = NULL) {
   by <- if (is.null(by)) {
     character()
   } else {
@@ -1481,7 +1585,8 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
     TRUE,
     n_threads,
     "r8map",
-    functions = unclass(f)[["functions"]]
+    functions = unclass(f)[["functions"]],
+    report = report
   )
   summary_table(
     x,
@@ -1491,7 +1596,7 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
     res[["units"]],
     columns
   )
-} # /R8::map_calc
+} # /R8::map_calc_run
 
 
 # %% map_typed ----
@@ -1500,8 +1605,6 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
 #' @keywords internal
 #' @noRd
 map_typed <- function(x, f, columns, by, args, n_threads) {
-  # A body in R runs on R's thread.
-  threads_of(n_threads)
   sig <- map_signature(f, args)
   returns <- sig[["returns"]]
   if (identical(returns[["kind"]], "option")) {
@@ -1520,66 +1623,37 @@ map_typed <- function(x, f, columns, by, args, n_threads) {
       class = "r8_value_error"
     )
   }
-  by <- if (is.null(by)) {
-    character()
-  } else {
-    key_columns(x, by, quote(by), environment())
+  for (a in names(sig[["args"]])) {
+    v <- sig[["args"]][[a]]
+    if (!is.atomic(v) || is.object(v) || length(v) != 1L) {
+      r8_abort(
+        "A map over the columns of a table gives one value to each parameter ",
+        "in `args`, and `",
+        a,
+        "` holds ",
+        length(v),
+        if (is.object(v)) " values of a class" else " values",
+        ": r8map(x, f, args = list(trim = 0.2)).",
+        class = "r8_argument_error"
+      )
+    }
   }
-  columns <- map_columns(x, columns, by)
-  if (length(by) > 0L) {
-    g <- table_result(r8_table_groups(x, by), x)
-    ids <- g[["ids"]]
-    first <- g[["first"]]
-  } else {
-    ids <- rep.int(1L, nrow(x))
-    first <- NULL
+  # The map of calc(f(col(), <args>)): the column takes the first parameter,
+  # and each argument of `args` is a constant.
+  env <- new.env(parent = emptyenv())
+  assign(".r8_f", f, envir = env)
+  given <- list(quote(col()))
+  names(given) <- sig[["item"]]
+  for (a in names(sig[["args"]])) {
+    held <- paste0(".r8_arg_", a)
+    assign(held, sig[["args"]][[a]], envir = env)
+    given[[a]] <- call("val", as.name(held))
   }
-  n_groups <- if (is.null(first)) 1L else length(first)
-  name <- attr(f, "r8_function", exact = TRUE) %||% "f"
-  # The keys of group `k`, for a message.
-  keys_text <- function(k) group_text(x, by, first[k])
-  out <- with_progress(length(columns) * n_groups, name, function(step) {
-    lapply(columns, function(column) {
-      parts <- split(x[[column]], factor(ids, levels = seq_len(n_groups)))
-      values <- lapply(seq_along(parts), function(k) {
-        v <- withCallingHandlers(
-          do.call(f, c(list(parts[[k]]), sig[["args"]])),
-          error = function(cnd) {
-            r8_abort(
-              "r8map(): `",
-              name,
-              "` of column `",
-              column,
-              "`",
-              keys_text(k),
-              ": ",
-              conditionMessage(cnd),
-              class = "r8_value_error",
-              data = list(parent = cnd)
-            )
-          }
-        )
-        if (length(v) != 1L || !is.atomic(v)) {
-          r8_abort(
-            "r8map(): `",
-            name,
-            "` of column `",
-            column,
-            "`",
-            keys_text(k),
-            " gives ",
-            length(v),
-            " values; a function that r8map() maps gives one.",
-            class = "r8_value_error"
-          )
-        }
-        step()
-        v
-      })
-      do.call(c, values)
-    })
+  e <- as.call(c(list(as.name(".r8_f")), given))
+  value <- do.call(calc, list(call("quote", e)), envir = env)
+  map_progress(NULL, sig[["name"]], function(step, report) {
+    map_calc_run(x, value, columns, by, n_threads, report = report)
   })
-  summary_table(x, by, first, out, rep(NA_character_, length(columns)), columns)
 } # /R8::map_typed
 
 
@@ -1610,7 +1684,7 @@ map_hook <- function() {
 } # /R8::map_hook
 
 
-# %% with_progress ----
+# %% map_progress ----
 #' The steps of a map, with its progress
 #'
 #' Reads the option `r8.progress` once (`map_hook()`). A map reports its steps at
@@ -1619,19 +1693,25 @@ map_hook <- function() {
 #' shorter map reports nothing; `end` follows with `"done"`, `"error"`, or
 #' `"aborted"`.
 #'
-#' @param total Integer: The steps.
+#' A map whose calls Rust makes counts them in Rust, at the report points of
+#' `rtemis_r8::progress::Stride`, and calls `report(current, total)`, which calls
+#' `begin` after 0.2 s and `update`, and gives the condition of an error of the
+#' hook, or `NULL`.
+#'
+#' @param total Optional integer: The steps, or `NULL` where `report` gives them.
 #' @param label Character: The name of the function mapped.
-#' @param run Function: Of one argument, a function of no arguments that counts
-#'   a step; gives the map's result.
+#' @param run Function: Of two arguments, a function of no arguments that counts
+#'   a step of a map in R, and `report`, or `NULL` without a hook; gives the
+#'   map's result.
 #'
 #' @return The result of `run`.
 #'
 #' @keywords internal
 #' @noRd
-with_progress <- function(total, label, run) {
+map_progress <- function(total, label, run) {
   hook <- map_hook()
   if (is.null(hook)) {
-    return(run(function() NULL))
+    return(run(function() NULL, NULL))
   }
   start <- proc.time()[["elapsed"]]
   last <- start
@@ -1664,6 +1744,26 @@ with_progress <- function(total, label, run) {
     done <<- done + 1L
     if (done >= next_at) report()
   }
+  # The report of a map whose calls Rust counts at its own report points; it
+  # runs under the frames of Rust, so it gives an error's condition.
+  reported <- function(current, of) {
+    tryCatch(
+      {
+        done <<- as.integer(current)
+        total <<- as.integer(of)
+        if (!begun) {
+          if (proc.time()[["elapsed"]] - start < 0.2) {
+            return(NULL)
+          }
+          handle <<- hook[["begin"]](total, label, "r8map")
+          begun <<- TRUE
+        }
+        hook[["update"]](handle, done)
+        NULL
+      },
+      error = identity
+    )
+  }
   status <- "error"
   on.exit(
     if (begun) {
@@ -1676,12 +1776,15 @@ with_progress <- function(total, label, run) {
     add = TRUE
   )
   out <- withCallingHandlers(
-    run(step),
+    run(step, reported),
     interrupt = function(cnd) status <<- "aborted"
   )
   status <- "done"
+  if (!is.null(total)) {
+    done <- total
+  }
   out
-} # /R8::with_progress
+} # /R8::map_progress
 
 
 # %% map_signature ----
@@ -1828,7 +1931,7 @@ map_items <- function(x, f, columns, by, args, n_threads) {
     )
   }
   out <- withCallingHandlers(
-    with_progress(length(x), sig[["name"]], function(step) {
+    map_progress(length(x), sig[["name"]], function(step, report) {
       each <- function(i) {
         at <<- i
         v <- call_f(x[[i]])

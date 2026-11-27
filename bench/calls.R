@@ -6,7 +6,9 @@
 # test package r8pkgR, whose body is in Rust, against the same function with
 # its body in R and against the dialect's `max(col()) - min(col())`, each as
 # `r8map(v, calc(...), by = "g")` over 10 columns of 10^6 rows at 100, 10^4,
-# and 10^5 groups, so that 10^3, 10^5, and 10^6 calls of the function run.
+# and 10^5 groups, so that 10^3, 10^5, and 10^6 calls of the function run;
+# `r8map(v, spread, by = "g")`, the plain form of the map ("plain"), and the
+# same with a progress hook that does nothing ("hooked").
 # Times are medians of `reps` runs, in ms, one run for the body in R, and
 # medians of bench::mark() in microseconds at the size of rtemis's tuner. Run
 # against installed release builds of R8 and r8pkgR:
@@ -45,8 +47,15 @@ by_groups <- function(n, g) {
   rust <- calc(spread(col()))
   in_r <- calc(spread_r(col()))
   dialect <- calc(max(col()) - min(col()))
+  hook <- list(begin = function(total, label, kind) 1L, update = function(h, n) NULL, end = function(h, s) NULL)
   times <- c(
     rust = ms(\() r8map(v, rust, columns = cols, by = "g", n_threads = 1L)),
+    plain = ms(\() r8map(v, spread, columns = cols, by = "g", n_threads = 1L)),
+    hooked = {
+      op <- options(r8.progress = hook)
+      on.exit(options(op))
+      ms(\() r8map(v, spread, columns = cols, by = "g", n_threads = 1L))
+    },
     r = ms(\() r8map(v, in_r, columns = cols, by = "g", n_threads = 1L), 1L),
     dialect = ms(\() r8map(v, dialect, columns = cols, by = "g", n_threads = 1L))
   )

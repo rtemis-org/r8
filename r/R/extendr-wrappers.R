@@ -772,14 +772,18 @@ r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 #' @param threads Integer: The threads that the aggregates of a column may use.
 #' @param functions List: The typed functions that the expressions call, by
 #'   their qualified names.
-#' @param caller Function: R8's `call_typed()`, or `NULL` without functions.
+#' @param callers List: R8's `call_typed()`, `call_settled()`, and the function
+#'   that reports the calls done to the progress hook, or `NULL`, as `call`,
+#'   `settle`, and `report`; or `NULL` without functions.
 #' @return A list of `first`, the first row of each group from 1 or `NULL`
 #'   without keys, `columns`, the computed vectors, and `units`, or an
 #'   `r8_refused`, which for an error of a call holds `call`, the function,
-#'   the column, and the first row of the group, and `failed`, the condition.
+#'   the column, and the first row of the group, and `failed`, the condition,
+#'   and for an error of the progress hook holds `hook`, its condition. A jump
+#'   of R that a compiled body caught continues instead.
 #' @keywords internal
 #' @noRd
-r8_table_calc <- function(x, exprs, by, summary, threads, functions, caller) .Call(wrap__r8_table_calc, x, exprs, by, summary, threads, functions, caller)
+r8_table_calc <- function(x, exprs, by, summary, threads, functions, callers) .Call(wrap__r8_table_calc, x, exprs, by, summary, threads, functions, callers)
 
 #' The threads of a table function by default: half of the logical cores, at
 #' most 2 where `R CMD check` limits the cores (`_R_CHECK_LIMIT_CORES_`), and
@@ -788,16 +792,6 @@ r8_table_calc <- function(x, exprs, by, summary, threads, functions, caller) .Ca
 #' @keywords internal
 #' @noRd
 r8_default_threads <- function() .Call(wrap__r8_default_threads)
-
-#' The groups of the rows of the table value `x` by the key columns `by`.
-#'
-#' @param x The table value.
-#' @param by Character: The key columns.
-#' @return A list of `ids`, the group of each row from 1, and `first`, the
-#'   first row of each group from 1, or an `r8_refused`.
-#' @keywords internal
-#' @noRd
-r8_table_groups <- function(x, by) .Call(wrap__r8_table_groups, x, by)
 
 #' The expressions of a map of `f` over `columns`: `f` with `col()` set to
 #' each column.
@@ -1026,6 +1020,15 @@ r8_css_text <- function(theme, named) .Call(wrap__r8_css_text, theme, named)
 #' @keywords internal
 #' @noRd
 r8_determine_output <- function(facts) .Call(wrap__r8_determine_output, facts)
+
+#' The call of a typed function's compiled body that runs.
+#'
+#' @return `NULL` outside a call, or a list of `at`, the place of the
+#'   expression from 1, `function`, the qualified name, and `first_row`, the
+#'   first row of the group from 1, or `NULL`.
+#' @keywords internal
+#' @noRd
+r8_call_site <- function() .Call(wrap__r8_call_site)
 
 #' The variants of the enum of the value `x` under the declaration that `x`
 #' carries, for a type that is not registered.

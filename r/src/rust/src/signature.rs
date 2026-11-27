@@ -967,37 +967,40 @@ impl CallChecks {
         }
     }
 
-    /// Whether the result in the element `at` of `list` passes the return
-    /// type, in its stored form, which replaces it in `list`.
-    pub(crate) fn result(&self, list: SEXP, at: usize) -> bool {
+    /// Checks the result in the element `at` of `list` against the return
+    /// type: `Ok` with the result in its stored form, which replaces it in
+    /// `list`, or the problems that refuse it, of class `r8_problems`, or the
+    /// text of an error of the check.
+    pub(crate) fn result(&self, list: SEXP, at: usize) -> std::result::Result<(), Robj> {
         let (ty, test) = match &self.0.returned {
             Returned::Type(t, test) => (t, test),
-            Returned::Any => return true,
-            Returned::SelfType => return false,
+            Returned::Any => return Ok(()),
+            Returned::SelfType => return Err(Robj::from("a typed function returns no `Self`")),
         };
         let x = unsafe { VECTOR_ELT(list, at as isize) };
         let stored = match test.run(x) {
-            PASS => return true,
+            PASS => return Ok(()),
             TO_INTEGER => unsafe { extendr_ffi::Rf_ScalarInteger(*REAL(x) as i32) },
             TO_DOUBLE => unsafe { Rf_ScalarReal(f64::from(*INTEGER(x))) },
             _ => {
                 let docs = crate::declare::registry().snapshot();
-                if !errors_of(x, ty, &docs, None).is_empty() {
-                    return false;
+                let errors = errors_of(x, ty, &docs, None);
+                if !errors.is_empty() {
+                    return Err(problems(&errors).unwrap_or_else(|e| Robj::from(e.to_string())));
                 }
                 test.admit(x);
                 match normalize(x, ty, &*docs) {
-                    Ok(None) => return true,
+                    Ok(None) => return Ok(()),
                     Ok(Some(r)) => {
                         unsafe { extendr_ffi::SET_VECTOR_ELT(list, at as isize, r.get()) };
-                        return true;
+                        return Ok(());
                     }
-                    Err(_) => return false,
+                    Err(e) => return Err(Robj::from(e.to_string())),
                 }
             }
         };
         unsafe { extendr_ffi::SET_VECTOR_ELT(list, at as isize, stored) };
-        true
+        Ok(())
     }
 }
 

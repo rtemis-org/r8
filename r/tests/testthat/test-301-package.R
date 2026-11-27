@@ -343,3 +343,42 @@ scenario(
     }
   }
 )
+
+scenario(
+  "B9",
+  "a summary calls a body in Rust once for each group",
+  situation = "A package's typed function has its body in Rust. A user calls it in r8summarize() for each group of a table, and the values of one group make the body return an error.",
+  risk = "The body runs through R for every group, or runs again to produce the error, so that a body that draws random numbers or takes long runs twice; or an error that R raises inside the body loses its condition.",
+  result = "The body is called from R8's Rust code, once for each group, and each value equals a direct call's. The group whose body returns an error stops the summary with the error that a direct call raises, inside an error that names the column and the group; an error that R raises inside the body continues as itself, inside the same.",
+  how = "installed",
+  code = {
+    lib <- install_test_packages()
+    out <- run_r(
+      lib,
+      c(
+        "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
+        "say <- function(...) cat(..., '\\n')",
+        "x <- Raven(ward = c('ICU', 'ICU', 'Oncology', 'Oncology', 'Ward'), v = c(1, 2, 3, -1, 4))",
+        "s <- r8summarize(x[c(1, 2, 3, 5), ], list(n = calc(counted(v))), by = 'ward')",
+        "say('values', identical(s$n, c(3, 3, 4)))",
+        "before <- count_of()",
+        "e <- tryCatch(r8summarize(x, list(n = calc(counted(v))), by = 'ward'), error = identity)",
+        "say('once', count_of() - before, class(e)[1], class(e$parent)[1], grepl('in the group ward = \"Oncology\"', conditionMessage(e), fixed = TRUE))",
+        "heap <- gc()[2L, 4L]",
+        "invisible(mem.maxVSize(ceiling(heap) + 20))",
+        "big <- as.integer(ceiling((heap + 100) * 2^20 / 8))",
+        "e <- tryCatch(r8summarize(x, list(m = calc(filled(v, n = val(big)))), by = 'ward'), error = identity)",
+        "invisible(mem.maxVSize(Inf))",
+        "say('r', class(e)[1], class(e$parent)[1])"
+      )
+    )
+    info <- paste(out, collapse = "\n")
+    for (line in c(
+      "values TRUE ",
+      "once 2 r8_value_error r8_compiled_error TRUE ",
+      "r r8_value_error simpleError "
+    )) {
+      expect_true(line %in% out, info = paste(line, info, sep = "\n"))
+    }
+  }
+)

@@ -242,10 +242,16 @@ static void set_error(R8Error *err, const char *code, const char *message) {
 
 // R8Api.protect: runs a callback under R_UnwindProtect, whose cleanup
 // jumps back here when R jumps, so the callback's caller sees R8_UNWIND
-// instead of the jump. The continuation token is kept for the C frame that
-// called the compiled code, which continues the jump once the code has
-// returned (`r8_compiled_returned()`).
+// instead of the jump. Two continuation tokens keep the jump caught last:
+// `continuation`, of R8's own protections (R8's Rust code, the checks of an
+// interrupt, the construction of views), and `package_continuation`, of the
+// R8Api.protect that packages call, whose jump the frame that called the
+// compiled code continues once the code has returned (`r8_compiled_returned()`,
+// `r8_continue_held()`). A protection of R8 that returns normally clears its
+// own token, so a jump that a package's code caught stays held until R8
+// continues it.
 static SEXP continuation = NULL;
+static SEXP package_continuation = NULL;
 
 typedef struct Protected {
   SEXP (*fn)(void *);
@@ -264,8 +270,8 @@ static void protected_cleanup(void *p, Rboolean jump) {
   }
 }
 
-static R8Status api_protect(SEXP (*fn)(void *data), void *data, SEXP *value,
-                            R8Error *err) {
+static R8Status protect_on(SEXP token, SEXP (*fn)(void *data), void *data, SEXP *value,
+                           R8Error *err) {
   if (fn == NULL || value == NULL) {
     set_error(err, "invalid_argument", "`fn` or `value` is NULL");
     return R8_ERROR;
@@ -277,11 +283,17 @@ static R8Status api_protect(SEXP (*fn)(void *data), void *data, SEXP *value,
     set_error(err, "unwind", "R raised a condition inside R8Api.protect");
     return R8_UNWIND;
   }
-  *value = R_UnwindProtect(protected_body, &p, protected_cleanup, &p, continuation);
+  *value = R_UnwindProtect(protected_body, &p, protected_cleanup, &p, token);
   // R_UnwindProtect() keeps the result in the token, which R8 preserves;
   // clearing it leaves the result to the caller.
-  SETCAR(continuation, R_NilValue);
+  SETCAR(token, R_NilValue);
   return R8_OK;
+}
+
+// R8Api.protect of R8's own code.
+static R8Status api_protect(SEXP (*fn)(void *data), void *data, SEXP *value,
+                            R8Error *err) {
+  return protect_on(continuation, fn, data, value, err);
 }
 
 // The number of calls of a package's compiled code from R8's C frames that
@@ -304,15 +316,22 @@ static R8Status package_protect(SEXP (*fn)(void *data), void *data, SEXP *value,
     set_error(err, "unwind", "a jump of R is pending; the compiled code returns before it calls R");
     return R8_UNWIND;
   }
-  R8Status status = api_protect(fn, data, value, err);
+  R8Status status = protect_on(package_continuation, fn, data, value, err);
   if (status == R8_UNWIND && depth > 0) {
     pending = 1;
   }
   return status;
 }
 
-// Before R8 calls a package's compiled code from a C frame.
+// Before R8 calls a package's compiled code, from a C frame or a Rust frame.
 void r8_compiled_enter(void) { depth++; }
+
+// The error of compiled code that returned R8_UNWIND without a jump that its
+// R8Api.protect caught.
+const char *r8_unwound_text(void) {
+  return "the compiled code returned R8_UNWIND, and R8Api.protect caught no jump of R "
+         "[unwind_without_jump]";
+}
 
 // After a package's compiled code, which R8 called from a C frame, returns
 // `status`: a jump of R that its R8Api.protect caught continues, whatever the
@@ -324,11 +343,32 @@ void r8_compiled_returned(R8Status status) {
   }
   if (pending) {
     pending = 0;
-    R_ContinueUnwind(continuation);
+    R_ContinueUnwind(package_continuation);
   }
   if (status == R8_UNWIND) {
-    Rf_error("the compiled code returned R8_UNWIND, and R8Api.protect caught no jump of R "
-             "[unwind_without_jump]");
+    Rf_error("%s", r8_unwound_text());
+  }
+}
+
+// After a package's compiled code that R8 called from a Rust frame: whether its
+// R8Api.protect caught a jump of R, which stays held, so that the package's
+// R8Api.protect runs nothing, until the Rust frames have returned and
+// `r8_continue_held()` continues it.
+int r8_compiled_held(void) {
+  if (depth > 0) {
+    depth--;
+  }
+  return pending;
+}
+
+// Whether a jump of R that a package's R8Api.protect caught is held.
+int r8_jump_held(void) { return pending; }
+
+// Continues the jump that `r8_compiled_held()` held.
+void r8_continue_held(void) {
+  if (pending) {
+    pending = 0;
+    R_ContinueUnwind(package_continuation);
   }
 }
 
@@ -338,7 +378,7 @@ void r8_compiled_returned(R8Status status) {
 void r8_drop_unwind(void) {
   if (pending) {
     pending = 0;
-    SETCAR(continuation, R_NilValue);
+    SETCAR(package_continuation, R_NilValue);
   }
 }
 
@@ -467,6 +507,8 @@ static const R8Api *r8_api(uint32_t abi_version) {
 void r8_register_api(void) {
   continuation = R_MakeUnwindCont();
   R_PreserveObject(continuation);
+  package_continuation = R_MakeUnwindCont();
+  R_PreserveObject(package_continuation);
   R_RegisterCCallable("R8", "r8_api", (DL_FUNC) r8_api);
 }
 
@@ -595,10 +637,9 @@ static SEXP r8_invoke(SEXP fn, SEXP args) {
     // R8's `compiled_abort()` raises the classed condition, r8_compiled_error
     // or r8_panic, from the generic's call.
     SEXP ns = PROTECT(R_FindNamespace(PROTECT(Rf_mkString("R8"))));
-    SEXP code = PROTECT(Rf_mkString(err.code[0] == '\0' ? "no_code" : err.code));
-    SEXP message = PROTECT(Rf_mkString(
-        err.message[0] == '\0' ? "the compiled method returned an error without a message"
-                                : err.message));
+    // `compiled_abort()` names an empty code or message.
+    SEXP code = PROTECT(Rf_mkString(err.code));
+    SEXP message = PROTECT(Rf_mkString(err.message));
     r8_abort3("compiled_abort", code, message, PROTECT(generic_call()), ns);
     UNPROTECT(5);
   }
@@ -1152,10 +1193,8 @@ static SEXP r8_native(SEXP env, SEXP key, SEXP dispatch) {
     err.code[sizeof(err.code) - 1] = '\0';
     err.message[sizeof(err.message) - 1] = '\0';
     SEXP ns = r8_namespace(dispatch);
-    SEXP code = PROTECT(Rf_mkString(err.code[0] == '\0' ? "no_code" : err.code));
-    SEXP message = PROTECT(Rf_mkString(
-        err.message[0] == '\0' ? "the compiled body returned an error without a message"
-                                : err.message));
+    SEXP code = PROTECT(Rf_mkString(err.code));
+    SEXP message = PROTECT(Rf_mkString(err.message));
     SEXP sys_call = PROTECT(Rf_lang1(Rf_install("sys.call")));
     SEXP fcall = PROTECT(Rf_eval(sys_call, env));
     r8_abort3("compiled_abort", code, message, fcall, ns);

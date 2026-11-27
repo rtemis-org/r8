@@ -6,11 +6,16 @@
 //! (`#[r8::function]`, `crate::exports`) is called through that body from
 //! here: the cells of each argument of `vec(T)` as an R vector, the
 //! arguments checked as a call from R checks them, and the result checked
-//! against the return type (`crate::signature::CallChecks`). A call that these
-//! checks or the body refuse runs through the function's closure, which raises
-//! the error of a direct call. The calls of a function whose body is R code run
-//! through its closure, in R8's `call_typed()`, one loop for the calls of a
-//! function.
+//! against the return type (`crate::signature::CallChecks`); the body runs at
+//! most once. A call whose arguments the checks refuse runs through the
+//! function's closure, which raises the error of a direct call, and where the
+//! body returns an error or a result that the return type refuses, R8's
+//! `call_settled()` gives the condition of a direct call. A jump of R that the
+//! body's `R8Api.protect` caught is held, the evaluation returns without calling
+//! R, and the jump continues once the Rust frames have returned
+//! (`crate::interrupt::interruptible_if()`). The calls of a function whose body is
+//! R code run through its closure, in R8's `call_typed()`, one loop for the calls
+//! of a function.
 //!
 //! spec: R8/raven#summaries
 
@@ -23,7 +28,7 @@ use extendr_ffi::{
     INTEGER, LOGICAL, R_xlen_t, REAL, Rf_allocVector, Rf_protect, Rf_unprotect, SET_STRING_ELT,
     SET_VECTOR_ELT, SEXPTYPE, STRING_ELT, VECTOR_ELT,
 };
-use rtemis_r8::abi::{CallInputs, OK, Sexp};
+use rtemis_r8::abi::{CallInputs, ERROR, OK, Sexp};
 use rtemis_r8::name::QualifiedName;
 use rtemis_r8::rules::calc::{Argument, Call, CallFailed, CallValue, Data};
 use rtemis_r8::rules::{DocumentSet, TypeLookup};
@@ -45,19 +50,85 @@ pub(crate) struct RFunctions<'h> {
     docs: &'h DocumentSet,
     closures: HashMap<String, Robj>,
     caller: Option<Function>,
+    settle: Option<Function>,
+    /// R8's function that reports the calls done to the progress hook, or
+    /// `None` without a hook.
+    report: Option<Function>,
+    /// The calls made, their total, one call for each group of each of the
+    /// expressions, as in a map, and the report points of their count.
+    steps: std::cell::Cell<u64>,
+    total: std::cell::Cell<u64>,
+    expressions: usize,
+    stride: RefCell<rtemis_r8::progress::Stride>,
     /// The condition of the call that is an error.
     pub(crate) failed: RefCell<Option<Robj>>,
+    /// The condition of an error of the progress hook.
+    pub(crate) hook_failed: RefCell<Option<Robj>>,
+    /// Whether a body's `R8Api.protect` caught a jump of R, which is held.
+    jumped: std::cell::Cell<bool>,
+}
+
+/// The call of a compiled body that runs, for a handler of R that names its
+/// column and group: the place of its expression, the function, and the first
+/// row of its group, from 0.
+struct Site {
+    active: std::cell::Cell<bool>,
+    at: std::cell::Cell<usize>,
+    row: std::cell::Cell<Option<u32>>,
+    function: RefCell<String>,
+}
+
+thread_local! {
+    static SITE: Site = const {
+        Site {
+            active: std::cell::Cell::new(false),
+            at: std::cell::Cell::new(0),
+            row: std::cell::Cell::new(None),
+            function: RefCell::new(String::new()),
+        }
+    };
+}
+
+/// The call of a typed function's compiled body that runs.
+///
+/// @return `NULL` outside a call, or a list of `at`, the place of the
+///   expression from 1, `function`, the qualified name, and `first_row`, the
+///   first row of the group from 1, or `NULL`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_call_site() -> Robj {
+    SITE.with(|s| {
+        if !s.active.get() {
+            return ().into();
+        }
+        list!(
+            at = s.at.get() as i32 + 1,
+            function = s.function.borrow().clone(),
+            first_row = s.row.get().map(|r| r as i32 + 1)
+        )
+        .into()
+    })
+}
+
+extendr_module! {
+    mod typed_calls;
+    fn r8_call_site;
 }
 
 impl<'h> RFunctions<'h> {
     /// The closures of `functions`, a list named by qualified names, over the
-    /// columns `columns`, a list named `names`, of a table that `docs` declares.
+    /// columns `columns`, a list named `names`, of a table that `docs` declares;
+    /// `callers` holds R8's `call_typed()`, `call_settled()`, and the function
+    /// that reports progress, as `call`, `settle`, and `report`; `expressions`
+    /// is the number of the expressions computed.
     pub(crate) fn new(
         names: &'h [String],
         columns: SEXP,
         docs: &'h DocumentSet,
         functions: &Robj,
-        caller: &Robj,
+        callers: &Robj,
+        expressions: usize,
     ) -> RFunctions<'h> {
         let mut closures = HashMap::new();
         if let Ok(l) = List::try_from(functions.clone()) {
@@ -70,9 +141,56 @@ impl<'h> RFunctions<'h> {
             columns,
             docs,
             closures,
-            caller: caller.as_function(),
+            caller: callers.dollar("call").ok().and_then(|f| f.as_function()),
+            settle: callers.dollar("settle").ok().and_then(|f| f.as_function()),
+            report: callers.dollar("report").ok().and_then(|f| f.as_function()),
+            steps: std::cell::Cell::new(0),
+            total: std::cell::Cell::new(0),
+            expressions,
+            stride: RefCell::new(rtemis_r8::progress::Stride::new()),
             failed: RefCell::new(None),
+            hook_failed: RefCell::new(None),
+            jumped: std::cell::Cell::new(false),
         }
+    }
+
+    /// Counts `n` calls, which end at the place `at`; at a report point of
+    /// their count, reports the calls done to the progress hook, whose error
+    /// stops the calls.
+    fn step(&self, n: u64, at: usize) -> std::result::Result<(), CallFailed> {
+        let done = self.steps.get() + n;
+        self.steps.set(done);
+        if !self.stride.borrow_mut().reached(done) {
+            return Ok(());
+        }
+        let Some(report) = &self.report else {
+            return Ok(());
+        };
+        let out = report
+            .call(pairlist!(done as f64, self.total.get().max(done) as f64))
+            .unwrap_or_else(|e| Robj::from(e.to_string()));
+        if out.is_null() {
+            return Ok(());
+        }
+        let message = if out.is_string() {
+            out.as_str().unwrap_or_default().to_string()
+        } else {
+            out.dollar("message")
+                .ok()
+                .and_then(|m| m.as_str().map(str::to_string))
+                .unwrap_or_default()
+        };
+        *self.hook_failed.borrow_mut() = Some(out);
+        Err(CallFailed {
+            at,
+            message: format!("the progress hook: {message}"),
+        })
+    }
+
+    /// Whether a body's `R8Api.protect` caught a jump of R, which is held until
+    /// the Rust frames have returned; nothing calls R before then.
+    pub(crate) fn jumped(&self) -> bool {
+        self.jumped.get()
     }
 
     /// The column `name` of the table.
@@ -267,12 +385,28 @@ fn call_value(s: SEXP) -> std::result::Result<CallValue, String> {
 enum Native {
     /// Every call gave its value.
     Done,
-    /// The call after those that gave their values did not pass its checks,
-    /// or its body returned an error.
+    /// The arguments of the call after those that gave their values did not
+    /// pass their checks; the body has not run.
     Refused,
+    /// The body of that call returned an error or a result that the return
+    /// type refuses.
+    Failed(Settle),
+    /// The body's `R8Api.protect` caught a jump of R, which is held.
+    Jumped,
     /// No package registered a compiled body of the function, or the body
     /// takes other parameters than the call gives.
     Absent,
+}
+
+/// What a body that failed returned, for the condition of a direct call.
+enum Settle {
+    /// An error, or a panic, by its code and message.
+    Compiled { code: String, message: String },
+    /// A result that the return type refuses: its problems, or the text of an
+    /// error of the check.
+    Result(Robj),
+    /// `R8_UNWIND` without a caught jump.
+    Unwound,
 }
 
 /// What an argument of the calls of a compiled body is: the cells of a
@@ -443,6 +577,7 @@ impl RFunctions<'_> {
         // The body fills the report only when it returns an error.
         let mut err = crate::rust_stored::blank();
         let mut argv: Vec<Sexp> = vec![std::ptr::null_mut(); n];
+        SITE.with(|s| *s.function.borrow_mut() = function.to_string());
         for (k, args) in calls.iter().enumerate() {
             rtemis_r8::progress::tick();
             for (i, (_, a)) in args.iter().enumerate() {
@@ -466,20 +601,86 @@ impl RFunctions<'_> {
             for (i, a) in argv.iter_mut().enumerate() {
                 *a = unsafe { VECTOR_ELT(list, i as R_xlen_t) }.cast();
             }
+            let row = args.iter().find_map(|(_, a)| match a {
+                Argument::Column { rows, .. } | Argument::Cells { rows, .. } => {
+                    rows.first().copied()
+                }
+                _ => None,
+            });
+            SITE.with(|s| {
+                s.row.set(row);
+                s.active.set(true);
+            });
             let mut result: Sexp = unsafe { extendr_ffi::R_NilValue }.cast();
+            crate::rust_stored::body_enter();
             let status = unsafe { body(&inputs, argv.as_ptr(), n, &mut result, &mut err) };
             if status == OK {
                 unsafe { SET_VECTOR_ELT(list, n as R_xlen_t, result.cast()) };
             }
-            crate::rust_stored::returned_to_rust();
-            if status != OK || !checks.result(list, n) {
-                return Ok(Native::Refused);
+            let held = crate::rust_stored::body_returned();
+            SITE.with(|s| s.active.set(false));
+            // A held jump continues whatever the body returned, and nothing
+            // calls R before it does.
+            if held {
+                self.jumped.set(true);
+                return Ok(Native::Jumped);
+            }
+            match status {
+                OK => {}
+                ERROR => {
+                    let text = |b: &[std::ffi::c_char]| {
+                        let bytes: Vec<u8> = b
+                            .iter()
+                            .take_while(|&&c| c != 0)
+                            .map(|&c| c as u8)
+                            .collect();
+                        String::from_utf8_lossy(&bytes).into_owned()
+                    };
+                    return Ok(Native::Failed(Settle::Compiled {
+                        code: text(&err.code),
+                        message: text(&err.message),
+                    }));
+                }
+                _ => return Ok(Native::Failed(Settle::Unwound)),
+            }
+            if let Err(problems) = checks.result(list, n) {
+                return Ok(Native::Failed(Settle::Result(problems)));
             }
             let v =
                 call_value(unsafe { VECTOR_ELT(list, n as R_xlen_t) }).map_err(|m| fail(k, m))?;
             out.push(v);
+            self.step(1, offset + k + 1)?;
         }
         Ok(Native::Done)
+    }
+
+    /// The condition of a direct call of `function` whose body failed as
+    /// `settle` says, by R8's `call_settled()`, as the failure of the call at
+    /// the place `at`.
+    fn settled(&self, function: &QualifiedName, settle: Settle, at: usize) -> CallFailed {
+        let name = function.to_string();
+        let fail = |message: String| CallFailed { at, message };
+        let (Some(f), Some(settle_fn)) = (self.closures.get(&name), &self.settle) else {
+            return fail(format!("`{name}()` is not a function of the expression"));
+        };
+        let (kind, payload): (&str, Robj) = match settle {
+            Settle::Compiled { code, message } => {
+                ("compiled", list!(code = code, message = message).into())
+            }
+            Settle::Result(problems) => ("result", problems),
+            Settle::Unwound => ("unwound", crate::rust_stored::unwound_text().into()),
+        };
+        let out = match settle_fn.call(pairlist!(f.clone(), name.as_str(), kind, payload)) {
+            Ok(o) => o,
+            Err(e) => return fail(format!("the call ended: {e}")),
+        };
+        let message = out
+            .dollar("message")
+            .ok()
+            .and_then(|m| m.as_str().map(str::to_string))
+            .unwrap_or_default();
+        *self.failed.borrow_mut() = Some(out);
+        fail(message)
     }
 }
 
@@ -490,22 +691,53 @@ impl rtemis_r8::rules::calc::Functions for RFunctions<'_> {
         calls: &[Call<'_>],
     ) -> std::result::Result<Vec<CallValue>, CallFailed> {
         let name = function.to_string();
+        if self.total.get() == 0 {
+            self.total.set((self.expressions * calls.len()) as u64);
+        }
         let mut out = Vec::with_capacity(calls.len());
         while out.len() < calls.len() {
             let k = out.len();
             match self.through_body(function, &calls[k..], &mut out)? {
                 Native::Done => {}
-                // The closure raises the error of a direct call, or, where
-                // it admits what the checks here refuse, gives the value.
+                // The closure, in which the body does not run either, raises
+                // the error of a direct call, or, where it admits what the
+                // checks here refuse, gives the value.
                 Native::Refused => {
                     let at = out.len();
                     out.extend(self.through_closure(&name, &calls[at..=at], at)?);
+                    self.step(1, at + 1)?;
                 }
+                Native::Failed(settle) => return Err(self.settled(function, settle, out.len())),
+                Native::Jumped => {
+                    return Err(CallFailed {
+                        at: out.len(),
+                        message: "R jumped inside the compiled body".to_string(),
+                    });
+                }
+                // The calls run in R, which checks the user's interrupt itself;
+                // with a progress hook, in chunks that end at the report points.
                 Native::Absent => {
-                    out.extend(self.through_closure(&name, &calls[k..], k)?);
+                    let mut at = k;
+                    while at < calls.len() {
+                        let n = match self.report {
+                            None => calls.len() - at,
+                            Some(_) => {
+                                usize::try_from(self.stride.borrow().remaining(self.steps.get()))
+                                    .unwrap_or(usize::MAX)
+                                    .min(calls.len() - at)
+                            }
+                        };
+                        out.extend(self.through_closure(&name, &calls[at..at + n], at)?);
+                        at += n;
+                        self.step(n as u64, at)?;
+                    }
                 }
             }
         }
         Ok(out)
+    }
+
+    fn expression(&self, at: usize) {
+        SITE.with(|s| s.at.set(at));
     }
 }

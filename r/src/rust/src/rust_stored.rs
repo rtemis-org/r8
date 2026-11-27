@@ -287,31 +287,98 @@ fn error_text(err: &Error) -> String {
     format!("{} [{}]", report_text(&err.message), report_text(&err.code))
 }
 
-/// `r8_drop_unwind()` of `view.c`, which drops the jump of R that a package's
-/// `R8Api.protect` caught, set by `R_init_R8()`.
-static DROP_UNWIND: std::sync::atomic::AtomicPtr<()> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+/// The functions of `view.c` around compiled code of a package that R8 calls
+/// from a Rust frame, set by `R_init_R8()`: `r8_drop_unwind()`,
+/// `r8_compiled_enter()`, `r8_compiled_held()`, `r8_jump_held()`,
+/// `r8_continue_held()`, and `r8_unwound_text()`.
+static COMPILED: [std::sync::atomic::AtomicPtr<()>; 6] =
+    [const { std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()) }; 6];
 
-/// Receives `r8_drop_unwind()` from `R_init_R8()`.
+/// Receives the functions of [`COMPILED`] from `R_init_R8()`.
 ///
 /// # Safety
 ///
-/// `drop` is that function.
+/// The arguments are those functions.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn r8_set_drop_unwind(drop: *mut ()) {
-    DROP_UNWIND.store(drop, std::sync::atomic::Ordering::Release);
+pub unsafe extern "C" fn r8_set_compiled_functions(
+    drop: *mut (),
+    enter: *mut (),
+    held: *mut (),
+    is_held: *mut (),
+    resume: *mut (),
+    unwound: *mut (),
+) {
+    for (slot, f) in COMPILED
+        .iter()
+        .zip([drop, enter, held, is_held, resume, unwound])
+    {
+        slot.store(f, std::sync::atomic::Ordering::Release);
+    }
 }
 
-/// After compiled code of a package that R8 calls from a Rust frame, a codec
-/// function or a function's body: a jump of R that the code's `R8Api.protect`
-/// caught does not continue through Rust frames, so it is dropped, and the call
-/// reports it as the error `unwind`.
+/// The function of `COMPILED` at `k`, or `None` before `R_init_R8()`.
+fn compiled_fn(k: usize) -> Option<*mut ()> {
+    let f = COMPILED[k].load(std::sync::atomic::Ordering::Acquire);
+    (!f.is_null()).then_some(f)
+}
+
+/// After a codec function that R8 calls from a Rust frame: a jump of R that
+/// the codec's `R8Api.protect` caught does not continue through Rust frames,
+/// so it is dropped, and the call reports it as the error `unwind`.
 pub(crate) fn returned_to_rust() {
-    let f = DROP_UNWIND.load(std::sync::atomic::Ordering::Acquire);
-    if !f.is_null() {
+    if let Some(f) = compiled_fn(0) {
         let f: unsafe extern "C" fn() = unsafe { std::mem::transmute::<*mut (), _>(f) };
         unsafe { f() };
     }
+}
+
+/// Before the body of a typed function that R8 calls from a Rust frame.
+pub(crate) fn body_enter() {
+    if let Some(f) = compiled_fn(1) {
+        let f: unsafe extern "C" fn() = unsafe { std::mem::transmute::<*mut (), _>(f) };
+        unsafe { f() };
+    }
+}
+
+/// After the body of [`body_enter()`]: whether its `R8Api.protect` caught a
+/// jump of R, which stays held until [`continue_held()`] continues it. While a
+/// jump is held, no code calls R.
+pub(crate) fn body_returned() -> bool {
+    compiled_fn(2).is_some_and(|f| {
+        let f: unsafe extern "C" fn() -> std::os::raw::c_int =
+            unsafe { std::mem::transmute::<*mut (), _>(f) };
+        unsafe { f() != 0 }
+    })
+}
+
+/// Whether a jump of R that a package's `R8Api.protect` caught is held.
+pub(crate) fn jump_held() -> bool {
+    compiled_fn(3).is_some_and(|f| {
+        let f: unsafe extern "C" fn() -> std::os::raw::c_int =
+            unsafe { std::mem::transmute::<*mut (), _>(f) };
+        unsafe { f() != 0 }
+    })
+}
+
+/// Continues the held jump of R, once the Rust frames that called the body
+/// have returned; it does not return.
+pub(crate) fn continue_held() {
+    if let Some(f) = compiled_fn(4) {
+        let f: unsafe extern "C" fn() = unsafe { std::mem::transmute::<*mut (), _>(f) };
+        unsafe { f() };
+    }
+}
+
+/// The error of a body that returned `R8_UNWIND` without a caught jump, as
+/// `r8_compiled_returned()` raises it.
+pub(crate) fn unwound_text() -> String {
+    compiled_fn(5)
+        .map(|f| {
+            let f: unsafe extern "C" fn() -> *const c_char =
+                unsafe { std::mem::transmute::<*mut (), _>(f) };
+            c_text(unsafe { f() }).unwrap_or_default()
+        })
+        .unwrap_or_default()
 }
 
 /// A state built by the codec from the fields of `fields`, a list in

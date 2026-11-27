@@ -51,6 +51,7 @@ extendr_module! {
     use report;
     use signature;
     use text;
+    use typed_calls;
     use value;
     use values;
     use version;
@@ -72,6 +73,7 @@ extendr_module! {
     use oracle;
     use signature;
     use text;
+    use typed_calls;
     use value;
     use values;
     use version;

@@ -5,6 +5,8 @@
 //! and returns a result that its return type refuses; and `unwound()`, which
 //! returns the error code of a jump of R without one.
 
+use std::sync::atomic::{AtomicI32, Ordering};
+
 use rtemis_r8_api as r8;
 
 /// Holds each element between `lo` and `hi`.
@@ -89,4 +91,34 @@ pub fn portion(x: &[f64], whole: &[f64], scale: f64) -> r8::Result<f64> {
         return Err(r8::Error::new("zero_whole", "`whole` sums to 0"));
     }
     Ok(scale * x.iter().sum::<f64>() / w)
+}
+
+/// The calls of `counted()`.
+static COUNTED: AtomicI32 = AtomicI32::new(0);
+
+/// The sum of `x`, counting its calls; an error for a negative value.
+#[r8::function]
+pub fn counted(x: &[f64]) -> r8::Result<f64> {
+    COUNTED.fetch_add(1, Ordering::Relaxed);
+    if x.iter().any(|v| *v < 0.0) {
+        return Err(r8::Error::new("negative", "`x` holds a negative value"));
+    }
+    Ok(x.iter().sum())
+}
+
+/// The calls of `counted()` so far.
+#[r8::function]
+pub fn count_of() -> i32 {
+    COUNTED.load(Ordering::Relaxed)
+}
+
+/// The length of `x`, after R allocates a vector of `n` doubles, inside
+/// `R8Api.protect`.
+#[r8::function]
+pub fn filled(x: &[f64], n: i32) -> r8::Result<f64> {
+    let v = vec![0.0_f64; usize::try_from(n).unwrap_or(0)];
+    match r8::IntoR::into_r(v) {
+        Ok(_) => Ok(x.len() as f64),
+        Err(r8::Jumped::Unwind(e) | r8::Jumped::Error(e)) => Err(e),
+    }
 }

@@ -88,6 +88,13 @@ pub(crate) fn interruptible_if<T>(long: bool, f: impl FnOnce() -> Result<T>) -> 
         crate::rust_stored::guarded(|| f.take().map(|f| f()))
     }));
     rtemis_r8::progress::set_hook(before);
+    // A jump of R that a typed function's compiled body caught is held while the
+    // walk returns, and continues here, where no frame of the walk remains.
+    if crate::rust_stored::jump_held() {
+        drop(out);
+        crate::rust_stored::continue_held();
+        return Err(Error::Other("R8 stopped".to_string()));
+    }
     match out {
         Ok(Some(Some(v))) => v,
         // R jumped.

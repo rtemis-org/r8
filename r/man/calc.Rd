@@ -64,9 +64,12 @@ direct call: a missing cell for a parameter of \code{vec(T)} is the call's error
 with the group's keys, and a parameter of \code{vec(option(T))} receives the
 missing cells. A function whose body is \code{\link[=rust]{rust()}} is called from R8's Rust
 code through the body that its package registers, with the cells of each
-group as an R vector; a call that the checks or the body refuse runs through
-the function's closure, which raises the error of a direct call. A rule and
-a computed field call no function.
+group as an R vector, and its body runs at most once for each call: a call
+whose arguments the checks refuse runs through the function's closure, which
+raises the error of a direct call, and an error or a refused result of the
+body is the error that a direct call raises. An R error or an interrupt
+inside the body continues as itself. A rule and a computed field call no
+function.
 }
 
 \examples{

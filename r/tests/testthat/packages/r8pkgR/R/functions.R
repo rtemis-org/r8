@@ -3,8 +3,9 @@
 # 2026- EDG rtemis.org
 
 # Typed functions whose bodies are in Rust (src/rust/src/functions.rs).
-# `spread()` and `portion()` return one value, which the expressions of
-# R8::calc() call once for each group.
+# `spread()`, `portion()`, `counted()`, and `filled()` return one value, which
+# the expressions of R8::calc() call once for each group; `count_of()` gives the
+# calls of `counted()` so far.
 
 clip <- R8::new_function(
   "clip",
@@ -87,4 +88,34 @@ portion <- R8::new_function(
   rules = list(scale = R8::rule(scale > 0)),
   return_type = R8::type_double(min = 0),
   description = "`scale` times the sum of `x` over the sum of `whole`."
+)
+
+counted <- R8::new_function(
+  "counted",
+  function(x = R8::arg_vec(R8::type_double(), description = "The values.")) {
+    R8::rust()
+  },
+  return_type = R8::type_double(),
+  description = "The sum of `x`, counting its calls; an error for a negative value."
+)
+
+count_of <- R8::new_function(
+  "count_of",
+  function() R8::rust(),
+  return_type = R8::type_integer(),
+  description = "The calls of `counted()` so far."
+)
+
+filled <- R8::new_function(
+  "filled",
+  function(
+    x = R8::arg_vec(R8::type_double(), description = "The values."),
+    n = R8::arg_integer(
+      description = "The length of the vector that R allocates."
+    )
+  ) {
+    R8::rust()
+  },
+  return_type = R8::type_double(),
+  description = "The length of `x`, after R allocates a vector of `n` doubles."
 )

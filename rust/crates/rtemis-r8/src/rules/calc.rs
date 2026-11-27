@@ -145,6 +145,10 @@ pub trait Functions {
         function: &QualifiedName,
         calls: &[Call<'_>],
     ) -> Result<Vec<CallValue>, CallFailed>;
+
+    /// Called before the calls of the expression at the place `at` of the
+    /// expressions computed, so that a host can name the column of a call.
+    fn expression(&self, _at: usize) {}
 }
 
 /// A host that calls no typed function.
@@ -836,6 +840,7 @@ pub fn computed<'a, A: Access<'a>>(
             _ => None,
         };
         let kind = kind_of(&calc.ty, integer(&calc.rows.invariant, &calc.rows.cells));
+        functions.expression(at);
         let eval = Eval::calling(&calc.rows, table, rows, groups.clone(), threads, functions)
             .map_err(|f| match f {
                 Failed::Table(m) => NotComputed::Table(m),

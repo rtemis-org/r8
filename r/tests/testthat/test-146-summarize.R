@@ -276,10 +276,38 @@ test_that("r8map() calls a typed function on each column of each group, as a dir
   )
   expect_match(
     conditionMessage(e),
-    "column `sbp` in the group sex = \"M\"",
+    paste0(
+      "r8map(): `sbp` calls `",
+      attr(spread, "r8_function"),
+      "()` in the group sex = \"M\""
+    ),
     fixed = TRUE
   )
+  expect_s3_class(e$parent, "r8_argument_error")
   expect_error(spread(x$sbp[x$sex == "M"]), class = "r8_value_error")
+  # On a table, `args` gives one value to each parameter.
+  scaled <- new_function(
+    "scaled",
+    function(v = arg_vec(type_double()), by = arg_double(default = 1)) {
+      sum(v) * by
+    },
+    return_type = type_double()
+  )
+  expect_identical(
+    r8map(
+      x,
+      scaled,
+      columns = "weight",
+      by = "sex",
+      args = list(by = 2)
+    )$weight,
+    2 * c(sum(x$weight[x$sex == "F"]), sum(x$weight[x$sex == "M"]))
+  )
+  refuses(
+    r8map(x, scaled, columns = "weight", args = list(by = c(1, 2))),
+    "gives one value to each parameter in `args`, and `by` holds 2 values",
+    class = "r8_argument_error"
+  )
   refuses(r8map(x, median, by = "ward"), "new_function()")
 })
 

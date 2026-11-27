@@ -148,7 +148,7 @@ test_that("load compares each Rust body with its declaration", {
       sprintf("source(%s)", deparse(file.path(pkg, "R", "r8-types.R"))),
       # The declarations of R/functions.R with bodies in R, as a session
       # outside the package declares them.
-      "rust_names <- c('pkgr::clip', 'pkgr::level', 'pkgr::tally', 'pkgr::fraction', 'pkgr::unwound', 'pkgr::spread', 'pkgr::portion')",
+      "rust_names <- c('pkgr::clip', 'pkgr::level', 'pkgr::tally', 'pkgr::fraction', 'pkgr::unwound', 'pkgr::spread', 'pkgr::portion', 'pkgr::counted', 'pkgr::count_of', 'pkgr::filled')",
       "check <- function(in_rust = rust_names, in_r = character()) tryCatch({ R8:::check_functions('r8pkgR', R8:::r8_exports_functions(ptr, 'pkgr'), in_rust, in_r); 'agree' }, error = conditionMessage)",
       "clip <- new_function('clip', function(x = arg_vec(type_double()), lo = arg_double(), hi = arg_double()) x)",
       "level <- new_function('level', function(x = arg_vec(type_double()), lo = arg_double(default = 0), hi = arg_double()) x)",
@@ -157,6 +157,9 @@ test_that("load compares each Rust body with its declaration", {
       "unwound <- new_function('unwound', function() 1)",
       "spread <- new_function('spread', function(x = arg_vec(type_double())) 0, return_type = type_double())",
       "portion <- new_function('portion', function(x = arg_vec(type_double()), whole = arg_vec(type_double()), scale = arg_double(default = 1)) 0, return_type = type_double(min = 0))",
+      "counted <- new_function('counted', function(x = arg_vec(type_double())) 0, return_type = type_double())",
+      "count_of <- new_function('count_of', function() 0L, return_type = type_integer())",
+      "filled <- new_function('filled', function(x = arg_vec(type_double()), n = arg_integer()) 0, return_type = type_double())",
       "say('first', check())",
       "e <- check(c(rust_names, 'pkgr::midrange'))",
       "say('absent', grepl('`pkgr::midrange()` has the body rust(), and the package\\'s Rust code exports no function `midrange`', e, fixed = TRUE))",
@@ -269,6 +272,27 @@ test_that("an expression of calc() calls a body in Rust through its entry, as a 
       "z <- Raven(g = c('a', 'a', 'b'), v = c(1, NA, 2))",
       "e <- tryCatch(r8summarize(z, list(s = calc(spread(v))), by = 'g'), error = identity)",
       "say('missing', parent(e), grepl('in the group g = \"a\"', conditionMessage(e), fixed = TRUE))",
+      # The body runs at most once: a group whose body returns an error stops
+      # the calls, and the error is that of a direct call.
+      "x2 <- Raven(g = c('a', 'b', 'b', 'c'), v = c(1, 2, -1, 3))",
+      "before <- count_of()",
+      "e <- tryCatch(r8summarize(x2, list(n = calc(counted(v))), by = 'g'), error = identity)",
+      "say('once', count_of() - before, parent(e), grepl('in the group g = \"b\": `x` holds a negative value [negative]', conditionMessage(e), fixed = TRUE))",
+      "direct <- tryCatch(counted(c(2, -1)), error = identity)",
+      "say('direct', identical(class(e$parent), class(direct)), identical(conditionMessage(e$parent), conditionMessage(direct)))",
+      "e <- tryCatch(suppressWarnings(r8summarize(x2, list(f = calc(fraction(-1, 2))), by = 'g')), error = identity)",
+      "say('panic', class(e$parent)[1])",
+      "e <- tryCatch(r8summarize(x2, list(u = calc(unwound())), by = 'g'), error = identity)",
+      "say('unwound', class(e)[1], grepl('[unwind_without_jump]', conditionMessage(e$parent), fixed = TRUE))",
+      # An R error inside the body's R8Api.protect continues as itself, inside
+      # the error that names the column and the group.
+      "heap <- gc()[2L, 4L]",
+      "invisible(mem.maxVSize(ceiling(heap) + 20))",
+      "big <- as.integer(ceiling((heap + 100) * 2^20 / 8))",
+      "e <- tryCatch(r8summarize(x2, list(m = calc(filled(v, n = val(big)))), by = 'g'), error = identity)",
+      "say('jump', class(e)[1], class(e$parent)[1], grepl('`m` calls `pkgr::filled()` in the group g = \"a\": vector memory limit', conditionMessage(e), fixed = TRUE))",
+      "invisible(mem.maxVSize(Inf))",
+      "say('after', identical(r8summarize(x2, list(m = calc(filled(v, n = 10L))), by = 'g')$m, c(1, 2, 1)))",
       # Without its package's registration, the call is the closure's.
       "f <- r8pkgR::spread",
       "unloadNamespace('r8pkgR')",
@@ -293,6 +317,12 @@ test_that("an expression of calc() calls a body in Rust through its entry, as a 
     "rule r8_value_error r8_argument_error rule_violation ",
     "result r8_value_error r8_result_error below_min ",
     "missing r8_value_error r8_argument_error missing_value TRUE ",
+    "once 2 r8_value_error r8_compiled_error negative TRUE ",
+    "direct TRUE TRUE ",
+    "panic r8_panic ",
+    "unwound r8_value_error TRUE ",
+    "jump r8_value_error simpleError TRUE ",
+    "after TRUE ",
     "unloaded r8_value_error r8_dispatch_error "
   )) {
     expect_true(line %in% out, info = paste(line, info, sep = "\n"))

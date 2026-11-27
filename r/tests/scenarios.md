@@ -56,7 +56,7 @@ What each feature does, in 45 files of 418 tests. The runtime has its own tests 
 
 ## Scenarios
 
-What happens to a user: 68 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
+What happens to a user: 69 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
 
 ### A. One session: a user declares a type again at the console
 
@@ -84,6 +84,7 @@ What happens to a user: 68 scenarios, of which 1 are open, since what R8 is to d
 | B6 | a package that is unloaded and loaded again works | A user unloads a package and loads it again, as after an update in the same session. | The second load is refused as a duplicate, or the methods of the first answer. | The package loads again, and its methods are those of the second load. | installed packages |
 | B7 | the types and methods of an unloaded package are not used | A user unloads a package, and calls a generic of another package for a value of its type. | Code of a package that is not loaded answers. | The call is an error that names the package to load. | open: R8 keeps the declarations and the methods in R of an unloaded package. |
 | B8 | a developer moves the body of a typed function to Rust | A package declares a typed function in R. Its loop is slow on long vectors, so its developer writes the body in the package's Rust code and replaces the R body with rust(). | Callers, the help page, the schema of the arguments, or calls from documents change with the body; or the Rust function takes other parameters than the declaration, and computes from the wrong arguments. | The declaration stays the function's: the same parameters, schema, and record, with the arguments checked before the Rust function runs and its result after. The results equal those of the R body. A Rust function whose parameters differ from the declaration is refused when the package loads, with the signature to write. | installed packages |
+| B9 | a summary calls a body in Rust once for each group | A package's typed function has its body in Rust. A user calls it in r8summarize() for each group of a table, and the values of one group make the body return an error. | The body runs through R for every group, or runs again to produce the error, so that a body that draws random numbers or takes long runs twice; or an error that R raises inside the body loses its condition. | The body is called from R8's Rust code, once for each group, and each value equals a direct call's. The group whose body returns an error stops the summary with the error that a direct call raises, inside an error that names the column and the group; an error that R raises inside the body continues as itself, inside the same. | installed packages |
 
 ### C. Values that travel: to workers, files, and other sessions
 
