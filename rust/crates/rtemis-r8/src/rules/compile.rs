@@ -5,11 +5,14 @@
 //! so a rule's mistakes are declaration errors. The result is a typed tree
 //! that `eval` runs.
 
+use super::calc::{Kind, integer, kind_of};
 use super::eval::{Scalar, unwrap_option};
 use super::ty::{Members, Ty, TypeLookup, VariantFields, members};
 use crate::access::{valid_date, valid_posixct};
 use crate::canonical::{date_days, datetime_micros};
-use crate::ir::{FieldDef, FieldType, Logic, Operator};
+use crate::ir::{FieldDef, FieldType, Logic, Operator, ReturnType};
+use crate::name::QualifiedName;
+use crate::tree::Tree;
 
 /// A problem in a rule expression, located by a JSON Pointer into the
 /// expression.
@@ -179,6 +182,15 @@ pub enum Expr {
         at: usize,
         skip: bool,
     },
+    /// A call of a typed function over all rows, or over the rows of each
+    /// group, of one value of `kind`; `at` is its place among the rule's
+    /// aggregates and calls.
+    Call {
+        function: QualifiedName,
+        args: Vec<CallArg>,
+        kind: Kind,
+        at: usize,
+    },
     /// `is.null(x)`: a presence test, which does not count as a read.
     IsNull(Box<Expr>),
     /// `is.na(x)`: missing, or `NaN`.
@@ -201,6 +213,32 @@ pub enum Expr {
     },
 }
 
+/// The argument of one parameter of a call of a typed function.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallArg {
+    /// The parameter's name.
+    pub name: Box<str>,
+    /// What the call gives it.
+    pub value: ArgValue,
+}
+
+/// What a call gives a parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArgValue {
+    /// For a parameter of `vec(T)` or a factor, the cells of an expression in
+    /// the rows of the group, of `kind`.
+    Cells {
+        /// The expression of each row.
+        expr: Expr,
+        /// The kind of its cells.
+        kind: Kind,
+    },
+    /// For a scalar parameter, a constant.
+    Constant(Logic),
+    /// The parameter's constant default, which the call omits.
+    Default(Box<Tree>),
+}
+
 /// What the names of an expression are.
 #[derive(Clone, Copy)]
 enum Names<'a> {
@@ -221,14 +259,16 @@ struct Compiler<'a> {
     errors: Vec<RuleError>,
     /// The columns that the expression reads.
     cells: Vec<Cell>,
-    /// The number of aggregates.
+    /// The number of aggregates and calls.
     aggregates: usize,
+    /// The expression may call typed functions.
+    calls: bool,
 }
 
 /// Whether an expression reads a cell.
 fn reads_cell(e: &Expr) -> bool {
     match e {
-        Expr::Cell(_) | Expr::Aggregate { .. } => true,
+        Expr::Cell(_) | Expr::Aggregate { .. } | Expr::Call { .. } => true,
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => xs.iter().any(reads_cell),
         Expr::IsNa(x) | Expr::IsNull(x) => reads_cell(x),
         _ => false,
@@ -239,7 +279,7 @@ fn reads_cell(e: &Expr) -> bool {
 pub(crate) fn reads_cell_outside(e: &Expr) -> bool {
     match e {
         Expr::Cell(_) => true,
-        Expr::Aggregate { .. } => false,
+        Expr::Aggregate { .. } | Expr::Call { .. } => false,
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
             xs.iter().any(reads_cell_outside)
         }
@@ -366,7 +406,8 @@ fn evaluated(op: Operator) -> Option<(Op, std::ops::RangeInclusive<usize>)> {
         | O::N
         | O::Count
         | O::NaRm
-        | O::Col => return None,
+        | O::Col
+        | O::Call => return None,
     })
 }
 
@@ -952,6 +993,215 @@ impl Compiler<'_> {
         )
     }
 
+    /// A call of a typed function: `["ns::f", name, argument, ...]`.
+    fn call(&mut self, args: &[&Logic], path: &str) -> (Expr, Ty) {
+        if !self.calls {
+            return self.error(
+                "rule_call",
+                path,
+                "an expression of `calc()` in `r8set()`, `r8summarize()`, or `r8map()` calls a typed function; a rule and a computed field call none".to_string(),
+            );
+        }
+        let form = "`call` takes a function's qualified name, then the name of each parameter given and its argument";
+        let Some(name) = args.first().and_then(|a| a.as_str()) else {
+            return self.error("rule_call", path, form.to_string());
+        };
+        if args.len() % 2 != 1 {
+            return self.error("rule_call", path, form.to_string());
+        }
+        let q = match QualifiedName::parse(name) {
+            Ok(q) => q,
+            Err(e) => return self.error("rule_call", &format!("{path}/0"), e.to_string()),
+        };
+        let lookup = self.lookup;
+        let Some(f) = lookup.function_of(&q) else {
+            return self.error(
+                "rule_call_unknown",
+                &format!("{path}/0"),
+                format!("`{q}` is not a registered typed function"),
+            );
+        };
+        // One value of a scalar type.
+        let returned = match &f.return_type {
+            Some(ReturnType::Type(t)) => Some(unwrap_option(t)),
+            _ => None,
+        };
+        let (ty, kind) = match returned {
+            Some(FieldType::Logical) => (Ty::Bool, Kind::Logical),
+            Some(FieldType::Integer(_)) => (
+                Ty::Number {
+                    unit: None,
+                    exact: true,
+                },
+                Kind::Integer,
+            ),
+            Some(FieldType::Double(_)) => (
+                Ty::Number {
+                    unit: None,
+                    exact: false,
+                },
+                Kind::Double,
+            ),
+            Some(FieldType::Character(_)) => (Ty::String, Kind::Character),
+            Some(FieldType::Date) => (Ty::Date, Kind::Date),
+            Some(FieldType::Posixct) => (Ty::Posixct, Kind::DateTime),
+            _ => {
+                let found = match returned {
+                    Some(t) => format!("returns {}", Ty::of(t, None).describe()),
+                    None => "declares no return type".to_string(),
+                };
+                return self.error(
+                    "rule_call_type",
+                    path,
+                    format!("`{q}()` {found}; a function that an expression calls returns one logical, integer, double, string, date, or date-time, or `option()` of one"),
+                );
+            }
+        };
+        // The arguments given, by parameter.
+        let mut given: Vec<(&str, &Logic, usize)> = Vec::with_capacity(args.len() / 2);
+        for (i, pair) in args[1..].chunks(2).enumerate() {
+            let at = 1 + 2 * i;
+            let Some(p) = pair[0].as_str() else {
+                return self.error("rule_call", &format!("{path}/{at}"), form.to_string());
+            };
+            if !f.params.iter().any(|x| x.name() == p) {
+                return self.error(
+                    "rule_call_argument",
+                    &format!("{path}/{at}"),
+                    format!("`{q}()` has no parameter `{p}`"),
+                );
+            }
+            if given.iter().any(|(g, _, _)| *g == p) {
+                return self.error(
+                    "rule_call_argument",
+                    &format!("{path}/{at}"),
+                    format!("`{p}` is given twice"),
+                );
+            }
+            given.push((p, pair[1], at + 1));
+        }
+        let mut out = Vec::with_capacity(f.params.len());
+        for p in &f.params {
+            let pname = p.name();
+            if pname == "..." {
+                return self.error(
+                    "rule_call_argument",
+                    path,
+                    format!(
+                        "`{q}()` takes `...`; an expression calls a function of named parameters"
+                    ),
+                );
+            }
+            let arg = given.iter().find(|(g, _, _)| *g == pname);
+            let full = match p {
+                crate::ir::ParamDef::Full(x) if x.ty.is_some() => x,
+                _ => {
+                    return self.error(
+                        "rule_call_argument",
+                        path,
+                        format!("`{pname}` of `{q}()` has no type; an expression calls a function whose parameters are typed"),
+                    );
+                }
+            };
+            let Some(ty) = &full.ty else {
+                unreachable!("matched above")
+            };
+            let Some((_, a, at)) = arg else {
+                match (&full.default, &full.host_default) {
+                    (Some(d), _) => out.push(CallArg {
+                        name: pname.into(),
+                        value: ArgValue::Default(d.clone()),
+                    }),
+                    (None, Some(_)) => {
+                        return self.error(
+                            "rule_call_argument",
+                            path,
+                            format!("the default of `{pname}` of `{q}()` is an R expression, which an expression does not evaluate; the call gives `{pname}`"),
+                        );
+                    }
+                    (None, None) => {
+                        return self.error(
+                            "rule_call_argument",
+                            path,
+                            format!("`{q}()` requires `{pname}`"),
+                        );
+                    }
+                }
+                continue;
+            };
+            let at = format!("{path}/{at}");
+            let cells = matches!(
+                unwrap_option(ty),
+                FieldType::Vec { .. } | FieldType::Factor { .. }
+            );
+            let scalar = matches!(
+                unwrap_option(ty),
+                FieldType::Logical
+                    | FieldType::Integer(_)
+                    | FieldType::Double(_)
+                    | FieldType::Character(_)
+                    | FieldType::Date
+                    | FieldType::Posixct
+            );
+            if cells {
+                let before = self.errors.len();
+                let (e, t) = self.compile(a, &at);
+                if self.errors.len() > before {
+                    return (Expr::Lit(Scalar::Null), Ty::Any);
+                }
+                if !reads_cell_outside(&e) {
+                    return self.error(
+                        "rule_call_argument",
+                        &at,
+                        format!("`{pname}` of `{q}()` takes the cells of a column in the rows of each group, and its argument is one value for the rows"),
+                    );
+                }
+                let kind = kind_of(&t, integer(&e, &self.cells));
+                out.push(CallArg {
+                    name: pname.into(),
+                    value: ArgValue::Cells { expr: e, kind },
+                });
+            } else if scalar {
+                if !matches!(
+                    a,
+                    Logic::Null | Logic::Bool(_) | Logic::Number(_) | Logic::String(_)
+                ) {
+                    return self.error(
+                        "rule_call_argument",
+                        &at,
+                        format!(
+                            "`{pname}` of `{q}()` takes one constant, or `val()` of an R value"
+                        ),
+                    );
+                }
+                out.push(CallArg {
+                    name: pname.into(),
+                    value: ArgValue::Constant((*a).clone()),
+                });
+            } else {
+                return self.error(
+                    "rule_call_argument",
+                    &at,
+                    format!(
+                        "`{pname}` of `{q}()` is of {}; an expression gives the cells of a column to a parameter of `vec()` or a factor, and a constant to one of a scalar type",
+                        Ty::of(ty, None).describe()
+                    ),
+                );
+            }
+        }
+        let at = self.aggregates;
+        self.aggregates += 1;
+        (
+            Expr::Call {
+                function: q,
+                args: out,
+                kind,
+                at,
+            },
+            ty,
+        )
+    }
+
     fn step(&mut self, ty: &Ty, seg: &str, path: &str) -> Option<(Step, Ty)> {
         let member = |t: Ty| Some((Step::Field(seg.to_string()), t));
         let column = |t: Ty| Some((Step::Column(seg.to_string()), t));
@@ -1054,6 +1304,9 @@ impl Compiler<'_> {
 
     fn operation(&mut self, operator: Operator, args: &[&Logic], path: &str) -> (Expr, Ty) {
         let op = operator.as_str();
+        if operator == Operator::Call {
+            return self.call(args, path);
+        }
         if let Names::Columns { aggregates, .. } = self.names {
             use Operator as O;
             match operator {
@@ -1659,6 +1912,7 @@ fn compiler<'a>(names: Names<'a>, lookup: &'a dyn TypeLookup) -> Compiler<'a> {
         errors: Vec::new(),
         cells: Vec::new(),
         aggregates: 0,
+        calls: false,
     }
 }
 
@@ -1689,7 +1943,7 @@ pub struct Rows {
     pub when: Option<Expr>,
     /// The columns they read, by `Expr::Cell`.
     pub cells: Vec<Cell>,
-    /// The number of aggregates in them.
+    /// The number of aggregates and calls in them.
     pub aggregates: usize,
 }
 
@@ -1753,6 +2007,7 @@ pub fn compile_calc(
         },
         lookup,
     );
+    c.calls = true;
     let (expr, ty) = c.compile(logic, "");
     if c.errors.is_empty() {
         if summary && reads_cell_outside(&expr) {

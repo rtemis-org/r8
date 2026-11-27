@@ -285,6 +285,160 @@ table_result <- function(res, x) {
 } # /R8::table_result
 
 
+# %% table_calc ----
+#' The columns that calc() values compute over a table
+#'
+#' Passes the typed functions that the values call to the binding, which
+#' calls each through `call_typed()`, and raises the error of a call that
+#' fails with the column, the function, the keys of the group, and the call's
+#' condition as `parent`.
+#'
+#' @param x The table.
+#' @param columns List: The `calc()` values, or their expressions, by the
+#'   names of the columns.
+#' @param by Character: The key columns.
+#' @param summary Logical: One value for each group.
+#' @param n_threads Optional Integer: The argument `n_threads`.
+#' @param fn Character: The table function, for a message.
+#' @param functions Optional list: The typed functions, by qualified name,
+#'   where `columns` holds expressions.
+#'
+#' @return The list that `r8_table_calc()` gives.
+#'
+#' @keywords internal
+#' @noRd
+table_calc <- function(
+  x,
+  columns,
+  by,
+  summary,
+  n_threads,
+  fn,
+  functions = NULL
+) {
+  exprs <- columns
+  if (is.null(functions)) {
+    functions <- list()
+    for (i in seq_along(columns)) {
+      e <- unclass(columns[[i]])
+      exprs[[i]] <- e[["expr"]]
+      if (length(e[["functions"]]) > 0L) {
+        functions <- c(functions, e[["functions"]])
+      }
+    }
+  }
+  caller <- NULL
+  if (length(functions) > 0L) {
+    functions <- functions[!duplicated(names(functions))]
+    # A value from another session carries the records of its functions.
+    for (qname in names(functions)) {
+      record <- attr(functions[[qname]], "r8_record")
+      if (is.null(r8_function_ir(qname)) && !is.null(record)) {
+        register_records(list(record))
+      }
+    }
+    caller <- call_typed
+  } else {
+    functions <- NULL
+  }
+  res <- r8_table_calc(
+    x,
+    exprs,
+    by,
+    summary,
+    threads_of(n_threads),
+    functions,
+    caller
+  )
+  if (inherits(res, "r8_refused") && !is.null(res[["call"]])) {
+    call <- res[["call"]]
+    failed <- res[["failed"]]
+    cnd <- if (inherits(failed, "r8_call_failed")) failed[["condition"]]
+    r8_abort(
+      fn,
+      "(): `",
+      call[["column"]],
+      "` calls `",
+      call[["function"]],
+      "()`",
+      group_text(x, by, call[["first_row"]]),
+      ": ",
+      if (is.null(cnd)) res[["message"]] else conditionMessage(cnd),
+      class = "r8_value_error",
+      data = if (!is.null(cnd)) list(parent = cnd)
+    )
+  }
+  table_result(res, x)
+} # /R8::table_calc
+
+
+# %% call_typed ----
+#' The calls of a typed function for the evaluator of expressions
+#'
+#' @param f Function: The typed function.
+#' @param calls List: The arguments of each call, by parameter name.
+#'
+#' @return A list of the value of each call, or, at the first call that is an
+#'   error, an `r8_call_failed` of its condition, its message, and `at`, its
+#'   place.
+#'
+#' @keywords internal
+#' @noRd
+call_typed <- function(f, calls) {
+  out <- vector("list", length(calls))
+  i <- 0L
+  tryCatch(
+    {
+      for (i in seq_along(calls)) {
+        out[i] <- list(do.call(f, calls[[i]]))
+      }
+      out
+    },
+    error = function(cnd) {
+      structure(
+        list(condition = cnd, message = conditionMessage(cnd), at = i),
+        class = "r8_call_failed"
+      )
+    }
+  )
+} # /R8::call_typed
+
+
+# %% group_text ----
+#' The keys of a group, for a message
+#'
+#' @param x The table.
+#' @param by Character: The key columns.
+#' @param row Optional integer: The first row of the group, from 1.
+#'
+#' @return Character: `" in the group k = \"a\""`, or `""` without keys.
+#'
+#' @keywords internal
+#' @noRd
+group_text <- function(x, by, row) {
+  if (length(by) == 0L || is.null(row)) {
+    return("")
+  }
+  shown <- vapply(
+    by,
+    function(b) {
+      v <- x[[b]][[row]]
+      paste0(
+        b,
+        " = ",
+        if (is.character(v) || is.factor(v)) {
+          if (is.na(v)) "NA" else paste0("\"", as.character(v), "\"")
+        } else {
+          format(v)
+        }
+      )
+    },
+    ""
+  )
+  paste0(" in the group ", paste(shown, collapse = ", "))
+} # /R8::group_text
+
+
 # %% column_closing ----
 #' What an assignment that a declared column refuses may be instead
 #'
@@ -891,15 +1045,13 @@ r8set <- function(x, columns, by = NULL, n_threads = NULL) {
   }
   units <- NULL
   if (any(computed)) {
-    res <- table_result(
-      r8_table_calc(
-        x,
-        lapply(columns[computed], function(e) unclass(e)[["expr"]]),
-        by %||% character(),
-        FALSE,
-        threads_of(n_threads)
-      ),
-      x
+    res <- table_calc(
+      x,
+      columns[computed],
+      by %||% character(),
+      FALSE,
+      n_threads,
+      "r8set"
     )
     columns[computed] <- res[["columns"]]
     units <- stats::setNames(res[["units"]], keys[computed])
@@ -1068,16 +1220,7 @@ r8summarize <- function(x, columns, by = NULL, n_threads = NULL) {
   } else {
     key_columns(x, by, substitute(by), parent.frame())
   }
-  res <- table_result(
-    r8_table_calc(
-      x,
-      lapply(columns, function(e) unclass(e)[["expr"]]),
-      by,
-      TRUE,
-      threads_of(n_threads)
-    ),
-    x
-  )
+  res <- table_calc(x, columns, by, TRUE, n_threads, "r8summarize")
   summary_table(
     x,
     by,
@@ -1331,9 +1474,14 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
   if (inherits(exprs, "r8_refused")) {
     r8_abort(exprs[["message"]], ".", class = "r8_value_error")
   }
-  res <- table_result(
-    r8_table_calc(x, exprs, by, TRUE, threads_of(n_threads)),
-    x
+  res <- table_calc(
+    x,
+    exprs,
+    by,
+    TRUE,
+    n_threads,
+    "r8map",
+    functions = unclass(f)[["functions"]]
   )
   summary_table(
     x,
@@ -1389,28 +1537,7 @@ map_typed <- function(x, f, columns, by, args, n_threads) {
   n_groups <- if (is.null(first)) 1L else length(first)
   name <- attr(f, "r8_function", exact = TRUE) %||% "f"
   # The keys of group `k`, for a message.
-  group_text <- function(k) {
-    if (is.null(first)) {
-      return("")
-    }
-    shown <- vapply(
-      by,
-      function(b) {
-        v <- x[[b]][[first[[k]]]]
-        paste0(
-          b,
-          " = ",
-          if (is.character(v) || is.factor(v)) {
-            if (is.na(v)) "NA" else paste0("\"", as.character(v), "\"")
-          } else {
-            format(v)
-          }
-        )
-      },
-      ""
-    )
-    paste0(" in the group ", paste(shown, collapse = ", "))
-  }
+  keys_text <- function(k) group_text(x, by, first[k])
   out <- with_progress(length(columns) * n_groups, name, function(step) {
     lapply(columns, function(column) {
       parts <- split(x[[column]], factor(ids, levels = seq_len(n_groups)))
@@ -1424,7 +1551,7 @@ map_typed <- function(x, f, columns, by, args, n_threads) {
               "` of column `",
               column,
               "`",
-              group_text(k),
+              keys_text(k),
               ": ",
               conditionMessage(cnd),
               class = "r8_value_error",
@@ -1439,7 +1566,7 @@ map_typed <- function(x, f, columns, by, args, n_threads) {
             "` of column `",
             column,
             "`",
-            group_text(k),
+            keys_text(k),
             " gives ",
             length(v),
             " values; a function that r8map() maps gives one.",

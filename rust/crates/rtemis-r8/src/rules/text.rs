@@ -203,6 +203,21 @@ fn write(e: &Logic) -> String {
                     }
                 }
                 (Operator::Sub, 1) => format!("-{}", operand(&args[0], 8, false)),
+                // A typed function: its qualified name, then its arguments by
+                // name.
+                (Operator::Call, n) if n % 2 == 1 => {
+                    let Some(name) = args[0].as_str() else {
+                        return json(e);
+                    };
+                    let mut parts = Vec::with_capacity(n / 2);
+                    for pair in args[1..].chunks(2) {
+                        let Some(p) = pair[0].as_str() else {
+                            return json(e);
+                        };
+                        parts.push(format!("{p} = {}", write(&pair[1])));
+                    }
+                    format!("{name}({})", parts.join(", "))
+                }
                 (Operator::If, 2 | 3) => {
                     let mut t = format!("if ({}) {}", write(&args[0]), write(&args[1]));
                     if let Some(no) = args.get(2) {
@@ -298,6 +313,10 @@ mod tests {
         assert_eq!(
             t(json!({"if": [{"===": [{"var": "d"}, 0]}, null, {"var": "d"}]})),
             "if (d == 0) NA else d"
+        );
+        assert_eq!(
+            t(json!({"call": ["pkg::trimmed_mean", "x", {"col": []}, "trim", 0.2]})),
+            "pkg::trimmed_mean(x = col(), trim = 0.2)"
         );
     }
 }

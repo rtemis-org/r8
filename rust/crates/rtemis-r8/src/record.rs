@@ -249,7 +249,7 @@ operator_tags! {
     26 Nrow, 27 Ncol, 28 Dim, 29 IsNull, 30 IsVariant, 31 Levels, 32 All, 33 Any,
     34 If, 35 And, 36 Or, 37 Abs, 38 Sum, 39 Nchar, 40 Path, 41 Mean, 42 Pmin,
     43 Pmax, 44 Sqrt, 45 Log, 46 Exp, 47 IsNa, 48 Pow, 49 N, 50 Count, 51 Median,
-    52 NaRm, 53 Col,
+    52 NaRm, 53 Col, 54 Call,
 }
 
 /// A number at the tags `base` (a `u64`), `base + 1` (a negative `i64`), and

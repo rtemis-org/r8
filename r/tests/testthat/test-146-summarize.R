@@ -283,6 +283,210 @@ test_that("r8map() calls a typed function on each column of each group, as a dir
   refuses(r8map(x, median, by = "ward"), "new_function()")
 })
 
+test_that("calc() calls a typed function, once over all rows or for each group", {
+  op <- options(r8.namespace = "calls")
+  on.exit(options(op))
+  x <- vitals()
+  trimmed_mean <- new_function(
+    "trimmed_mean",
+    function(v = arg_vec(type_double()), trim = arg_double(default = 0)) {
+      mean(v, trim = trim)
+    },
+    return_type = type_double()
+  )
+  q <- attr(trimmed_mean, "r8_function")
+  e <- calc(trimmed_mean(weight, trim = 0.25))
+  expect_identical(
+    format(e),
+    paste0("<r8 calc> ", q, "(v = weight, trim = 0.25)")
+  )
+  s <- r8summarize(
+    x,
+    list(
+      tm = calc(trimmed_mean(weight, trim = 0.25)),
+      m = calc(trimmed_mean(weight)),
+      gap = calc(trimmed_mean(weight) - mean(weight))
+    ),
+    by = "sex"
+  )
+  f <- x$weight[x$sex == "F"]
+  m <- x$weight[x$sex == "M"]
+  expect_identical(s$tm, c(mean(f, trim = 0.25), mean(m, trim = 0.25)))
+  expect_identical(s$m, c(mean(f), mean(m)))
+  expect_equal(s$gap, c(0, 0))
+  # The result has no unit; an argument may be an expression of cells.
+  expect_identical(unname(units_of(s)[c("tm", "m")]), c(NA_character_, NA))
+  expect_identical(
+    r8summarize(x, list(b = calc(trimmed_mean(weight / height^2))))$b,
+    mean(x$weight / x$height^2)
+  )
+  # Over all rows, and over the row's group with `by`.
+  y <- r8set(x, list(d = calc(weight - trimmed_mean(weight))))
+  expect_equal(y$d, x$weight - mean(x$weight))
+  y <- r8set(x, list(d = calc(weight - trimmed_mean(weight))), by = "sex")
+  expect_equal(y$d, x$weight - ave(x$weight, x$sex))
+  # In a map, col() is each column; a typed function as `f` is the map of
+  # calc(f(col())).
+  expect_identical(
+    r8map(
+      x,
+      calc(trimmed_mean(col(), trim = 0.25)),
+      columns = c("weight", "height"),
+      by = "sex"
+    ),
+    r8map(
+      x,
+      trimmed_mean,
+      columns = c("weight", "height"),
+      by = "sex",
+      args = list(trim = 0.25)
+    )
+  )
+  # A name of the dialect comes first: `mean` is the dialect's.
+  mean <- new_function(
+    "mean",
+    function(v = arg_vec(type_double())) -1,
+    return_type = type_double()
+  )
+  expect_identical(
+    r8summarize(x, list(m = calc(mean(weight))))$m,
+    base::mean(x$weight)
+  )
+})
+
+test_that("a call in calc() is checked as a direct call", {
+  op <- options(r8.namespace = "calls")
+  on.exit(options(op))
+  x <- vitals()
+  spread <- new_function(
+    "spread",
+    function(v = arg_vec(type_double())) max(v) - min(v),
+    return_type = type_double()
+  )
+  present <- new_function(
+    "present",
+    function(v = arg_vec(option(type_double()))) sum(!is.na(v)),
+    return_type = type_integer()
+  )
+  # A group with a missing cell is the error of a direct call.
+  e <- expect_error(
+    r8summarize(x, list(s = calc(spread(sbp))), by = "sex"),
+    class = "r8_value_error"
+  )
+  expect_match(
+    conditionMessage(e),
+    paste0(
+      "r8summarize(): `s` calls `",
+      attr(spread, "r8_function"),
+      "()` in the group sex = \"M\""
+    ),
+    fixed = TRUE
+  )
+  expect_s3_class(e$parent, "r8_argument_error")
+  # A function of option() cells receives them.
+  expect_identical(
+    r8summarize(x, list(n = calc(present(sbp))), by = "sex")$n,
+    c(4L, 2L)
+  )
+  # An error of the body stops the call at its group.
+  fails <- new_function(
+    "fails",
+    function(v = arg_vec(type_double())) {
+      if (length(v) > 2L) stop("too many") else 1
+    },
+    return_type = type_double()
+  )
+  e <- expect_error(
+    r8summarize(x, list(f = calc(fails(weight))), by = "ward"),
+    class = "r8_value_error"
+  )
+  expect_match(
+    conditionMessage(e),
+    "in the group ward = \"ICU\": too many",
+    fixed = TRUE
+  )
+  expect_identical(conditionMessage(e$parent), "too many")
+})
+
+test_that("calc() refuses a call that the declaration of its function does not admit", {
+  op <- options(r8.namespace = "calls")
+  on.exit(options(op))
+  x <- vitals()
+  scaled <- new_function(
+    "scaled",
+    function(v = arg_vec(type_double()), by = arg_double(default = 1)) {
+      sum(v) * by
+    },
+    return_type = type_double()
+  )
+  q <- attr(scaled, "r8_function")
+  refuses(
+    r8summarize(x, list(s = calc(scaled(weight, by = height)))),
+    paste0("`by` of `", q, "()` takes one constant, or `val()` of an R value")
+  )
+  refuses(
+    r8summarize(x, list(s = calc(scaled(2)))),
+    paste0("`v` of `", q, "()` takes the cells of a column")
+  )
+  k <- 2
+  expect_identical(
+    r8summarize(x, list(s = calc(scaled(weight, by = val(k)))))$s,
+    2 * sum(x$weight)
+  )
+  refuses(
+    calc(scaled(weight, w = 1)),
+    "unused argument (w = 1)",
+    class = "r8_declaration_error"
+  )
+  # A default in R is not evaluated by an expression.
+  later <- new_function(
+    "later",
+    function(v = arg_vec(type_double()), k = arg_double(default = length(v))) k,
+    return_type = type_double()
+  )
+  refuses(
+    r8summarize(x, list(s = calc(later(weight)))),
+    paste0(
+      "the default of `k` of `",
+      attr(later, "r8_function"),
+      "()` is an R expression"
+    )
+  )
+  expect_identical(r8summarize(x, list(s = calc(later(weight, k = 3))))$s, 3)
+  # One value of a scalar type.
+  centered <- new_function(
+    "centered",
+    function(v = arg_vec(type_double())) v - mean(v),
+    return_type = vec(type_double())
+  )
+  refuses(
+    r8summarize(x, list(s = calc(centered(weight)))),
+    "a function that an expression calls returns one logical, integer, double, string, date, or date-time"
+  )
+  refuses(
+    calc(stats::sd(weight)),
+    "`stats::sd()` is an R function; calc() calls the functions of the dialect and typed functions of new_function()",
+    class = "r8_declaration_error"
+  )
+  # A rule and a computed field call no function.
+  refuses(
+    rule(scaled(weight) > 0),
+    paste0("`", q, "()` is a typed function, which a rule does not call"),
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    new_struct(
+      "Dosed",
+      fields = list(
+        mg = vec(type_double()),
+        g = field(option(type_double()), compute = calc(scaled(mg)))
+      )
+    ),
+    "a rule and a computed field call none",
+    fixed = TRUE
+  )
+})
+
 test_that("r8map() applies to a declared table as to a raven", {
   op <- options(r8.namespace = "maps")
   on.exit(options(op))

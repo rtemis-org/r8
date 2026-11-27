@@ -158,6 +158,10 @@ operators! {
     NaRm = "na_rm",
     /// `col`: the column that a map over columns gives an expression.
     Col = "col",
+    /// `call`: a call of a typed function, `["ns::f", "x", operand, "trim",
+    /// 0.2]`: the function's qualified name, then each argument given, by
+    /// its parameter's name. Only the expressions of table functions call one.
+    Call = "call",
 }
 
 /// A JSONLogic expression of the rule dialect, as declared.

@@ -238,3 +238,51 @@ scenario(
     expect_identical(nrow(r8filter(p, rule(bmi > 24))), 1L)
   }
 )
+
+scenario(
+  "F16",
+  "a function that a summary calls for each group is checked as a direct call",
+  situation = "A user summarizes each ward's blood pressure with a trimmed mean of their own, where one ward has a missing reading, and writes the same summary with R's own mean(x, trim =).",
+  risk = "The function receives cells that its declaration refuses, a missing cell is dropped without notice, or an R function runs with a meaning that the expression does not show.",
+  result = "The function is called once for each group with the group's cells and checked as each direct call is: a missing cell is the call's error, with the ward, and a function of option() cells receives it. An R function that is not a typed function is refused, with new_function().",
+  code = {
+    trimmed <- new_function(
+      "trimmed",
+      function(v = arg_vec(type_double()), trim = arg_double(default = 0.1)) {
+        mean(v, trim = trim)
+      },
+      return_type = type_double()
+    )
+    counted <- new_function(
+      "counted",
+      function(v = arg_vec(option(type_double()))) sum(!is.na(v)),
+      return_type = type_integer()
+    )
+    v <- Raven(
+      ward = c("ICU", "ICU", "ICU", "Oncology", "Oncology"),
+      sbp = c(142, 150, NA, 118, 126)
+    )
+    e <- expect_error(
+      r8summarize(v, list(sbp = calc(trimmed(sbp))), by = "ward"),
+      "in the group ward = \"ICU\"",
+      fixed = TRUE,
+      class = "r8_value_error"
+    )
+    expect_s3_class(e$parent, "r8_argument_error")
+    s <- r8summarize(
+      r8filter(v, rule(!is.na(sbp))),
+      list(sbp = calc(trimmed(sbp, trim = 0.2))),
+      by = "ward"
+    )
+    expect_identical(s$sbp, c(mean(c(142, 150), trim = 0.2), 122))
+    expect_identical(
+      r8summarize(v, list(n = calc(counted(sbp))), by = "ward")$n,
+      c(2L, 2L)
+    )
+    expect_error(
+      calc(stats::weighted.mean(sbp, trim = 0.1)),
+      "is an R function",
+      class = "r8_declaration_error"
+    )
+  }
+)

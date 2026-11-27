@@ -81,6 +81,60 @@
           }
         ]
       }
+    ],
+    "functions": [
+      {
+        "name": "trimmed_mean",
+        "description": "",
+        "params": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "option",
+                "inner": {
+                  "kind": "double"
+                }
+              }
+            }
+          },
+          {
+            "name": "trim",
+            "type": {
+              "kind": "double"
+            },
+            "default": 0.1
+          }
+        ],
+        "return_type": {
+          "kind": "option",
+          "inner": {
+            "kind": "double"
+          }
+        }
+      },
+      {
+        "name": "centered",
+        "description": "",
+        "params": [
+          {
+            "name": "x",
+            "type": {
+              "kind": "vec",
+              "element": {
+                "kind": "double"
+              }
+            }
+          }
+        ],
+        "return_type": {
+          "kind": "vec",
+          "element": {
+            "kind": "double"
+          }
+        }
+      }
     ]
   },
   "cases": [
@@ -1798,6 +1852,715 @@
           {
             "code": "rule_missing_constant",
             "path": "/==="
+          }
+        ]
+      }
+    },
+    {
+      "id": "call-unknown",
+      "description": "A call names a function that the documents do not declare.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "v": {
+            "call": [
+              "ns::nothing",
+              "x",
+              {
+                "var": "sbp"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_call_unknown",
+            "path": "/call/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "call-scalar-takes-a-constant",
+      "description": "A scalar parameter takes a constant, and a column is no constant.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "v": {
+            "call": [
+              "ns::trimmed_mean",
+              "x",
+              {
+                "var": "sbp"
+              },
+              "trim",
+              {
+                "var": "weight"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_call_argument",
+            "path": "/call/4"
+          }
+        ]
+      }
+    },
+    {
+      "id": "call-vector-takes-cells",
+      "description": "A parameter of `vec()` takes the cells of a column, and a constant is one value for the rows.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "v": {
+            "call": [
+              "ns::trimmed_mean",
+              "x",
+              3
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_call_argument",
+            "path": "/call/2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "call-requires-a-parameter",
+      "description": "A parameter without a default is given.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "v": {
+            "call": [
+              "ns::trimmed_mean",
+              "trim",
+              0.2
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_call_argument",
+            "path": "/call"
+          }
+        ]
+      }
+    },
+    {
+      "id": "call-unknown-parameter",
+      "description": "An argument names a parameter that the function does not declare.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "v": {
+            "call": [
+              "ns::trimmed_mean",
+              "x",
+              {
+                "var": "sbp"
+              },
+              "w",
+              1
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_call_argument",
+            "path": "/call/3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "call-returns-one-value",
+      "description": "A function that an expression calls returns one value of a scalar type.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "v": {
+            "call": [
+              "ns::centered",
+              "x",
+              {
+                "var": "weight"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "rule_call_type",
+            "path": "/call"
+          }
+        ]
+      }
+    },
+    {
+      "id": "call-in-a-column-of-every-row",
+      "description": "A call over all rows, beside a cell of each row, compiles in a column of every row; a summary reads cells within aggregates and calls.",
+      "op": "summarize",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "columns": {
+          "v": {
+            "-": [
+              {
+                "var": "weight"
+              },
+              {
+                "call": [
+                  "ns::trimmed_mean",
+                  "x",
+                  {
+                    "var": "weight"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "errors": [
+          {
+            "code": "calc_summary",
+            "path": ""
           }
         ]
       }

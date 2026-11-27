@@ -280,17 +280,22 @@ val <- function(x) x
 #'
 #' Replaces each `val()` call with its value, evaluated in `env`, and signals
 #' an error for a one-argument `all()` or `any()`, which writes the
-#' two-argument form.
+#' two-argument form. With `calls`, a call of a name that is no word of the
+#' dialect is a typed function, found in `env` and recorded in `calls` by its
+#' qualified name, whose arguments `match.call()` matches to its parameters:
+#' `.r8_call("ns::f", x = expr, trim = 0.2)`.
 #'
 #' @param e The unevaluated expression.
-#' @param env Environment: Where `rule()` is called.
+#' @param env Environment: Where `rule()` or `calc()` is called.
+#' @param calls Optional environment: The typed functions that the expression
+#'   calls, for `calc()`; `NULL` refuses them.
 #'
 #' @return The expression with each `val()` call replaced by a constant, or a
 #'   call to `c()` of constants for a vector.
 #'
 #' @keywords internal
 #' @noRd
-rule_expr <- function(e, env) {
+rule_expr <- function(e, env, calls = NULL) {
   if (!is.call(e)) {
     return(e)
   }
@@ -303,16 +308,170 @@ rule_expr <- function(e, env) {
   }
   for (fn in c("all", "any")) {
     if (is_rule_fn(head, fn) && length(e) == 2L) {
-      elementwise_error(fn, rule_expr(e[[2L]], env))
+      elementwise_error(fn, rule_expr(e[[2L]], env, calls))
+    }
+  }
+  word <- if (is.name(head)) {
+    !is.null(.r8_rule_words[[as.character(head)]])
+  } else {
+    !(is.call(head) &&
+      length(head) == 3L &&
+      identical(head[[1L]], as.name("::")) &&
+      !as.character(head[[2L]]) %in% c("R8", "base"))
+  }
+  if (!word) {
+    f <- callee_function(head, env)
+    if (inherits(f, "r8_function")) {
+      return(typed_call(e, f, env, calls))
+    }
+    if (!is.null(calls) && is.function(f)) {
+      untyped_call(e)
     }
   }
   for (i in seq_along(e)[-1L]) {
     if (!is.null(e[[i]])) {
-      e[[i]] <- rule_expr(e[[i]], env)
+      e[[i]] <- rule_expr(e[[i]], env, calls)
     }
   }
   e
 } # /R8::rule_expr
+
+
+# %% rule_word_names ----
+#' The functions of the rule dialect, as R writes them
+#'
+#' A callee of one of these names, `R8::name` or `base::name`, or a callee that
+#' is no name, is read or refused by the translation of a rule; another name,
+#' and `pkg::name` of another package, may name a typed function.
+#'
+#' @return Character: The names.
+#'
+#' @keywords internal
+#' @noRd
+rule_word_names <- function() {
+  c(
+    names(r8_rule_operators()),
+    "int64",
+    "json_ir",
+    "(",
+    "{",
+    "c",
+    "if",
+    "[[",
+    "[",
+    "$",
+    "val",
+    "col",
+    "quote",
+    ".r8_call"
+  )
+} # /R8::rule_word_names
+
+
+# %% callee_function ----
+#' The function that a callee names
+#'
+#' @param head The callee: a name, or `pkg::name`.
+#' @param env Environment: Where `rule()` or `calc()` is called.
+#'
+#' @return The function, or `NULL` where the callee names none.
+#'
+#' @keywords internal
+#' @noRd
+callee_function <- function(head, env) {
+  if (is.name(head)) {
+    return(get0(as.character(head), envir = env, mode = "function"))
+  }
+  f <- tryCatch(eval(head, env), error = function(cnd) NULL)
+  if (is.function(f)) f else NULL
+} # /R8::callee_function
+
+
+# %% untyped_call ----
+#' Refuse a call of an R function in an expression of calc()
+#'
+#' @param e The call, whose callee is no word of the dialect and an R
+#'   function that is not a typed function.
+#'
+#' @return Does not return.
+#'
+#' @keywords internal
+#' @noRd
+untyped_call <- function(e) {
+  name <- paste(deparse(e[[1L]]), collapse = "")
+  r8_abort(
+    "`",
+    paste(deparse(e), collapse = " "),
+    "`: `",
+    name,
+    "()` is an R function; calc() calls the functions of the dialect and ",
+    "typed functions of new_function(), such as ",
+    "new_function(\"f\", function(x = arg_vec(type_double())) ..., ",
+    "return_type = type_double()).",
+    class = "r8_declaration_error"
+  )
+} # /R8::untyped_call
+
+
+# %% typed_call ----
+#' The call of a typed function in an expression of calc()
+#'
+#' @param e The call.
+#' @param f Function: The typed function that it calls.
+#' @param env Environment: Where `calc()` is called.
+#' @param calls Optional environment: The typed functions of the expression;
+#'   `NULL` refuses the call, as `rule()` does.
+#'
+#' @return `.r8_call(qname, ...)`, with the arguments that `match.call()`
+#'   matches to the parameters of `f`, each prepared by `rule_expr()`.
+#'
+#' @keywords internal
+#' @noRd
+typed_call <- function(e, f, env, calls) {
+  qname <- attr(f, "r8_function", exact = TRUE)
+  text <- paste(deparse(e), collapse = " ")
+  if (is.null(calls)) {
+    r8_abort(
+      "`",
+      text,
+      "`: `",
+      qname,
+      "()` is a typed function, which a rule does not call; an expression ",
+      "of calc() in r8set(), r8summarize(), or r8map() calls it.",
+      class = "r8_declaration_error"
+    )
+  }
+  matched <- tryCatch(
+    match.call(f, e, expand.dots = FALSE),
+    error = function(cnd) {
+      r8_abort(
+        "`",
+        text,
+        "`: ",
+        conditionMessage(cnd),
+        class = "r8_declaration_error"
+      )
+    }
+  )
+  args <- as.list(matched)[-1L]
+  if ("..." %in% names(args)) {
+    r8_abort(
+      "`",
+      text,
+      "`: `",
+      qname,
+      "()` takes `...`; an expression of calc() calls a function of named ",
+      "parameters.",
+      class = "r8_declaration_error"
+    )
+  }
+  args <- lapply(args, rule_expr, env = env, calls = calls)
+  if (is.null(r8_function_ir(qname)) && !is.null(attr(f, "r8_record"))) {
+    register_records(list(attr(f, "r8_record")))
+  }
+  assign(qname, f, envir = calls)
+  as.call(c(list(as.name(".r8_call"), qname), args))
+} # /R8::typed_call
 
 
 # %% col_name ----
@@ -398,6 +557,21 @@ col_name <- function(e, env) {
 #' is missing; `na.rm = TRUE` leaves the missing cells out. With no cell left,
 #' `sum()` is 0 and the others are missing.
 #'
+#' @section Typed functions:
+#' A call of a name that is no function of the dialect calls a typed function
+#' of [new_function()], found where `calc()` is called and matched to its
+#' parameters as R matches a call: `calc(trimmed_mean(sbp, trim = 0.2))`. The
+#' functions of the dialect come first, so a typed function named `mean` is
+#' not called by `mean()`. A parameter of `vec(T)` or of a factor takes the
+#' cells of its argument in the rows of each group, or of the table without
+#' `by`; a scalar parameter takes a constant or `val()`; an omitted parameter
+#' takes its constant default, and a default written in R is an error. The
+#' function returns one logical, integer, double, string, date, or date-time,
+#' or `option()` of one, and its value has no unit. Each call is checked as a
+#' direct call: a missing cell for a parameter of `vec(T)` is the call's error,
+#' with the group's keys, and a parameter of `vec(option(T))` receives the
+#' missing cells. A rule and a computed field call no function.
+#'
 #' @param expr Expression: The expression, over the columns of a table.
 #'
 #' @return An `r8_calc`.
@@ -408,6 +582,15 @@ col_name <- function(e, env) {
 #' m <- "auc"
 #' calc(median(col(m)))
 #' calc(median(col()))
+#' trimmed_mean <- new_function(
+#'   "trimmed_mean",
+#'   function(x = arg_vec(type_double()), trim = arg_double(default = 0)) {
+#'     mean(x, trim = trim)
+#'   },
+#'   return_type = type_double()
+#' )
+#' d <- Raven(g = c("a", "b", "a", "b"), x = c(1, 2, 3, 40))
+#' r8summarize(d, list(x = calc(trimmed_mean(x, trim = 0.25))), by = "g")
 #'
 #' @export
 calc <- function(expr) {
@@ -416,12 +599,16 @@ calc <- function(expr) {
   if (is.call(e) && identical(e[[1L]], as.name("quote"))) {
     e <- e[[2L]]
   }
-  e <- rule_expr(e, env)
+  calls <- new.env(parent = emptyenv())
+  e <- rule_expr(e, env, calls)
   out <- r8_rule(e, NULL, NULL, NULL)
   if (is.character(out)) {
     r8_abort(out, class = "r8_declaration_error")
   }
-  structure(list(expr = out[["invariant"]], call = e), class = "r8_calc")
+  structure(
+    list(expr = out[["invariant"]], call = e, functions = as.list(calls)),
+    class = "r8_calc"
+  )
 } # /R8::calc
 
 

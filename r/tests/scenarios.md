@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 45 files of 414 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 45 files of 417 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -47,7 +47,7 @@ What each feature does, in 45 files of 414 tests. The runtime has its own tests 
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
 | `test-144-scenarios.R` | The written list of the scenarios is that of the test files. | 3 |
 | `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8check_call(), r8call_from_json(), and r8call_to_json(). | 7 |
-| `test-146-summarize.R` | Expressions as values, columns computed from them, summaries of the groups of a table's rows, and maps of one expression or typed function over columns. The conformance corpus (conformance/summarize/) has the semantics of each aggregate. | 14 |
+| `test-146-summarize.R` | Expressions as values, columns computed from them, summaries of the groups of a table's rows, and maps of one expression or typed function over columns. The conformance corpus (conformance/summarize/) has the semantics of each aggregate. | 17 |
 | `test-147-map.R` | Maps of a typed function over the items of a list or a vector, with constant arguments, in the container of the function's return type. | 9 |
 | `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 4 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
@@ -56,7 +56,7 @@ What each feature does, in 45 files of 414 tests. The runtime has its own tests 
 
 ## Scenarios
 
-What happens to a user: 67 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
+What happens to a user: 68 scenarios, of which 1 are open, since what R8 is to do is not decided or not implemented. Scenarios of packages install them, at several versions where a package is updated, and run in fresh R sessions.
 
 ### A. One session: a user declares a type again at the console
 
@@ -154,4 +154,5 @@ What happens to a user: 67 scenarios, of which 1 are open, since what R8 is to d
 | F13 | a condition on columns means the same whatever the table and the session hold | A user filters a table by a column, in a session that has a variable of the column's name, or a table that later gains a column of a variable's name. Or the user forgets rule(). | The line reads a variable where the user means a column, or the other way round, and keeps other rows without an error. | A name in rule() is a column, and val() is R's value; every other index is R's own. A condition on a column without rule() is an error that writes the rule. | one session |
 | F14 | a missing cell decides nothing that another condition decides | A rule has two conditions, and a cell that one of them reads is missing. The rule checks the rows of a table, and filters another. | The order in which the conditions are written decides whether a row is valid, or whether it is kept. | Conditions combine as R combines them: a false one is false with a missing one, in either order. A check fails where the rule is false, and a filter keeps the rows where it is true; a row where it is missing is neither. | one session |
 | F15 | a calculation gives values that the type of its source does not admit | A user standardizes a column that is declared to be at least 0, takes the logarithm of another, which gives NaN, and computes a column from two. | The calculation is an error that the user did not expect, or its result keeps a range, a rule, or a unit that is not its own. | A calculation is R's, and its result keeps nothing of its source: under another name, it is a column without a range, a rule, or a unit. Where it replaces the declared column, the error says so, and gives another name and Raven(), whose replaced column has no unit. | one session |
+| F16 | a function that a summary calls for each group is checked as a direct call | A user summarizes each ward's blood pressure with a trimmed mean of their own, where one ward has a missing reading, and writes the same summary with R's own mean(x, trim =). | The function receives cells that its declaration refuses, a missing cell is dropped without notice, or an R function runs with a meaning that the expression does not show. | The function is called once for each group with the group's cells and checked as each direct call is: a missing cell is the call's error, with the ward, and a function of option() cells receives it. An R function that is not a typed function is refused, with new_function(). | one session |
 

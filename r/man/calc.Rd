@@ -48,11 +48,37 @@ is missing; \code{na.rm = TRUE} leaves the missing cells out. With no cell left,
 \code{sum()} is 0 and the others are missing.
 }
 
+\section{Typed functions}{
+
+A call of a name that is no function of the dialect calls a typed function
+of \code{\link[=new_function]{new_function()}}, found where \code{calc()} is called and matched to its
+parameters as R matches a call: \code{calc(trimmed_mean(sbp, trim = 0.2))}. The
+functions of the dialect come first, so a typed function named \code{mean} is
+not called by \code{mean()}. A parameter of \code{vec(T)} or of a factor takes the
+cells of its argument in the rows of each group, or of the table without
+\code{by}; a scalar parameter takes a constant or \code{val()}; an omitted parameter
+takes its constant default, and a default written in R is an error. The
+function returns one logical, integer, double, string, date, or date-time,
+or \code{option()} of one, and its value has no unit. Each call is checked as a
+direct call: a missing cell for a parameter of \code{vec(T)} is the call's error,
+with the group's keys, and a parameter of \code{vec(option(T))} receives the
+missing cells. A rule and a computed field call no function.
+}
+
 \examples{
 calc(weight_kg / height_m^2)
 calc(mean(sbp, na.rm = TRUE))
 m <- "auc"
 calc(median(col(m)))
 calc(median(col()))
+trimmed_mean <- new_function(
+  "trimmed_mean",
+  function(x = arg_vec(type_double()), trim = arg_double(default = 0)) {
+    mean(x, trim = trim)
+  },
+  return_type = type_double()
+)
+d <- Raven(g = c("a", "b", "a", "b"), x = c(1, 2, 3, 40))
+r8summarize(d, list(x = calc(trimmed_mean(x, trim = 0.25))), by = "g")
 
 }

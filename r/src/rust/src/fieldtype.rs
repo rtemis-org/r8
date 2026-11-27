@@ -903,6 +903,20 @@ pub(crate) fn logic(x: SEXP) -> Built<Logic> {
             _ => Err(BuildError::VariantName),
         },
         "[[" | "[" => Err(BuildError::RuleIndex { expr: deparsed(x) }),
+        // A typed function that `calc()` found, and the arguments that it
+        // matched, by parameter: `.r8_call("ns::f", x = expr, trim = 0.2)`.
+        ".r8_call" => {
+            let names = arg_names(x);
+            let Some((first, rest)) = a.split_first() else {
+                return Err(BuildError::RuleOperand { expr: deparsed(x) });
+            };
+            let mut operands = vec![constant(*first)?];
+            for (v, n) in rest.iter().zip(&names[1..]) {
+                operands.push(Logic::String(n.as_str().into()));
+                operands.push(logic(*v)?);
+            }
+            Ok(build::call(Operator::Call, operands))
+        }
         _ => match operator(&name) {
             Some(op) => {
                 let names = arg_names(x);

@@ -123,7 +123,11 @@ fn field_paths(e: &Expr, out: &mut Vec<Vec<Step>>) {
                 out.push(steps.clone());
             }
         }
-        Expr::Var { .. } | Expr::Lit(_) | Expr::Cell(_) | Expr::Aggregate { .. } => {}
+        Expr::Var { .. }
+        | Expr::Lit(_)
+        | Expr::Cell(_)
+        | Expr::Aggregate { .. }
+        | Expr::Call { .. } => {}
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
             xs.iter().for_each(|x| field_paths(x, out));
         }

@@ -163,8 +163,18 @@ tuner <- function() {
     check = FALSE,
     min_iterations = 50L
   )
+  out <- data.frame(expression = as.character(b$expression), median_us = round(as.numeric(b$median) * 1e6, 1))
+  # A typed function as a word of calc(), where the build has it.
+  if (!inherits(try(calc(spread(col())), silent = TRUE), "try-error")) {
+    b <- bench::mark(
+      R8_map_call = r8map(v, calc(spread(col())), by = "combo"),
+      check = FALSE,
+      min_iterations = 50L
+    )
+    out <- rbind(out, data.frame(expression = "R8_map_call", median_us = round(as.numeric(b$median) * 1e6, 1)))
+  }
   setDTthreads(threads)
-  data.frame(expression = as.character(b$expression), median_us = round(as.numeric(b$median) * 1e6, 1))
+  out
 }
 
 main <- function() {

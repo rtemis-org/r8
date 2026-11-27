@@ -8,6 +8,10 @@
 //! keys: ascending, missing last, strings by code point, factors by level.
 //! `col()` in an expression is the column that [`mapped`] sets it to.
 //!
+//! An expression calls a typed function through the host's [`Functions`]:
+//! once over all rows, or once for each group, with the cells of the group
+//! for each parameter of `vec(T)` and a constant for each scalar parameter.
+//!
 //! [`r8sort()`]: crate::rules
 
 use std::collections::HashMap;
@@ -16,10 +20,12 @@ use std::sync::Arc;
 
 use super::compile::{Calc, Cell, Expr, Op, RowScope, Rows, RuleError, compile_calc};
 use super::eval::Scalar;
-use super::rows::{Block, Eval, Groups, Held, MISSING, NA_NUMBER, RowError, STATES};
+use super::rows::{Block, Eval, Failed, Groups, Held, MISSING, NA_NUMBER, RowError, STATES};
 use super::{Ty, TypeLookup};
 use crate::access::Access;
 use crate::ir::{FieldType, Logic, Operator, TableDef, build};
+use crate::name::QualifiedName;
+use crate::tree::Tree;
 
 /// The rows of a block.
 const BLOCK: usize = 1024;
@@ -73,6 +79,86 @@ pub struct Computed {
     pub zone_of: Option<String>,
 }
 
+/// The argument of one parameter in a call of a typed function, for one
+/// group of rows or for all rows.
+#[derive(Debug, Clone, Copy)]
+pub enum Argument<'c> {
+    /// The cells of the table's column `name` in the rows `rows`, in order.
+    Column {
+        /// The column.
+        name: &'c str,
+        /// The rows, from 0.
+        rows: &'c [u32],
+    },
+    /// The cells that an expression computes, in the rows `rows`; a date-time
+    /// takes the time zone of the column `zone`.
+    Cells {
+        /// The cells of every row.
+        data: &'c Data,
+        /// The rows, from 0.
+        rows: &'c [u32],
+        /// The date-time column whose time zone the cells take.
+        zone: Option<&'c str>,
+    },
+    /// A constant, as the expression writes it.
+    Constant(&'c Logic),
+    /// The parameter's default, which the expression omits.
+    Default(&'c Tree),
+}
+
+/// The value of a call of a typed function: one value of its return type.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallValue {
+    /// A missing value, of a return type of `option()`.
+    Missing,
+    /// A logical.
+    Logical(bool),
+    /// An integer or a double.
+    Number(f64),
+    /// A string.
+    Text(String),
+    /// Days since 1970-01-01.
+    Date(i64),
+    /// Microseconds since 1970-01-01T00:00:00Z.
+    DateTime(i64),
+}
+
+/// The arguments of one call of a typed function, each by its parameter's
+/// name, in the order of the parameters.
+pub type Call<'c> = Vec<(&'c str, Argument<'c>)>;
+
+/// A call of a typed function that is an error.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallFailed {
+    /// The call, by its place among the calls.
+    pub at: usize,
+    /// The call's message.
+    pub message: String,
+}
+
+/// The host's calls of typed functions.
+pub trait Functions {
+    /// The values of `function` for each of `calls`, in order, one for each
+    /// group; the first call that is an error stops the others.
+    fn call(
+        &self,
+        function: &QualifiedName,
+        calls: &[Call<'_>],
+    ) -> Result<Vec<CallValue>, CallFailed>;
+}
+
+/// A host that calls no typed function.
+pub struct NoFunctions;
+
+impl Functions for NoFunctions {
+    fn call(&self, function: &QualifiedName, _: &[Call<'_>]) -> Result<Vec<CallValue>, CallFailed> {
+        Err(CallFailed {
+            at: 0,
+            message: format!("`{function}()` is called where the host calls no typed function"),
+        })
+    }
+}
+
 /// Why expressions compute no columns.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NotComputed {
@@ -89,6 +175,19 @@ pub enum NotComputed {
         at: usize,
         /// The first row, or group, with an error.
         error: RowError,
+    },
+    /// A call of a typed function in expression `at` is an error.
+    Call {
+        /// The expression's place.
+        at: usize,
+        /// The function's qualified name.
+        function: String,
+        /// The group of the call, from 0, or 0 for all rows.
+        group: usize,
+        /// The first row of the group, when there are groups.
+        first_row: Option<usize>,
+        /// The call's message.
+        message: String,
     },
     /// A key column does not group rows.
     Key(String),
@@ -465,7 +564,7 @@ fn group_ids(keys: &[Vec<u64>], rows: usize) -> Groups {
 
 /// Whether an expression gives an integer whatever its values: a cell of an
 /// integer column, `n()`, `count()`, and a choice among integers.
-fn integer(e: &Expr, cells: &[Cell]) -> bool {
+pub(super) fn integer(e: &Expr, cells: &[Cell]) -> bool {
     match e {
         Expr::Cell(k) => matches!(
             super::eval::unwrap_option(&cells[*k].ty),
@@ -481,6 +580,7 @@ fn integer(e: &Expr, cells: &[Cell]) -> bool {
             ..
         }
         | Expr::Op(Op::Min | Op::Max, operands) => operands.iter().all(|x| integer(x, cells)),
+        Expr::Call { kind, .. } => *kind == Kind::Integer,
         Expr::If(parts) => parts.iter().enumerate().all(|(i, p)| {
             (i % 2 == 0 && i + 1 < parts.len())
                 || matches!(p, Expr::Lit(Scalar::Null))
@@ -491,7 +591,7 @@ fn integer(e: &Expr, cells: &[Cell]) -> bool {
 }
 
 /// The name of the first date-time column that an expression reads.
-fn zone_of(cells: &[Cell]) -> Option<String> {
+pub(super) fn zone_of(cells: &[Cell]) -> Option<String> {
     cells
         .iter()
         .find(|c| matches!(super::eval::unwrap_option(&c.ty), FieldType::Posixct))
@@ -499,7 +599,7 @@ fn zone_of(cells: &[Cell]) -> Option<String> {
 }
 
 /// The kind of a computed column of type `ty`.
-fn kind_of(ty: &Ty, int: bool) -> Kind {
+pub(super) fn kind_of(ty: &Ty, int: bool) -> Kind {
     match ty {
         Ty::Bool | Ty::Any => Kind::Logical,
         Ty::Number { .. } if int => Kind::Integer,
@@ -511,7 +611,7 @@ fn kind_of(ty: &Ty, int: bool) -> Kind {
 }
 
 /// Empty cells of a kind.
-fn empty(kind: Kind, n: usize) -> Data {
+pub(super) fn empty(kind: Kind, n: usize) -> Data {
     match kind {
         Kind::Logical => Data::Logical(Vec::with_capacity(n)),
         Kind::Integer => Data::Integer(Vec::with_capacity(n)),
@@ -524,7 +624,13 @@ fn empty(kind: Kind, n: usize) -> Data {
 
 /// Appends the cells of a block of `n` rows from `lo` to `out`; the first
 /// error, at its row, and the number of rows with one, go to `error`.
-fn append(out: &mut Data, b: &Block<'_, '_>, lo: usize, n: usize, error: &mut Option<RowError>) {
+pub(super) fn append(
+    out: &mut Data,
+    b: &Block<'_, '_>,
+    lo: usize,
+    n: usize,
+    error: &mut Option<RowError>,
+) {
     // Numbers of a block without states: `NaN` is missing.
     if let (Data::Double(v), Block::Number(x, None)) = (&mut *out, b) {
         v.extend(
@@ -652,12 +758,14 @@ pub fn mapped(f: &Logic, columns: &[&str]) -> Result<Vec<Logic>, RuleError> {
 /// every row, or, where `summary`, of each group of the rows by the columns
 /// `by`, or of the table without them. In a column of every row, an
 /// aggregate is over the row's group.
+#[allow(clippy::too_many_arguments)]
 pub fn computed<'a, A: Access<'a>>(
     table: A,
     def: &TableDef,
     by: &[&str],
     exprs: &[&Logic],
     lookup: &dyn TypeLookup,
+    functions: &dyn Functions,
     summary: bool,
     threads: usize,
 ) -> Result<Outcome, NotComputed> {
@@ -728,8 +836,22 @@ pub fn computed<'a, A: Access<'a>>(
             _ => None,
         };
         let kind = kind_of(&calc.ty, integer(&calc.rows.invariant, &calc.rows.cells));
-        let eval = Eval::new(&calc.rows, table, rows, groups.clone(), threads)
-            .map_err(NotComputed::Table)?;
+        let eval = Eval::calling(&calc.rows, table, rows, groups.clone(), threads, functions)
+            .map_err(|f| match f {
+                Failed::Table(m) => NotComputed::Table(m),
+                Failed::Row(error) => NotComputed::Row { at, error },
+                Failed::Call {
+                    function,
+                    group,
+                    message,
+                } => NotComputed::Call {
+                    at,
+                    function,
+                    group,
+                    first_row: groups.as_ref().map(|g| g.first[group] as usize),
+                    message,
+                },
+            })?;
         let n = if summary { eval.group_count() } else { rows };
         // A summary of a table of no rows, without keys, is one row.
         let n = if summary && groups.as_ref().is_some_and(|g| g.count == 0) {

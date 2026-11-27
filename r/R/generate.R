@@ -1529,6 +1529,22 @@ logic_to_r <- function(x) {
       }
       return(as.call(c(as.name("if"), lapply(operands, to_r))))
     }
+    # A typed function by its qualified name, then its arguments by name.
+    if (op == "call") {
+      n <- length(operands)
+      if (n %% 2L != 1L || !is.character(operands[[1L]])) {
+        fail()
+      }
+      parts <- strsplit(operands[[1L]], "::", fixed = TRUE)[[1L]]
+      if (length(parts) != 2L) {
+        fail()
+      }
+      at <- seq_len((n - 1L) / 2L) * 2L
+      args <- lapply(operands[at + 1L], to_r)
+      names(args) <- vapply(operands[at], as.character, "")
+      head <- call("::", as.name(parts[[1L]]), as.name(parts[[2L]]))
+      return(as.call(c(list(head), args)))
+    }
     fn <- r_spelling()[op]
     if (is.na(fn)) {
       fail()

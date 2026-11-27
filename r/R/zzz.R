@@ -426,6 +426,10 @@ declare_conversion <- function(converter, source, fn, env) {
 # (`r8_native_symbols()`), set when the package loads.
 .r8_native <- new.env(parent = emptyenv())
 
+# The functions of the rule dialect as R writes them, each bound to `TRUE`
+# (`rule_word_names()`), set when the package loads.
+.r8_rule_words <- new.env(parent = emptyenv())
+
 # The native symbol of the C routine `invoke`, bound when the package loads,
 # which a compiled method's wrapper calls.
 .r8_c_invoke <- NULL
@@ -433,6 +437,9 @@ declare_conversion <- function(converter, source, fn, env) {
 # %% .onLoad ----
 .onLoad <- function(libname, pkgname) {
   list2env(r8_native_symbols(), envir = .r8_native)
+  for (w in rule_word_names()) {
+    assign(w, TRUE, envir = .r8_rule_words)
+  }
   ns <- topenv()
   assign(".r8_c_find", .r8_native[["find"]], envir = ns)
   assign(".r8_c_replaced", .r8_native[["replaced"]], envir = ns)

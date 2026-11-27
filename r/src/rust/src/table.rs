@@ -29,6 +29,7 @@ use crate::rview::{
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     fn SHALLOW_DUPLICATE_ATTRIB(to: SEXP, from: SEXP);
+    fn Rf_copyMostAttrib(from: SEXP, to: SEXP);
 }
 
 thread_local! {
@@ -1826,6 +1827,263 @@ fn computed_vector(c: &rtemis_r8::rules::calc::Computed, x: &Held) -> Robj {
     }
 }
 
+/// The calls of typed functions of the expressions of a table function: each
+/// function's closure by its qualified name, called by `caller`, R8's
+/// `call_typed()`, which gives the value or the condition of an error.
+struct RFunctions<'h> {
+    held: &'h Held,
+    closures: HashMap<String, Robj>,
+    caller: Option<Function>,
+    /// The condition of the call that is an error.
+    failed: std::cell::RefCell<Option<Robj>>,
+}
+
+impl<'h> RFunctions<'h> {
+    /// The closures of `functions`, a list named by qualified names.
+    fn new(held: &'h Held, functions: &Robj, caller: &Robj) -> RFunctions<'h> {
+        let mut closures = HashMap::new();
+        if let Ok(l) = List::try_from(functions.clone()) {
+            for (name, f) in l.iter() {
+                closures.insert(name.to_string(), f);
+            }
+        }
+        RFunctions {
+            held,
+            closures,
+            caller: caller.as_function(),
+            failed: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// The column `name` of the table.
+    fn column(&self, name: &str) -> std::result::Result<SEXP, String> {
+        self.held
+            .names
+            .iter()
+            .position(|n| n == name)
+            .map(|k| self.held.column(k))
+            .ok_or_else(|| format!("`{name}` is not a column of the table"))
+    }
+}
+
+/// The cells of the vector `x` in the rows `rows`, with the attributes of `x`
+/// but its names and dimensions, such as the levels of a factor and the time
+/// zone of a date-time.
+fn rows_of(x: SEXP, rows: &[u32]) -> std::result::Result<Robj, String> {
+    let t = sexptype(x);
+    if !matches!(
+        t,
+        SEXPTYPE::REALSXP | SEXPTYPE::INTSXP | SEXPTYPE::LGLSXP | SEXPTYPE::STRSXP
+    ) {
+        return Err("a column of a call holds logicals, numbers, or strings".to_string());
+    }
+    unsafe {
+        let out = Rf_protect(Rf_allocVector(t, rows.len() as R_xlen_t));
+        for (i, &r) in rows.iter().enumerate() {
+            let (i, r) = (i as R_xlen_t, r as R_xlen_t);
+            match t {
+                SEXPTYPE::REALSXP => *REAL(out).offset(i) = REAL_ELT(x, r),
+                SEXPTYPE::INTSXP => *INTEGER(out).offset(i) = INTEGER_ELT(x, r),
+                SEXPTYPE::LGLSXP => *LOGICAL(out).offset(i) = LOGICAL_ELT(x, r),
+                _ => SET_STRING_ELT(out, i, STRING_ELT(x, r)),
+            }
+        }
+        Rf_copyMostAttrib(x, out);
+        let robj = Robj::from_sexp(out);
+        Rf_unprotect(1);
+        Ok(robj)
+    }
+}
+
+/// The cells of `data` in the rows `rows`, as an R vector; a date-time takes
+/// the time zone `zone`.
+fn cells_of(data: &rtemis_r8::rules::calc::Data, rows: &[u32], zone: Option<String>) -> Robj {
+    use rtemis_r8::rules::calc::Data;
+    let at = |r: &u32| *r as usize;
+    match data {
+        Data::Logical(v) => Logicals::from_values(rows.iter().map(|r| match v[at(r)] {
+            Some(true) => Rbool::true_value(),
+            Some(false) => Rbool::false_value(),
+            None => Rbool::na_value(),
+        }))
+        .into(),
+        Data::Integer(v) => {
+            Integers::from_values(rows.iter().map(|r| v[at(r)].map_or(Rint::na(), Rint::from)))
+                .into()
+        }
+        Data::Double(v) => Doubles::from_values(rows.iter().map(|r| Rfloat::from(v[at(r)]))).into(),
+        Data::Character(v) => Strings::from_values(rows.iter().map(|r| match &v[at(r)] {
+            Some(t) => Rstr::from(t.as_str()),
+            None => Rstr::na(),
+        }))
+        .into(),
+        Data::Date(v) => {
+            let mut d: Robj = Doubles::from_values(
+                rows.iter()
+                    .map(|r| v[at(r)].map_or(Rfloat::na(), |t| Rfloat::from(t as f64))),
+            )
+            .into();
+            let _ = d.set_class(["Date"]);
+            d
+        }
+        Data::DateTime(v) => {
+            let mut d: Robj = Doubles::from_values(
+                rows.iter()
+                    .map(|r| v[at(r)].map_or(Rfloat::na(), |t| Rfloat::from(t as f64 / 1e6))),
+            )
+            .into();
+            let _ = d.set_class(["POSIXct", "POSIXt"]);
+            let _ = d.set_attrib("tzone", zone.unwrap_or_else(|| "UTC".to_string()));
+            d
+        }
+    }
+}
+
+/// A constant of a call as an R value: an integer for a whole number that R
+/// wrote as one, and `NA` for `null`.
+fn constant_of(c: &rtemis_r8::ir::Logic) -> std::result::Result<Robj, String> {
+    use rtemis_r8::ir::{Logic, Number};
+    Ok(match c {
+        Logic::Null => Robj::from(Rbool::na_value()),
+        Logic::Bool(b) => Robj::from(*b),
+        Logic::String(t) => Robj::from(&**t),
+        Logic::Number(Number::F64(x)) => Robj::from(*x),
+        Logic::Number(n) => match n.as_i64().and_then(|i| i32::try_from(i).ok()) {
+            Some(i) => Robj::from(i),
+            None => Robj::from(n.as_f64()),
+        },
+        _ => return Err("a constant of a call is one value".to_string()),
+    })
+}
+
+/// The value that a call gives, one element of a vector.
+fn call_value(x: &Robj) -> std::result::Result<rtemis_r8::rules::calc::CallValue, String> {
+    use rtemis_r8::rules::calc::CallValue as V;
+    let s = unsafe { x.get() };
+    // `NULL` is the absent value of a return type of `option()`.
+    if is_null(s) {
+        return Ok(V::Missing);
+    }
+    if xlen(s) != 1 {
+        return Err(format!(
+            "the function gives {} values, and a call gives one",
+            xlen(s)
+        ));
+    }
+    unsafe {
+        let real = |s: SEXP| match sexptype(s) {
+            SEXPTYPE::REALSXP => Some(REAL_ELT(s, 0)).filter(|x| !x.is_nan()),
+            SEXPTYPE::INTSXP => Some(INTEGER_ELT(s, 0))
+                .filter(|&i| i != extendr_ffi::R_NaInt)
+                .map(f64::from),
+            _ => None,
+        };
+        if inherits(s, "factor") {
+            let code = INTEGER_ELT(s, 0);
+            if code == extendr_ffi::R_NaInt {
+                return Ok(V::Missing);
+            }
+            return string_elt(attr(s, crate::rview::sym_levels()), (code - 1) as usize)
+                .map(|t| V::Text(t.into_owned()))
+                .ok_or_else(|| "the factor's code is outside its levels".to_string());
+        }
+        if inherits(s, "Date") {
+            return Ok(real(s).map_or(V::Missing, |d| V::Date(d.floor() as i64)));
+        }
+        if inherits(s, "POSIXct") {
+            return Ok(real(s).map_or(V::Missing, |t| V::DateTime((t * 1e6).round() as i64)));
+        }
+        Ok(match sexptype(s) {
+            SEXPTYPE::REALSXP | SEXPTYPE::INTSXP => real(s).map_or(V::Missing, V::Number),
+            SEXPTYPE::LGLSXP => match LOGICAL_ELT(s, 0) {
+                b if b == extendr_ffi::R_NaInt => V::Missing,
+                b => V::Logical(b != 0),
+            },
+            SEXPTYPE::STRSXP => string_elt(s, 0).map_or(V::Missing, |t| V::Text(t.into_owned())),
+            _ => return Err("the function gives a value that is not a logical, a number, a string, a date, or a date-time".to_string()),
+        })
+    }
+}
+
+impl RFunctions<'_> {
+    /// The arguments of one call as a list of R values by parameter name.
+    fn arguments(
+        &self,
+        args: &[(&str, rtemis_r8::rules::calc::Argument<'_>)],
+    ) -> std::result::Result<Robj, String> {
+        use rtemis_r8::rules::calc::Argument;
+        let mut names: Vec<&str> = Vec::with_capacity(args.len());
+        let mut values: Vec<Robj> = Vec::with_capacity(args.len());
+        for (p, a) in args {
+            let v = match a {
+                // The closure evaluates the default it declares.
+                Argument::Default(_) => continue,
+                Argument::Column { name, rows } => rows_of(self.column(name)?, rows)?,
+                Argument::Cells { data, rows, zone } => {
+                    let zone = zone.and_then(|z| self.column(z).ok()).and_then(|c| {
+                        string_elt(attr(c, crate::rview::sym_tzone()), 0).map(|s| s.into_owned())
+                    });
+                    cells_of(data, rows, zone)
+                }
+                Argument::Constant(c) => constant_of(c)?,
+            };
+            names.push(p);
+            values.push(v);
+        }
+        List::from_names_and_values(names, values)
+            .map(Robj::from)
+            .map_err(|e| e.to_string())
+    }
+}
+
+impl rtemis_r8::rules::calc::Functions for RFunctions<'_> {
+    fn call(
+        &self,
+        function: &QualifiedName,
+        calls: &[rtemis_r8::rules::calc::Call<'_>],
+    ) -> std::result::Result<
+        Vec<rtemis_r8::rules::calc::CallValue>,
+        rtemis_r8::rules::calc::CallFailed,
+    > {
+        use rtemis_r8::rules::calc::CallFailed;
+        let fail = |at: usize, message: String| CallFailed { at, message };
+        let name = function.to_string();
+        let (Some(f), Some(caller)) = (self.closures.get(&name), &self.caller) else {
+            return Err(fail(
+                0,
+                format!("`{name}()` is not a function of the expression"),
+            ));
+        };
+        let mut given: Vec<Robj> = Vec::with_capacity(calls.len());
+        for (at, args) in calls.iter().enumerate() {
+            given.push(self.arguments(args).map_err(|m| fail(at, m))?);
+        }
+        let out = caller
+            .call(pairlist!(f.clone(), List::from_values(given)))
+            .map_err(|e| fail(0, format!("the call ended: {e}")))?;
+        if out.inherits("r8_call_failed") {
+            let message = out
+                .dollar("message")
+                .ok()
+                .and_then(|m| m.as_str().map(str::to_string))
+                .unwrap_or_default();
+            let at = out
+                .dollar("at")
+                .ok()
+                .and_then(|a| a.as_integer())
+                .map_or(0, |a| (a.max(1) - 1) as usize);
+            *self.failed.borrow_mut() = Some(out);
+            return Err(fail(at, message));
+        }
+        let values = List::try_from(out).map_err(|e| fail(0, e.to_string()))?;
+        values
+            .values()
+            .enumerate()
+            .map(|(at, v)| call_value(&v).map_err(|m| fail(at, m)))
+            .collect()
+    }
+}
+
 /// A message of an expression of `names` that computes no column.
 fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summary: bool) -> String {
     use rtemis_r8::rules::calc::NotComputed as N;
@@ -1865,6 +2123,12 @@ fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summar
             }
         ),
         N::Key(m) => format!("`by`: {m}"),
+        N::Call {
+            at,
+            function,
+            message,
+            ..
+        } => format!("`{}` calls `{function}()`: {message}", names[at]),
         N::Table(m) => m,
     }
 }
@@ -1877,14 +2141,29 @@ fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summar
 /// @param by Character: The key columns, or a vector of length 0.
 /// @param summary Logical: One value for each group.
 /// @param threads Integer: The threads that the aggregates of a column may use.
+/// @param functions List: The typed functions that the expressions call, by
+///   their qualified names.
+/// @param caller Function: R8's `call_typed()`, or `NULL` without functions.
 /// @return A list of `first`, the first row of each group from 1 or `NULL`
 ///   without keys, `columns`, the computed vectors, and `units`, or an
-///   `r8_refused`.
+///   `r8_refused`, which for an error of a call holds `call`, the function,
+///   the column, and the first row of the group, and `failed`, the condition.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_table_calc(x: Robj, exprs: List, by: Robj, summary: bool, threads: i32) -> Result<Robj> {
-    crate::interrupt::interruptible(unsafe { x.get() }, || {
+fn r8_table_calc(
+    x: Robj,
+    exprs: List,
+    by: Robj,
+    summary: bool,
+    threads: i32,
+    functions: Robj,
+    caller: Robj,
+) -> Result<Robj> {
+    // A call of R may jump, which the protection of a long walk carries past
+    // the frames of Rust.
+    let calls = !functions.is_null() && functions.len() > 0;
+    crate::interrupt::interruptible_if(calls || crate::interrupt::long(unsafe { x.get() }), || {
         let h = match Held::of(unsafe { x.get() }) {
             Ok(h) => h,
             Err(m) => return Ok(refused(m)),
@@ -1906,16 +2185,39 @@ fn r8_table_calc(x: Robj, exprs: List, by: Robj, summary: bool, threads: i32) ->
             .collect();
         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
         let refs: Vec<&rtemis_r8::ir::Logic> = logic.iter().collect();
+        let host = RFunctions::new(&h, &functions, &caller);
         let out = match rtemis_r8::rules::calc::computed(
             RView::Whole(unsafe { x.get() }),
             h.def(),
             &keys,
             &refs,
             &*h.docs,
+            &host,
             summary,
             usize::try_from(threads).unwrap_or(1).max(1),
         ) {
             Ok(o) => o,
+            Err(rtemis_r8::rules::calc::NotComputed::Call {
+                at,
+                function,
+                first_row,
+                message,
+                ..
+            }) => {
+                let failed = host.failed.borrow_mut().take().unwrap_or_else(|| ().into());
+                let mut r: Robj = list!(
+                    message = message,
+                    call = list!(
+                        function = function,
+                        column = names[at].clone(),
+                        first_row = first_row.map(|r| r as i32 + 1)
+                    ),
+                    failed = failed
+                )
+                .into();
+                let _ = r.set_class(["r8_refused"]);
+                return Ok(r);
+            }
             Err(e) => return Ok(refused(not_computed(e, &names, summary))),
         };
         let columns: Vec<Robj> = out.columns.iter().map(|c| computed_vector(c, &h)).collect();
@@ -1969,6 +2271,7 @@ fn r8_table_groups(x: Robj, by: Robj) -> Result<Robj> {
             &keys,
             &[],
             &*h.docs,
+            &rtemis_r8::rules::calc::NoFunctions,
             true,
             1,
         ) {

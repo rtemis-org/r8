@@ -630,7 +630,7 @@ impl<'a, 'l, A: Access<'a>> Env<'l, A> {
             }
             Expr::And(parts) => self.decided(parts, false),
             Expr::Or(parts) => self.decided(parts, true),
-            Expr::Cell(_) | Expr::Aggregate { .. } => {
+            Expr::Cell(_) | Expr::Aggregate { .. } | Expr::Call { .. } => {
                 Err("a cell is read by the rows of a table".to_string())
             }
             Expr::IsNa(inner) => match self.eval(inner)? {

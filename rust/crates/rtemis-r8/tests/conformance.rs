@@ -577,7 +577,16 @@ fn run_calc(op: &str, ir: Option<&DocumentSet>, case: &Value) -> Option<String> 
     };
     let refs: Vec<&Logic> = exprs.iter().collect();
     let table = rtemis_r8::access::Json::new(&case["input"]);
-    let got = match computed(table, def, &by, &refs, docs, op != "calc", 1) {
+    let got = match computed(
+        table,
+        def,
+        &by,
+        &refs,
+        docs,
+        &rtemis_r8::rules::calc::NoFunctions,
+        op != "calc",
+        1,
+    ) {
         Ok(out) => {
             let mut columns = serde_json::Map::new();
             for (name, c) in names.iter().zip(&out.columns) {
@@ -639,6 +648,7 @@ fn run_calc(op: &str, ir: Option<&DocumentSet>, case: &Value) -> Option<String> 
             return (got != want).then(|| format!("errors {got:?}, expected {want:?}"));
         }
         Err(NotComputed::Key(m)) => serde_json::json!({"key_error": m}),
+        Err(NotComputed::Call { function, .. }) => serde_json::json!({"call_error": function}),
         Err(NotComputed::Table(m)) => return Some(m),
     };
     if let Some(Value::String(_)) = case["expect"].get("key_error") {

@@ -770,12 +770,16 @@ r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 #' @param by Character: The key columns, or a vector of length 0.
 #' @param summary Logical: One value for each group.
 #' @param threads Integer: The threads that the aggregates of a column may use.
+#' @param functions List: The typed functions that the expressions call, by
+#'   their qualified names.
+#' @param caller Function: R8's `call_typed()`, or `NULL` without functions.
 #' @return A list of `first`, the first row of each group from 1 or `NULL`
 #'   without keys, `columns`, the computed vectors, and `units`, or an
-#'   `r8_refused`.
+#'   `r8_refused`, which for an error of a call holds `call`, the function,
+#'   the column, and the first row of the group, and `failed`, the condition.
 #' @keywords internal
 #' @noRd
-r8_table_calc <- function(x, exprs, by, summary, threads) .Call(wrap__r8_table_calc, x, exprs, by, summary, threads)
+r8_table_calc <- function(x, exprs, by, summary, threads, functions, caller) .Call(wrap__r8_table_calc, x, exprs, by, summary, threads, functions, caller)
 
 #' The threads of a table function by default: half of the logical cores, at
 #' most 2 where `R CMD check` limits the cores (`_R_CHECK_LIMIT_CORES_`), and

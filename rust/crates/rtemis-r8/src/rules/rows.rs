@@ -18,7 +18,10 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::compile::{Cell, Expr, Op, RowScope, Rows, RuleError, compile_rows, reads_cell_outside};
+use super::calc::{self, Argument, CallValue, Data, Functions, Kind};
+use super::compile::{
+    ArgValue, CallArg, Cell, Expr, Op, RowScope, Rows, RuleError, compile_rows, reads_cell_outside,
+};
 use super::diagnose::{Diagnosis, comparison, shown_scalar};
 use super::eval::{LOGARITHM, POWER, ROOT, Scalar, ZERO, extreme, median, power, unwrap_option};
 use super::exact::{ExactSum, PairSum};
@@ -28,6 +31,7 @@ use crate::access::{Access, Factor, Json, Read, is_na_real};
 use crate::emit::number_text;
 use crate::ir::{FieldType, Logic, RuleDef, TableDef};
 use crate::name::Name;
+use crate::name::QualifiedName;
 use crate::problem::Segment;
 
 /// The rows of a block.
@@ -824,10 +828,35 @@ impl Groups {
     }
 }
 
-/// The values of an aggregate for each group, or for the table.
+/// The values of an aggregate or a call for each group, or for the table.
 pub(super) enum Values {
     Numbers(Vec<f64>),
     Times(Vec<i64>, Instant),
+    Logicals(Vec<bool>),
+    Texts(Vec<String>),
+}
+
+/// Why the aggregates and calls of an expression have no values.
+pub(super) enum Failed {
+    /// The table does not read.
+    Table(String),
+    /// A cell of an argument of a call is an error.
+    Row(RowError),
+    /// A call is an error.
+    Call {
+        /// The function's qualified name.
+        function: String,
+        /// The group, from 0.
+        group: usize,
+        /// The call's message.
+        message: String,
+    },
+}
+
+/// An aggregate or a call of an expression, at its place.
+enum Found<'e> {
+    Aggregate(Op, &'e [Expr], bool),
+    Call(&'e QualifiedName, &'e [CallArg], Kind),
 }
 
 /// An aggregate's value for each group, and its state, 0 where it has a value.
@@ -906,6 +935,23 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
         groups: Option<Arc<Groups>>,
         threads: usize,
     ) -> Result<Self, String> {
+        Self::calling(of, table, rows, groups, threads, &calc::NoFunctions).map_err(|f| match f {
+            Failed::Table(m) => m,
+            Failed::Row(e) => e.message.to_string(),
+            Failed::Call { message, .. } => message,
+        })
+    }
+
+    /// [`Eval::new`], whose expressions call typed functions through
+    /// `functions`.
+    pub(super) fn calling(
+        of: &Rows,
+        table: A,
+        rows: usize,
+        groups: Option<Arc<Groups>>,
+        threads: usize,
+        functions: &dyn Functions,
+    ) -> Result<Self, Failed> {
         let columns = of
             .cells
             .iter()
@@ -921,18 +967,130 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             levels: RefCell::default(),
             met: RefCell::default(),
         };
-        let mut found: Vec<(usize, Op, &[Expr], bool)> = Vec::with_capacity(of.aggregates);
+        let mut found: Vec<(usize, Found<'_>)> = Vec::with_capacity(of.aggregates);
         aggregates(&of.invariant, &mut found);
         if let Some(w) = &of.when {
             aggregates(w, &mut found);
         }
         // One within the operand of another comes before it.
-        found.sort_by_key(|(at, _, _, _)| *at);
-        for (_, op, operands, skip) in found {
-            let v = eval.aggregate(op, operands, skip)?;
+        found.sort_by_key(|(at, _)| *at);
+        for (_, f) in found {
+            let v = match f {
+                Found::Aggregate(op, operands, skip) => {
+                    eval.aggregate(op, operands, skip).map_err(Failed::Table)?
+                }
+                Found::Call(function, args, kind) => {
+                    eval.call(function, args, kind, &of.cells, functions)?
+                }
+            };
             eval.aggregates.push(v);
         }
         Ok(eval)
+    }
+
+    /// The value of a call of `function` over all rows, or for each group:
+    /// the cells of each argument of `vec(T)` in the rows of the group, and
+    /// the constants and defaults of the others.
+    fn call(
+        &self,
+        function: &QualifiedName,
+        args: &[CallArg],
+        kind: Kind,
+        cells: &[Cell],
+        functions: &dyn Functions,
+    ) -> Result<Aggregated, Failed> {
+        // The cells of each argument that is not one column, of every row.
+        let mut data: Vec<Option<(Data, Option<String>)>> = Vec::with_capacity(args.len());
+        for a in args {
+            data.push(match &a.value {
+                ArgValue::Cells {
+                    expr: Expr::Cell(_),
+                    ..
+                } => None,
+                ArgValue::Cells { expr, kind } => {
+                    let mut out = calc::empty(*kind, self.rows);
+                    let mut error = None;
+                    for lo in (0..self.rows).step_by(BLOCK) {
+                        let hi = (lo + BLOCK).min(self.rows);
+                        let b = self.block(expr, lo, hi).map_err(Failed::Table)?;
+                        calc::append(&mut out, &b, lo, hi - lo, &mut error);
+                    }
+                    if let Some(e) = error {
+                        return Err(Failed::Row(e));
+                    }
+                    Some((out, first_zone(expr, cells)))
+                }
+                _ => None,
+            });
+        }
+        let all: Vec<u32> = if self.groups.is_none() {
+            (0..self.rows as u32).collect()
+        } else {
+            Vec::new()
+        };
+        let g = self.group_count();
+        let rows_of = |k: usize| -> &[u32] {
+            match &self.groups {
+                Some(x) => x.rows_of(k),
+                None => &all,
+            }
+        };
+        let mut calls: Vec<calc::Call<'_>> = Vec::with_capacity(g);
+        for k in 0..g {
+            if k % 256 == 255 {
+                crate::progress::tick_block();
+            }
+            let rows = rows_of(k);
+            let given: calc::Call<'_> = args
+                .iter()
+                .zip(&data)
+                .map(|(a, d)| {
+                    let arg = match (&a.value, d) {
+                        (ArgValue::Cells { .. }, Some((data, zone))) => Argument::Cells {
+                            data,
+                            rows,
+                            zone: zone.as_deref(),
+                        },
+                        (
+                            ArgValue::Cells {
+                                expr: Expr::Cell(c),
+                                ..
+                            },
+                            None,
+                        ) => Argument::Column {
+                            name: &cells[*c].name,
+                            rows,
+                        },
+                        (ArgValue::Constant(c), _) => Argument::Constant(c),
+                        (ArgValue::Default(d), _) => Argument::Default(d),
+                        (ArgValue::Cells { .. }, None) => unreachable!("gathered above"),
+                    };
+                    (&*a.name, arg)
+                })
+                .collect();
+            calls.push(given);
+        }
+        let got = functions.call(function, &calls).map_err(|f| Failed::Call {
+            function: function.to_string(),
+            group: f.at,
+            message: f.message,
+        })?;
+        if got.len() != g {
+            return Err(Failed::Call {
+                function: function.to_string(),
+                group: 0,
+                message: format!("the host gives {} values for {g} calls", got.len()),
+            });
+        }
+        let mut values = CallValues::new(kind, g);
+        for (k, v) in got.into_iter().enumerate() {
+            values.set(k, v).map_err(|message| Failed::Call {
+                function: function.to_string(),
+                group: k,
+                message,
+            })?;
+        }
+        Ok(values.into_aggregated())
     }
 
     /// The number of groups: 1 for rows without groups.
@@ -1378,7 +1536,9 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             Expr::Lit(Scalar::Null) => Ok(Block::Nothing(MISSING)),
             Expr::Lit(s) => Ok(Block::One(s.clone())),
             Expr::Cell(k) => Ok(self.cells(*k, lo, hi)),
-            Expr::Aggregate { at, .. } => Ok(self.aggregated(&self.aggregates[*at], lo, hi)),
+            Expr::Aggregate { at, .. } | Expr::Call { at, .. } => {
+                Ok(self.aggregated(&self.aggregates[*at], lo, hi))
+            }
             Expr::And(parts) | Expr::Or(parts) => {
                 let decides = u8::from(matches!(e, Expr::Or(_)));
                 let mut out = vec![1 - decides; n];
@@ -1554,25 +1714,14 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
                 (_, s) if s != 0 => Block::Nothing(s),
                 (Values::Numbers(v), _) => Block::One(Scalar::Num(v[0])),
                 (Values::Times(t, of), _) => Block::One(of.scalar(t[0])),
+                (Values::Logicals(v), _) => Block::One(Scalar::Bool(v[0])),
+                (Values::Texts(v), _) => Block::One(Scalar::Str(v[0].clone())),
             },
-            (_, true) => match &a.values {
-                Values::Numbers(v) => {
-                    Block::Number(Numbers::Own(v[lo..hi].to_vec()), states(&mut (lo..hi)))
-                }
-                Values::Times(t, of) => Block::Time(t[lo..hi].to_vec(), states(&mut (lo..hi)), *of),
-            },
+            (_, true) => values_of(a, lo..hi, states(&mut (lo..hi))),
             (Some(g), false) => {
                 let ids = &g.ids[lo..hi];
                 let st = states(&mut ids.iter().map(|&k| k as usize));
-                match &a.values {
-                    Values::Numbers(v) => Block::Number(
-                        Numbers::Own(ids.iter().map(|&k| v[k as usize]).collect()),
-                        st,
-                    ),
-                    Values::Times(t, of) => {
-                        Block::Time(ids.iter().map(|&k| t[k as usize]).collect(), st, *of)
-                    }
-                }
+                values_of(a, ids.iter().map(|&k| k as usize), st)
             }
         }
     }
@@ -2098,8 +2247,105 @@ fn instants<'e, 'a>(x: Vec<i64>, is_date: bool) -> Block<'e, 'a> {
     Block::Time(x, states, of)
 }
 
-/// The aggregates of `e`, with their places.
-pub(super) fn aggregates<'e>(e: &'e Expr, out: &mut Vec<(usize, Op, &'e [Expr], bool)>) {
+/// The block of the values of `a` at the places `at`, with their states.
+fn values_of<'e, 'a>(
+    a: &'e Aggregated,
+    at: impl Iterator<Item = usize>,
+    st: States,
+) -> Block<'e, 'a> {
+    match &a.values {
+        Values::Numbers(v) => Block::Number(Numbers::Own(at.map(|k| v[k]).collect()), st),
+        Values::Times(t, of) => Block::Time(at.map(|k| t[k]).collect(), st, *of),
+        Values::Logicals(v) => Block::Bool(
+            at.map(|k| match a.states[k] {
+                0 => u8::from(v[k]),
+                s => stated(s),
+            })
+            .collect(),
+        ),
+        Values::Texts(v) => Block::Text(at.map(|k| Cow::Owned(v[k].clone())).collect(), st),
+    }
+}
+
+/// The values of a call for each group, as they come.
+struct CallValues {
+    kind: Kind,
+    values: Values,
+    states: Vec<u8>,
+}
+
+impl CallValues {
+    fn new(kind: Kind, n: usize) -> CallValues {
+        let values = match kind {
+            Kind::Logical => Values::Logicals(vec![false; n]),
+            Kind::Integer | Kind::Double => Values::Numbers(vec![NA_NUMBER; n]),
+            Kind::Character => Values::Texts(vec![String::new(); n]),
+            Kind::Date => Values::Times(vec![i64::MIN; n], Instant::Date),
+            Kind::DateTime => Values::Times(vec![i64::MIN; n], Instant::DateTime),
+        };
+        CallValues {
+            kind,
+            values,
+            states: vec![MISSING; n],
+        }
+    }
+
+    /// The value of group `k`; the error of a value of another kind.
+    fn set(&mut self, k: usize, v: CallValue) -> Result<(), String> {
+        match (&mut self.values, v) {
+            (_, CallValue::Missing) => return Ok(()),
+            (Values::Numbers(x), CallValue::Number(n)) if !n.is_nan() => x[k] = n,
+            (Values::Numbers(_), CallValue::Number(_)) => return Ok(()),
+            (Values::Logicals(x), CallValue::Logical(b)) => x[k] = b,
+            (Values::Texts(x), CallValue::Text(t)) => x[k] = t,
+            (Values::Times(x, Instant::Date), CallValue::Date(d)) => x[k] = d,
+            (Values::Times(x, Instant::DateTime), CallValue::DateTime(t)) => x[k] = t,
+            (_, v) => {
+                return Err(format!(
+                    "the function gives {v:?}, and its declared return type is of {:?}",
+                    self.kind
+                ));
+            }
+        }
+        self.states[k] = 0;
+        Ok(())
+    }
+
+    fn into_aggregated(self) -> Aggregated {
+        Aggregated {
+            values: self.values,
+            states: self.states,
+        }
+    }
+}
+
+/// The first date-time column that `e` reads.
+fn first_zone(e: &Expr, cells: &[Cell]) -> Option<String> {
+    let mut found = None;
+    visit_cells(e, &mut |k| {
+        if found.is_none() && matches!(unwrap_option(&cells[k].ty), FieldType::Posixct) {
+            found = Some(cells[k].name.to_string());
+        }
+    });
+    found
+}
+
+/// Calls `f` with each cell that `e` reads outside calls.
+fn visit_cells(e: &Expr, f: &mut dyn FnMut(usize)) {
+    match e {
+        Expr::Cell(k) => f(*k),
+        Expr::Aggregate { operands: xs, .. }
+        | Expr::If(xs)
+        | Expr::And(xs)
+        | Expr::Or(xs)
+        | Expr::Op(_, xs) => xs.iter().for_each(|x| visit_cells(x, f)),
+        Expr::IsNa(x) | Expr::IsNull(x) => visit_cells(x, f),
+        _ => {}
+    }
+}
+
+/// The aggregates and calls of `e`, with their places.
+fn aggregates<'e>(e: &'e Expr, out: &mut Vec<(usize, Found<'e>)>) {
     match e {
         Expr::Aggregate {
             op,
@@ -2108,7 +2354,20 @@ pub(super) fn aggregates<'e>(e: &'e Expr, out: &mut Vec<(usize, Op, &'e [Expr], 
             skip,
         } => {
             operands.iter().for_each(|x| aggregates(x, out));
-            out.push((*at, *op, operands, *skip));
+            out.push((*at, Found::Aggregate(*op, operands, *skip)));
+        }
+        Expr::Call {
+            function,
+            args,
+            kind,
+            at,
+        } => {
+            for a in args {
+                if let ArgValue::Cells { expr, .. } = &a.value {
+                    aggregates(expr, out);
+                }
+            }
+            out.push((*at, Found::Call(function, args, *kind)));
         }
         Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
             xs.iter().for_each(|x| aggregates(x, out));
