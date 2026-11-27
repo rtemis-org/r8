@@ -24,9 +24,12 @@
 - `calc(expr)` declares an expression of the rule dialect as a value. `r8_set(x, list(bmi = calc(weight / height^2)))` stores the column that it computes in Rust, with the unit that the expression infers, and `r8_set(x, columns, by)` evaluates its aggregates over each row's group.
 - `r8summarize(x, columns, by)` gives one row for each group of the rows of a table, in the order of the keys, with the summaries that `calc()` values of `n()`, `count()`, `sum()`, `mean()`, `median()`, `min()`, and `max()` compute; `na.rm = TRUE` leaves out missing cells.
 - `r8map(x, f, columns, by)`, a generic, maps a typed function of R8, or a `calc()` in which `col()` is the column, over the columns of a table, one row for each group. An impl for `Raven` applies to every table.
+- `r8map(x, f, args = list(...))` of a list or an atomic vector calls a typed function on each element, with the constant arguments of `args`, and gives an atomic vector or a list by the function's return type, with the names of `x`.
+- A map of a typed function reports its progress to the functions of the option `r8.progress`, `begin`, `update`, and `end`, which a host such as rtemis.core draws; a map that ends within 0.2 s reports nothing.
 - The rule dialect has `^`, `median()`, `n()`, `count()`, `NA`, `na.rm = TRUE` in aggregates, and `col(expr)`, the column whose name an R expression gives.
 - `field(compute =)` takes a `calc()`: `field(option(type_double()), compute = calc(mg / 1000))`.
 - `aggregate()` of a table is an error that names `r8summarize()`.
+- `n_threads` of `r8map()`, `r8summarize()`, `r8_set()`, `r8_sort()`, `r8_filter()`, and `r8_check()`, and the option `r8.n_threads`, set the threads that their work in Rust may use; a result is the same for any number of threads.
 
 # R8 0.5.0
 

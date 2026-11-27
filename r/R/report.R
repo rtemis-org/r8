@@ -34,6 +34,10 @@
 #' @param against A [rule()], a list of rules, or a type: an R8 type object, or a field
 #'   type such as [type_table()].
 #' @param limit Integer: The problems listed for each rule.
+#' @param n_threads Optional Integer [1, Inf): The threads that the work in Rust may
+#'   use; `NULL` takes `getOption("r8.n_threads")`, whose default is half the logical
+#'   cores, at most 2 where `R CMD check` limits the cores, and at most
+#'   `OMP_THREAD_LIMIT`. A result is the same for any number of threads.
 #'
 #' @return A value of the struct `R8::Report`, with the fields `type`, the type that the
 #'   table was held against or `NULL`, `rows`, `rules`, and `problems`.
@@ -53,7 +57,8 @@
 #' r8_filter(report$problems, rule(rule == "age"))
 #'
 #' @export
-r8_check <- function(x, against, limit = 1000L) {
+r8_check <- function(x, against, limit = 1000L, n_threads = NULL) {
+  threads_of(n_threads)
   if (
     !is.numeric(limit) ||
       length(limit) != 1L ||

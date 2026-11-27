@@ -577,7 +577,7 @@ fn run_calc(op: &str, ir: Option<&DocumentSet>, case: &Value) -> Option<String> 
     };
     let refs: Vec<&Logic> = exprs.iter().collect();
     let table = rtemis_r8::access::Json::new(&case["input"]);
-    let got = match computed(table, def, &by, &refs, docs, op != "calc") {
+    let got = match computed(table, def, &by, &refs, docs, op != "calc", 1) {
         Ok(out) => {
             let mut columns = serde_json::Map::new();
             for (name, c) in names.iter().zip(&out.columns) {

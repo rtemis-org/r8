@@ -4,7 +4,7 @@
 \alias{r8_check}
 \title{Check a table against rules or a type}
 \usage{
-r8_check(x, against, limit = 1000L)
+r8_check(x, against, limit = 1000L, n_threads = NULL)
 }
 \arguments{
 \item{x}{A value of a table, or a data frame. Any other object for a type of other
@@ -14,6 +14,11 @@ values, which is checked as a whole.}
 type such as \code{\link[=type_table]{type_table()}}.}
 
 \item{limit}{Integer: The problems listed for each rule.}
+
+\item{n_threads}{Optional Integer [1, Inf): The threads that the work in Rust may
+use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half the logical
+cores, at most 2 where \verb{R CMD check} limits the cores, and at most
+\code{OMP_THREAD_LIMIT}. A result is the same for any number of threads.}
 }
 \value{
 A value of the struct \code{R8::Report}, with the fields \code{type}, the type that the

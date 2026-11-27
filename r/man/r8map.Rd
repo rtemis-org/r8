@@ -4,29 +4,71 @@
 \alias{r8map}
 \title{Map an expression or a typed function over columns}
 \usage{
-r8map(x, f, columns = NULL, by = NULL)
+r8map(x, f, columns = NULL, by = NULL, args = NULL, n_threads = NULL)
 }
 \arguments{
 \item{x}{A value of a table.}
 
-\item{f}{A typed function of one column, or a \code{\link[=calc]{calc()}} that reads \code{col()}.}
+\item{f}{A typed function, whose first parameter takes each item, or, for a
+table, a \code{\link[=calc]{calc()}} that reads \code{col()}.}
 
 \item{columns}{Optional Character or numeric: The columns mapped, by name or by
 position, each once.}
 
 \item{by}{Optional Character or numeric: The key columns, by name or by
 position.}
+
+\item{args}{Optional named list: The constant arguments of every call of a typed
+function, by the names of its parameters other than the first.}
+
+\item{n_threads}{Optional Integer [1, Inf): The threads that the work in Rust may
+use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half the logical
+cores, at most 2 where \verb{R CMD check} limits the cores, and at most
+\code{OMP_THREAD_LIMIT}. A result is the same for any number of threads. A typed function
+with its body in R runs on R's thread.}
 }
 \value{
-A \link{Raven} of the key columns and one column for each column mapped.
+Of a table, a \link{Raven} of the key columns and one column for each column
+mapped; of a list or a vector, an atomic vector or a list, with the names of
+\code{x}.
 }
 \description{
+\code{r8map(x, f)} calls \code{f} once for each item of \code{x}, in order, and collects the
+results in the container that \code{f}'s return type declares. \code{r8map()} is a generic
+of R8 that dispatches on \code{x} and on what \code{f} is: a method for \link{Raven} applies to
+every table.
+}
+\section{Lists and vectors}{
+
+The items of a list or an atomic vector are its elements, given to the first
+parameter of a typed function (\code{\link[=new_function]{new_function()}}); \code{args} holds the constant
+arguments of every call, by the names of \code{f}'s other parameters:
+\code{r8map(folds, train_glm, args = list(data = d, outcome = "y"))}. A scalar return
+type gives an atomic vector, and another type a list of the values, checked by
+\code{f}, with the names of \code{x}. An error of a call names its item, and the map gives
+nothing.
+}
+
+\section{Progress}{
+
+A map of a typed function reports its progress to a host that sets the option
+\code{r8.progress} to a list of three functions: \code{begin(total, label, kind)}, which
+gives a handle, \code{update(handle, current)}, and \code{end(handle, status)}, with the
+status \code{"done"}, \code{"error"}, or \code{"aborted"}. The total is the calls of \code{f}, the
+label its name, and the kind \code{"r8map"}. \code{begin} is called once the map has run
+for 0.2 s, so that a shorter map reports nothing, and \code{update} at most about
+every 0.05 to 0.2 s. Without the option, its default, a map reports nothing.
+}
+
+\section{Tables}{
+
 \code{r8map(x, f, columns, by)} gives one row for each group of the rows of \code{x} by
 the key columns \code{by}, or one row for the table: the keys, then \code{f} of each column
 of \code{columns}, under the column's name. Without \code{columns}, every column that is
-not a key is mapped. \code{r8map()} is a generic of R8 that dispatches on \code{x} and on
-what \code{f} is: a method for \link{Raven} applies to every table.
+not a key is mapped. \code{r8map(split(x, x[["g"]]), f)} maps \code{f} over the tables of
+the groups.
 }
+
 \section{Typed functions}{
 
 A typed function of R8 (\code{\link[=new_function]{new_function()}}), with a body in R or in Rust, is
@@ -60,6 +102,15 @@ spread <- new_function(
   return_type = type_double()
 )
 r8map(m, spread, columns = "auc", by = "combo")
+# A resample is the indices of its training rows; the data is a constant.
+Fold <- new_struct("Fold", fields = list(train = vec(type_integer())))
+folds <- list(a = Fold(train = 1:2), b = Fold(train = 3:4))
+fold_auc <- new_function(
+  "fold_auc",
+  function(fold = arg(Fold), data = arg(Raven)) mean(data[fold$train, ]$auc),
+  return_type = type_double()
+)
+r8map(folds, fold_auc, args = list(data = m))
 options(op)
 
 }

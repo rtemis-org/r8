@@ -31,6 +31,7 @@ mod compile;
 mod diagnose;
 mod eval;
 mod exact;
+mod parallel;
 mod rows;
 pub mod text;
 mod ty;

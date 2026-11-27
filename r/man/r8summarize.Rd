@@ -4,7 +4,7 @@
 \alias{r8summarize}
 \title{Summarize the groups of a table's rows}
 \usage{
-r8summarize(x, columns, by = NULL)
+r8summarize(x, columns, by = NULL, n_threads = NULL)
 }
 \arguments{
 \item{x}{A value of a table.}
@@ -14,6 +14,11 @@ result's columns.}
 
 \item{by}{Optional Character or numeric: The key columns, by name or by
 position.}
+
+\item{n_threads}{Optional Integer [1, Inf): The threads that the work in Rust may
+use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half the logical
+cores, at most 2 where \verb{R CMD check} limits the cores, and at most
+\code{OMP_THREAD_LIMIT}. A result is the same for any number of threads.}
 }
 \value{
 A \link{Raven} of the key columns and the summaries, with the units that

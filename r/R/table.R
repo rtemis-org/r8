@@ -375,7 +375,7 @@ check_table <- function(x, arg = "x") {
         class = "r8_value_error"
       )
     }
-    return(table_result(r8_table_get(x, NULL, cols), x))
+    return(table_result(r8_table_get(x, NULL, cols, threads_of(NULL)), x))
   }
   rows <- if (!missing(i)) {
     row_index(x, index_value(i, x, substitute(i), env, "rule"), substitute(i))
@@ -383,7 +383,7 @@ check_table <- function(x, arg = "x") {
   cols <- if (!missing(j)) {
     index_value(j, x, substitute(j), env, "x[, c(%s)]")
   }
-  table_result(r8_table_get(x, rows, cols), x)
+  table_result(r8_table_get(x, rows, cols, threads_of(NULL)), x)
 } # /R8::[.r8_table
 
 
@@ -524,6 +524,10 @@ row_index <- function(x, i, e) {
 #'
 #' @param x A value of a table.
 #' @param rule A [rule()] without `when`. Its `id` and `message` are not read.
+#' @param n_threads Optional Integer [1, Inf): The threads that the work in Rust may
+#'   use; `NULL` takes `getOption("r8.n_threads")`, whose default is half the logical
+#'   cores, at most 2 where `R CMD check` limits the cores, and at most
+#'   `OMP_THREAD_LIMIT`. A result is the same for any number of threads.
 #' @param columns Character or numeric: The columns, by name or by position, each
 #'   once.
 #'
@@ -539,7 +543,7 @@ row_index <- function(x, i, e) {
 #' r[!wide, c("Species", "Petal.Width")]
 #'
 #' @export
-r8_filter <- function(x, rule) {
+r8_filter <- function(x, rule, n_threads = NULL) {
   check_table(x)
   rule <- index_value(rule, x, substitute(rule), parent.frame(), "rule")
   if (!inherits(rule, "r8_rule")) {
@@ -548,7 +552,7 @@ r8_filter <- function(x, rule) {
       class = "r8_argument_error"
     )
   }
-  table_result(r8_table_get(x, list(rule), NULL), x)
+  table_result(r8_table_get(x, list(rule), NULL, threads_of(n_threads)), x)
 } # /R8::r8_filter
 
 
@@ -558,7 +562,7 @@ r8_filter <- function(x, rule) {
 r8_select <- function(x, columns) {
   check_table(x)
   columns <- table_columns_arg(x, columns, substitute(columns), parent.frame())
-  table_result(r8_table_get(x, NULL, columns), x)
+  table_result(r8_table_get(x, NULL, columns, 1L), x)
 } # /R8::r8_select
 
 
@@ -809,6 +813,10 @@ subset.r8_table <- function(x, ...) {
 #'   numeric: The columns, by name or by position, each once.
 #' @param by Optional Character or numeric: The key columns whose groups the
 #'   aggregates of [calc()] entries are over, by name or by position.
+#' @param n_threads Optional Integer [1, Inf): The threads that the work in Rust may
+#'   use; `NULL` takes `getOption("r8.n_threads")`, whose default is half the logical
+#'   cores, at most 2 where `R CMD check` limits the cores, and at most
+#'   `OMP_THREAD_LIMIT`. A result is the same for any number of threads.
 #' @param from Character or numeric: The columns, by name or by position, each once.
 #' @param to Character: The new names, one for each column of `from`.
 #'
@@ -822,7 +830,7 @@ subset.r8_table <- function(x, ...) {
 #' r8_drop(r, "height")
 #'
 #' @export
-r8_set <- function(x, columns, by = NULL) {
+r8_set <- function(x, columns, by = NULL, n_threads = NULL) {
   check_table(x)
   if (is_value(columns) && inherits(columns, "r8_table")) {
     columns <- as.list(columns)
@@ -888,7 +896,8 @@ r8_set <- function(x, columns, by = NULL) {
         x,
         lapply(columns[computed], function(e) unclass(e)[["expr"]]),
         by %||% character(),
-        FALSE
+        FALSE,
+        threads_of(n_threads)
       ),
       x
     )
@@ -913,6 +922,36 @@ r8_set <- function(x, columns, by = NULL) {
   }
   with_units(res, units)
 } # /R8::r8_set
+
+
+# %% threads_of ----
+#' The threads of a call
+#'
+#' @param n_threads Optional Integer: The argument `n_threads`.
+#'
+#' @return Integer: The threads, from the argument, the option `r8.n_threads`, or
+#'   `r8_default_threads()`.
+#'
+#' @keywords internal
+#' @noRd
+threads_of <- function(n_threads) {
+  n <- n_threads %||% getOption("r8.n_threads") %||% r8_default_threads()
+  if (
+    !is.numeric(n) ||
+      length(n) != 1L ||
+      is.na(n) ||
+      n < 1 ||
+      n != round(n) ||
+      n > .Machine[["integer.max"]]
+  ) {
+    r8_abort(
+      "`n_threads` is a whole number of threads, at least 1, such as 2L; ",
+      "options(r8.n_threads = ) sets the default.",
+      class = "r8_argument_error"
+    )
+  }
+  as.integer(n)
+} # /R8::threads_of
 
 
 # %% with_units ----
@@ -1001,6 +1040,10 @@ key_columns <- function(x, by, e, env) {
 #'   result's columns.
 #' @param by Optional Character or numeric: The key columns, by name or by
 #'   position.
+#' @param n_threads Optional Integer [1, Inf): The threads that the work in Rust may
+#'   use; `NULL` takes `getOption("r8.n_threads")`, whose default is half the logical
+#'   cores, at most 2 where `R CMD check` limits the cores, and at most
+#'   `OMP_THREAD_LIMIT`. A result is the same for any number of threads.
 #'
 #' @return A [Raven] of the key columns and the summaries, with the units that
 #'   the expressions infer.
@@ -1017,7 +1060,7 @@ key_columns <- function(x, by, e, env) {
 #' )
 #'
 #' @export
-r8summarize <- function(x, columns, by = NULL) {
+r8summarize <- function(x, columns, by = NULL, n_threads = NULL) {
   check_table(x)
   check_calcs(columns, "r8summarize")
   by <- if (is.null(by)) {
@@ -1030,7 +1073,8 @@ r8summarize <- function(x, columns, by = NULL) {
       x,
       lapply(columns, function(e) unclass(e)[["expr"]]),
       by,
-      TRUE
+      TRUE,
+      threads_of(n_threads)
     ),
     x
   )
@@ -1071,7 +1115,7 @@ summary_table <- function(x, by, first, columns, units, names) {
   }
   names(columns) <- names
   keys <- if (length(by) > 0L) {
-    as.list(table_result(r8_table_get(x, first, by), x))
+    as.list(table_result(r8_table_get(x, first, by, 1L), x))
   }
   out <- Raven(c(keys, columns))
   # The facts of the keys, and the units of the summaries.
@@ -1104,11 +1148,35 @@ summary_table <- function(x, by, first, columns, units, names) {
 
 #' Map an expression or a typed function over columns
 #'
+#' `r8map(x, f)` calls `f` once for each item of `x`, in order, and collects the
+#' results in the container that `f`'s return type declares. `r8map()` is a generic
+#' of R8 that dispatches on `x` and on what `f` is: a method for [Raven] applies to
+#' every table.
+#'
+#' @section Lists and vectors:
+#' The items of a list or an atomic vector are its elements, given to the first
+#' parameter of a typed function ([new_function()]); `args` holds the constant
+#' arguments of every call, by the names of `f`'s other parameters:
+#' `r8map(folds, train_glm, args = list(data = d, outcome = "y"))`. A scalar return
+#' type gives an atomic vector, and another type a list of the values, checked by
+#' `f`, with the names of `x`. An error of a call names its item, and the map gives
+#' nothing.
+#'
+#' @section Progress:
+#' A map of a typed function reports its progress to a host that sets the option
+#' `r8.progress` to a list of three functions: `begin(total, label, kind)`, which
+#' gives a handle, `update(handle, current)`, and `end(handle, status)`, with the
+#' status `"done"`, `"error"`, or `"aborted"`. The total is the calls of `f`, the
+#' label its name, and the kind `"r8map"`. `begin` is called once the map has run
+#' for 0.2 s, so that a shorter map reports nothing, and `update` at most about
+#' every 0.05 to 0.2 s. Without the option, its default, a map reports nothing.
+#'
+#' @section Tables:
 #' `r8map(x, f, columns, by)` gives one row for each group of the rows of `x` by
 #' the key columns `by`, or one row for the table: the keys, then `f` of each column
 #' of `columns`, under the column's name. Without `columns`, every column that is
-#' not a key is mapped. `r8map()` is a generic of R8 that dispatches on `x` and on
-#' what `f` is: a method for [Raven] applies to every table.
+#' not a key is mapped. `r8map(split(x, x[["g"]]), f)` maps `f` over the tables of
+#' the groups.
 #'
 #' @section Typed functions:
 #' A typed function of R8 ([new_function()]), with a body in R or in Rust, is
@@ -1128,13 +1196,24 @@ summary_table <- function(x, by, first, columns, units, names) {
 #' f)` applies one to whole columns, and `split()` gives the groups' tables.
 #'
 #' @param x A value of a table.
-#' @param f A typed function of one column, or a [calc()] that reads `col()`.
+#' @param f A typed function, whose first parameter takes each item, or, for a
+#'   table, a [calc()] that reads `col()`.
 #' @param columns Optional Character or numeric: The columns mapped, by name or by
 #'   position, each once.
 #' @param by Optional Character or numeric: The key columns, by name or by
 #'   position.
+#' @param n_threads Optional Integer [1, Inf): The threads that the work in Rust may
+#'   use; `NULL` takes `getOption("r8.n_threads")`, whose default is half the logical
+#'   cores, at most 2 where `R CMD check` limits the cores, and at most
+#'   `OMP_THREAD_LIMIT`. A result is the same for any number of threads. A typed function
+#'   with its body in R runs on R's thread.
 #'
-#' @return A [Raven] of the key columns and one column for each column mapped.
+#' @param args Optional named list: The constant arguments of every call of a typed
+#'   function, by the names of its parameters other than the first.
+#'
+#' @return Of a table, a [Raven] of the key columns and one column for each column
+#'   mapped; of a list or a vector, an atomic vector or a list, with the names of
+#'   `x`.
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
@@ -1150,6 +1229,15 @@ summary_table <- function(x, by, first, columns, units, names) {
 #'   return_type = type_double()
 #' )
 #' r8map(m, spread, columns = "auc", by = "combo")
+#' # A resample is the indices of its training rows; the data is a constant.
+#' Fold <- new_struct("Fold", fields = list(train = vec(type_integer())))
+#' folds <- list(a = Fold(train = 1:2), b = Fold(train = 3:4))
+#' fold_auc <- new_function(
+#'   "fold_auc",
+#'   function(fold = arg(Fold), data = arg(Raven)) mean(data[fold$train, ]$auc),
+#'   return_type = type_double()
+#' )
+#' r8map(folds, fold_auc, args = list(data = m))
 #' options(op)
 #'
 #' @name r8map
@@ -1169,13 +1257,18 @@ r8map <- NULL
 declare_map <- function(ns) {
   r8map <- generic(
     "r8map",
-    params(x, f, columns = NULL, by = NULL),
-    description = "One row for each group: the keys, then `f` of each column.",
+    params(x, f, columns = NULL, by = NULL, args = NULL, n_threads = NULL),
+    description = "`f` of each item of `x`, in the container of its return type.",
     dispatch = c("x", "f")
   )
   implement(r8map, Raven, host_class("r8_calc")) <- map_calc
   implement(r8map, Raven, host_class("r8_function")) <- map_typed
   implement(r8map, Raven, host_class("function")) <- map_function
+  for (kind in c("list", "logical", "integer", "double", "character")) {
+    implement(r8map, kind, host_class("r8_function")) <- map_items
+    implement(r8map, kind, host_class("r8_calc")) <- map_items_calc
+    implement(r8map, kind, host_class("function")) <- map_function
+  }
   assign("r8map", r8map, envir = ns)
   invisible(NULL)
 } # /R8::declare_map
@@ -1215,7 +1308,14 @@ map_columns <- function(x, columns, by) {
 #'
 #' @keywords internal
 #' @noRd
-map_calc <- function(x, f, columns, by) {
+map_calc <- function(x, f, columns, by, args, n_threads) {
+  if (!is.null(args)) {
+    r8_abort(
+      "`args` are the constant arguments of a typed function; a calc() reads ",
+      "columns and val().",
+      class = "r8_argument_error"
+    )
+  }
   by <- if (is.null(by)) {
     character()
   } else {
@@ -1226,7 +1326,10 @@ map_calc <- function(x, f, columns, by) {
   if (inherits(exprs, "r8_refused")) {
     r8_abort(exprs[["message"]], ".", class = "r8_value_error")
   }
-  res <- table_result(r8_table_calc(x, exprs, by, TRUE), x)
+  res <- table_result(
+    r8_table_calc(x, exprs, by, TRUE, threads_of(n_threads)),
+    x
+  )
   summary_table(
     x,
     by,
@@ -1243,7 +1346,27 @@ map_calc <- function(x, f, columns, by) {
 #'
 #' @keywords internal
 #' @noRd
-map_typed <- function(x, f, columns, by) {
+map_typed <- function(x, f, columns, by, args, n_threads) {
+  # A body in R runs on R's thread.
+  threads_of(n_threads)
+  sig <- map_signature(f, args)
+  returns <- sig[["returns"]]
+  if (identical(returns[["kind"]], "option")) {
+    returns <- returns[["inner"]]
+  }
+  if (
+    !returns[["kind"]] %in%
+      c("logical", "integer", "double", "character", "date", "posixct")
+  ) {
+    r8_abort(
+      "A map over the columns of a table gives one value of each column in a ",
+      "column of the result, and `",
+      sig[["name"]],
+      "` returns another type; r8map(split(x, x[[\"g\"]]), f) maps it over ",
+      "the tables of the groups.",
+      class = "r8_value_error"
+    )
+  }
   by <- if (is.null(by)) {
     character()
   } else {
@@ -1283,12 +1406,28 @@ map_typed <- function(x, f, columns, by) {
     )
     paste0(" in the group ", paste(shown, collapse = ", "))
   }
-  out <- lapply(columns, function(column) {
-    parts <- split(x[[column]], factor(ids, levels = seq_len(n_groups)))
-    values <- lapply(seq_along(parts), function(k) {
-      v <- withCallingHandlers(
-        f(parts[[k]]),
-        error = function(cnd) {
+  out <- with_progress(length(columns) * n_groups, name, function(step) {
+    lapply(columns, function(column) {
+      parts <- split(x[[column]], factor(ids, levels = seq_len(n_groups)))
+      values <- lapply(seq_along(parts), function(k) {
+        v <- withCallingHandlers(
+          do.call(f, c(list(parts[[k]]), sig[["args"]])),
+          error = function(cnd) {
+            r8_abort(
+              "r8map(): `",
+              name,
+              "` of column `",
+              column,
+              "`",
+              group_text(k),
+              ": ",
+              conditionMessage(cnd),
+              class = "r8_value_error",
+              data = list(parent = cnd)
+            )
+          }
+        )
+        if (length(v) != 1L || !is.atomic(v)) {
           r8_abort(
             "r8map(): `",
             name,
@@ -1296,33 +1435,311 @@ map_typed <- function(x, f, columns, by) {
             column,
             "`",
             group_text(k),
-            ": ",
-            conditionMessage(cnd),
-            class = "r8_value_error",
-            data = list(parent = cnd)
+            " gives ",
+            length(v),
+            " values; a function that r8map() maps gives one.",
+            class = "r8_value_error"
           )
         }
-      )
-      if (length(v) != 1L || !is.atomic(v)) {
-        r8_abort(
-          "r8map(): `",
-          name,
-          "` of column `",
-          column,
-          "`",
-          group_text(k),
-          " gives ",
-          length(v),
-          " values; a function that r8map() maps gives one.",
-          class = "r8_value_error"
-        )
-      }
-      v
+        step()
+        v
+      })
+      do.call(c, values)
     })
-    do.call(c, values)
   })
   summary_table(x, by, first, out, rep(NA_character_, length(columns)), columns)
 } # /R8::map_typed
+
+
+# %% map_hook ----
+#' The hook of the progress of maps, which a host draws
+#'
+#' @return The option `r8.progress`: `NULL`, its default, or a list of the
+#'   functions `begin(total, label, kind)`, which gives a handle,
+#'   `update(handle, current)`, and `end(handle, status)`.
+#'
+#' @keywords internal
+#' @noRd
+map_hook <- function() {
+  hook <- getOption("r8.progress")
+  if (
+    !is.null(hook) &&
+      (!is.list(hook) ||
+        !all(c("begin", "update", "end") %in% names(hook)) ||
+        !all(vapply(hook[c("begin", "update", "end")], is.function, NA)))
+  ) {
+    r8_abort(
+      "The option `r8.progress` is NULL or a list of the functions `begin`, ",
+      "`update`, and `end`.",
+      class = "r8_argument_error"
+    )
+  }
+  hook
+} # /R8::map_hook
+
+
+# %% with_progress ----
+#' The steps of a map, with its progress
+#'
+#' Reads the option `r8.progress` once (`map_hook()`). A map reports its steps at
+#' a stride that doubles while reports come within 0.05 s and halves when they
+#' come after 0.2 s, and calls `begin` at the first report after 0.2 s, so that a
+#' shorter map reports nothing; `end` follows with `"done"`, `"error"`, or
+#' `"aborted"`.
+#'
+#' @param total Integer: The steps.
+#' @param label Character: The name of the function mapped.
+#' @param run Function: Of one argument, a function of no arguments that counts
+#'   a step; gives the map's result.
+#'
+#' @return The result of `run`.
+#'
+#' @keywords internal
+#' @noRd
+with_progress <- function(total, label, run) {
+  hook <- map_hook()
+  if (is.null(hook)) {
+    return(run(function() NULL))
+  }
+  start <- proc.time()[["elapsed"]]
+  last <- start
+  done <- 0L
+  stride <- 1L
+  next_at <- 1L
+  handle <- NULL
+  begun <- FALSE
+  report <- function() {
+    now <- proc.time()[["elapsed"]]
+    gap <- now - last
+    if (gap < 0.05) {
+      stride <<- stride * 2L
+    } else if (gap > 0.2) {
+      stride <<- max(1L, stride %/% 2L)
+    }
+    next_at <<- done + stride
+    if (!begun) {
+      if (now - start < 0.2) {
+        return(invisible(NULL))
+      }
+      handle <<- hook[["begin"]](total, label, "r8map")
+      begun <<- TRUE
+    }
+    last <<- now
+    hook[["update"]](handle, done)
+    invisible(NULL)
+  }
+  step <- function() {
+    done <<- done + 1L
+    if (done >= next_at) report()
+  }
+  status <- "error"
+  on.exit(
+    if (begun) {
+      # A map that completes reports its last steps.
+      if (identical(status, "done")) {
+        hook[["update"]](handle, done)
+      }
+      hook[["end"]](handle, status)
+    },
+    add = TRUE
+  )
+  out <- withCallingHandlers(
+    run(step),
+    interrupt = function(cnd) status <<- "aborted"
+  )
+  status <- "done"
+  out
+} # /R8::with_progress
+
+
+# %% map_signature ----
+#' The checked signature of a typed function that a map calls
+#'
+#' @param f A typed function.
+#' @param args Optional named list: The constant arguments of every call.
+#'
+#' @return A list of `name`, the function's name, `item`, the name of the
+#'   parameter that takes each item, `returns`, the declared return type, and
+#'   `args`.
+#'
+#' @keywords internal
+#' @noRd
+map_signature <- function(f, args) {
+  name <- attr(f, "r8_function", exact = TRUE) %||% "f"
+  ir <- r8_function_ir(name)
+  params <- ir[["params"]]
+  if (length(params) == 0L || is.null(params[[1L]][["type"]])) {
+    r8_abort(
+      "r8map() gives each item to the first parameter of `",
+      name,
+      "`, which declares its type: function(x = arg_double(), ...).",
+      class = "r8_argument_error"
+    )
+  }
+  if (is.null(ir[["return_type"]])) {
+    r8_abort(
+      "r8map() collects the results of `",
+      name,
+      "` in the container of its return type: new_function(..., return_type = ).",
+      class = "r8_argument_error"
+    )
+  }
+  item <- params[[1L]][["name"]]
+  others <- vapply(params[-1L], `[[`, "", "name")
+  args <- args %||% list()
+  keys <- names(args) %||% character()
+  if (
+    !is.list(args) ||
+      is.object(args) ||
+      length(keys) != length(args) ||
+      anyNA(keys) ||
+      !all(nzchar(keys))
+  ) {
+    r8_abort(
+      "`args` is a named list of the constant arguments of every call: ",
+      "args = list(data = d).",
+      class = "r8_argument_error"
+    )
+  }
+  if (anyDuplicated(keys) > 0L) {
+    r8_abort(
+      "`args` names `",
+      keys[[anyDuplicated(keys)]],
+      "` twice.",
+      class = "r8_argument_error"
+    )
+  }
+  if (item %in% keys) {
+    r8_abort(
+      "`",
+      item,
+      "` of `",
+      name,
+      "` takes each item of `x`; `args` holds the others.",
+      class = "r8_argument_error"
+    )
+  }
+  unknown <- setdiff(keys, others)
+  if (length(unknown) > 0L) {
+    near <- r8_nearest_name(unknown[[1L]], others)
+    r8_abort(
+      "`",
+      name,
+      "` has no parameter `",
+      unknown[[1L]],
+      "`",
+      if (length(near) > 0L) paste0("; the nearest is `", near, "`"),
+      ".",
+      class = "r8_argument_error"
+    )
+  }
+  list(name = name, item = item, returns = ir[["return_type"]], args = args)
+} # /R8::map_signature
+
+
+# %% map_items ----
+#' The method of r8map() for a list or an atomic vector and a typed function
+#'
+#' @keywords internal
+#' @noRd
+map_items <- function(x, f, columns, by, args, n_threads) {
+  if (!is.null(columns) || !is.null(by)) {
+    r8_abort(
+      "`columns` and `by` choose the columns and the groups of a table; ",
+      "r8map() of a ",
+      if (is.list(x)) "list" else "vector",
+      " calls `f` on each element.",
+      class = "r8_argument_error"
+    )
+  }
+  # A body in R runs on R's thread.
+  threads_of(n_threads)
+  sig <- map_signature(f, args)
+  constants <- sig[["args"]]
+  call_f <- if (length(constants) == 0L) {
+    f
+  } else {
+    function(item) do.call(f, c(list(item), constants))
+  }
+  returns <- sig[["returns"]]
+  if (identical(returns[["kind"]], "option")) {
+    returns <- returns[["inner"]]
+  }
+  kind <- returns[["kind"]]
+  scalar <- list(
+    logical = NA,
+    integer = NA_integer_,
+    double = NA_real_,
+    character = NA_character_
+  )
+  # The item whose call runs, for the message of its error; 0 outside a call.
+  at <- 0L
+  failed <- function(cnd) {
+    if (at == 0L) {
+      return(invisible(NULL))
+    }
+    name <- names(x)[at]
+    i <- at
+    at <<- 0L
+    r8_abort(
+      "r8map(): `",
+      sig[["name"]],
+      "` of item ",
+      i,
+      if (!is.null(name) && !is.na(name) && nzchar(name)) {
+        paste0(" (`", name, "`)")
+      },
+      ": ",
+      conditionMessage(cnd),
+      class = "r8_value_error",
+      data = list(parent = cnd)
+    )
+  }
+  out <- withCallingHandlers(
+    with_progress(length(x), sig[["name"]], function(step) {
+      each <- function(i) {
+        at <<- i
+        v <- call_f(x[[i]])
+        at <<- 0L
+        step()
+        v
+      }
+      if (kind %in% names(scalar)) {
+        vapply(seq_along(x), each, scalar[[kind]], USE.NAMES = FALSE)
+      } else if (kind %in% c("date", "posixct")) {
+        values <- lapply(seq_along(x), each)
+        if (length(values) == 0L) {
+          if (kind == "date") {
+            as.Date(character())
+          } else {
+            as.POSIXct(character(), tz = "UTC")
+          }
+        } else {
+          do.call(c, values)
+        }
+      } else {
+        lapply(seq_along(x), each)
+      }
+    }),
+    error = failed
+  )
+  names(out) <- names(x)
+  out
+} # /R8::map_items
+
+
+# %% map_items_calc ----
+#' The method of r8map() for a list or an atomic vector and a calc()
+#'
+#' @keywords internal
+#' @noRd
+map_items_calc <- function(x, f, columns, by, args, n_threads) {
+  r8_abort(
+    "A calc() maps over the columns of a table, with col() as each column; ",
+    "a list or a vector takes a typed function: r8map(x, f) with f of new_function().",
+    class = "r8_value_error"
+  )
+} # /R8::map_items_calc
 
 
 # %% map_function ----
@@ -1330,12 +1747,12 @@ map_typed <- function(x, f, columns, by) {
 #'
 #' @keywords internal
 #' @noRd
-map_function <- function(x, f, columns, by) {
+map_function <- function(x, f, columns, by, args, n_threads) {
   r8_abort(
-    "r8map() maps a typed function of R8, declared with new_function(), or ",
-    "calc() with col(): r8map(x, calc(median(col())), by = \"g\"). ",
-    "lapply(x[columns], f) applies an R function to whole columns, and ",
-    "split() gives the groups' tables.",
+    "r8map() maps a typed function of R8, declared with new_function(), whose ",
+    "return type gives the container of the results, or, over the columns of a ",
+    "table, calc() with col(). lapply(x, f) applies an R function, and split() ",
+    "gives the tables of a table's groups.",
     class = "r8_value_error"
   )
 } # /R8::map_function
@@ -1349,10 +1766,10 @@ r8_drop <- function(x, columns) {
   columns <- table_columns_arg(x, columns, substitute(columns), parent.frame())
   # Positions and names are read as r8_select() reads them.
   at <- match(
-    names(table_result(r8_table_get(x, NULL, columns), x)),
+    names(table_result(r8_table_get(x, NULL, columns, 1L), x)),
     names(x)
   )
-  table_result(r8_table_get(x, NULL, setdiff(seq_along(x), at)), x)
+  table_result(r8_table_get(x, NULL, setdiff(seq_along(x), at), 1L), x)
 } # /R8::r8_drop
 
 
@@ -1385,6 +1802,10 @@ r8_rename <- function(x, from, to) {
 #' @param by Character or numeric: The columns, the first foremost, by name or by
 #'   position.
 #' @param descending Optional character or numeric: The columns of `by` that descend.
+#' @param n_threads Optional Integer [1, Inf): The threads that the work in Rust may
+#'   use; `NULL` takes `getOption("r8.n_threads")`, whose default is half the logical
+#'   cores, at most 2 where `R CMD check` limits the cores, and at most
+#'   `OMP_THREAD_LIMIT`. A result is the same for any number of threads.
 #'
 #' @return A value of the type of `x`.
 #'
@@ -1393,7 +1814,7 @@ r8_rename <- function(x, from, to) {
 #' r8_sort(r, c("site", "age"), descending = "age")
 #'
 #' @export
-r8_sort <- function(x, by, descending = NULL) {
+r8_sort <- function(x, by, descending = NULL, n_threads = NULL) {
   check_table(x)
   by <- table_columns_arg(x, by, substitute(by), parent.frame(), "by")
   if (!is.null(descending)) {
@@ -1405,7 +1826,10 @@ r8_sort <- function(x, by, descending = NULL) {
       "descending"
     )
   }
-  table_result(r8_table_sort(x, by, descending %||% character()), x)
+  table_result(
+    r8_table_sort(x, by, descending %||% character(), threads_of(n_threads)),
+    x
+  )
 } # /R8::r8_sort
 
 

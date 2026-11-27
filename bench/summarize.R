@@ -4,7 +4,8 @@
 
 # Grouped summaries, columns computed by calc(), and maps over columns in R8,
 # against data.table on one thread and on its default threads, collapse,
-# dplyr, base R, and DuckDB. Times are medians of `reps` runs, in ms, and of
+# dplyr, base R, and DuckDB; R8 on one thread (R8) and on two (R8_2). Times are
+# medians of `reps` runs, in ms, and of
 # bench::mark() in microseconds for the size of rtemis's tuner. Run against an
 # installed release build of R8: `R_LIBS=<library> Rscript bench/summarize.R`.
 # spec: R8/raven#summaries
@@ -52,7 +53,8 @@ by_key <- function(n, g, key = c("integer", "factor", "string", "sparse", "two")
   reps <- if (n > 1e6) 3L else 5L
   keys <- paste(by, collapse = ", ")
   times <- c(
-    R8 = ms(\() r8summarize(v, sums, by = by), reps),
+    R8 = ms(\() r8summarize(v, sums, by = by, n_threads = 1L), reps),
+    R8_2 = ms(\() r8summarize(v, sums, by = by, n_threads = 2L), reps),
     dt1 = {
       setDTthreads(1L)
       ms(\() dt[, .(n = .N, mx = mean(x), sy = sum(y)), keyby = by], reps)
@@ -85,14 +87,15 @@ medians_and_missing <- function(n, g) {
   dt <- as.data.table(d)
   setDTthreads(1L)
   med <- c(
-    R8 = ms(\() r8summarize(v, list(m = calc(median(x, na.rm = TRUE))), by = "k"), 3L),
+    R8 = ms(\() r8summarize(v, list(m = calc(median(x, na.rm = TRUE))), by = "k", n_threads = 1L), 3L),
     dt1 = ms(\() dt[, .(m = median(x, na.rm = TRUE)), keyby = k], 3L),
     collapse = ms(\() fmedian(d$x, d$k), 3L)
   )
   setDTthreads(threads)
   strict <- c(
-    R8 = ms(\() r8summarize(v, list(m = calc(mean(x)), s = calc(sum(x))), by = "k"), 3L),
-    R8_na_rm = ms(\() r8summarize(v, list(m = calc(mean(x, na.rm = TRUE)), s = calc(sum(x, na.rm = TRUE))), by = "k"), 3L),
+    R8 = ms(\() r8summarize(v, list(m = calc(mean(x)), s = calc(sum(x))), by = "k", n_threads = 1L), 3L),
+    R8_2 = ms(\() r8summarize(v, list(m = calc(mean(x)), s = calc(sum(x))), by = "k", n_threads = 2L), 3L),
+    R8_na_rm = ms(\() r8summarize(v, list(m = calc(mean(x, na.rm = TRUE)), s = calc(sum(x, na.rm = TRUE))), by = "k", n_threads = 1L), 3L),
     dt1 = {
       setDTthreads(1L)
       ms(\() dt[, .(m = mean(x, na.rm = TRUE), s = sum(x, na.rm = TRUE)), keyby = k], 3L)
@@ -113,13 +116,13 @@ in_rows <- function(n, g) {
   dt <- as.data.table(d)
   setDTthreads(1L)
   count <- c(
-    R8 = ms(\() r8_set(v, list(nk = calc(n())), by = "k"), 3L),
+    R8 = ms(\() r8_set(v, list(nk = calc(n())), by = "k", n_threads = 1L), 3L),
     dt1 = ms(\() copy(dt)[, nk := .N, by = k], 3L),
     dplyr = ms(\() mutate(d, nk = n(), .by = k), 3L),
     base = ms(\() ave(seq_len(n), d$k, FUN = length), 3L)
   )
   bmi <- c(
-    R8 = ms(\() r8_set(v, list(bmi = calc(w / h^2))), 3L),
+    R8 = ms(\() r8_set(v, list(bmi = calc(w / h^2)), n_threads = 1L), 3L),
     base = ms(\() d$w / d$h^2, 3L),
     dt1 = ms(\() copy(dt)[, bmi := w / h^2], 3L)
   )
@@ -150,7 +153,7 @@ tuner <- function() {
     return_type = type_double()
   )
   b <- bench::mark(
-    R8_map_calc = r8map(v, calc(mean(col())), by = "combo"),
+    R8_map_calc = r8map(v, calc(mean(col())), by = "combo", n_threads = 1L),
     R8_map_median = r8map(v, calc(median(col())), by = "combo"),
     R8_map_typed = r8map(v, spread, by = "combo"),
     dt1_mean = dt[, lapply(.SD, mean), keyby = combo],

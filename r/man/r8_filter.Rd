@@ -5,7 +5,7 @@
 \alias{r8_select}
 \title{Choose rows and columns of a table}
 \usage{
-r8_filter(x, rule)
+r8_filter(x, rule, n_threads = NULL)
 
 r8_select(x, columns)
 }
@@ -13,6 +13,11 @@ r8_select(x, columns)
 \item{x}{A value of a table.}
 
 \item{rule}{A \code{\link[=rule]{rule()}} without \code{when}. Its \code{id} and \code{message} are not read.}
+
+\item{n_threads}{Optional Integer [1, Inf): The threads that the work in Rust may
+use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half the logical
+cores, at most 2 where \verb{R CMD check} limits the cores, and at most
+\code{OMP_THREAD_LIMIT}. A result is the same for any number of threads.}
 
 \item{columns}{Character or numeric: The columns, by name or by position, each
 once.}

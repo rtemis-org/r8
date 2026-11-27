@@ -4,7 +4,7 @@
 \alias{r8_sort}
 \title{Order the rows of a table}
 \usage{
-r8_sort(x, by, descending = NULL)
+r8_sort(x, by, descending = NULL, n_threads = NULL)
 }
 \arguments{
 \item{x}{A value of a table.}
@@ -13,6 +13,11 @@ r8_sort(x, by, descending = NULL)
 position.}
 
 \item{descending}{Optional character or numeric: The columns of \code{by} that descend.}
+
+\item{n_threads}{Optional Integer [1, Inf): The threads that the work in Rust may
+use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half the logical
+cores, at most 2 where \verb{R CMD check} limits the cores, and at most
+\code{OMP_THREAD_LIMIT}. A result is the same for any number of threads.}
 }
 \value{
 A value of the type of \code{x}.

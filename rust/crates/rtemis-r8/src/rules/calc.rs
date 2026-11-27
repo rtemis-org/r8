@@ -271,6 +271,56 @@ fn column_keys<'a, A: Access<'a>>(eval: &Eval<'a, A>, k: usize, rows: usize) -> 
     out
 }
 
+/// The groups of one key column of integers, `i32::MIN` missing, numbered in
+/// the order of the integers, the missing last; `None` where their range is
+/// too wide for a direct index.
+fn integer_groups(x: &[i32]) -> Option<Groups> {
+    let rows = x.len();
+    let (lo, hi) = x
+        .iter()
+        .filter(|&&v| v != i32::MIN)
+        .fold((i32::MAX, i32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    let width = if lo > hi {
+        1
+    } else {
+        (i64::from(hi) - i64::from(lo)) as usize + 2
+    };
+    if width > DIRECT.max(2 * rows) {
+        return None;
+    }
+    let place = |v: i32| {
+        if v == i32::MIN {
+            width - 1
+        } else {
+            (i64::from(v) - i64::from(lo)) as usize
+        }
+    };
+    let mut at = vec![0u32; width];
+    for &v in x {
+        at[place(v)] += 1;
+    }
+    // Each place in use takes its rank, which orders as the integers.
+    let mut sizes = Vec::new();
+    for a in at.iter_mut() {
+        if *a > 0 {
+            sizes.push(*a);
+            *a = (sizes.len() - 1) as u32;
+        } else {
+            *a = u32::MAX;
+        }
+    }
+    let count = sizes.len();
+    let mut ids = vec![0u32; rows];
+    let mut first = vec![0u32; count];
+    // Backward, so that each group's first row is written last.
+    for r in (0..rows).rev() {
+        let g = at[place(x[r])];
+        ids[r] = g;
+        first[g as usize] = r as u32;
+    }
+    Some(Groups::from_parts(ids, sizes, first))
+}
+
 /// The places of a direct index of groups: above them, a hash.
 const DIRECT: usize = 1 << 22;
 
@@ -609,6 +659,7 @@ pub fn computed<'a, A: Access<'a>>(
     exprs: &[&Logic],
     lookup: &dyn TypeLookup,
     summary: bool,
+    threads: usize,
 ) -> Result<Outcome, NotComputed> {
     let t = table
         .table(&def.columns, def.open)
@@ -654,9 +705,19 @@ pub fn computed<'a, A: Access<'a>>(
             cells,
             aggregates: 0,
         };
-        let eval = Eval::new(&keys_of, table, rows, None).map_err(NotComputed::Table)?;
-        let keys: Vec<Vec<u64>> = (0..by.len()).map(|k| column_keys(&eval, k, rows)).collect();
-        Some(Arc::new(group_ids(&keys, rows)))
+        let eval = Eval::new(&keys_of, table, rows, None, 1).map_err(NotComputed::Table)?;
+        let one = (by.len() == 1)
+            .then(|| eval.integers(0))
+            .flatten()
+            .and_then(|x| integer_groups(&x[..rows]));
+        Some(Arc::new(match one {
+            Some(g) => g,
+            None => {
+                let keys: Vec<Vec<u64>> =
+                    (0..by.len()).map(|k| column_keys(&eval, k, rows)).collect();
+                group_ids(&keys, rows)
+            }
+        }))
     };
     let mut columns = Vec::with_capacity(exprs.len());
     for (at, e) in exprs.iter().enumerate() {
@@ -667,8 +728,8 @@ pub fn computed<'a, A: Access<'a>>(
             _ => None,
         };
         let kind = kind_of(&calc.ty, integer(&calc.rows.invariant, &calc.rows.cells));
-        let eval =
-            Eval::new(&calc.rows, table, rows, groups.clone()).map_err(NotComputed::Table)?;
+        let eval = Eval::new(&calc.rows, table, rows, groups.clone(), threads)
+            .map_err(NotComputed::Table)?;
         let n = if summary { eval.group_count() } else { rows };
         // A summary of a table of no rows, without keys, is one row.
         let n = if summary && groups.as_ref().is_some_and(|g| g.count == 0) {

@@ -385,3 +385,32 @@ test_that("a summary of a group is the summary of the table filtered to it", {
     expect_identical(as.list(s[k, names(sums)]), as.list(one))
   }
 })
+
+test_that("a summary is the same for any number of threads", {
+  set.seed(1461)
+  n <- 300000L
+  x <- Raven(
+    k = sample.int(3000L, n, TRUE),
+    v = rnorm(n) * 10^sample(-6:6, n, TRUE),
+    w = sample(c(1:5, NA), n, TRUE)
+  )
+  sums <- list(
+    s = calc(sum(v)),
+    m = calc(mean(v)),
+    lo = calc(min(v)),
+    hi = calc(max(w, na.rm = TRUE)),
+    sw = calc(sum(w))
+  )
+  one <- r8summarize(x, sums, by = "k", n_threads = 1L)
+  for (t in c(2L, 3L, 7L)) {
+    expect_true(r8_equal(one, r8summarize(x, sums, by = "k", n_threads = t)))
+  }
+  whole <- r8summarize(x, sums, n_threads = 1L)
+  expect_true(r8_equal(whole, r8summarize(x, sums, n_threads = 4L)))
+  expect_equal(one$s, as.vector(tapply(x$v, x$k, sum)), tolerance = 1e-12)
+  refuses(
+    r8summarize(x, sums, n_threads = 0L),
+    "`n_threads` is a whole number",
+    class = "r8_argument_error"
+  )
+})

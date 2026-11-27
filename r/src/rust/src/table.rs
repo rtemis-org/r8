@@ -31,6 +31,49 @@ unsafe extern "C" {
     fn SHALLOW_DUPLICATE_ATTRIB(to: SEXP, from: SEXP);
 }
 
+thread_local! {
+    /// The threads that the current call of a table function may use.
+    static THREADS: std::cell::Cell<usize> = const { std::cell::Cell::new(1) };
+}
+
+/// The threads that the current call may use.
+fn threads() -> usize {
+    THREADS.get()
+}
+
+/// `f` with `n` threads for the current call.
+fn with_threads<T>(n: i32, f: impl FnOnce() -> T) -> T {
+    let before = THREADS.replace(usize::try_from(n).unwrap_or(1).max(1));
+    let out = f();
+    THREADS.set(before);
+    out
+}
+
+/// The threads of a table function by default: half of the logical cores, at
+/// most 2 where `R CMD check` limits the cores (`_R_CHECK_LIMIT_CORES_`), and
+/// at most `OMP_THREAD_LIMIT`.
+/// @return Integer: The threads.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_default_threads() -> i32 {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let mut n = (cores / 2).max(1);
+    let limited = std::env::var("_R_CHECK_LIMIT_CORES_")
+        .is_ok_and(|v| !v.is_empty() && !v.eq_ignore_ascii_case("false"));
+    if limited {
+        n = n.min(2);
+    }
+    if let Some(max) = std::env::var("OMP_THREAD_LIMIT")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&m| m >= 1)
+    {
+        n = n.min(max);
+    }
+    i32::try_from(n).unwrap_or(1)
+}
+
 fn fail(m: impl Into<String>) -> Error {
     Error::Other(m.into())
 }
@@ -846,7 +889,7 @@ fn gathered(columns: &[SEXP], at: &[u32]) -> Vec<Robj> {
         }
     }
     let one = |ns: &[Numbers]| ns.iter().for_each(|n| unsafe { n.gather(at) });
-    if numbers.len() > 1 && numbers.len() * m >= CELLS_FOR_THREADS {
+    if threads() > 1 && numbers.len() > 1 && numbers.len() * m >= CELLS_FOR_THREADS {
         let (a, b) = numbers.split_at(numbers.len() / 2);
         std::thread::scope(|s| {
             // A platform without threads, such as webR, gathers in one.
@@ -868,11 +911,16 @@ fn gathered(columns: &[SEXP], at: &[u32]) -> Vec<Robj> {
 /// @param x A value of a table.
 /// @param i,j The indices; `i` is a list of one `rule()` for the rows where it is
 ///   true.
+/// @param threads Integer: The threads that the gathering of rows may use.
 /// @return The value, or an object of class `r8_refused` or `r8_problems`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_table_get(x: Robj, i: Robj, j: Robj) -> Result<Robj> {
+fn r8_table_get(x: Robj, i: Robj, j: Robj, threads: i32) -> Result<Robj> {
+    with_threads(threads, || table_get(x, i, j))
+}
+
+fn table_get(x: Robj, i: Robj, j: Robj) -> Result<Robj> {
     crate::interrupt::interruptible(unsafe { x.get() }, || {
         let h = match Held::of(unsafe { x.get() }) {
             Ok(h) => h,
@@ -1365,7 +1413,7 @@ fn sort_by_keys(at: &mut Vec<u32>, keys: &[u64]) {
     let bounds = by_first_digit(&mut pairs, &mut spare);
     // The buckets of the first digit are apart, and go to the threads by halves.
     let half = match bounds.iter().position(|b| *b >= pairs.len() / 2) {
-        Some(i) if pairs.len() >= ROWS_FOR_THREADS => bounds[i],
+        Some(i) if threads() > 1 && pairs.len() >= ROWS_FOR_THREADS => bounds[i],
         _ => pairs.len(),
     };
     let (low, high) = pairs.split_at_mut(half);
@@ -1476,11 +1524,16 @@ fn sort_part(at: &mut Vec<u32>, keys: &[u64]) {
 /// @param x A value of a table.
 /// @param by The columns.
 /// @param descending The columns of `by` that descend.
+/// @param threads Integer: The threads that the order and the gathering may use.
 /// @return The value, or an object of class `r8_refused`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_table_sort(x: Robj, by: Robj, descending: Robj) -> Result<Robj> {
+fn r8_table_sort(x: Robj, by: Robj, descending: Robj, threads: i32) -> Result<Robj> {
+    with_threads(threads, || table_sort(x, by, descending))
+}
+
+fn table_sort(x: Robj, by: Robj, descending: Robj) -> Result<Robj> {
     crate::interrupt::interruptible(unsafe { x.get() }, || {
         let h = match Held::of(unsafe { x.get() }) {
             Ok(h) => h,
@@ -1823,13 +1876,14 @@ fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summar
 ///   of the columns.
 /// @param by Character: The key columns, or a vector of length 0.
 /// @param summary Logical: One value for each group.
+/// @param threads Integer: The threads that the aggregates of a column may use.
 /// @return A list of `first`, the first row of each group from 1 or `NULL`
 ///   without keys, `columns`, the computed vectors, and `units`, or an
 ///   `r8_refused`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_table_calc(x: Robj, exprs: List, by: Robj, summary: bool) -> Result<Robj> {
+fn r8_table_calc(x: Robj, exprs: List, by: Robj, summary: bool, threads: i32) -> Result<Robj> {
     crate::interrupt::interruptible(unsafe { x.get() }, || {
         let h = match Held::of(unsafe { x.get() }) {
             Ok(h) => h,
@@ -1859,6 +1913,7 @@ fn r8_table_calc(x: Robj, exprs: List, by: Robj, summary: bool) -> Result<Robj> 
             &refs,
             &*h.docs,
             summary,
+            usize::try_from(threads).unwrap_or(1).max(1),
         ) {
             Ok(o) => o,
             Err(e) => return Ok(refused(not_computed(e, &names, summary))),
@@ -1915,6 +1970,7 @@ fn r8_table_groups(x: Robj, by: Robj) -> Result<Robj> {
             &[],
             &*h.docs,
             true,
+            1,
         ) {
             Ok(o) => o,
             Err(e) => return Ok(refused(not_computed(e, &[], true))),
@@ -1970,6 +2026,7 @@ extendr_module! {
     fn r8_table_sort;
     fn r8_table_bind;
     fn r8_table_calc;
+    fn r8_default_threads;
     fn r8_table_groups;
     fn r8_calc_mapped;
 }

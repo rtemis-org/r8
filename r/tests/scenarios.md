@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 44 files of 404 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 45 files of 414 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -47,7 +47,8 @@ What each feature does, in 44 files of 404 tests. The runtime has its own tests 
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
 | `test-144-scenarios.R` | The written list of the scenarios is that of the test files. | 3 |
 | `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8_check_call(), r8_call_from_json(), and r8_call_to_json(). | 7 |
-| `test-146-summarize.R` | Expressions as values, columns computed from them, summaries of the groups of a table's rows, and maps of one expression or typed function over columns. The conformance corpus (conformance/summarize/) has the semantics of each aggregate. | 13 |
+| `test-146-summarize.R` | Expressions as values, columns computed from them, summaries of the groups of a table's rows, and maps of one expression or typed function over columns. The conformance corpus (conformance/summarize/) has the semantics of each aggregate. | 14 |
+| `test-147-map.R` | Maps of a typed function over the items of a list or a vector, with constant arguments, in the container of the function's return type. | 9 |
 | `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 4 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
 | `test-153-documentation.R` | The documentation of packages that declare R8 types: help pages from roxygen2, and the R declarations of types declared in Rust. | 3 |

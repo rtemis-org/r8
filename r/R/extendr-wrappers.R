@@ -706,10 +706,11 @@ r8_table_new <- function(columns, type_name, own, facts) .Call(wrap__r8_table_ne
 #' @param x A value of a table.
 #' @param i,j The indices; `i` is a list of one `rule()` for the rows where it is
 #'   true.
+#' @param threads Integer: The threads that the gathering of rows may use.
 #' @return The value, or an object of class `r8_refused` or `r8_problems`.
 #' @keywords internal
 #' @noRd
-r8_table_get <- function(x, i, j) .Call(wrap__r8_table_get, x, i, j)
+r8_table_get <- function(x, i, j, threads) .Call(wrap__r8_table_get, x, i, j, threads)
 
 #' The columns of the table value `x`.
 #'
@@ -747,10 +748,11 @@ r8_table_rename <- function(x, from, to) .Call(wrap__r8_table_rename, x, from, t
 #' @param x A value of a table.
 #' @param by The columns.
 #' @param descending The columns of `by` that descend.
+#' @param threads Integer: The threads that the order and the gathering may use.
 #' @return The value, or an object of class `r8_refused`.
 #' @keywords internal
 #' @noRd
-r8_table_sort <- function(x, by, descending) .Call(wrap__r8_table_sort, x, by, descending)
+r8_table_sort <- function(x, by, descending, threads) .Call(wrap__r8_table_sort, x, by, descending, threads)
 
 #' The rows of the table values `xs`, of one type and with the same columns.
 #'
@@ -767,12 +769,21 @@ r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 #'   of the columns.
 #' @param by Character: The key columns, or a vector of length 0.
 #' @param summary Logical: One value for each group.
+#' @param threads Integer: The threads that the aggregates of a column may use.
 #' @return A list of `first`, the first row of each group from 1 or `NULL`
 #'   without keys, `columns`, the computed vectors, and `units`, or an
 #'   `r8_refused`.
 #' @keywords internal
 #' @noRd
-r8_table_calc <- function(x, exprs, by, summary) .Call(wrap__r8_table_calc, x, exprs, by, summary)
+r8_table_calc <- function(x, exprs, by, summary, threads) .Call(wrap__r8_table_calc, x, exprs, by, summary, threads)
+
+#' The threads of a table function by default: half of the logical cores, at
+#' most 2 where `R CMD check` limits the cores (`_R_CHECK_LIMIT_CORES_`), and
+#' at most `OMP_THREAD_LIMIT`.
+#' @return Integer: The threads.
+#' @keywords internal
+#' @noRd
+r8_default_threads <- function() .Call(wrap__r8_default_threads)
 
 #' The groups of the rows of the table value `x` by the key columns `by`.
 #'

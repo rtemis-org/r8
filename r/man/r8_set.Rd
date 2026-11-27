@@ -6,7 +6,7 @@
 \alias{r8_rename}
 \title{Change the columns of a table}
 \usage{
-r8_set(x, columns, by = NULL)
+r8_set(x, columns, by = NULL, n_threads = NULL)
 
 r8_drop(x, columns)
 
@@ -21,6 +21,11 @@ numeric: The columns, by name or by position, each once.}
 
 \item{by}{Optional Character or numeric: The key columns whose groups the
 aggregates of \code{\link[=calc]{calc()}} entries are over, by name or by position.}
+
+\item{n_threads}{Optional Integer [1, Inf): The threads that the work in Rust may
+use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half the logical
+cores, at most 2 where \verb{R CMD check} limits the cores, and at most
+\code{OMP_THREAD_LIMIT}. A result is the same for any number of threads.}
 
 \item{from}{Character or numeric: The columns, by name or by position, each once.}
 

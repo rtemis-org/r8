@@ -21,7 +21,8 @@ use serde_json::Value;
 use super::compile::{Cell, Expr, Op, RowScope, Rows, RuleError, compile_rows, reads_cell_outside};
 use super::diagnose::{Diagnosis, comparison, shown_scalar};
 use super::eval::{LOGARITHM, POWER, ROOT, Scalar, ZERO, extreme, median, power, unwrap_option};
-use super::exact::{BoundedSum, ExactSum};
+use super::exact::{ExactSum, PairSum};
+use super::parallel::{self, Cells, Part};
 use super::{Shown, TypeLookup};
 use crate::access::{Access, Factor, Json, Read, is_na_real};
 use crate::emit::number_text;
@@ -133,7 +134,7 @@ impl RowRule {
         if rows == 0 {
             return Ok(out);
         }
-        let eval = Eval::new(&self.rows, table, rows, None)?;
+        let eval = Eval::new(&self.rows, table, rows, None, 1)?;
         for lo in (0..rows).step_by(BLOCK) {
             let hi = (lo + BLOCK).min(rows);
             for (i, &v) in eval.holds(&self.rows, lo, hi)?.iter().enumerate() {
@@ -167,7 +168,7 @@ impl RowRule {
             ));
         }
         let mut error: Option<RowError> = None;
-        let eval = Eval::new(&self.rows, table, rows, None)?;
+        let eval = Eval::new(&self.rows, table, rows, None, 1)?;
         for lo in (0..rows).step_by(BLOCK) {
             let hi = (lo + BLOCK).min(rows);
             let found = eval.holds(&self.rows, lo, hi)?;
@@ -235,7 +236,7 @@ impl RowRule {
         if rows == 0 {
             return Ok(out);
         }
-        let eval = Eval::new(&self.rows, table, rows, None)?;
+        let eval = Eval::new(&self.rows, table, rows, None, 1)?;
         let by_row =
             reads_row(&self.rows.invariant) || self.rows.when.as_ref().is_some_and(reads_row);
         let last = if by_row { rows } else { 1 };
@@ -289,7 +290,7 @@ impl RowRule {
     /// The values that the rule reads in the row `row`, and the computed
     /// operands of the comparison that it tests.
     pub fn diagnose<'a, A: Access<'a>>(&self, table: A, rows: usize, row: usize) -> Diagnosis {
-        match Eval::new(&self.rows, table, rows, None) {
+        match Eval::new(&self.rows, table, rows, None, 1) {
             Ok(eval) => self.diagnosis(&eval, row),
             Err(_) => Diagnosis::default(),
         }
@@ -787,6 +788,18 @@ impl Groups {
         }
     }
 
+    /// The groups of `ids`, with the number of rows and the first row of
+    /// each.
+    pub(super) fn from_parts(ids: Vec<u32>, sizes: Vec<u32>, first: Vec<u32>) -> Groups {
+        Groups {
+            ids,
+            count: sizes.len(),
+            first,
+            sizes,
+            order: std::sync::OnceLock::new(),
+        }
+    }
+
     /// The rows of group `k`, in order.
     pub fn rows_of(&self, k: usize) -> &[u32] {
         let (starts, rows) = self.order.get_or_init(|| {
@@ -823,11 +836,6 @@ pub(super) struct Aggregated {
     pub(super) states: Vec<u8>,
 }
 
-/// The groups above which a sum keeps a bounded sum of each group, and sums
-/// exactly only the groups whose bound does not decide the rounding: above
-/// them, one exact sum for each group leaves the cache.
-const BOUNDED_ABOVE: usize = 2048;
-
 /// The columns of a table, and the results of the aggregates over them.
 pub(super) struct Eval<'a, A> {
     columns: Vec<Column<'a, A>>,
@@ -838,6 +846,8 @@ pub(super) struct Eval<'a, A> {
     aggregates: Vec<Aggregated>,
     /// The rows of a block are groups, whose cells are the aggregates'.
     over_groups: Flag<bool>,
+    /// The threads that the aggregates of a column may run on.
+    threads: usize,
     /// By the address of a comparison with literals, what it is for each level
     /// of the factor compared.
     levels: RefCell<HashMap<usize, Vec<u8>>>,
@@ -853,8 +863,7 @@ struct Acc {
     least: bool,
     /// The cells with a value, of each group.
     count: Vec<u64>,
-    sums: Vec<ExactSum>,
-    bounded: Vec<BoundedSum>,
+    sums: Vec<PairSum>,
     extremes: Vec<f64>,
     states: Vec<u8>,
     /// The value of each row, for a gathered aggregate: `NaN` where it has
@@ -872,11 +881,6 @@ impl Acc {
 
     /// A value of group `k`, of the row `r` for a gathered aggregate.
     fn push(&mut self, k: usize, x: f64, r: Option<usize>) {
-        // A bounded sum counts its numbers.
-        if !self.bounded.is_empty() {
-            self.bounded[k].add(x);
-            return;
-        }
         self.count[k] += 1;
         match self.op {
             Op::Sum | Op::Mean => self.sums[k].add(x),
@@ -900,6 +904,7 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
         table: A,
         rows: usize,
         groups: Option<Arc<Groups>>,
+        threads: usize,
     ) -> Result<Self, String> {
         let columns = of
             .cells
@@ -912,6 +917,7 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             groups,
             aggregates: Vec::with_capacity(of.aggregates),
             over_groups: Flag::new(false),
+            threads,
             levels: RefCell::default(),
             met: RefCell::default(),
         };
@@ -1137,6 +1143,15 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
                 states: vec![0; g],
             });
         }
+        // A column that the host holds as one array: a kernel over its rows.
+        if matches!(op, Op::Sum | Op::Mean | Op::Min | Op::Max)
+            && let [Expr::Cell(k)] = operands
+            && let Some(x) = self.array(*k)
+        {
+            let ids = groups.as_ref().map(|g| &g.ids[..]);
+            let part = parallel::column_states(op, x, ids, g, self.rows, skip, self.threads);
+            return Ok(self.finish_column(op, part, x));
+        }
         let gather = op == Op::Median;
         let summed = matches!(op, Op::Sum | Op::Mean);
         let least = op == Op::Min;
@@ -1145,13 +1160,8 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             skip,
             least,
             count: vec![0; g],
-            sums: if summed && g <= BOUNDED_ABOVE {
-                vec![ExactSum::default(); g]
-            } else {
-                Vec::new()
-            },
-            bounded: if summed && g > BOUNDED_ABOVE {
-                vec![BoundedSum::default(); g]
+            sums: if summed {
+                vec![PairSum::default(); g]
             } else {
                 Vec::new()
             },
@@ -1235,15 +1245,9 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             }
             self.over_groups.set(false);
         }
-        if !acc.bounded.is_empty() {
-            for (c, b) in acc.count.iter_mut().zip(&acc.bounded) {
-                *c = b.count();
-            }
-        }
         let Acc {
             count,
             sums,
-            bounded,
             extremes,
             mut states,
             by_row,
@@ -1278,14 +1282,14 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
                 missing_where_none(&mut v, &mut states);
                 v
             }
-            Op::Sum | Op::Mean if !bounded.is_empty() => {
+            Op::Sum | Op::Mean => {
                 let mut v = vec![0.0; g];
                 // The groups whose bound does not decide the rounding, each
                 // with its exact sum.
                 let mut exact: Vec<u32> = vec![u32::MAX; g];
                 let mut again: Vec<ExactSum> = Vec::new();
                 for k in 0..g {
-                    match bounded[k].value() {
+                    match sums[k].value() {
                         Some(x) => v[k] = x,
                         None if states[k] == 0 => {
                             exact[k] = again.len() as u32;
@@ -1306,16 +1310,6 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
                         }
                     }
                 }
-                if op == Op::Mean {
-                    for k in 0..g {
-                        v[k] /= count[k] as f64;
-                    }
-                    missing_where_none(&mut v, &mut states);
-                }
-                v
-            }
-            Op::Sum | Op::Mean => {
-                let mut v: Vec<f64> = sums.iter().map(ExactSum::value).collect();
                 if op == Op::Mean {
                     for k in 0..g {
                         v[k] /= count[k] as f64;
@@ -1438,6 +1432,87 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             Expr::If(parts) => self.choice(parts, lo, hi),
             Expr::Op(op, args) => self.operation(e, *op, args, lo, hi),
             _ => Err("the expression reads a whole field".to_string()),
+        }
+    }
+
+    /// The numbers of the column `k`, where the host holds them as one array of
+    /// the table's rows.
+    fn array(&self, k: usize) -> Option<Cells<'a>> {
+        match &self.columns[k] {
+            Column::Double(_, Some(x)) if x.len() >= self.rows => Some(Cells::Doubles(x)),
+            Column::Integer(_, Some(x)) if x.len() >= self.rows => Some(Cells::Integers(x)),
+            _ => None,
+        }
+    }
+
+    /// The values of an aggregate of a column from its states: a sum that the
+    /// bound of its pair does not decide is summed exactly, in a pass of its
+    /// own.
+    fn finish_column(&self, op: Op, part: Part, x: Cells<'a>) -> Aggregated {
+        let g = part.count.len();
+        let mut states: Vec<u8> = part
+            .missing
+            .iter()
+            .map(|&m| u8::from(m) * MISSING)
+            .collect();
+        let mut values = vec![NA_NUMBER; g];
+        match op {
+            Op::Sum | Op::Mean => {
+                let mut exact: Vec<u32> = vec![u32::MAX; g];
+                let mut again: Vec<ExactSum> = Vec::new();
+                for k in (0..g).filter(|&k| states[k] == 0) {
+                    match part.sums[k].value() {
+                        Some(v) => values[k] = v,
+                        None => {
+                            exact[k] = again.len() as u32;
+                            again.push(ExactSum::default());
+                        }
+                    }
+                }
+                if !again.is_empty() {
+                    let ids = self.groups.as_ref().map(|g| &g.ids[..]);
+                    for r in 0..self.rows {
+                        let k = ids.map_or(0, |ids| ids[r] as usize);
+                        let v = x.at(r);
+                        if exact[k] != u32::MAX && !v.is_nan() {
+                            again[exact[k] as usize].add(v);
+                        }
+                    }
+                    for k in 0..g {
+                        if exact[k] != u32::MAX {
+                            values[k] = again[exact[k] as usize].value();
+                        }
+                    }
+                }
+                if op == Op::Mean {
+                    for k in 0..g {
+                        if part.count[k] == 0 && states[k] == 0 {
+                            states[k] = MISSING;
+                        }
+                        values[k] /= part.count[k] as f64;
+                    }
+                }
+            }
+            _ => {
+                for k in 0..g {
+                    if part.count[k] == 0 && states[k] == 0 {
+                        states[k] = MISSING;
+                    }
+                    values[k] = part.extremes[k];
+                }
+            }
+        }
+        for k in 0..g {
+            if states[k] != 0 || values[k].is_nan() {
+                values[k] = NA_NUMBER;
+                if states[k] == 0 {
+                    states[k] = MISSING;
+                }
+            }
+        }
+        Aggregated {
+            values: Values::Numbers(values),
+            states,
         }
     }
 
@@ -1675,25 +1750,25 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
                 ))
             }
             Op::Pow => {
-                let (x, s) = one(0)?.numbers(n).map(|(x, s)| (x.each(n, |v| v), s))?;
-                let (y, t) = one(1)?.numbers(n).map(|(y, t)| (y.each(n, |v| v), t))?;
+                let (a, b) = (one(0)?, one(1)?);
+                let ((x, s), (y, t)) = (a.numbers(n)?, b.numbers(n)?);
                 let mut states = merge(s, t);
-                let mut out = vec![0.0; n];
-                let mut failed: Vec<(usize, &str)> = Vec::new();
-                for i in 0..n {
-                    out[i] = match power(x[i], y[i]) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            failed.push((i, e));
-                            f64::NAN
-                        }
-                    };
+                // A square is one product, without an error.
+                if let Operand::One(2.0) = y {
+                    return Ok(Block::Number(Numbers::Own(x.each(n, |v| v * v)), states));
                 }
-                for (i, e) in failed {
-                    let st = if e == ZERO { ZERO_STATE } else { POWER_STATE };
-                    let s = &mut states.get_or_insert_with(|| vec![0; n])[i];
-                    if *s <= MISSING && !x[i].is_nan() && !y[i].is_nan() {
-                        *s = st;
+                let out = x.with(y, n, |x, y| power(x, y).unwrap_or(f64::NAN));
+                let failed = x.with(y, n, |x, y| match power(x, y) {
+                    Err(e) if e == ZERO => ZERO_STATE,
+                    Err(_) => POWER_STATE,
+                    Ok(_) => 0,
+                });
+                if failed.iter().any(|&f| f != 0) {
+                    let s = states.get_or_insert_with(|| vec![0; n]);
+                    for (s, f) in s.iter_mut().zip(&failed) {
+                        if *f != 0 && *s <= MISSING {
+                            *s = *f;
+                        }
                     }
                 }
                 Ok(Block::Number(Numbers::Own(out), states))
@@ -1719,8 +1794,16 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
                         Op::Min => a.with(y, n, |a, b| extreme(true, a, b)),
                         Op::Max => a.with(y, n, |a, b| extreme(false, a, b)),
                         _ => {
-                            let zero = a.with(y, n, |a, b| b == 0.0 && !a.is_nan());
-                            states = mark(states, &zero, ZERO_STATE);
+                            // A zero divisor is rare: its cells are marked once
+                            // one is found.
+                            let any = match y {
+                                Operand::Many(ys) => ys.contains(&0.0),
+                                Operand::One(b) => b == 0.0,
+                            };
+                            if any {
+                                let zero = a.with(y, n, |a, b| b == 0.0 && !a.is_nan());
+                                states = mark(states, &zero, ZERO_STATE);
+                            }
                             if op == Op::Div {
                                 a.with(y, n, |a, b| a / b)
                             } else {

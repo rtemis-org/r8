@@ -179,20 +179,18 @@ mod tests {
 /// A sum of doubles as a pair of doubles, with a bound on its error, which
 /// gives the exact sum, rounded once, where the bound decides it.
 ///
-/// Each addition splits into the rounded sum `hi` and its exact error, which
-/// `lo` accumulates, so `hi` and the errors sum exactly to the numbers. Only
-/// the additions to `lo` round, by at most `2 n u` times the sum of the
-/// errors' magnitudes, `err`, for `n` additions and the unit roundoff `u`.
+/// Each addition splits by TwoSum into the rounded sum `hi` and its exact
+/// error, which TwoSum adds to `lo` in turn; so `hi`, `lo`, and the errors of
+/// the additions to `lo` sum exactly to the numbers, and `err`, the sum of
+/// those errors' magnitudes, bounds what `hi + lo` leaves out. Where `err` is
+/// 0, `hi + lo` is the exact sum, ties included.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct BoundedSum {
+pub(crate) struct PairSum {
     hi: f64,
     lo: f64,
     err: f64,
     n: u64,
 }
-
-/// The unit roundoff of a double, 2^-53.
-const UNIT: f64 = f64::EPSILON / 2.0;
 
 /// `a + b` and its exact error (Knuth's TwoSum).
 #[inline]
@@ -202,18 +200,32 @@ fn two_sum(a: f64, b: f64) -> (f64, f64) {
     (s, (a - (s - bb)) + (b - bb))
 }
 
-impl BoundedSum {
+impl PairSum {
     /// Adds `x`.
     #[inline]
     pub fn add(&mut self, x: f64) {
         let (s, e) = two_sum(self.hi, x);
+        let (l, e2) = two_sum(self.lo, e);
         self.hi = s;
-        self.lo += e;
-        self.err += e.abs();
+        self.lo = l;
+        self.err += e2.abs();
         self.n += 1;
     }
 
+    /// Adds the numbers of `other`, of which the exact sum is the same in either
+    /// order.
+    pub fn merge(&mut self, other: &PairSum) {
+        let (h, e) = two_sum(self.hi, other.hi);
+        let (l, e2) = two_sum(self.lo, other.lo);
+        let (l, e3) = two_sum(l, e);
+        self.hi = h;
+        self.lo = l;
+        self.err += other.err + e2.abs() + e3.abs();
+        self.n += other.n;
+    }
+
     /// The numbers added.
+    #[cfg(test)]
     pub fn count(&self) -> u64 {
         self.n
     }
@@ -228,16 +240,17 @@ impl BoundedSum {
         if !r.is_finite() {
             return None;
         }
-        // Without a rounded addition to `lo`, `hi + lo` is the exact sum,
-        // which the addition `r` rounds once.
+        // Without an error of an addition to `lo`, `hi + lo` is the exact
+        // sum, which the addition `r` rounds once.
         if self.err == 0.0 {
             return Some(r);
         }
-        // The exact sum is `r + t + d`, with `|d|` at most `bound`; it rounds
-        // to `r` where it lies strictly between the midpoints of `r` and its
-        // neighbors, whose gaps differ at a power of 2. The factors of 2
-        // cover the rounding of `bound` and of the margins.
-        let bound = 4.0 * self.n as f64 * UNIT * self.err;
+        // The exact sum is `r + t + d`, with `|d|` at most `err` (and `err`
+        // rounded at most by a relative `n u`, which the factor of 2
+        // covers); it rounds to `r` where it lies strictly between the
+        // midpoints of `r` and its neighbors, whose gaps differ at a power of
+        // 2.
+        let bound = 2.0 * self.err;
         let up = (r.next_up() - r) / 2.0 - t;
         let down = (r - r.next_down()) / 2.0 + t;
         (up > 2.0 * bound && down > 2.0 * bound).then_some(r)
@@ -245,8 +258,8 @@ impl BoundedSum {
 }
 
 #[cfg(test)]
-mod bounded_tests {
-    use super::{BoundedSum, ExactSum};
+mod pair_tests {
+    use super::{ExactSum, PairSum};
 
     struct Random(u64);
 
@@ -265,7 +278,7 @@ mod bounded_tests {
     }
 
     #[test]
-    fn a_bounded_sum_is_the_exact_sum_where_it_decides() {
+    fn a_pair_sum_is_the_exact_sum_where_it_decides() {
         let mut r = Random(0x9e37_79b9_7f4a_7c15);
         let mut decided = 0;
         for case in 0..4000usize {
@@ -286,7 +299,7 @@ mod bounded_tests {
                 ];
             }
             let mut exact = ExactSum::default();
-            let mut bounded = BoundedSum::default();
+            let mut bounded = PairSum::default();
             for &x in &xs {
                 exact.add(x);
                 bounded.add(x);
@@ -297,17 +310,49 @@ mod bounded_tests {
                 decided += 1;
             }
         }
-        assert!(decided > 2000, "{decided}");
+        assert!(decided > 3000, "{decided}");
     }
 
     #[test]
-    fn a_bounded_sum_does_not_decide_what_overflows() {
-        let mut b = BoundedSum::default();
+    fn a_pair_sum_does_not_decide_what_overflows() {
+        let mut b = PairSum::default();
         b.add(f64::MAX);
         b.add(f64::MAX);
         assert_eq!(b.value(), None);
-        let mut b = BoundedSum::default();
+        let mut b = PairSum::default();
         b.add(f64::INFINITY);
         assert_eq!(b.value(), None);
+    }
+
+    #[test]
+    fn a_pair_sum_decides_ties_and_merges_at_every_split() {
+        let mut r = Random(0x2545_f491_4f6c_dd1d);
+        for _ in 0..3000 {
+            let n = 2 + (r.next() % 30) as usize;
+            let xs: Vec<f64> = (0..n).map(|_| r.number()).collect();
+            let mut exact = ExactSum::default();
+            xs.iter().for_each(|&x| exact.add(x));
+            let want = exact.value().to_bits();
+            let mut whole = PairSum::default();
+            xs.iter().for_each(|&x| whole.add(x));
+            // Few full doubles often sum to a midpoint: decided all the same.
+            assert_eq!(whole.value().map(f64::to_bits), Some(want), "{xs:?}");
+            for at in 0..=n {
+                let (mut a, mut b) = (PairSum::default(), PairSum::default());
+                xs[..at].iter().for_each(|&x| a.add(x));
+                xs[at..].iter().for_each(|&x| b.add(x));
+                a.merge(&b);
+                if let Some(v) = a.value() {
+                    assert_eq!(v.to_bits(), want, "{xs:?} at {at}");
+                }
+                assert_eq!(a.count(), n as u64);
+            }
+        }
+        // A tie of halves of the last place rounds to even.
+        let mut t = PairSum::default();
+        for x in [1.0, f64::EPSILON / 2.0] {
+            t.add(x);
+        }
+        assert_eq!(t.value(), Some(1.0));
     }
 }
