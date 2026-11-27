@@ -46,6 +46,7 @@ pub mod exports;
 pub mod impl_signature;
 pub mod ir;
 pub mod layout;
+pub mod message;
 pub mod name;
 mod open;
 pub mod problem;

@@ -19,6 +19,7 @@ mod fieldtype;
 mod interrupt;
 mod irde;
 mod irser;
+mod message;
 #[cfg(feature = "oracle")]
 mod oracle;
 mod pins;
@@ -45,6 +46,7 @@ extendr_module! {
     use declare;
     use exports;
     use fieldtype;
+    use message;
     use rust_stored;
     use table;
     use reader;
@@ -66,6 +68,7 @@ extendr_module! {
     use declare;
     use exports;
     use fieldtype;
+    use message;
     use rust_stored;
     use table;
     use reader;

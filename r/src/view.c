@@ -323,6 +323,13 @@ static R8Status package_protect(SEXP (*fn)(void *data), void *data, SEXP *value,
   return status;
 }
 
+// R8Api.protect as packages call it, for R8's Rust code that calls R as a
+// package's code does, between `r8_compiled_enter()` and `r8_compiled_held()`, so
+// that a jump out of the call is held.
+R8Status r8_package_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err) {
+  return package_protect(fn, data, value, err);
+}
+
 // Before R8 calls a package's compiled code, from a C frame or a Rust frame.
 void r8_compiled_enter(void) { depth++; }
 

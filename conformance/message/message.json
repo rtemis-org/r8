@@ -1,0 +1,85 @@
+{
+  "$corpus": 1,
+  "description": "The messages of a long map: the text of its start and its end, which states where its work runs, the line that a host prints with a timestamp and a caller, and the engine of the work.",
+  "cases": [
+    {
+      "id": "start-of-a-table-map-in-rust",
+      "description": "A map of a table whose typed function has its body in Rust runs in Rust.",
+      "op": "message",
+      "input": {
+        "kind": "start",
+        "label": "pkgr::spread",
+        "host": "R",
+        "timestamp": "2026-11-27 10:04:12",
+        "caller": "r8map",
+        "size": { "columns": 10, "groups": 100000, "calls": 1000000 },
+        "place": { "path": "rust", "bodies": [ { "function": "pkgr::spread", "in_rust": true } ] }
+      },
+      "expect": {
+        "text": "r8map(): pkgr::spread over 10 columns and 100,000 groups, 1,000,000 calls, in Rust",
+        "line": "2026-11-27 10:04:12 r8map(): pkgr::spread over 10 columns and 100,000 groups, 1,000,000 calls, in Rust [r8map]",
+        "engine": "rust"
+      }
+    },
+    {
+      "id": "end-of-a-table-map-with-a-body-in-r",
+      "description": "A body in the host's language runs in the host; the end states the wall time, the CPU time, and the threads.",
+      "op": "message",
+      "input": {
+        "kind": "done",
+        "label": "pkgr::spread_r",
+        "host": "R",
+        "timestamp": "2026-11-27 10:04:15",
+        "caller": "r8map",
+        "wall": 3.31,
+        "cpu": 3.24,
+        "threads": 1,
+        "place": { "path": "rust", "bodies": [ { "function": "pkgr::spread_r", "in_rust": false } ] }
+      },
+      "expect": {
+        "text": "r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust, with the body of `pkgr::spread_r` in R",
+        "line": "2026-11-27 10:04:15 r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust, with the body of `pkgr::spread_r` in R [r8map]",
+        "engine": "rust+r"
+      }
+    },
+    {
+      "id": "start-of-a-list-map",
+      "description": "A map of a list runs in the host, which calls each body.",
+      "op": "message",
+      "input": {
+        "kind": "start",
+        "label": "pkgr::fit",
+        "host": "R",
+        "timestamp": "2026-11-27 10:04:12",
+        "size": { "items": 1 },
+        "place": { "path": "host", "bodies": [ { "function": "pkgr::fit", "in_rust": false } ] }
+      },
+      "expect": {
+        "text": "r8map(): pkgr::fit over 1 item, in R",
+        "line": "2026-11-27 10:04:12 r8map(): pkgr::fit over 1 item, in R",
+        "engine": "r"
+      }
+    },
+    {
+      "id": "end-of-a-list-map-with-bodies-in-rust",
+      "description": "Compiled bodies of a list map run in Rust, from the host's loop.",
+      "op": "message",
+      "input": {
+        "kind": "done",
+        "label": "calc",
+        "host": "R",
+        "timestamp": "2026-11-27 10:04:15",
+        "caller": "r8map",
+        "wall": 12.4,
+        "cpu": 0.254,
+        "threads": 4,
+        "place": { "path": "host", "bodies": [ { "function": "pkgr::a", "in_rust": true }, { "function": "pkgr::b", "in_rust": true }, { "function": "pkgr::c", "in_rust": true } ] }
+      },
+      "expect": {
+        "text": "r8map(): done in 12 s, CPU 0.25 s of 4 threads, in R, with the bodies of `pkgr::a`, `pkgr::b`, and `pkgr::c` in Rust",
+        "line": "2026-11-27 10:04:15 r8map(): done in 12 s, CPU 0.25 s of 4 threads, in R, with the bodies of `pkgr::a`, `pkgr::b`, and `pkgr::c` in Rust [r8map]",
+        "engine": "rust+r"
+      }
+    }
+  ]
+}

@@ -4,7 +4,15 @@
 \alias{r8map}
 \title{Map an expression or a typed function over columns}
 \usage{
-r8map(x, f, columns = NULL, by = NULL, args = NULL, n_threads = NULL)
+r8map(
+  x,
+  f,
+  columns = NULL,
+  by = NULL,
+  args = NULL,
+  n_threads = NULL,
+  verbosity = 1L
+)
 }
 \arguments{
 \item{x}{A value of a table.}
@@ -27,6 +35,9 @@ use; \code{NULL} takes \code{getOption("r8.n_threads")}, whose default is half t
 cores, at most 2 where \verb{R CMD check} limits the cores, and at most
 \code{OMP_THREAD_LIMIT}. A result is the same for any number of threads. A typed function
 with its body in R runs on R's thread.}
+
+\item{verbosity}{Integer [0, Inf): 0 writes no message, and 1 the start and the
+end of a map that takes longer than 0.2 s.}
 }
 \value{
 Of a table, a \link{Raven} of the key columns and one column for each column
@@ -60,6 +71,20 @@ label its name, and the kind \code{"r8map"}; on a table, the total is the groups
 times the columns. \code{begin} is called once the map has run for 0.2 s, so that a
 shorter map reports nothing, and \code{update} about every 0.05 to 0.2 s. Without the
 option, its default, a map reports nothing.
+}
+
+\section{Messages}{
+
+At \code{verbosity} 1 or more, a map that takes longer than 0.2 s writes a start
+line once it has run for 0.2 s and a done line when it completes, each with
+the time and where the map runs, in Rust, in R, or both, by the bodies of its
+typed functions; the done line states the wall time, the CPU time of the
+process, and the threads that the map may use:
+\verb{2026-11-27 10:04:15 r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust [r8map]}.
+The lines are messages, which \code{suppressMessages()} silences. A hook in
+\code{r8.progress} with a fourth function, \code{message(event)}, receives each as a
+list of \code{level}, \code{kind} (\code{"start"} or \code{"done"}), \code{text}, \code{caller}, and \code{time};
+a hook without one receives \code{begin} and \code{end} in their place.
 }
 
 \section{Tables}{

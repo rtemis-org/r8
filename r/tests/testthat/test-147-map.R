@@ -257,3 +257,88 @@ test_that("rtemis.core draws the progress of a map under its own", {
     fixed = TRUE
   )))
 })
+
+test_that("a long map writes where it runs at verbosity 1, and nothing at 0", {
+  x <- Raven(g = rep(1:6, each = 2L), a = runif(12L), b = runif(12L))
+  slow_sum <- declared(new_function(
+    "slow_sum",
+    function(v = arg_vec(type_double())) {
+      Sys.sleep(0.03)
+      sum(v)
+    },
+    return_type = type_double()
+  ))
+  q <- attr(slow_sum, "r8_function")
+  lines <- character()
+  m <- withCallingHandlers(
+    r8map(x, slow_sum, by = "g"),
+    message = function(cnd) {
+      lines <<- c(lines, conditionMessage(cnd))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_length(lines, 2L)
+  expect_match(
+    lines[[1L]],
+    paste0(
+      "^[0-9-]+ [0-9:]+ r8map\\(\\): ",
+      q,
+      " over 2 columns and 6 groups, 12 calls, in Rust, with the body of `",
+      q,
+      "` in R \\[r8map\\]\n$"
+    )
+  )
+  expect_match(
+    lines[[2L]],
+    "r8map\\(\\): done in [0-9.]+ s, CPU [0-9.]+ s of [0-9]+ threads?, in Rust,"
+  )
+  # A list's map runs in R.
+  lines <- character()
+  withCallingHandlers(
+    r8map(as.double(1:12), slow),
+    message = function(cnd) {
+      lines <<- c(lines, conditionMessage(cnd))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_match(
+    lines[[1L]],
+    "over 12 items, 12 calls, in R [r8map]",
+    fixed = TRUE
+  )
+  # The messages are R's: suppressMessages() silences them; verbosity 0 and a
+  # short map write none.
+  expect_silent(suppressMessages(r8map(x, slow_sum, by = "g")))
+  # An exiting handler of the start line, which R8's Rust writes during the
+  # map, ends the map there, and the next map runs.
+  expect_identical(
+    tryCatch(r8map(x, slow_sum, by = "g"), message = function(cnd) "caught"),
+    "caught"
+  )
+  expect_silent(m2 <- suppressMessages(r8map(x, slow_sum, by = "g")))
+  expect_true(r8equal(m2, m))
+  expect_silent(r8map(x, slow_sum, by = "g", verbosity = 0L))
+  expect_silent(r8map(c(1, 2), slow))
+  refuses(
+    r8map(c(1, 2), slow, verbosity = -1),
+    "`verbosity` is a whole number of at least 0",
+    class = "r8_argument_error"
+  )
+  # A hook with `message` receives the events; one without receives begin and
+  # end in their place.
+  log <- recorder()
+  events <- list()
+  hook <- c(
+    log[["hook"]],
+    list(message = function(event) {
+      events[[length(events) + 1L]] <<- event
+    })
+  )
+  expect_silent(with_hook(hook, r8map(x, slow_sum, by = "g")))
+  expect_identical(vapply(events, `[[`, "", "kind"), c("start", "done"))
+  expect_identical(events[[1L]][["caller"]], "r8map")
+  expect_s3_class(events[[1L]][["time"]], "POSIXct")
+  quiet <- recorder()
+  expect_silent(with_hook(quiet[["hook"]], r8map(x, slow_sum, by = "g")))
+  expect_identical(quiet[["events"]][[1L]][["event"]], "begin")
+})

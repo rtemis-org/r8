@@ -1396,6 +1396,18 @@ summary_table <- function(x, by, first, columns, units, names) {
 #' shorter map reports nothing, and `update` about every 0.05 to 0.2 s. Without the
 #' option, its default, a map reports nothing.
 #'
+#' @section Messages:
+#' At `verbosity` 1 or more, a map that takes longer than 0.2 s writes a start
+#' line once it has run for 0.2 s and a done line when it completes, each with
+#' the time and where the map runs, in Rust, in R, or both, by the bodies of its
+#' typed functions; the done line states the wall time, the CPU time of the
+#' process, and the threads that the map may use:
+#' `2026-11-27 10:04:15 r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust [r8map]`.
+#' The lines are messages, which `suppressMessages()` silences. A hook in
+#' `r8.progress` with a fourth function, `message(event)`, receives each as a
+#' list of `level`, `kind` (`"start"` or `"done"`), `text`, `caller`, and `time`;
+#' a hook without one receives `begin` and `end` in their place.
+#'
 #' @section Tables:
 #' `r8map(x, f, columns, by)` gives one row for each group of the rows of `x` by
 #' the key columns `by`, or one row for the table: the keys, then `f` of each column
@@ -1439,6 +1451,8 @@ summary_table <- function(x, by, first, columns, units, names) {
 #' @param args Optional named list: The constant arguments of every call of a typed
 #'   function, by the names of its parameters other than the first; on a table,
 #'   one value each.
+#' @param verbosity Integer [0, Inf): 0 writes no message, and 1 the start and the
+#'   end of a map that takes longer than 0.2 s.
 #'
 #' @return Of a table, a [Raven] of the key columns and one column for each column
 #'   mapped; of a list or a vector, an atomic vector or a list, with the names of
@@ -1487,7 +1501,15 @@ declare_map <- function(ns) {
   # The arguments of `params()` as a quoted call, which R CMD check does not
   # read as variables.
   declared <- quote(
-    params(x, f, columns = NULL, by = NULL, args = NULL, n_threads = NULL)
+    params(
+      x,
+      f,
+      columns = NULL,
+      by = NULL,
+      args = NULL,
+      n_threads = NULL,
+      verbosity = 1L
+    )
   )
   r8map <- generic(
     "r8map",
@@ -1542,7 +1564,8 @@ map_columns <- function(x, columns, by) {
 #'
 #' @keywords internal
 #' @noRd
-map_calc <- function(x, f, columns, by, args, n_threads) {
+map_calc <- function(x, f, columns, by, args, n_threads, verbosity) {
+  verbosity <- verbosity_of(verbosity)
   if (!is.null(args)) {
     r8_abort(
       "`args` are the constant arguments of a typed function; a calc() reads ",
@@ -1550,8 +1573,90 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
       class = "r8_argument_error"
     )
   }
-  map_calc_run(x, f, columns, by, n_threads)
+  by <- map_by(x, by)
+  columns <- map_columns(x, columns, by)
+  map_progress(
+    NULL,
+    paste0("calc(", sub("^<r8 calc> ", "", format(f)), ")"),
+    function(step, report) {
+      map_calc_run(x, f, columns, by, n_threads, report = report)
+    },
+    verbosity = verbosity,
+    place = map_place(
+      "rust",
+      names(unclass(f)[["functions"]]) %||% character()
+    ),
+    size = list(columns = length(columns)),
+    threads = threads_of(n_threads),
+    hooked = FALSE
+  )
 } # /R8::map_calc
+
+
+# %% map_by ----
+#' The key columns of a map
+#'
+#' @param x A value of a table.
+#' @param by Character, numeric, or `NULL`: The keys.
+#'
+#' @return Character: The names, of length 0 without keys.
+#'
+#' @keywords internal
+#' @noRd
+map_by <- function(x, by) {
+  if (is.null(by)) {
+    return(character())
+  }
+  key_columns(x, by, quote(by), environment())
+} # /R8::map_by
+
+
+# %% map_place ----
+#' Where the work of a map runs, for its messages
+#'
+#' @param path Character \{"rust", "host"\}: The code that makes the calls of
+#'   its typed functions: R8's Rust, for a table, or a loop of R, for a list.
+#' @param functions Character: The qualified names of the functions called.
+#'
+#' @return A list of `path`, `functions`, and `in_rust`, whether a package
+#'   registered each body in compiled code.
+#'
+#' @keywords internal
+#' @noRd
+map_place <- function(path, functions) {
+  list(
+    path = path,
+    functions = functions,
+    in_rust = r8_body_in_rust(functions)
+  )
+} # /R8::map_place
+
+
+# %% verbosity_of ----
+#' The verbosity of a call
+#'
+#' @param verbosity The argument `verbosity`.
+#'
+#' @return Integer: The verbosity, at least 0.
+#'
+#' @keywords internal
+#' @noRd
+verbosity_of <- function(verbosity) {
+  if (
+    !is.numeric(verbosity) ||
+      length(verbosity) != 1L ||
+      is.na(verbosity) ||
+      verbosity < 0 ||
+      verbosity != trunc(verbosity)
+  ) {
+    r8_abort(
+      "`verbosity` is a whole number of at least 0: 0 prints nothing, and 1 ",
+      "the start and the end of a map that takes longer than 0.2 s.",
+      class = "r8_argument_error"
+    )
+  }
+  as.integer(verbosity)
+} # /R8::verbosity_of
 
 
 # %% map_calc_run ----
@@ -1559,7 +1664,9 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
 #'
 #' @param x The table.
 #' @param f A calc(), in which `col()` is each column.
-#' @param columns,by,n_threads The arguments of r8map().
+#' @param columns Character: The columns mapped (`map_columns()`).
+#' @param by Character: The key columns (`map_by()`).
+#' @param n_threads The argument of r8map().
 #' @param report Optional function: Of the calls done and their total, which
 #'   reports them to the progress hook (`map_progress()`).
 #'
@@ -1568,12 +1675,6 @@ map_calc <- function(x, f, columns, by, args, n_threads) {
 #' @keywords internal
 #' @noRd
 map_calc_run <- function(x, f, columns, by, n_threads, report = NULL) {
-  by <- if (is.null(by)) {
-    character()
-  } else {
-    key_columns(x, by, quote(by), environment())
-  }
-  columns <- map_columns(x, columns, by)
   exprs <- r8_calc_mapped(unclass(f)[["expr"]], columns)
   if (inherits(exprs, "r8_refused")) {
     r8_abort(exprs[["message"]], ".", class = "r8_value_error")
@@ -1604,7 +1705,8 @@ map_calc_run <- function(x, f, columns, by, n_threads, report = NULL) {
 #'
 #' @keywords internal
 #' @noRd
-map_typed <- function(x, f, columns, by, args, n_threads) {
+map_typed <- function(x, f, columns, by, args, n_threads, verbosity) {
+  verbosity <- verbosity_of(verbosity)
   sig <- map_signature(f, args)
   returns <- sig[["returns"]]
   if (identical(returns[["kind"]], "option")) {
@@ -1651,9 +1753,19 @@ map_typed <- function(x, f, columns, by, args, n_threads) {
   }
   e <- as.call(c(list(as.name(".r8_f")), given))
   value <- do.call(calc, list(call("quote", e)), envir = env)
-  map_progress(NULL, sig[["name"]], function(step, report) {
-    map_calc_run(x, value, columns, by, n_threads, report = report)
-  })
+  by <- map_by(x, by)
+  columns <- map_columns(x, columns, by)
+  map_progress(
+    NULL,
+    sig[["name"]],
+    function(step, report) {
+      map_calc_run(x, value, columns, by, n_threads, report = report)
+    },
+    verbosity = verbosity,
+    place = map_place("rust", sig[["name"]]),
+    size = list(columns = length(columns)),
+    threads = threads_of(n_threads)
+  )
 } # /R8::map_typed
 
 
@@ -1662,7 +1774,8 @@ map_typed <- function(x, f, columns, by, args, n_threads) {
 #'
 #' @return The option `r8.progress`: `NULL`, its default, or a list of the
 #'   functions `begin(total, label, kind)`, which gives a handle,
-#'   `update(handle, current)`, and `end(handle, status)`.
+#'   `update(handle, current)`, and `end(handle, status)`, and, optionally,
+#'   `message(event)`, which takes R8's messages.
 #'
 #' @keywords internal
 #' @noRd
@@ -1672,11 +1785,12 @@ map_hook <- function() {
     !is.null(hook) &&
       (!is.list(hook) ||
         !all(c("begin", "update", "end") %in% names(hook)) ||
-        !all(vapply(hook[c("begin", "update", "end")], is.function, NA)))
+        !all(vapply(hook[c("begin", "update", "end")], is.function, NA)) ||
+        (!is.null(hook[["message"]]) && !is.function(hook[["message"]])))
   ) {
     r8_abort(
       "The option `r8.progress` is NULL or a list of the functions `begin`, ",
-      "`update`, and `end`.",
+      "`update`, and `end`, and optionally `message`.",
       class = "r8_argument_error"
     )
   }
@@ -1685,7 +1799,7 @@ map_hook <- function() {
 
 
 # %% map_progress ----
-#' The steps of a map, with its progress
+#' The steps of a map, with its progress and its messages
 #'
 #' Reads the option `r8.progress` once (`map_hook()`). A map reports its steps at
 #' a stride that doubles while reports come within 0.05 s and halves when they
@@ -1698,28 +1812,100 @@ map_hook <- function() {
 #' `begin` after 0.2 s and `update`, and gives the condition of an error of the
 #' hook, or `NULL`.
 #'
+#' At `verbosity` 1 or more, a map writes a start line at its first report after
+#' 0.2 s and a done line when it completes after 0.2 s, in the words of
+#' `rtemis_r8::message`, each stating where the map runs, the done line with
+#' the wall time, the CPU time of the process, and the threads: to the hook's
+#' `message(event)` where it has one, by base `message()` without a hook, and
+#' to neither where a hook has no `message`, whose `begin` and `end` take their
+#' place.
+#'
 #' @param total Optional integer: The steps, or `NULL` where `report` gives them.
 #' @param label Character: The name of the function mapped.
 #' @param run Function: Of two arguments, a function of no arguments that counts
-#'   a step of a map in R, and `report`, or `NULL` without a hook; gives the
-#'   map's result.
+#'   a step of a map in R, and `report`, or `NULL` without a hook or a message;
+#'   gives the map's result.
+#' @param verbosity Integer: The call's verbosity.
+#' @param place List: Where the map runs (`map_place()`), evaluated for a
+#'   message alone.
+#' @param size List: `columns`, of a table, or `items`, of a list.
+#' @param threads Integer: The threads that the map's work may use.
+#' @param hooked Logical: Whether the hook receives the map's progress.
 #'
 #' @return The result of `run`.
 #'
 #' @keywords internal
 #' @noRd
-map_progress <- function(total, label, run) {
+map_progress <- function(
+  total,
+  label,
+  run,
+  verbosity = 0L,
+  place = list(),
+  size = list(),
+  threads = 1L,
+  hooked = TRUE
+) {
   hook <- map_hook()
-  if (is.null(hook)) {
+  progress <- hooked && !is.null(hook)
+  # `label` and `place` are evaluated only for a message or a hook.
+  talk <- verbosity >= 1L && (is.null(hook) || is.function(hook[["message"]]))
+  if (!progress && !talk) {
     return(run(function() NULL, NULL))
   }
-  start <- proc.time()[["elapsed"]]
+  started <- proc.time()
+  start <- started[["elapsed"]]
   last <- start
   done <- 0L
   stride <- 1L
   next_at <- 1L
   handle <- NULL
   begun <- FALSE
+  said <- FALSE
+  say <- function(kind, fields) {
+    text <- r8_map_message(kind, c(list(label = label), place, fields))[[
+      "text"
+    ]]
+    time <- Sys.time()
+    if (!is.null(hook) && is.function(hook[["message"]])) {
+      hook[["message"]](list(
+        level = "info",
+        kind = kind,
+        text = text,
+        caller = "r8map",
+        time = time
+      ))
+    } else {
+      message(r8_message_line(format(time, "%Y-%m-%d %H:%M:%S"), text, "r8map"))
+    }
+  }
+  # The size at a report, when the total of the calls is known.
+  size_now <- function() {
+    if (
+      !is.null(size[["columns"]]) && !is.null(total) && size[["columns"]] > 0L
+    ) {
+      return(list(
+        columns = size[["columns"]],
+        groups = total %/% size[["columns"]],
+        calls = total
+      ))
+    }
+    if (!is.null(size[["columns"]])) {
+      return(list(columns = size[["columns"]]))
+    }
+    list(items = total, calls = total)
+  }
+  # At the first report after 0.2 s.
+  gate <- function() {
+    if (progress && !begun) {
+      handle <<- hook[["begin"]](total, label, "r8map")
+      begun <<- TRUE
+    }
+    if (talk && !said) {
+      said <<- TRUE
+      say("start", size_now())
+    }
+  }
   report <- function() {
     now <- proc.time()[["elapsed"]]
     gap <- now - last
@@ -1729,15 +1915,14 @@ map_progress <- function(total, label, run) {
       stride <<- max(1L, stride %/% 2L)
     }
     next_at <<- done + stride
-    if (!begun) {
-      if (now - start < 0.2) {
-        return(invisible(NULL))
-      }
-      handle <<- hook[["begin"]](total, label, "r8map")
-      begun <<- TRUE
+    if (!begun && !said && now - start < 0.2) {
+      return(invisible(NULL))
     }
+    gate()
     last <<- now
-    hook[["update"]](handle, done)
+    if (begun) {
+      hook[["update"]](handle, done)
+    }
     invisible(NULL)
   }
   step <- function() {
@@ -1751,14 +1936,13 @@ map_progress <- function(total, label, run) {
       {
         done <<- as.integer(current)
         total <<- as.integer(of)
-        if (!begun) {
-          if (proc.time()[["elapsed"]] - start < 0.2) {
-            return(NULL)
-          }
-          handle <<- hook[["begin"]](total, label, "r8map")
-          begun <<- TRUE
+        if (!begun && !said && proc.time()[["elapsed"]] - start < 0.2) {
+          return(NULL)
         }
-        hook[["update"]](handle, done)
+        gate()
+        if (begun) {
+          hook[["update"]](handle, done)
+        }
         NULL
       },
       error = identity
@@ -1766,19 +1950,36 @@ map_progress <- function(total, label, run) {
   }
   status <- "error"
   on.exit(
-    if (begun) {
-      # A map that completes reports its last steps.
-      if (identical(status, "done")) {
-        hook[["update"]](handle, done)
+    {
+      if (begun) {
+        # A map that completes reports its last steps.
+        if (identical(status, "done")) {
+          hook[["update"]](handle, done)
+        }
+        hook[["end"]](handle, status)
       }
-      hook[["end"]](handle, status)
+      took <- proc.time() - started
+      if (talk && identical(status, "done") && took[["elapsed"]] >= 0.2) {
+        say(
+          "done",
+          list(
+            wall = took[["elapsed"]],
+            cpu = took[["user.self"]] + took[["sys.self"]],
+            threads = threads
+          )
+        )
+      }
     },
     add = TRUE
   )
-  out <- withCallingHandlers(
-    run(step, reported),
-    interrupt = function(cnd) status <<- "aborted"
-  )
+  out <- if (progress) {
+    withCallingHandlers(
+      run(step, reported),
+      interrupt = function(cnd) status <<- "aborted"
+    )
+  } else {
+    run(step, reported)
+  }
   status <- "done"
   if (!is.null(total)) {
     done <- total
@@ -1877,7 +2078,8 @@ map_signature <- function(f, args) {
 #'
 #' @keywords internal
 #' @noRd
-map_items <- function(x, f, columns, by, args, n_threads) {
+map_items <- function(x, f, columns, by, args, n_threads, verbosity) {
+  verbosity <- verbosity_of(verbosity)
   if (!is.null(columns) || !is.null(by)) {
     r8_abort(
       "`columns` and `by` choose the columns and the groups of a table; ",
@@ -1931,31 +2133,38 @@ map_items <- function(x, f, columns, by, args, n_threads) {
     )
   }
   out <- withCallingHandlers(
-    map_progress(length(x), sig[["name"]], function(step, report) {
-      each <- function(i) {
-        at <<- i
-        v <- call_f(x[[i]])
-        at <<- 0L
-        step()
-        v
-      }
-      if (kind %in% names(scalar)) {
-        vapply(seq_along(x), each, scalar[[kind]], USE.NAMES = FALSE)
-      } else if (kind %in% c("date", "posixct")) {
-        values <- lapply(seq_along(x), each)
-        if (length(values) == 0L) {
-          if (kind == "date") {
-            as.Date(character())
+    map_progress(
+      length(x),
+      sig[["name"]],
+      function(step, report) {
+        each <- function(i) {
+          at <<- i
+          v <- call_f(x[[i]])
+          at <<- 0L
+          step()
+          v
+        }
+        if (kind %in% names(scalar)) {
+          vapply(seq_along(x), each, scalar[[kind]], USE.NAMES = FALSE)
+        } else if (kind %in% c("date", "posixct")) {
+          values <- lapply(seq_along(x), each)
+          if (length(values) == 0L) {
+            if (kind == "date") {
+              as.Date(character())
+            } else {
+              as.POSIXct(character(), tz = "UTC")
+            }
           } else {
-            as.POSIXct(character(), tz = "UTC")
+            do.call(c, values)
           }
         } else {
-          do.call(c, values)
+          lapply(seq_along(x), each)
         }
-      } else {
-        lapply(seq_along(x), each)
-      }
-    }),
+      },
+      verbosity = verbosity,
+      place = map_place("host", sig[["name"]]),
+      size = list(items = length(x))
+    ),
     error = failed
   )
   names(out) <- names(x)
@@ -1968,7 +2177,7 @@ map_items <- function(x, f, columns, by, args, n_threads) {
 #'
 #' @keywords internal
 #' @noRd
-map_items_calc <- function(x, f, columns, by, args, n_threads) {
+map_items_calc <- function(x, f, columns, by, args, n_threads, verbosity) {
   r8_abort(
     "A calc() maps over the columns of a table, with col() as each column; ",
     "a list or a vector takes a typed function: r8map(x, f) with f of new_function().",
@@ -1982,7 +2191,7 @@ map_items_calc <- function(x, f, columns, by, args, n_threads) {
 #'
 #' @keywords internal
 #' @noRd
-map_function <- function(x, f, columns, by, args, n_threads) {
+map_function <- function(x, f, columns, by, args, n_threads, verbosity) {
   r8_abort(
     "r8map() maps a typed function of R8, declared with new_function(), whose ",
     "return type gives the container of the results, or, over the columns of a ",

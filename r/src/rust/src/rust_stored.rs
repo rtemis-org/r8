@@ -290,9 +290,9 @@ fn error_text(err: &Error) -> String {
 /// The functions of `view.c` around compiled code of a package that R8 calls
 /// from a Rust frame, set by `R_init_R8()`: `r8_drop_unwind()`,
 /// `r8_compiled_enter()`, `r8_compiled_held()`, `r8_jump_held()`,
-/// `r8_continue_held()`, and `r8_unwound_text()`.
-static COMPILED: [std::sync::atomic::AtomicPtr<()>; 6] =
-    [const { std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()) }; 6];
+/// `r8_continue_held()`, `r8_unwound_text()`, and `r8_package_protect()`.
+static COMPILED: [std::sync::atomic::AtomicPtr<()>; 7] =
+    [const { std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()) }; 7];
 
 /// Receives the functions of [`COMPILED`] from `R_init_R8()`.
 ///
@@ -307,10 +307,11 @@ pub unsafe extern "C" fn r8_set_compiled_functions(
     is_held: *mut (),
     resume: *mut (),
     unwound: *mut (),
+    protect: *mut (),
 ) {
     for (slot, f) in COMPILED
         .iter()
-        .zip([drop, enter, held, is_held, resume, unwound])
+        .zip([drop, enter, held, is_held, resume, unwound, protect])
     {
         slot.store(f, std::sync::atomic::Ordering::Release);
     }
@@ -366,6 +367,67 @@ pub(crate) fn continue_held() {
     if let Some(f) = compiled_fn(4) {
         let f: unsafe extern "C" fn() = unsafe { std::mem::transmute::<*mut (), _>(f) };
         unsafe { f() };
+    }
+}
+
+/// The outcome of an R call that R8's Rust makes with R's handlers visible
+/// ([`call_held()`]).
+pub(crate) enum Called {
+    /// The call's value, unprotected.
+    Value(SEXP),
+    /// R jumped out of the call; the jump is held.
+    Held,
+    /// The call did not run.
+    Failed(String),
+}
+
+/// Evaluates `call` in `env` from a Rust frame as R code evaluates it, with the
+/// handlers of R's conditions visible, so that `suppressMessages()` and the
+/// caller's handlers see its conditions: inside the `R8Api.protect` of
+/// packages, between [`body_enter()`] and [`body_returned()`]. R's jump out of
+/// the call, such as that of an exiting handler or an interrupt, is held as a
+/// body's is, until the Rust frames have returned; no code calls R after it.
+pub(crate) fn call_held(call: SEXP, env: SEXP) -> Called {
+    #[allow(improper_ctypes)]
+    unsafe extern "C" {
+        fn Rf_eval(call: SEXP, env: SEXP) -> SEXP;
+    }
+    struct Eval {
+        call: SEXP,
+        env: SEXP,
+    }
+    extern "C" fn eval_body(p: *mut c_void) -> SEXP {
+        let e = unsafe { &*p.cast::<Eval>() };
+        unsafe { Rf_eval(e.call, e.env) }
+    }
+    let Some(f) = compiled_fn(6) else {
+        return Called::Failed("R8 is loaded without R_init_R8()".to_string());
+    };
+    let f: unsafe extern "C" fn(
+        extern "C" fn(*mut c_void) -> SEXP,
+        *mut c_void,
+        *mut SEXP,
+        *mut Error,
+    ) -> Status = unsafe { std::mem::transmute::<*mut (), _>(f) };
+    let mut data = Eval { call, env };
+    let mut value: SEXP = unsafe { extendr_ffi::R_NilValue };
+    let mut err = blank();
+    body_enter();
+    let status = unsafe {
+        f(
+            eval_body,
+            std::ptr::from_mut(&mut data).cast(),
+            &mut value,
+            &mut err,
+        )
+    };
+    if body_returned() {
+        return Called::Held;
+    }
+    if status == OK {
+        Called::Value(value)
+    } else {
+        Called::Failed(error_text(&err))
     }
 }
 

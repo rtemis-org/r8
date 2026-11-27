@@ -117,7 +117,8 @@
             "call",
             "calc",
             "summarize",
-            "map"
+            "map",
+            "message"
           ]
         },
         "type": {
@@ -958,6 +959,140 @@
                   "items": {
                     "$ref": "#/$defs/error"
                   }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "input"
+          ],
+          "properties": {
+            "op": {
+              "const": "message"
+            },
+            "input": {
+              "type": "object",
+              "required": [
+                "kind",
+                "label",
+                "place",
+                "host",
+                "timestamp"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "start",
+                    "done"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                },
+                "caller": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "columns": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "groups": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "calls": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "place": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "bodies"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "enum": [
+                        "rust",
+                        "host"
+                      ]
+                    },
+                    "bodies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "function",
+                          "in_rust"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "function": {
+                            "type": "string"
+                          },
+                          "in_rust": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "wall": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cpu": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "threads": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "expect": {
+              "type": "object",
+              "required": [
+                "text",
+                "line",
+                "engine"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "string"
+                },
+                "engine": {
+                  "enum": [
+                    "rust",
+                    "r",
+                    "rust+r"
+                  ]
                 }
               }
             }

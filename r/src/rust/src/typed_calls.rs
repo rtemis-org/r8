@@ -38,6 +38,7 @@ use crate::rview::{attr, inherits, is_null, sexptype, string_elt, xlen};
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     fn Rf_copyMostAttrib(from: SEXP, to: SEXP);
+    fn Rf_lang3(f: SEXP, a: SEXP, b: SEXP) -> SEXP;
 }
 
 /// The host of the calls of typed functions in the expressions of a table
@@ -166,9 +167,29 @@ impl<'h> RFunctions<'h> {
         let Some(report) = &self.report else {
             return Ok(());
         };
-        let out = report
-            .call(pairlist!(done as f64, self.total.get().max(done) as f64))
-            .unwrap_or_else(|e| Robj::from(e.to_string()));
+        // The hook runs as R code runs, its conditions seen by the handlers of
+        // the caller, such as `suppressMessages()`.
+        let total = self.total.get().max(done) as f64;
+        let call: Robj = unsafe {
+            Robj::from_sexp(Rf_lang3(
+                report.get(),
+                Robj::from(done as f64).get(),
+                Robj::from(total).get(),
+            ))
+        };
+        let out = match crate::rust_stored::call_held(unsafe { call.get() }, unsafe {
+            extendr_ffi::R_GlobalEnv
+        }) {
+            crate::rust_stored::Called::Value(v) => unsafe { Robj::from_sexp(v) },
+            crate::rust_stored::Called::Held => {
+                self.jumped.set(true);
+                return Err(CallFailed {
+                    at,
+                    message: "R jumped inside the progress hook".to_string(),
+                });
+            }
+            crate::rust_stored::Called::Failed(m) => Robj::from(m),
+        };
         if out.is_null() {
             return Ok(());
         }

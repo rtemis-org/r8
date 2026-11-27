@@ -28,8 +28,9 @@ int r8_compiled_held(void);
 int r8_jump_held(void);
 void r8_continue_held(void);
 const char *r8_unwound_text(void);
+R8Status r8_package_protect(SEXP (*fn)(void *data), void *data, SEXP *value, R8Error *err);
 void r8_set_compiled_functions(void *drop, void *enter, void *held, void *is_held,
-                                void *resume, void *unwound);
+                                void *resume, void *unwound, void *protect);
 void r8_pin_library(const void *address);
 void r8_init_values(DllInfo *dll);
 SEXP r8_identity(SEXP type, SEXP variant, SEXP names, SEXP cls, SEXP declaration, SEXP record,
@@ -79,7 +80,8 @@ void R_init_R8(DllInfo *dll) {
     r8_set_interrupt_functions((void *) r8_check_interrupt, (void *) r8_continue_unwind);
     r8_set_compiled_functions((void *) r8_drop_unwind, (void *) r8_compiled_enter,
                               (void *) r8_compiled_held, (void *) r8_jump_held,
-                              (void *) r8_continue_held, (void *) r8_unwound_text);
+                              (void *) r8_continue_held, (void *) r8_unwound_text,
+                              (void *) r8_package_protect);
     r8_init_values(dll);
     r8_init_fields(dll);
     r8_init_rust_stored(dll);

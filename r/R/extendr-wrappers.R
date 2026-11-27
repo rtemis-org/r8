@@ -653,6 +653,37 @@ r8_date_literals <- function(x, datetime) .Call(wrap__r8_date_literals, x, datet
 #' @noRd
 r8_rule_operators <- function() .Call(wrap__r8_rule_operators)
 
+#' Whether a package registered the body of each function in compiled code.
+#'
+#' @param qnames Character: The qualified names, or a vector of length 0.
+#' @return Logical: One for each name.
+#' @keywords internal
+#' @noRd
+r8_body_in_rust <- function(qnames) .Call(wrap__r8_body_in_rust, qnames)
+
+#' The text of a message of a long map, and the engine of its work.
+#'
+#' @param kind Character \{"start", "done"\}: The message.
+#' @param fields List: `label`, the function's name; `path`, `"rust"` for a
+#'   table's map or `"host"` for a list's; `functions` and `in_rust`, the
+#'   functions called and whether each body is compiled code; for `"start"`,
+#'   `columns`, `groups`, `items`, and `calls`, each or `NULL`; for `"done"`,
+#'   `wall`, `cpu`, and `threads`.
+#' @return List: `text` and `engine`.
+#' @keywords internal
+#' @noRd
+r8_map_message <- function(kind, fields) .Call(wrap__r8_map_message, kind, fields)
+
+#' The line of a message, `<timestamp> <text> [<caller>]`.
+#'
+#' @param timestamp Character: The time, as `"%Y-%m-%d %H:%M:%S"` writes it.
+#' @param text Character: The message.
+#' @param caller Character: The function that writes it, or `""`.
+#' @return Character.
+#' @keywords internal
+#' @noRd
+r8_message_line <- function(timestamp, text, caller) .Call(wrap__r8_message_line, timestamp, text, caller)
+
 #' The parts of a Rust-stored value that `r8size()` adds up: the bytes of
 #' its state and the cached fields that are not views of the state.
 #'

@@ -323,6 +323,7 @@ fn conformance_corpus() {
                 op @ ("calc" | "summarize" | "map") => run_calc(op, ir.as_ref(), case),
                 "check" => run_check(ir.as_ref(), case),
                 "call" => run_call(ir.as_ref(), case),
+                "message" => run_message(case),
                 "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 op @ ("canonical" | "hash") => run_canonical(
                     op,
@@ -359,6 +360,51 @@ fn conformance_corpus() {
 /// function `type`, and the rules left unchecked. The arguments of a valid
 /// call satisfy the function's JSON Schema of arguments, and those of a call
 /// whose problems are all structural do not.
+fn run_message(case: &Value) -> Option<String> {
+    use rtemis_r8::message::{Body, Path, Place, Size, line, map_done, map_started};
+    let input = &case["input"];
+    let n = |v: &Value| v.as_u64();
+    let place = Place {
+        path: match input["place"]["path"].as_str()? {
+            "rust" => Path::Rust,
+            _ => Path::Host,
+        },
+        bodies: input["place"]["bodies"]
+            .as_array()?
+            .iter()
+            .map(|b| Body {
+                function: b["function"].as_str().unwrap_or_default().to_string(),
+                in_rust: b["in_rust"].as_bool().unwrap_or_default(),
+            })
+            .collect(),
+    };
+    let host = input["host"].as_str()?;
+    let text = match input["kind"].as_str()? {
+        "start" => {
+            let size = Size {
+                columns: n(&input["size"]["columns"]),
+                groups: n(&input["size"]["groups"]),
+                items: n(&input["size"]["items"]),
+                calls: n(&input["size"]["calls"]),
+            };
+            map_started(input["label"].as_str()?, &size, &place, host)
+        }
+        _ => map_done(
+            input["wall"].as_f64()?,
+            input["cpu"].as_f64()?,
+            n(&input["threads"])?,
+            &place,
+            host,
+        ),
+    };
+    let got = serde_json::json!({
+        "text": text,
+        "line": line(input["timestamp"].as_str()?, &text, input["caller"].as_str()),
+        "engine": place.engine().name(),
+    });
+    (got != case["expect"]).then(|| format!("expected {}, got {got}", case["expect"]))
+}
+
 fn run_call(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
     use rtemis_r8::call::{arguments_schema, read_call};
     let Some(docs) = ir else {
