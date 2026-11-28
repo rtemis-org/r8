@@ -324,6 +324,7 @@ fn conformance_corpus() {
                 "check" => run_check(ir.as_ref(), case),
                 "call" => run_call(ir.as_ref(), case),
                 "message" => run_message(case),
+                "plan" => run_plan(ir.as_ref(), case),
                 "refine" => run_refine(ir.as_ref(), &case["type"], &case["input"], &case["expect"]),
                 op @ ("canonical" | "hash") => run_canonical(
                     op,
@@ -361,7 +362,7 @@ fn conformance_corpus() {
 /// call satisfy the function's JSON Schema of arguments, and those of a call
 /// whose problems are all structural do not.
 fn run_message(case: &Value) -> Option<String> {
-    use rtemis_r8::message::{Body, Path, Place, Size, line, map_done, map_started};
+    use rtemis_r8::message::{Body, Path, Place, Size, line, map_ended, map_started};
     let input = &case["input"];
     let n = |v: &Value| v.as_u64();
     let place = Place {
@@ -379,7 +380,7 @@ fn run_message(case: &Value) -> Option<String> {
             .collect(),
     };
     let host = input["host"].as_str()?;
-    let text = match input["kind"].as_str()? {
+    let text = match input["phase"].as_str()? {
         "start" => {
             let size = Size {
                 columns: n(&input["size"]["columns"]),
@@ -389,7 +390,7 @@ fn run_message(case: &Value) -> Option<String> {
             };
             map_started(input["label"].as_str()?, &size, &place, host)
         }
-        _ => map_done(
+        _ => map_ended(
             input["wall"].as_f64()?,
             input["cpu"].as_f64()?,
             n(&input["threads"])?,
@@ -401,6 +402,99 @@ fn run_message(case: &Value) -> Option<String> {
         "text": text,
         "line": line(input["timestamp"].as_str()?, &text, input["caller"].as_str()),
         "engine": place.engine().name(),
+    });
+    (got != case["expect"]).then(|| format!("expected {}, got {got}", case["expect"]))
+}
+
+fn run_plan(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
+    use rtemis_r8::ir::{Logic, TypeDef};
+    use rtemis_r8::plan::{ListCall, TableCall, headline, list_plan, mermaid, table_plan};
+    use rtemis_r8::rules::TypeLookup;
+    use rtemis_r8::rules::calc::{NotComputed, mapped, planned};
+    let Some(docs) = ir else {
+        return Some("a `plan` case needs the suite's `ir`".to_string());
+    };
+    let options = &case["options"];
+    let in_rust: Vec<QualifiedName> = options["in_rust"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|q| QualifiedName::parse(q.as_str()?).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let function = options["function"].as_str().unwrap_or("r8map");
+    let plan = if let Some(typed) = options["typed"].as_str() {
+        let typed = QualifiedName::parse(typed).ok()?;
+        let items = case["input"].as_array()?.len() as u64;
+        list_plan(
+            &ListCall {
+                function,
+                typed: &typed,
+                items,
+                in_rust: in_rust.contains(&typed),
+            },
+            docs,
+        )
+    } else {
+        let ty = QualifiedName::parse(case["type"].as_str()?).ok()?;
+        let Some(TypeDef::Table(def)) = docs.find(&ty) else {
+            return Some(format!("`{ty}` is not a table of the suite's `ir`"));
+        };
+        let by: Vec<&str> = options["by"]
+            .as_array()
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let (names, exprs): (Vec<String>, Vec<Logic>) = if options.get("f").is_some() {
+            let columns: Vec<&str> = options["columns"]
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            let e = mapped(&Logic::from_value(&options["f"]), &columns).ok()?;
+            (columns.iter().map(|c| c.to_string()).collect(), e)
+        } else {
+            options["columns"]
+                .as_object()?
+                .iter()
+                .map(|(k, v)| (k.clone(), Logic::from_value(v)))
+                .unzip()
+        };
+        let refs: Vec<&Logic> = exprs.iter().collect();
+        let columns: Vec<&str> = names.iter().map(String::as_str).collect();
+        let summary = options["summary"].as_bool().unwrap_or(true);
+        let threads = options["threads"].as_u64().unwrap_or(1) as usize;
+        let table = rtemis_r8::access::Json::new(&case["input"]);
+        let planned = match planned(table, def, &by, &refs, docs, summary, threads) {
+            Ok(p) => p,
+            Err(NotComputed::Key(m)) => {
+                let got = serde_json::json!({"key_error": m});
+                return (got != case["expect"])
+                    .then(|| format!("{got}, expected {}", case["expect"]));
+            }
+            Err(NotComputed::Rule { errors, .. }) => {
+                let got = sorted_errors(errors.into_iter().map(|e| (e.path, e.code.into(), None)));
+                let want = expected_errors(&case["expect"]);
+                return (got != want).then(|| format!("errors {got:?}, expected {want:?}"));
+            }
+            Err(other) => return Some(format!("{other:?}")),
+        };
+        let call = TableCall {
+            function,
+            label: options["label"].as_str().unwrap_or(""),
+            table: &ty,
+            by: &by,
+            columns: &columns,
+            exprs: &refs,
+            summary,
+            threads,
+        };
+        table_plan(&call, &planned, docs, &|f| in_rust.contains(f))
+    };
+    let got = serde_json::json!({
+        "plan": serde_json::to_value(&plan).ok()?,
+        "headline": headline(&plan, "R"),
+        "mermaid": mermaid(&plan),
     });
     (got != case["expect"]).then(|| format!("expected {}, got {got}", case["expect"]))
 }

@@ -66,7 +66,7 @@ nothing.
 A map of a typed function reports its progress to a host that sets the option
 \code{r8.progress} to a list of three functions: \code{begin(total, label, kind)}, which
 gives a handle, \code{update(handle, current)}, and \code{end(handle, status)}, with the
-status \code{"done"}, \code{"error"}, or \code{"aborted"}. The total is the calls of \code{f}, the
+status \code{"completed"}, \code{"failed"}, or \code{"aborted"}. The total is the calls of \code{f}, the
 label its name, and the kind \code{"r8map"}; on a table, the total is the groups
 times the columns. \code{begin} is called once the map has run for 0.2 s, so that a
 shorter map reports nothing, and \code{update} about every 0.05 to 0.2 s. Without the
@@ -76,14 +76,14 @@ option, its default, a map reports nothing.
 \section{Messages}{
 
 At \code{verbosity} 1 or more, a map that takes longer than 0.2 s writes a start
-line once it has run for 0.2 s and a done line when it completes, each with
+line once it has run for 0.2 s and an end line when it completes, each with
 the time and where the map runs, in Rust, in R, or both, by the bodies of its
-typed functions; the done line states the wall time, the CPU time of the
+typed functions; the end line states the wall time, the CPU time of the
 process, and the threads that the map may use:
-\verb{2026-11-27 10:04:15 r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust [r8map]}.
+\verb{2026-11-27 10:04:15 r8map(): completed in 3.3 s, CPU 3.2 s of 1 thread, in Rust [r8map]}.
 The lines are messages, which \code{suppressMessages()} silences. A hook in
 \code{r8.progress} with a fourth function, \code{message(event)}, receives each as a
-list of \code{level}, \code{kind} (\code{"start"} or \code{"done"}), \code{text}, \code{caller}, and \code{time};
+list of \code{level}, \code{phase} (\code{"start"} or \code{"end"}), \code{text}, \code{caller}, and \code{time};
 a hook without one receives \code{begin} and \code{end} in their place.
 }
 

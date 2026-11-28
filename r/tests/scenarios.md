@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 45 files of 419 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 46 files of 427 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -49,10 +49,11 @@ What each feature does, in 45 files of 419 tests. The runtime has its own tests 
 | `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8check_call(), r8call_from_json(), and r8call_to_json(). | 7 |
 | `test-146-summarize.R` | Expressions as values, columns computed from them, summaries of the groups of a table's rows, and maps of one expression or typed function over columns. The conformance corpus (conformance/summarize/) has the semantics of each aggregate. | 17 |
 | `test-147-map.R` | Maps of a typed function over the items of a list or a vector, with constant arguments, in the container of the function's return type. | 10 |
+| `test-148-explain.R` | The plan of a call of a table function before it runs: its stages, where each runs, the typed functions it would call, and its flowchart. | 7 |
 | `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 4 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
 | `test-153-documentation.R` | The documentation of packages that declare R8 types: help pages from roxygen2, and the R declarations of types declared in Rust. | 3 |
-| `test-154-rust-functions.R` | Typed functions whose bodies are in Rust: the functions of r8pkgR that R/functions.R declares with rust(), and src/rust/src/functions.rs holds. | 5 |
+| `test-154-rust-functions.R` | Typed functions whose bodies are in Rust: the functions of r8pkgR that R/functions.R declares with rust(), and src/rust/src/functions.rs holds. | 6 |
 
 ## Scenarios
 

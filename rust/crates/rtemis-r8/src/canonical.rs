@@ -364,6 +364,38 @@ fn hashed_declaration(ty: &QualifiedName, lookup: &dyn TypeLookup) -> Value {
     Value::Object(seen.into_iter().collect())
 }
 
+/// The hash of a typed function's declaration: the SHA-256 of the canonical
+/// text of an object of `function`, its IR with the descriptions of the
+/// function and its parameters emptied, and `types`, which maps the qualified
+/// name of every named type that its parameters and return type reach to its
+/// declaration, stripped as the declaration hash strips it.
+pub fn function_hash(def: &crate::ir::FunctionDef, lookup: &dyn TypeLookup) -> String {
+    let mut f = def.clone();
+    f.description.clear();
+    for p in &mut f.params {
+        if let crate::ir::ParamDef::Full(full) = p {
+            full.description = Box::default();
+        }
+    }
+    let mut names = Vec::new();
+    for p in &def.params {
+        if let Some(ty) = p.ty() {
+            named_in(ty, &mut names);
+        }
+    }
+    if let Some(crate::ir::ReturnType::Type(t)) = &def.return_type {
+        named_in(t, &mut names);
+    }
+    let mut seen = std::collections::BTreeMap::new();
+    for n in names {
+        reachable(&n, lookup, strip, &mut seen);
+    }
+    text_hash(&serde_json::json!({
+        "function": serde_json::to_value(&f).expect("a declaration serializes"),
+        "types": Value::Object(seen.into_iter().collect()),
+    }))
+}
+
 /// The hash of what a declaration says about a value: the declaration hash
 /// without defaults, `sensitive`, and the IDs and messages of rules, which have
 /// no part in a value that holds every field, as a document does.

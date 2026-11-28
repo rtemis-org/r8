@@ -5,10 +5,19 @@
 
 use extendr_api::prelude::*;
 use extendr_api::{Error, Result};
-use rtemis_r8::message::{Body, Path, Place, Size, line, map_done, map_started};
+use rtemis_r8::message::{Body, Path, Place, Size, line, map_ended, map_started};
 
 /// The language of the host, in the texts of messages.
 const HOST: &str = "R";
+
+/// Whether a package registered the body of the function `qname` in compiled
+/// code, by the lookup that a call uses.
+pub(crate) fn in_rust(qname: &str) -> bool {
+    std::ffi::CString::new(qname.as_bytes()).is_ok_and(|c| {
+        let key = unsafe { extendr_ffi::Rf_install(c.as_ptr()) };
+        crate::exports::native_body(key).is_some()
+    })
+}
 
 /// Whether a package registered the body of each function in compiled code.
 ///
@@ -22,34 +31,26 @@ fn r8_body_in_rust(qnames: Robj) -> Logicals {
     // address that a slice takes.
     let registered: Vec<Rbool> = crate::rview::strings(unsafe { qnames.get() })
         .into_iter()
-        .map(|q| {
-            Rbool::from(
-                q.and_then(|q| std::ffi::CString::new(q.as_bytes()).ok())
-                    .is_some_and(|c| {
-                        let key = unsafe { extendr_ffi::Rf_install(c.as_ptr()) };
-                        crate::exports::native_body(key).is_some()
-                    }),
-            )
-        })
+        .map(|q| Rbool::from(q.is_some_and(|q| in_rust(&q))))
         .collect();
     Logicals::from_values(registered)
 }
 
 /// The text of a message of a long map, and the engine of its work.
 ///
-/// @param kind Character \{"start", "done"\}: The message.
+/// @param phase Character \{"start", "end"\}: The message.
 /// @param fields List: `label`, the function's name; `path`, `"rust"` for a
 ///   table's map or `"host"` for a list's; `functions` and `in_rust`, the
 ///   functions called and whether each body is compiled code; for `"start"`,
-///   `columns`, `groups`, `items`, and `calls`, each or `NULL`; for `"done"`,
+///   `columns`, `groups`, `items`, and `calls`, each or `NULL`; for `"end"`,
 ///   `wall`, `cpu`, and `threads`.
 /// @return List: `text` and `engine`.
 /// @keywords internal
 /// @noRd
 #[extendr]
-fn r8_map_message(kind: &str, fields: List) -> Result<List> {
+fn r8_map_message(phase: &str, fields: List) -> Result<List> {
     let get = |name: &str| fields.dollar(name).unwrap_or_else(|_| Robj::from(()));
-    // A number, integer or double.
+    // A number: an integer or a double.
     let number = |name: &str| {
         let v = get(name);
         v.as_real().or_else(|| v.as_integer().map(f64::from))
@@ -76,7 +77,7 @@ fn r8_map_message(kind: &str, fields: List) -> Result<List> {
             .collect(),
     };
     let label = get("label").as_str().unwrap_or("f").to_string();
-    let text = match kind {
+    let text = match phase {
         "start" => map_started(
             &label,
             &Size {
@@ -88,7 +89,7 @@ fn r8_map_message(kind: &str, fields: List) -> Result<List> {
             &place,
             HOST,
         ),
-        "done" => map_done(
+        "end" => map_ended(
             number("wall").unwrap_or(0.0),
             number("cpu").unwrap_or(0.0),
             count("threads").unwrap_or(1).max(1),

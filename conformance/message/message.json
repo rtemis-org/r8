@@ -7,7 +7,7 @@
       "description": "A map of a table whose typed function has its body in Rust runs in Rust.",
       "op": "message",
       "input": {
-        "kind": "start",
+        "phase": "start",
         "label": "pkgr::spread",
         "host": "R",
         "timestamp": "2026-11-27 10:04:12",
@@ -26,7 +26,7 @@
       "description": "A body in the host's language runs in the host; the end states the wall time, the CPU time, and the threads.",
       "op": "message",
       "input": {
-        "kind": "done",
+        "phase": "end",
         "label": "pkgr::spread_r",
         "host": "R",
         "timestamp": "2026-11-27 10:04:15",
@@ -37,8 +37,8 @@
         "place": { "path": "rust", "bodies": [ { "function": "pkgr::spread_r", "in_rust": false } ] }
       },
       "expect": {
-        "text": "r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust, with the body of `pkgr::spread_r` in R",
-        "line": "2026-11-27 10:04:15 r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust, with the body of `pkgr::spread_r` in R [r8map]",
+        "text": "r8map(): completed in 3.3 s, CPU 3.2 s of 1 thread, in Rust, with the body of `pkgr::spread_r` in R",
+        "line": "2026-11-27 10:04:15 r8map(): completed in 3.3 s, CPU 3.2 s of 1 thread, in Rust, with the body of `pkgr::spread_r` in R [r8map]",
         "engine": "rust+r"
       }
     },
@@ -47,7 +47,7 @@
       "description": "A map of a list runs in the host, which calls each body.",
       "op": "message",
       "input": {
-        "kind": "start",
+        "phase": "start",
         "label": "pkgr::fit",
         "host": "R",
         "timestamp": "2026-11-27 10:04:12",
@@ -65,7 +65,7 @@
       "description": "Compiled bodies of a list map run in Rust, from the host's loop.",
       "op": "message",
       "input": {
-        "kind": "done",
+        "phase": "end",
         "label": "calc",
         "host": "R",
         "timestamp": "2026-11-27 10:04:15",
@@ -76,8 +76,8 @@
         "place": { "path": "host", "bodies": [ { "function": "pkgr::a", "in_rust": true }, { "function": "pkgr::b", "in_rust": true }, { "function": "pkgr::c", "in_rust": true } ] }
       },
       "expect": {
-        "text": "r8map(): done in 12 s, CPU 0.25 s of 4 threads, in R, with the bodies of `pkgr::a`, `pkgr::b`, and `pkgr::c` in Rust",
-        "line": "2026-11-27 10:04:15 r8map(): done in 12 s, CPU 0.25 s of 4 threads, in R, with the bodies of `pkgr::a`, `pkgr::b`, and `pkgr::c` in Rust [r8map]",
+        "text": "r8map(): completed in 12 s, CPU 0.25 s of 4 threads, in R, with the bodies of `pkgr::a`, `pkgr::b`, and `pkgr::c` in Rust",
+        "line": "2026-11-27 10:04:15 r8map(): completed in 12 s, CPU 0.25 s of 4 threads, in R, with the bodies of `pkgr::a`, `pkgr::b`, and `pkgr::c` in Rust [r8map]",
         "engine": "rust+r"
       }
     }

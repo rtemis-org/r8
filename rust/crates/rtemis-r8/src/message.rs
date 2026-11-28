@@ -7,14 +7,14 @@
 //!
 //! spec: R8/raven#summaries
 
-/// A message: its level, its kind, such as `"start"` or `"done"` of a map, its
+/// A message: its level, its phase, `"start"` or `"end"` of a map, its
 /// text, and the function that writes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
-    /// `"info"`.
+    /// The severity, `"info"`.
     pub level: &'static str,
-    /// What the message reports, such as `"start"`.
-    pub kind: &'static str,
+    /// The moment of the work the message marks, `"start"` or `"end"`.
+    pub phase: &'static str,
     /// The message.
     pub text: String,
     /// The function that writes it, such as `"r8map"`.
@@ -129,6 +129,18 @@ pub struct Size {
 /// The text of the start of a long map of `label`:
 /// `r8map(): pkgr::f over 10 columns and 100,000 groups, 1,000,000 calls, in Rust`.
 pub fn map_started(label: &str, size: &Size, place: &Place, host: &str) -> String {
+    started("r8map", label, size, place, host)
+}
+
+/// The text of the start of the work of `function`, as [`map_started`]
+/// writes it for `r8map`.
+pub(crate) fn started(
+    function: &str,
+    label: &str,
+    size: &Size,
+    place: &Place,
+    host: &str,
+) -> String {
     let mut parts = Vec::new();
     match (size.columns, size.groups, size.items) {
         (Some(c), Some(g), _) => parts.push(format!(
@@ -149,15 +161,15 @@ pub fn map_started(label: &str, size: &Size, place: &Place, host: &str) -> Strin
         .calls
         .map(|n| format!(", {}", counted(n, "call", "calls")))
         .unwrap_or_default();
-    format!("r8map(): {label}{over}{calls}, {}", place.text(host))
+    format!("{function}(): {label}{over}{calls}, {}", place.text(host))
 }
 
 /// The text of the end of a long map: its wall time, the CPU time of the
 /// process, the threads that its work may use, and where it ran:
-/// `r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust`.
-pub fn map_done(wall: f64, cpu: f64, threads: u64, place: &Place, host: &str) -> String {
+/// `r8map(): completed in 3.3 s, CPU 3.2 s of 1 thread, in Rust`.
+pub fn map_ended(wall: f64, cpu: f64, threads: u64, place: &Place, host: &str) -> String {
     format!(
-        "r8map(): done in {} s, CPU {} s of {}, {}",
+        "r8map(): completed in {} s, CPU {} s of {}, {}",
         seconds(wall),
         seconds(cpu),
         counted(threads, "thread", "threads"),
@@ -175,7 +187,7 @@ pub fn line(timestamp: &str, text: &str, caller: Option<&str>) -> String {
 }
 
 /// `n` with its noun, the digits grouped by thousands: `1,000,000 calls`.
-fn counted(n: u64, one: &str, many: &str) -> String {
+pub(crate) fn counted(n: u64, one: &str, many: &str) -> String {
     format!("{} {}", grouped(n), if n == 1 { one } else { many })
 }
 
@@ -261,12 +273,12 @@ mod tests {
             "r8map(): pkgr::spread over 10 columns and 100,000 groups, 1,000,000 calls, in Rust"
         );
         assert_eq!(
-            map_done(3.31, 3.2, 1, &p, "R"),
-            "r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust"
+            map_ended(3.31, 3.2, 1, &p, "R"),
+            "r8map(): completed in 3.3 s, CPU 3.2 s of 1 thread, in Rust"
         );
         assert_eq!(
-            line("2026-11-27 10:04:12", "r8map(): done", Some("r8map")),
-            "2026-11-27 10:04:12 r8map(): done [r8map]"
+            line("2026-11-27 10:04:12", "r8map(): completed", Some("r8map")),
+            "2026-11-27 10:04:12 r8map(): completed [r8map]"
         );
         assert_eq!(seconds(0.254), "0.25");
         assert_eq!(seconds(12.4), "12");

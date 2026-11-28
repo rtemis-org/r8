@@ -2009,6 +2009,128 @@ fn r8_table_calc(
     })
 }
 
+/// The plan of a call over the columns of a table, as `r8_table_calc()` would
+/// run it, without evaluating a row or calling a typed function: the table is
+/// read, the keys checked, the groups numbered, and the expressions compiled.
+///
+/// @param x The table.
+/// @param exprs List: The expressions, by the names of the columns.
+/// @param by Character: The key columns.
+/// @param call List: `name`, the table function; `label`; `summary`,
+///   logical; and `threads`, an integer.
+/// @return A list of `nodes`, or an `r8_refused`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_table_plan(x: Robj, exprs: List, by: Robj, call: List) -> Result<Robj> {
+    crate::interrupt::interruptible_if(crate::interrupt::long(unsafe { x.get() }), || {
+        let h = match Held::of(unsafe { x.get() }) {
+            Ok(h) => h,
+            Err(m) => return Ok(refused(m)),
+        };
+        let names: Vec<String> = exprs
+            .names()
+            .map(|n| n.map(str::to_string).collect())
+            .unwrap_or_default();
+        let mut logic = Vec::with_capacity(exprs.len());
+        for (i, (_, e)) in exprs.iter().enumerate() {
+            match crate::irde::from_r::<rtemis_r8::ir::Logic>(unsafe { e.get() }) {
+                Ok(l) => logic.push(l),
+                Err(m) => return Ok(refused(format!("`{}` does not read: {}", names[i], m.0))),
+            }
+        }
+        let keys: Vec<String> = strings(unsafe { by.get() })
+            .into_iter()
+            .map(|k| k.map(|k| k.into_owned()).unwrap_or_default())
+            .collect();
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+        let refs: Vec<&rtemis_r8::ir::Logic> = logic.iter().collect();
+        let get = |name: &str| call.dollar(name).unwrap_or_else(|_| Robj::from(()));
+        let summary = get("summary").as_bool().unwrap_or(true);
+        let threads = get("threads")
+            .as_integer()
+            .map(|n| usize::try_from(n).unwrap_or(1).max(1))
+            .unwrap_or(1);
+        let function = get("name").as_str().unwrap_or("r8map").to_string();
+        let label = get("label").as_str().unwrap_or("").to_string();
+        let planned = match rtemis_r8::rules::calc::planned(
+            RView::Whole(unsafe { x.get() }),
+            h.def(),
+            &keys,
+            &refs,
+            &*h.docs,
+            summary,
+            threads,
+        ) {
+            Ok(p) => p,
+            Err(e) => return Ok(refused(not_computed(e, &names, summary))),
+        };
+        let columns: Vec<&str> = names.iter().map(String::as_str).collect();
+        let plan = rtemis_r8::plan::table_plan(
+            &rtemis_r8::plan::TableCall {
+                function: &function,
+                label: &label,
+                table: &h.q,
+                by: &keys,
+                columns: &columns,
+                exprs: &refs,
+                summary,
+                threads,
+            },
+            &planned,
+            &*h.docs,
+            &|f| crate::message::in_rust(&f.to_string()),
+        );
+        crate::irser::to_r(&plan).map_err(|e| Error::Other(e.to_string()))
+    })
+}
+
+/// The plan of a map of the typed function `typed` over the items of a list
+/// or a vector, whose calls a loop of R makes.
+///
+/// @param name Character: The table function, `"r8map"`.
+/// @param typed Character: The typed function's qualified name.
+/// @param items Integer: The items.
+/// @return A list of `nodes`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_list_plan(name: &str, typed: &str, items: i32) -> Result<Robj> {
+    let q = QualifiedName::parse(typed).map_err(|e| Error::Other(e.to_string()))?;
+    let docs = registry().snapshot();
+    let plan = rtemis_r8::plan::list_plan(
+        &rtemis_r8::plan::ListCall {
+            function: name,
+            typed: &q,
+            items: u64::try_from(items).unwrap_or(0),
+            in_rust: crate::message::in_rust(typed),
+        },
+        &*docs,
+    );
+    crate::irser::to_r(&plan).map_err(|e| Error::Other(e.to_string()))
+}
+
+/// The text of a plan: its Mermaid flowchart, its headline, or the text of
+/// each stage.
+///
+/// @param nodes List: The plan's nodes.
+/// @param form Character \{"mermaid", "headline", "stages"\}: The text.
+/// @return Character: One string, or one for each stage.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_plan_text(nodes: Robj, form: &str) -> Result<Robj> {
+    let plan = rtemis_r8::plan::Plan {
+        nodes: crate::irde::from_r(unsafe { nodes.get() }).map_err(|e| Error::Other(e.0))?,
+    };
+    match form {
+        "mermaid" => Ok(rtemis_r8::plan::mermaid(&plan).into()),
+        "headline" => Ok(rtemis_r8::plan::headline(&plan, "R").into()),
+        "stages" => Ok(Strings::from_values(rtemis_r8::plan::stage_texts(&plan)).into()),
+        other => Err(Error::Other(format!("no text `{other}` of a plan"))),
+    }
+}
+
 /// The expressions of a map of `f` over `columns`: `f` with `col()` set to
 /// each column.
 ///
@@ -2055,4 +2177,7 @@ extendr_module! {
     fn r8_table_calc;
     fn r8_default_threads;
     fn r8_calc_mapped;
+    fn r8_table_plan;
+    fn r8_list_plan;
+    fn r8_plan_text;
 }

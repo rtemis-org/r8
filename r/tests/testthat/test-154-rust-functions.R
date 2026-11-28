@@ -328,3 +328,46 @@ test_that("an expression of calc() calls a body in Rust through its entry, as a 
     expect_true(line %in% out, info = paste(line, info, sep = "\n"))
   }
 })
+
+test_that("r8explain() states where a body in Rust runs, and calls none", {
+  skip_if(
+    !nzchar(Sys.getenv("R8_PACKAGE_TESTS")),
+    "set R8_PACKAGE_TESTS to install the test packages"
+  )
+  lib <- install_test_packages()
+  out <- run_r(
+    lib,
+    c(
+      "suppressPackageStartupMessages({ library(R8); library(r8pkgR) })",
+      "say <- function(...) cat(..., '\\n')",
+      "x <- Raven(g = c('a', 'a', 'b'), v = c(1, 2, 4), w = c(0.5, 1, 2))",
+      "before <- count_of()",
+      "p <- r8explain(r8summarize(x, list(n = calc(counted(v))), by = 'g'))",
+      "s <- as.data.frame(p)",
+      "say('none', count_of() - before)",
+      "say('rust', p$engine, s$engine[s$stage == 'call'], s$language[s$stage == 'call'])",
+      "fn <- p$nodes[[1]]$meta$functions[[1]]",
+      "say('package', fn$name, fn$package, identical(fn$version, as.character(packageVersion('r8pkgR'))))",
+      "p <- r8explain(r8map(x, spread, columns = c('v', 'w'), by = 'g'))",
+      "say('map', p$headline)",
+      "op <- options(r8.namespace = 'mixed')",
+      "half <- new_function('half', function(x = arg_vec(type_double())) sum(x) / 2, return_type = type_double())",
+      "options(op)",
+      "p <- r8explain(r8summarize(x, list(s = calc(spread(v)), h = calc(half(v))), by = 'g'))",
+      "say('mixed', p$engine, is.null(p$nodes[[1]]$meta$functions[[2]]$package))",
+      "p <- r8explain(r8map(list(c(1, 2), c(3, 5)), spread))",
+      "say('list', p$engine, p$nodes[[1]]$meta$path)"
+    )
+  )
+  info <- paste(out, collapse = "\n")
+  for (line in c(
+    "none 0 ",
+    "rust rust rust rust ",
+    "package pkgr::counted r8pkgR TRUE ",
+    "map r8map(): pkgr::spread over 2 columns and 2 groups, 4 calls, in Rust ",
+    "mixed rust+r TRUE ",
+    "list rust+r host "
+  )) {
+    expect_true(line %in% out, info = paste(line, info, sep = "\n"))
+  }
+})

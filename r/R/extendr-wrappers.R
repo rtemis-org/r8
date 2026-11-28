@@ -663,16 +663,16 @@ r8_body_in_rust <- function(qnames) .Call(wrap__r8_body_in_rust, qnames)
 
 #' The text of a message of a long map, and the engine of its work.
 #'
-#' @param kind Character \{"start", "done"\}: The message.
+#' @param phase Character \{"start", "end"\}: The message.
 #' @param fields List: `label`, the function's name; `path`, `"rust"` for a
 #'   table's map or `"host"` for a list's; `functions` and `in_rust`, the
 #'   functions called and whether each body is compiled code; for `"start"`,
-#'   `columns`, `groups`, `items`, and `calls`, each or `NULL`; for `"done"`,
+#'   `columns`, `groups`, `items`, and `calls`, each or `NULL`; for `"end"`,
 #'   `wall`, `cpu`, and `threads`.
 #' @return List: `text` and `engine`.
 #' @keywords internal
 #' @noRd
-r8_map_message <- function(kind, fields) .Call(wrap__r8_map_message, kind, fields)
+r8_map_message <- function(phase, fields) .Call(wrap__r8_map_message, phase, fields)
 
 #' The line of a message, `<timestamp> <text> [<caller>]`.
 #'
@@ -834,6 +834,41 @@ r8_default_threads <- function() .Call(wrap__r8_default_threads)
 #' @keywords internal
 #' @noRd
 r8_calc_mapped <- function(f, columns) .Call(wrap__r8_calc_mapped, f, columns)
+
+#' The plan of a call over the columns of a table, as `r8_table_calc()` would
+#' run it, without evaluating a row or calling a typed function: the table is
+#' read, the keys checked, the groups numbered, and the expressions compiled.
+#'
+#' @param x The table.
+#' @param exprs List: The expressions, by the names of the columns.
+#' @param by Character: The key columns.
+#' @param call List: `name`, the table function; `label`; `summary`,
+#'   logical; and `threads`, an integer.
+#' @return A list of `nodes`, or an `r8_refused`.
+#' @keywords internal
+#' @noRd
+r8_table_plan <- function(x, exprs, by, call) .Call(wrap__r8_table_plan, x, exprs, by, call)
+
+#' The plan of a map of the typed function `typed` over the items of a list
+#' or a vector, whose calls a loop of R makes.
+#'
+#' @param name Character: The table function, `"r8map"`.
+#' @param typed Character: The typed function's qualified name.
+#' @param items Integer: The items.
+#' @return A list of `nodes`.
+#' @keywords internal
+#' @noRd
+r8_list_plan <- function(name, typed, items) .Call(wrap__r8_list_plan, name, typed, items)
+
+#' The text of a plan: its Mermaid flowchart, its headline, or the text of
+#' each stage.
+#'
+#' @param nodes List: The plan's nodes.
+#' @param form Character \{"mermaid", "headline", "stages"\}: The text.
+#' @return Character: One string, or one for each stage.
+#' @keywords internal
+#' @noRd
+r8_plan_text <- function(nodes, form) .Call(wrap__r8_plan_text, nodes, form)
 
 #' The IR parameters of a generic or trait method, from `params()`.
 #'

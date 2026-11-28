@@ -49,6 +49,7 @@ pub mod layout;
 pub mod message;
 pub mod name;
 mod open;
+pub mod plan;
 pub mod problem;
 pub mod progress;
 pub mod reader;

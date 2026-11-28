@@ -20,6 +20,12 @@ const ROWS_PER_THREAD: usize = 1 << 16;
 /// The rows between two checks of the hook or of the cancel flag.
 const STRIDE: usize = 1 << 14;
 
+/// The threads that work over `rows` rows takes, of at most `threads`: one
+/// for each range of at least `ROWS_PER_THREAD` rows.
+pub(super) fn threads_for(rows: usize, threads: usize) -> usize {
+    threads.clamp(1, (rows / ROWS_PER_THREAD).max(1))
+}
+
 /// `f` of ranges of `0..rows`, in order, on at most `threads` threads.
 pub(super) fn over_rows<T: Send>(
     rows: usize,
@@ -27,7 +33,7 @@ pub(super) fn over_rows<T: Send>(
     f: impl Fn(usize, usize, &AtomicBool) -> T + Sync,
 ) -> Vec<T> {
     let cancel = AtomicBool::new(false);
-    let threads = threads.clamp(1, (rows / ROWS_PER_THREAD).max(1));
+    let threads = threads_for(rows, threads);
     if threads == 1 {
         return vec![f(0, rows, &cancel)];
     }

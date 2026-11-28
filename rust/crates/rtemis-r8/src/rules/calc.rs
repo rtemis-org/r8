@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
-use super::compile::{Calc, Cell, Expr, Op, RowScope, Rows, RuleError, compile_calc};
+use super::compile::{ArgValue, Calc, Cell, Expr, Op, RowScope, Rows, RuleError, compile_calc};
 use super::eval::Scalar;
 use super::rows::{Block, Eval, Failed, Groups, Held, MISSING, NA_NUMBER, RowError, STATES};
 use super::{Ty, TypeLookup};
@@ -758,21 +758,15 @@ pub fn mapped(f: &Logic, columns: &[&str]) -> Result<Vec<Logic>, RuleError> {
     Ok(columns.iter().map(|c| set_column(f, c)).collect())
 }
 
-/// The columns that `exprs` compute over a valid value of the table `def`: of
-/// every row, or, where `summary`, of each group of the rows by the columns
-/// `by`, or of the table without them. In a column of every row, an
-/// aggregate is over the row's group.
-#[allow(clippy::too_many_arguments)]
-pub fn computed<'a, A: Access<'a>>(
+/// Reads the table, checks the keys, and numbers the groups of the rows, then
+/// gives the columns that expressions read, the rows, and the groups to
+/// `then`.
+fn prepared<'a, A: Access<'a>, R>(
     table: A,
     def: &TableDef,
     by: &[&str],
-    exprs: &[&Logic],
-    lookup: &dyn TypeLookup,
-    functions: &dyn Functions,
-    summary: bool,
-    threads: usize,
-) -> Result<Outcome, NotComputed> {
+    then: impl FnOnce(&dyn RowScope, usize, Option<Arc<Groups>>) -> Result<R, NotComputed>,
+) -> Result<R, NotComputed> {
     let t = table
         .table(&def.columns, def.open)
         .map_err(|f| NotComputed::Table(f.message))?;
@@ -831,18 +825,37 @@ pub fn computed<'a, A: Access<'a>>(
             }
         }))
     };
-    let mut columns = Vec::with_capacity(exprs.len());
-    for (at, e) in exprs.iter().enumerate() {
-        let calc: Calc = compile_calc(e, scope, lookup, summary)
-            .map_err(|errors| NotComputed::Rule { at, errors })?;
-        let unit = match &calc.ty {
-            Ty::Number { unit, .. } => unit.clone(),
-            _ => None,
-        };
-        let kind = kind_of(&calc.ty, integer(&calc.rows.invariant, &calc.rows.cells));
-        functions.expression(at);
-        let eval = Eval::calling(&calc.rows, table, rows, groups.clone(), threads, functions)
-            .map_err(|f| match f {
+    then(scope, rows, groups)
+}
+
+/// The columns that `exprs` compute over a valid value of the table `def`: of
+/// every row, or, where `summary`, of each group of the rows by the columns
+/// `by`, or of the table without them. In a column of every row, an
+/// aggregate is over the row's group.
+#[allow(clippy::too_many_arguments)]
+pub fn computed<'a, A: Access<'a>>(
+    table: A,
+    def: &TableDef,
+    by: &[&str],
+    exprs: &[&Logic],
+    lookup: &dyn TypeLookup,
+    functions: &dyn Functions,
+    summary: bool,
+    threads: usize,
+) -> Result<Outcome, NotComputed> {
+    prepared(table, def, by, |scope, rows, groups| {
+        let mut columns = Vec::with_capacity(exprs.len());
+        for (at, e) in exprs.iter().enumerate() {
+            let calc: Calc = compile_calc(e, scope, lookup, summary)
+                .map_err(|errors| NotComputed::Rule { at, errors })?;
+            let unit = match &calc.ty {
+                Ty::Number { unit, .. } => unit.clone(),
+                _ => None,
+            };
+            let kind = kind_of(&calc.ty, integer(&calc.rows.invariant, &calc.rows.cells));
+            functions.expression(at);
+            let eval = Eval::calling(&calc.rows, table, rows, groups.clone(), threads, functions)
+                .map_err(|f| match f {
                 Failed::Table(m) => NotComputed::Table(m),
                 Failed::Row(error) => NotComputed::Row { at, error },
                 Failed::Call {
@@ -857,38 +870,128 @@ pub fn computed<'a, A: Access<'a>>(
                     message,
                 },
             })?;
-        let n = if summary { eval.group_count() } else { rows };
-        // A summary of a table of no rows, without keys, is one row.
-        let n = if summary && groups.as_ref().is_some_and(|g| g.count == 0) {
-            0
-        } else {
-            n
-        };
-        eval.set_over_groups(summary);
-        let mut data = empty(kind, n);
-        let mut error: Option<RowError> = None;
-        for lo in (0..n).step_by(BLOCK) {
-            crate::progress::tick_block();
-            let hi = (lo + BLOCK).min(n);
-            let b = eval
-                .block(&calc.rows.invariant, lo, hi)
-                .map_err(NotComputed::Table)?;
-            append(&mut data, &b, lo, hi - lo, &mut error);
+            let n = if summary { eval.group_count() } else { rows };
+            // A summary of a table of no rows, without keys, is one row.
+            let n = if summary && groups.as_ref().is_some_and(|g| g.count == 0) {
+                0
+            } else {
+                n
+            };
+            eval.set_over_groups(summary);
+            let mut data = empty(kind, n);
+            let mut error: Option<RowError> = None;
+            for lo in (0..n).step_by(BLOCK) {
+                crate::progress::tick_block();
+                let hi = (lo + BLOCK).min(n);
+                let b = eval
+                    .block(&calc.rows.invariant, lo, hi)
+                    .map_err(NotComputed::Table)?;
+                append(&mut data, &b, lo, hi - lo, &mut error);
+            }
+            eval.set_over_groups(false);
+            if let Some(error) = error {
+                return Err(NotComputed::Row { at, error });
+            }
+            columns.push(Computed {
+                kind,
+                unit,
+                data,
+                zone_of: zone_of(&calc.rows.cells),
+            });
         }
-        eval.set_over_groups(false);
-        if let Some(error) = error {
-            return Err(NotComputed::Row { at, error });
-        }
-        columns.push(Computed {
-            kind,
-            unit,
-            data,
-            zone_of: zone_of(&calc.rows.cells),
-        });
-    }
-    Ok(Outcome {
-        groups: groups.map(|g| Arc::try_unwrap(g).unwrap_or_else(|g| (*g).clone())),
-        rows,
-        columns,
+        Ok(Outcome {
+            groups: groups.map(|g| Arc::try_unwrap(g).unwrap_or_else(|g| (*g).clone())),
+            rows,
+            columns,
+        })
     })
+}
+
+/// What one expression of a call computes, before any row is evaluated.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExprWork {
+    /// The typed functions that it calls, in the order of their calls.
+    pub calls: Vec<QualifiedName>,
+    /// Its aggregates of the dialect.
+    pub aggregates: usize,
+    /// Its aggregates that run as a kernel over one column, which may take
+    /// several threads: `sum()`, `mean()`, `min()`, or `max()` of a column.
+    pub kernels: usize,
+    /// It reads the cells of each row outside an aggregate and a call.
+    pub rows: bool,
+}
+
+/// The expressions of a call compiled against a table and the groups of its
+/// rows, before any row is evaluated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Planned {
+    /// The rows of the table.
+    pub rows: usize,
+    /// The number of groups, when keys are given.
+    pub groups: Option<usize>,
+    /// What each expression computes, in order.
+    pub exprs: Vec<ExprWork>,
+    /// The threads that an aggregate's kernel over the rows takes.
+    pub kernel_threads: usize,
+}
+
+/// The work of `exprs` over a valid value of the table `def`, as
+/// [`computed`] does it, without evaluating a row or calling a typed
+/// function: the table is read, the keys are checked, the groups are
+/// numbered, and each expression is compiled, with the errors of
+/// [`computed`].
+pub fn planned<'a, A: Access<'a>>(
+    table: A,
+    def: &TableDef,
+    by: &[&str],
+    exprs: &[&Logic],
+    lookup: &dyn TypeLookup,
+    summary: bool,
+    threads: usize,
+) -> Result<Planned, NotComputed> {
+    prepared(table, def, by, |scope, rows, groups| {
+        let mut out = Vec::with_capacity(exprs.len());
+        for (at, e) in exprs.iter().enumerate() {
+            let calc: Calc = compile_calc(e, scope, lookup, summary)
+                .map_err(|errors| NotComputed::Rule { at, errors })?;
+            let mut w = ExprWork::default();
+            work(&calc.rows.invariant, &mut w);
+            w.rows = !summary && super::compile::reads_cell_outside(&calc.rows.invariant);
+            out.push(w);
+        }
+        Ok(Planned {
+            rows,
+            groups: groups.map(|g| g.count),
+            exprs: out,
+            kernel_threads: super::parallel::threads_for(rows, threads.max(1)),
+        })
+    })
+}
+
+/// Adds the calls and the aggregates of `e` to `w`.
+fn work(e: &Expr, w: &mut ExprWork) {
+    match e {
+        Expr::Call { function, args, .. } => {
+            w.calls.push(function.clone());
+            for a in args {
+                if let ArgValue::Cells { expr, .. } = &a.value {
+                    work(expr, w);
+                }
+            }
+        }
+        Expr::Aggregate { op, operands, .. } => {
+            w.aggregates += 1;
+            if matches!(op, Op::Sum | Op::Mean | Op::Min | Op::Max)
+                && matches!(operands.as_slice(), [Expr::Cell(_)])
+            {
+                w.kernels += 1;
+            }
+            operands.iter().for_each(|o| work(o, w));
+        }
+        Expr::If(xs) | Expr::And(xs) | Expr::Or(xs) | Expr::Op(_, xs) => {
+            xs.iter().for_each(|x| work(x, w));
+        }
+        Expr::IsNa(x) | Expr::IsNull(x) => work(x, w),
+        _ => {}
+    }
 }

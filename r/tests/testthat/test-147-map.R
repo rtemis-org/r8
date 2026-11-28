@@ -173,7 +173,7 @@ test_that("a long map reports its progress to the hook, a short one nothing", {
     begin[c("total", "label", "kind")],
     list(total = 20L, label = attr(slow, "r8_function"), kind = "r8map")
   )
-  expect_identical(log[["events"]][[length(kinds)]][["status"]], "done")
+  expect_identical(log[["events"]][[length(kinds)]][["status"]], "completed")
   current <- unlist(lapply(
     Filter(function(e) e[["event"]] == "update", log[["events"]]),
     `[[`,
@@ -208,7 +208,7 @@ test_that("a map that fails ends its progress with the error", {
   last <- log[["events"]][[length(log[["events"]])]]
   expect_identical(
     last[c("event", "status")],
-    list(event = "end", status = "error")
+    list(event = "end", status = "failed")
   )
 })
 
@@ -252,7 +252,7 @@ test_that("rtemis.core draws the progress of a map under its own", {
   })
   expect_identical(out, as.double(1:15))
   expect_true(any(grepl(
-    paste(attr(slow, "r8_function"), "15/15 done"),
+    paste(attr(slow, "r8_function"), "15/15 completed"),
     drawn,
     fixed = TRUE
   )))
@@ -290,7 +290,7 @@ test_that("a long map writes where it runs at verbosity 1, and nothing at 0", {
   )
   expect_match(
     lines[[2L]],
-    "r8map\\(\\): done in [0-9.]+ s, CPU [0-9.]+ s of [0-9]+ threads?, in Rust,"
+    "r8map\\(\\): completed in [0-9.]+ s, CPU [0-9.]+ s of [0-9]+ threads?, in Rust,"
   )
   # A list's map runs in R.
   lines <- character()
@@ -335,7 +335,7 @@ test_that("a long map writes where it runs at verbosity 1, and nothing at 0", {
     })
   )
   expect_silent(with_hook(hook, r8map(x, slow_sum, by = "g")))
-  expect_identical(vapply(events, `[[`, "", "kind"), c("start", "done"))
+  expect_identical(vapply(events, `[[`, "", "phase"), c("start", "end"))
   expect_identical(events[[1L]][["caller"]], "r8map")
   expect_s3_class(events[[1L]][["time"]], "POSIXct")
   quiet <- recorder()

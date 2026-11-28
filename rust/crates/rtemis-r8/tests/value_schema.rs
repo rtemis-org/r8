@@ -95,10 +95,10 @@ fn exported_schemas_agree_with_validation() {
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
         // Value cases; a `dispatch` case names a trait, the input of a `refine`
-        // and an `update` case are declarations, and that of a `check` case is
-        // a table that its type may refuse.
+        // and an `update` case are declarations, that of a `check` case is a
+        // table that its type may refuse, and a `plan` case may map a list.
         for case in suite["cases"].as_array().unwrap() {
-            if ["dispatch", "refine", "update", "check", "call"]
+            if ["dispatch", "refine", "update", "check", "call", "plan"]
                 .contains(&case["op"].as_str().unwrap_or_default())
             {
                 continue;
@@ -186,10 +186,10 @@ fn closed_schemas_list_the_registered_implementors() {
         });
         let name = path.strip_prefix(&dir).unwrap().display().to_string();
         // Value cases; a `dispatch` case names a trait, the input of a `refine`
-        // and an `update` case are declarations, and that of a `check` case is
-        // a table that its type may refuse.
+        // and an `update` case are declarations, that of a `check` case is a
+        // table that its type may refuse, and a `plan` case may map a list.
         for case in suite["cases"].as_array().unwrap() {
-            if ["dispatch", "refine", "update", "check", "call"]
+            if ["dispatch", "refine", "update", "check", "call", "plan"]
                 .contains(&case["op"].as_str().unwrap_or_default())
             {
                 continue;

@@ -344,6 +344,24 @@ table_calc <- function(
   } else {
     functions <- NULL
   }
+  if (explaining()) {
+    explained(
+      r8_table_plan(
+        x,
+        exprs,
+        by,
+        list(
+          name = fn,
+          label = .r8_explain[["label"]] %||%
+            paste(names(exprs), collapse = ", "),
+          summary = summary,
+          threads = threads_of(n_threads)
+        )
+      ),
+      x,
+      functions
+    )
+  }
   run <- function() {
     r8_table_calc(
       x,
@@ -1390,7 +1408,7 @@ summary_table <- function(x, by, first, columns, units, names) {
 #' A map of a typed function reports its progress to a host that sets the option
 #' `r8.progress` to a list of three functions: `begin(total, label, kind)`, which
 #' gives a handle, `update(handle, current)`, and `end(handle, status)`, with the
-#' status `"done"`, `"error"`, or `"aborted"`. The total is the calls of `f`, the
+#' status `"completed"`, `"failed"`, or `"aborted"`. The total is the calls of `f`, the
 #' label its name, and the kind `"r8map"`; on a table, the total is the groups
 #' times the columns. `begin` is called once the map has run for 0.2 s, so that a
 #' shorter map reports nothing, and `update` about every 0.05 to 0.2 s. Without the
@@ -1398,14 +1416,14 @@ summary_table <- function(x, by, first, columns, units, names) {
 #'
 #' @section Messages:
 #' At `verbosity` 1 or more, a map that takes longer than 0.2 s writes a start
-#' line once it has run for 0.2 s and a done line when it completes, each with
+#' line once it has run for 0.2 s and an end line when it completes, each with
 #' the time and where the map runs, in Rust, in R, or both, by the bodies of its
-#' typed functions; the done line states the wall time, the CPU time of the
+#' typed functions; the end line states the wall time, the CPU time of the
 #' process, and the threads that the map may use:
-#' `2026-11-27 10:04:15 r8map(): done in 3.3 s, CPU 3.2 s of 1 thread, in Rust [r8map]`.
+#' `2026-11-27 10:04:15 r8map(): completed in 3.3 s, CPU 3.2 s of 1 thread, in Rust [r8map]`.
 #' The lines are messages, which `suppressMessages()` silences. A hook in
 #' `r8.progress` with a fourth function, `message(event)`, receives each as a
-#' list of `level`, `kind` (`"start"` or `"done"`), `text`, `caller`, and `time`;
+#' list of `level`, `phase` (`"start"` or `"end"`), `text`, `caller`, and `time`;
 #' a hook without one receives `begin` and `end` in their place.
 #'
 #' @section Tables:
@@ -1804,7 +1822,7 @@ map_hook <- function() {
 #' Reads the option `r8.progress` once (`map_hook()`). A map reports its steps at
 #' a stride that doubles while reports come within 0.05 s and halves when they
 #' come after 0.2 s, and calls `begin` at the first report after 0.2 s, so that a
-#' shorter map reports nothing; `end` follows with `"done"`, `"error"`, or
+#' shorter map reports nothing; `end` follows with `"completed"`, `"failed"`, or
 #' `"aborted"`.
 #'
 #' A map whose calls Rust makes counts them in Rust, at the report points of
@@ -1813,8 +1831,8 @@ map_hook <- function() {
 #' hook, or `NULL`.
 #'
 #' At `verbosity` 1 or more, a map writes a start line at its first report after
-#' 0.2 s and a done line when it completes after 0.2 s, in the words of
-#' `rtemis_r8::message`, each stating where the map runs, the done line with
+#' 0.2 s and an end line when it completes after 0.2 s, in the words of
+#' `rtemis_r8::message`, each stating where the map runs, the end line with
 #' the wall time, the CPU time of the process, and the threads: to the hook's
 #' `message(event)` where it has one, by base `message()` without a hook, and
 #' to neither where a hook has no `message`, whose `begin` and `end` take their
@@ -1846,6 +1864,11 @@ map_progress <- function(
   threads = 1L,
   hooked = TRUE
 ) {
+  if (explaining()) {
+    # r8explain() runs the map to its plan, which reports and says nothing.
+    .r8_explain[["label"]] <- label
+    return(run(function() NULL, NULL))
+  }
   hook <- map_hook()
   progress <- hooked && !is.null(hook)
   # `label` and `place` are evaluated only for a message or a hook.
@@ -1862,15 +1885,15 @@ map_progress <- function(
   handle <- NULL
   begun <- FALSE
   said <- FALSE
-  say <- function(kind, fields) {
-    text <- r8_map_message(kind, c(list(label = label), place, fields))[[
+  say <- function(phase, fields) {
+    text <- r8_map_message(phase, c(list(label = label), place, fields))[[
       "text"
     ]]
     time <- Sys.time()
     if (!is.null(hook) && is.function(hook[["message"]])) {
       hook[["message"]](list(
         level = "info",
-        kind = kind,
+        phase = phase,
         text = text,
         caller = "r8map",
         time = time
@@ -1948,20 +1971,20 @@ map_progress <- function(
       error = identity
     )
   }
-  status <- "error"
+  status <- "failed"
   on.exit(
     {
       if (begun) {
         # A map that completes reports its last steps.
-        if (identical(status, "done")) {
+        if (identical(status, "completed")) {
           hook[["update"]](handle, done)
         }
         hook[["end"]](handle, status)
       }
       took <- proc.time() - started
-      if (talk && identical(status, "done") && took[["elapsed"]] >= 0.2) {
+      if (talk && identical(status, "completed") && took[["elapsed"]] >= 0.2) {
         say(
-          "done",
+          "end",
           list(
             wall = took[["elapsed"]],
             cpu = took[["user.self"]] + took[["sys.self"]],
@@ -1980,7 +2003,7 @@ map_progress <- function(
   } else {
     run(step, reported)
   }
-  status <- "done"
+  status <- "completed"
   if (!is.null(total)) {
     done <- total
   }
@@ -2092,6 +2115,12 @@ map_items <- function(x, f, columns, by, args, n_threads, verbosity) {
   # A body in R runs on R's thread.
   threads_of(n_threads)
   sig <- map_signature(f, args)
+  if (explaining()) {
+    explained(
+      r8_list_plan("r8map", sig[["name"]], length(x)),
+      functions = stats::setNames(list(f), sig[["name"]])
+    )
+  }
   constants <- sig[["args"]]
   call_f <- if (length(constants) == 0L) {
     f

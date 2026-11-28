@@ -118,7 +118,8 @@
             "calc",
             "summarize",
             "map",
-            "message"
+            "message",
+            "plan"
           ]
         },
         "type": {
@@ -975,7 +976,7 @@
             "input": {
               "type": "object",
               "required": [
-                "kind",
+                "phase",
                 "label",
                 "place",
                 "host",
@@ -983,10 +984,10 @@
               ],
               "additionalProperties": false,
               "properties": {
-                "kind": {
+                "phase": {
                   "enum": [
                     "start",
-                    "done"
+                    "end"
                   ]
                 },
                 "label": {
@@ -1097,6 +1098,124 @@
               }
             }
           }
+        },
+        {
+          "properties": {
+            "op": {
+              "const": "plan"
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "function": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "f": true,
+                "columns": {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "object"
+                    }
+                  ]
+                },
+                "by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "summary": {
+                  "type": "boolean"
+                },
+                "threads": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "in_rust": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/qualified"
+                  }
+                },
+                "typed": {
+                  "$ref": "#/$defs/qualified"
+                }
+              }
+            },
+            "expect": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "plan",
+                    "headline",
+                    "mermaid"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "plan": {
+                      "type": "object",
+                      "required": [
+                        "nodes"
+                      ],
+                      "properties": {
+                        "nodes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "node_id",
+                              "parent_id",
+                              "kind",
+                              "label",
+                              "status",
+                              "t_start",
+                              "t_end",
+                              "meta"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "headline": {
+                      "type": "string"
+                    },
+                    "mermaid": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "key_error"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "key_error": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/$defs/errors"
+                }
+              ]
+            }
+          },
+          "required": [
+            "options"
+          ]
         }
       ]
     }
