@@ -207,7 +207,7 @@ plan_of <- function(nodes, call, functions = NULL) {
   if (!is.null(call)) {
     meta[["call"]] <- paste(deparse(call, width.cutoff = 500L), collapse = " ")
   }
-  meta[["r8_version"]] <- getNamespaceVersion("R8")[["version"]]
+  meta[["r8_version"]] <- as.character(getNamespaceVersion("R8"))
   meta[["platform"]] <- R.version[["platform"]]
   # A body's identity: the package in whose namespace its closure is defined,
   # with the package's version, or, for a function of no package, such as one
@@ -221,8 +221,8 @@ plan_of <- function(nodes, call, functions = NULL) {
     }
     home <- topenv(environment(closure))
     if (isNamespace(home)) {
-      f[["package"]] <- getNamespaceName(home)[["name"]]
-      f[["version"]] <- getNamespaceVersion(home)[["version"]]
+      f[["package"]] <- unname(getNamespaceName(home))
+      f[["version"]] <- as.character(getNamespaceVersion(home))
     } else {
       f[["body_hash"]] <- r8_text_hash(paste(
         deparse(body(closure), width.cutoff = 500L),

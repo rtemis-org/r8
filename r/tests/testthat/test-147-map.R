@@ -157,6 +157,13 @@ slow <- declared(new_function(
   },
   return_type = type_double()
 ))
+# A short map calls a function that does not sleep: on r-universe's machines
+# of macOS, three calls of `slow` ran past 0.2 s.
+fast <- declared(new_function(
+  "fast",
+  function(v = arg_double()) v,
+  return_type = type_double()
+))
 
 test_that("a long map reports its progress to the hook, a short one nothing", {
   log <- recorder()
@@ -183,7 +190,7 @@ test_that("a long map reports its progress to the hook, a short one nothing", {
   expect_identical(current[[length(current)]], 20L)
   # A map that ends within 0.2 s calls no hook.
   quick <- recorder()
-  with_hook(quick[["hook"]], r8map(c(1, 2, 3), slow))
+  with_hook(quick[["hook"]], r8map(c(1, 2, 3), fast))
   expect_length(quick[["events"]], 0L)
 })
 
@@ -320,7 +327,7 @@ test_that("a long map writes where it runs at verbosity 1, and nothing at 0", {
   expect_silent(m2 <- suppressMessages(r8map(x, slow_sum, by = "g")))
   expect_true(r8equal(m2, m))
   expect_silent(r8map(x, slow_sum, by = "g", verbosity = 0L))
-  expect_silent(r8map(c(1, 2), slow))
+  expect_silent(r8map(c(1, 2), fast))
   refuses(
     r8map(c(1, 2), slow, verbosity = -1),
     "`verbosity` is a whole number of at least 0",

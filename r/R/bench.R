@@ -137,7 +137,7 @@ r8bench <- function(expr, gc = FALSE) {
       size = bench_size(plans),
       plans = plans,
       platform = R.version[["platform"]],
-      r8_version = getNamespaceVersion("R8")[["version"]]
+      r8_version = as.character(getNamespaceVersion("R8"))
     ),
     class = "r8_bench"
   )
