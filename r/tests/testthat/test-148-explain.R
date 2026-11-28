@@ -53,9 +53,13 @@ test_that("a map's plan states its stages and calls no typed function", {
       "calls",
       "threads",
       "inputs",
-      "status"
+      "status",
+      "t_start",
+      "t_end",
+      "busy"
     )
   )
+  expect_true(all(is.na(stages[c("t_start", "t_end", "busy")])))
   calling <- stages[stages[["stage"]] == "call", ]
   expect_identical(calling[["function"]], rep(q, 2L))
   expect_identical(calling[["language"]], rep("r", 2L))
@@ -148,6 +152,34 @@ test_that("a summary, a computed column, and a list have their own stages", {
   expect_identical(as.data.frame(l)[["calls"]], c(NA, 2L, NA))
 })
 
+test_that("a stage reads the stages whose results it reads", {
+  r <- r8explain(r8set(m, list(share = calc(auc / sum(auc))), by = "combo"))
+  stages <- as.data.frame(r)
+  expect_identical(
+    stages$stage,
+    c("check", "compile", "group", "aggregate", "evaluate", "assemble")
+  )
+  expect_identical(stages$inputs[stages$stage == "evaluate"], "s3, s4, s5")
+  expect_identical(stages$inputs[stages$stage == "assemble"], "s6")
+  twice <- r8explain(r8map(
+    m,
+    calc(spread(col()) - spread(col())),
+    columns = "auc"
+  ))
+  calls <- as.data.frame(twice)
+  expect_identical(
+    calls$label[calls$stage == "call"],
+    paste0(q, ": auc #", 1:2)
+  )
+})
+
+test_that("a call of r8set() without calc() has a plan of its checks", {
+  p <- r8explain(r8set(m, list(flag = m$auc > 0.8)))
+  expect_identical(stages_of(p), c("check", "compile", "assemble"))
+  p <- r8explain(r8set(m, list()))
+  expect_identical(stages_of(p), c("check", "compile", "assemble"))
+})
+
 test_that("the arguments run before the call, and only the call is explained", {
   calls <<- 0L
   plan <- r8explain(r8map(
@@ -222,4 +254,45 @@ test_that("r8explain() refuses what it cannot explain, and raises the call's err
   # After an error, a call runs.
   expect_false(explaining())
   expect_s3_class(r8map(m, calc(median(col()))), "r8_table")
+})
+
+test_that("a function of no package is identified by its body", {
+  # The last test of the file: it declares `spread` again, with another body.
+  # A test's functions belong to R8's namespace when the tests run inside it,
+  # so the closures here are moved to an environment of no package.
+  f <- function(plan) plan$nodes[[1L]]$meta$functions[[1L]]
+  first <- r8explain(r8map(m, spread, by = "combo"))
+  home <- topenv(environment(spread))
+  if (isNamespace(home)) {
+    expect_identical(f(first)$package, getNamespaceName(home)[["name"]])
+  } else {
+    expect_match(f(first)$body_hash, "^sha256:[0-9a-f]{64}$")
+  }
+  loose <- function(closure) {
+    environment(closure) <- new.env(parent = globalenv())
+    closure
+  }
+  identity_of <- function(plan, closure) {
+    f(plan_of(
+      plan$nodes,
+      quote(r8map(m, spread)),
+      stats::setNames(list(loose(closure)), q)
+    ))
+  }
+  one <- identity_of(first, spread)
+  expect_null(one$package)
+  expect_match(one$body_hash, "^sha256:[0-9a-f]{64}$")
+  other <- declared(new_function(
+    "spread",
+    function(x = arg_vec(type_double())) diff(range(x)),
+    return_type = type_double()
+  ))
+  second <- r8explain(r8map(m, other, by = "combo"))
+  two <- identity_of(second, other)
+  expect_false(identical(two$body_hash, one$body_hash))
+  # The declaration is the same, and so is the plan hash.
+  expect_identical(
+    second$nodes[[1L]]$meta$plan_hash,
+    first$nodes[[1L]]$meta$plan_hash
+  )
 })

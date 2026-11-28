@@ -858,6 +858,7 @@ version = "0.6.0"
 dependencies = [
  "hashbrown",
  "jsonschema",
+ "libc",
  "regex",
  "rtemis-r8-macros",
  "ryu-js",

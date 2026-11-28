@@ -14,6 +14,62 @@ NULL
 #' @noRd
 r8_alloc_stats <- function() .Call(wrap__r8_alloc_stats)
 
+#' Seconds on a monotonic clock, from the first read in the process: the
+#' clock of the times of a plan's stages in R, which match the core's.
+#'
+#' @return Double.
+#' @keywords internal
+#' @noRd
+r8_clock <- function() .Call(wrap__r8_clock)
+
+#' The CPU time and the memory of R's process.
+#'
+#' @return A list of `user` and `system`, the seconds of CPU time of all its
+#'   threads, `rss`, the bytes it holds, and `peak`, the most it has held, the
+#'   operating system's high-water mark; a figure that the system does not
+#'   give is `NA`.
+#' @keywords internal
+#' @noRd
+r8_usage <- function() .Call(wrap__r8_usage)
+
+#' Starts a thread that reads the memory of R's process every `every_ms`
+#' milliseconds; it calls no function of R.
+#'
+#' @param every_ms Integer: The interval.
+#' @return An external pointer to the sampler, for `r8_sampler_stop()`.
+#' @keywords internal
+#' @noRd
+r8_sampler_start <- function(every_ms) .Call(wrap__r8_sampler_start, every_ms)
+
+#' Stops a sampler and gives the most memory that it read.
+#'
+#' @param sampler The external pointer that `r8_sampler_start()` gives.
+#' @return Double: The bytes, or `NA` where the system gives no reading or
+#'   the sampler has stopped.
+#' @keywords internal
+#' @noRd
+r8_sampler_stop <- function(sampler) .Call(wrap__r8_sampler_stop, sampler)
+
+#' The cores that R's process may use: those that the operating system gives
+#' it, and at most `SLURM_CPUS_PER_TASK` in a Slurm job.
+#'
+#' @return Integer.
+#' @keywords internal
+#' @noRd
+r8_cores_available <- function() .Call(wrap__r8_cores_available)
+
+#' The line of a benchmark's result, in the core's words.
+#'
+#' @param wall,cpu Double: The seconds of wall and CPU time.
+#' @param threads Integer: The threads that R8's work may use.
+#' @param peak Double: The most bytes that the process held, or `NA`.
+#' @param engine Character: `"rust"`, `"r"`, `"rust+r"`, or `""` where the
+#'   expression ran no table function of R8.
+#' @return Character.
+#' @keywords internal
+#' @noRd
+r8_bench_line <- function(wall, cpu, threads, peak, engine) .Call(wrap__r8_bench_line, wall, cpu, threads, peak, engine)
+
 #' The text of a rule's expression in the syntax that rules are written in
 #' (`rtemis_r8::rules::text::text()`).
 #'
@@ -799,8 +855,10 @@ r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 #' @param exprs List: The expressions, as `calc()` holds them, by the names
 #'   of the columns.
 #' @param by Character: The key columns, or a vector of length 0.
-#' @param summary Logical: One value for each group.
-#' @param threads Integer: The threads that the aggregates of a column may use.
+#' @param run List: `summary`, logical, one value for each group; `threads`,
+#'   an integer, the threads that the aggregates of a column may use; and
+#'   `trace`, `NULL` or, for a collector of the run's plan, a list of `name`,
+#'   the table function, `label`, and `before`, the seconds of R's checks.
 #' @param functions List: The typed functions that the expressions call, by
 #'   their qualified names.
 #' @param callers List: R8's `call_typed()`, `call_settled()`, and the function
@@ -810,11 +868,12 @@ r8_table_bind <- function(xs) .Call(wrap__r8_table_bind, xs)
 #'   without keys, `columns`, the computed vectors, and `units`, or an
 #'   `r8_refused`, which for an error of a call holds `call`, the function,
 #'   the column, and the first row of the group, and `failed`, the condition,
-#'   and for an error of the progress hook holds `hook`, its condition. A jump
-#'   of R that a compiled body caught continues instead.
+#'   and for an error of the progress hook holds `hook`, its condition; with a
+#'   `trace`, either holds `plan`, the nodes of the run's plan. A jump of R
+#'   that a compiled body caught continues instead.
 #' @keywords internal
 #' @noRd
-r8_table_calc <- function(x, exprs, by, summary, threads, functions, callers) .Call(wrap__r8_table_calc, x, exprs, by, summary, threads, functions, callers)
+r8_table_calc <- function(x, exprs, by, run, functions, callers) .Call(wrap__r8_table_calc, x, exprs, by, run, functions, callers)
 
 #' The threads of a table function by default: half of the logical cores, at
 #' most 2 where `R CMD check` limits the cores (`_R_CHECK_LIMIT_CORES_`), and
@@ -869,6 +928,14 @@ r8_list_plan <- function(name, typed, items) .Call(wrap__r8_list_plan, name, typ
 #' @keywords internal
 #' @noRd
 r8_plan_text <- function(nodes, form) .Call(wrap__r8_plan_text, nodes, form)
+
+#' The SHA-256 of a text's UTF-8 bytes, for the identity of a body of R code.
+#'
+#' @param text Character: The text.
+#' @return Character: `sha256:<hex>`.
+#' @keywords internal
+#' @noRd
+r8_text_hash <- function(text) .Call(wrap__r8_text_hash, text)
 
 #' The IR parameters of a generic or trait method, from `params()`.
 #'

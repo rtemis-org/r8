@@ -242,6 +242,7 @@ name = "rtemis-r8"
 version = "0.6.0"
 dependencies = [
  "hashbrown",
+ "libc",
  "regex",
  "ryu-js",
  "serde",

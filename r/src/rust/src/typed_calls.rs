@@ -142,9 +142,9 @@ impl<'h> RFunctions<'h> {
             columns,
             docs,
             closures,
-            caller: callers.dollar("call").ok().and_then(|f| f.as_function()),
-            settle: callers.dollar("settle").ok().and_then(|f| f.as_function()),
-            report: callers.dollar("report").ok().and_then(|f| f.as_function()),
+            caller: crate::rview::element(callers, "call").as_function(),
+            settle: crate::rview::element(callers, "settle").as_function(),
+            report: crate::rview::element(callers, "report").as_function(),
             steps: std::cell::Cell::new(0),
             total: std::cell::Cell::new(0),
             expressions,
@@ -196,9 +196,9 @@ impl<'h> RFunctions<'h> {
         let message = if out.is_string() {
             out.as_str().unwrap_or_default().to_string()
         } else {
-            out.dollar("message")
-                .ok()
-                .and_then(|m| m.as_str().map(str::to_string))
+            crate::rview::element(&out, "message")
+                .as_str()
+                .map(str::to_string)
                 .unwrap_or_default()
         };
         *self.hook_failed.borrow_mut() = Some(out);
@@ -490,15 +490,12 @@ impl RFunctions<'_> {
             .call(pairlist!(f.clone(), List::from_values(given)))
             .map_err(|e| fail(0, format!("the call ended: {e}")))?;
         if out.inherits("r8_call_failed") {
-            let message = out
-                .dollar("message")
-                .ok()
-                .and_then(|m| m.as_str().map(str::to_string))
+            let message = crate::rview::element(&out, "message")
+                .as_str()
+                .map(str::to_string)
                 .unwrap_or_default();
-            let at = out
-                .dollar("at")
-                .ok()
-                .and_then(|a| a.as_integer())
+            let at = crate::rview::element(&out, "at")
+                .as_integer()
                 .map_or(0, |a| (a.max(1) - 1) as usize);
             *self.failed.borrow_mut() = Some(out);
             return Err(fail(at, message));
@@ -695,10 +692,9 @@ impl RFunctions<'_> {
             Ok(o) => o,
             Err(e) => return fail(format!("the call ended: {e}")),
         };
-        let message = out
-            .dollar("message")
-            .ok()
-            .and_then(|m| m.as_str().map(str::to_string))
+        let message = crate::rview::element(&out, "message")
+            .as_str()
+            .map(str::to_string)
             .unwrap_or_default();
         *self.failed.borrow_mut() = Some(out);
         fail(message)

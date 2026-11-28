@@ -433,6 +433,7 @@ fn run_plan(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
                 typed: &typed,
                 items,
                 in_rust: in_rust.contains(&typed),
+                host: "r",
             },
             docs,
         )
@@ -488,8 +489,47 @@ fn run_plan(ir: Option<&DocumentSet>, case: &Value) -> Option<String> {
             exprs: &refs,
             summary,
             threads,
+            host: "r",
         };
-        table_plan(&call, &planned, docs, &|f| in_rust.contains(f))
+        let plan = table_plan(&call, &planned, docs, &|f| in_rust.contains(f));
+        // A run with a trace builds the plan that the dry run gives, by the same
+        // compiled step; its statuses and times aside, the two are equal.
+        let is_rust = |f: &QualifiedName| in_rust.contains(f);
+        let mut trace = rtemis_r8::rules::calc::Trace {
+            call,
+            in_rust: &is_rust,
+            before: 0.0,
+            plan: None,
+        };
+        let _ = rtemis_r8::rules::calc::computed_into(
+            rtemis_r8::access::Json::new(&case["input"]),
+            def,
+            &by,
+            &refs,
+            docs,
+            &rtemis_r8::rules::calc::NoFunctions,
+            summary,
+            threads,
+            &mut rtemis_r8::rules::calc::OwnColumns,
+            Some(&mut trace),
+        );
+        let mut run = trace.plan?;
+        for n in &mut run.nodes {
+            n.status = rtemis_r8::plan::Status::Pending;
+            n.t_start = None;
+            n.t_end = None;
+            n.meta.busy = None;
+            n.meta.group = None;
+            n.meta.row = None;
+            n.meta.message = None;
+        }
+        if run != plan {
+            return Some(format!(
+                "the run's plan differs from the dry run's: {}",
+                serde_json::to_string(&run).unwrap_or_default()
+            ));
+        }
+        plan
     };
     let got = serde_json::json!({
         "plan": serde_json::to_value(&plan).ok()?,
@@ -738,7 +778,8 @@ fn run_calc(op: &str, ir: Option<&DocumentSet>, case: &Value) -> Option<String> 
                     Kind::Date => "date",
                     Kind::DateTime => "posixct",
                 };
-                let cells: Vec<Value> = match &c.data {
+                // `computed()` holds every column.
+                let cells: Vec<Value> = match c.data.as_ref()? {
                     Data::Logical(v) => v.iter().map(|x| serde_json::json!(x)).collect(),
                     Data::Integer(v) => v.iter().map(|x| serde_json::json!(x)).collect(),
                     Data::Double(v) => v

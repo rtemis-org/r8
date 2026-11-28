@@ -146,6 +146,19 @@ pub struct Meta {
     /// The host's platform.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
+    /// The seconds that the stage was busy in a run: its time may overlap
+    /// another stage's, since aggregates and calls interleave.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub busy: Option<f64>,
+    /// The group of a failed call, from 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<u64>,
+    /// The first row of the failed group, or the failed row, from 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row: Option<u64>,
+    /// The message of a failed stage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// A typed function that a call calls.
@@ -162,6 +175,10 @@ pub struct FunctionMeta {
     /// That package's version, as the host gives it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// The SHA-256 of the body's code, as the host gives it, for a function
+    /// that no package declares.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_hash: Option<String>,
 }
 
 /// A call of a table function over the columns of a table.
@@ -183,6 +200,8 @@ pub struct TableCall<'a> {
     pub summary: bool,
     /// The threads that the call may use.
     pub threads: usize,
+    /// The host's language, as an engine's name: `r`.
+    pub host: &'a str,
 }
 
 /// A map of a typed function over the items of a list or a vector, whose
@@ -198,11 +217,13 @@ pub struct ListCall<'a> {
     /// Whether a package registered the typed function's body in compiled
     /// code.
     pub in_rust: bool,
+    /// The host's language, as an engine's name: `r`.
+    pub host: &'a str,
 }
 
-/// The language of a body, `rust` or `r`.
-fn language(in_rust: bool) -> &'static str {
-    if in_rust { "rust" } else { "r" }
+/// The language of a body: `rust`, or the host's.
+fn language(in_rust: bool, host: &str) -> &str {
+    if in_rust { "rust" } else { host }
 }
 
 /// The nodes of a plan, numbered as they are added; every stage is a child of
@@ -258,17 +279,53 @@ impl Builder {
 
 /// The plan of a call over the columns of a table: `check` of its arguments
 /// in the host, `compile` of its expressions, `group` of the rows by the keys,
-/// `evaluate` of the rows of an expression that reads cells outside its
-/// aggregates and calls, `aggregate` of the dialect's aggregates, a `call`
-/// stage for each call of a typed function in each expression, and `assemble`
-/// of the result in the host. `in_rust` tells whether a package registered a
-/// typed function's body in compiled code.
+/// `aggregate` of the dialect's aggregates, a `call` stage for each call of a
+/// typed function in each expression, `evaluate` of the rows of the
+/// expressions of a column of every row, and `assemble` of the result in the
+/// host. `in_rust` tells whether a package
+/// registered a typed function's body in compiled code.
+///
+/// A stage's `inputs` are the stages whose results it reads: `compile` and
+/// `group` read `check`; `aggregate` reads `compile` and `group`; a `call`
+/// reads them and, where its arguments read an aggregate, `aggregate`;
+/// `evaluate` reads them, `aggregate` where an expression of rows has
+/// aggregates, and the `call` stages of those expressions; `assemble` reads
+/// each work stage that no other stage reads, or `compile` and `group` where
+/// there is none.
 pub fn table_plan(
     call: &TableCall<'_>,
     planned: &Planned,
     lookup: &dyn TypeLookup,
     in_rust: &dyn Fn(&QualifiedName) -> bool,
 ) -> Plan {
+    table_plan_indexed(call, planned, lookup, in_rust).0
+}
+
+/// The places of a table plan's stages among its nodes.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StageIndex {
+    pub(crate) compile: usize,
+    pub(crate) group: Option<usize>,
+    pub(crate) aggregate: Option<usize>,
+    /// The `call` stages of each expression, in the order of its calls.
+    pub(crate) calls: Vec<Vec<usize>>,
+    pub(crate) evaluate: Option<usize>,
+    pub(crate) assemble: usize,
+}
+
+/// The place among a plan's nodes of the stage of ID `id`, `s<n>`.
+fn place_of(id: &str) -> usize {
+    id[1..].parse::<usize>().map_or(0, |n| n - 1)
+}
+
+/// [`table_plan`], with the places of its stages.
+pub(crate) fn table_plan_indexed(
+    call: &TableCall<'_>,
+    planned: &Planned,
+    lookup: &dyn TypeLookup,
+    in_rust: &dyn Fn(&QualifiedName) -> bool,
+) -> (Plan, StageIndex) {
+    let host = call.host;
     let per_call = planned.groups.unwrap_or(1) as u64;
     let mut functions: Vec<QualifiedName> = Vec::new();
     for e in &planned.exprs {
@@ -309,14 +366,14 @@ pub fn table_plan(
             .iter()
             .map(|b| FunctionMeta {
                 name: b.function.clone(),
-                language: language(b.in_rust).into(),
+                language: language(b.in_rust, host).into(),
                 ..FunctionMeta::default()
             })
             .collect(),
         ..Meta::default()
     };
     let mut b = Builder::new(call.function, call.label, root);
-    let check = b.stage("check", String::new(), "r", &[], Meta::default());
+    let check = b.stage("check", String::new(), host, &[], Meta::default());
     let compile = b.stage(
         "compile",
         String::new(),
@@ -327,6 +384,10 @@ pub fn table_plan(
             ..Meta::default()
         },
     );
+    let mut index = StageIndex {
+        compile: place_of(&compile),
+        ..StageIndex::default()
+    };
     let mut read = vec![compile.clone()];
     if !call.by.is_empty() {
         let group = b.stage(
@@ -341,25 +402,20 @@ pub fn table_plan(
                 ..Meta::default()
             },
         );
+        index.group = Some(place_of(&group));
         read.push(group);
     }
-    let mut work = Vec::new();
-    if planned.exprs.iter().any(|e| e.rows) {
-        work.push(b.stage(
-            "evaluate",
-            String::new(),
-            "rust",
-            &read,
-            Meta {
-                rows: Some(planned.rows as u64),
-                ..Meta::default()
-            },
-        ));
-    }
+    let with = |extra: &[String]| -> Vec<String> {
+        let mut v = read.clone();
+        v.extend(extra.iter().cloned());
+        v
+    };
+    let mut work: Vec<String> = Vec::new();
+    let mut read_by_work: Vec<String> = Vec::new();
     let aggregates: usize = planned.exprs.iter().map(|e| e.aggregates).sum();
-    if aggregates > 0 {
+    let aggregate = (aggregates > 0).then(|| {
         let kernels = planned.exprs.iter().any(|e| e.kernels > 0);
-        work.push(b.stage(
+        b.stage(
             "aggregate",
             String::new(),
             "rust",
@@ -369,16 +425,35 @@ pub fn table_plan(
                 threads: Some(kernels && planned.kernel_threads > 1),
                 ..Meta::default()
             },
-        ));
-    }
+        )
+    });
+    index.aggregate = aggregate.as_deref().map(place_of);
+    work.extend(aggregate.iter().cloned());
+    // The call stages of each expression, for the stage that evaluates its
+    // rows.
+    let mut calls_of: Vec<Vec<String>> = Vec::with_capacity(planned.exprs.len());
     for (e, column) in planned.exprs.iter().zip(call.columns) {
-        for f in &e.calls {
-            let lang = language(in_rust(f));
-            work.push(b.stage(
+        let mut ids = Vec::with_capacity(e.calls.len());
+        for (k, f) in e.calls.iter().enumerate() {
+            let lang = language(in_rust(f), host);
+            // A function called twice in one expression has an ordinal.
+            let twice = e.calls.iter().filter(|g| *g == f).count() > 1;
+            let nth = e.calls[..=k].iter().filter(|g| *g == f).count();
+            let label = if twice {
+                format!("{f}: {column} #{nth}")
+            } else {
+                format!("{f}: {column}")
+            };
+            let over_aggregate: Vec<String> = match (&aggregate, e.call_reads_aggregate[k]) {
+                (Some(a), true) => vec![a.clone()],
+                _ => Vec::new(),
+            };
+            read_by_work.extend(over_aggregate.iter().cloned());
+            let id = b.stage(
                 "call",
-                format!("{f}: {column}"),
+                label,
                 lang,
-                &read,
+                &with(&over_aggregate),
                 Meta {
                     function: Some(f.to_string()),
                     language: Some(lang.into()),
@@ -386,11 +461,84 @@ pub fn table_plan(
                     calls: Some(per_call),
                     ..Meta::default()
                 },
-            ));
+            );
+            ids.push(id.clone());
+            work.push(id);
         }
+        index.calls.push(ids.iter().map(|i| place_of(i)).collect());
+        calls_of.push(ids);
     }
-    let assembled = if work.is_empty() { read } else { work };
-    b.stage("assemble", String::new(), "r", &assembled, Meta::default());
+    if planned.exprs.iter().any(|e| e.rows) {
+        let mut extra: Vec<String> = Vec::new();
+        if let Some(a) = &aggregate
+            && planned.exprs.iter().any(|e| e.rows && e.aggregates > 0)
+        {
+            extra.push(a.clone());
+        }
+        for (e, ids) in planned.exprs.iter().zip(&calls_of) {
+            if e.rows {
+                extra.extend(ids.iter().cloned());
+            }
+        }
+        read_by_work.extend(extra.iter().cloned());
+        let evaluate = b.stage(
+            "evaluate",
+            String::new(),
+            "rust",
+            &with(&extra),
+            Meta {
+                rows: Some(planned.rows as u64),
+                ..Meta::default()
+            },
+        );
+        index.evaluate = Some(place_of(&evaluate));
+        work.push(evaluate);
+    }
+    let last: Vec<String> = work
+        .into_iter()
+        .filter(|w| !read_by_work.contains(w))
+        .collect();
+    let assembled = if last.is_empty() { read } else { last };
+    let assemble = b.stage("assemble", String::new(), host, &assembled, Meta::default());
+    index.assemble = place_of(&assemble);
+    (Plan { nodes: b.nodes }, index)
+}
+
+/// The plan of a call that failed before its expressions compiled: the call,
+/// `check`, and the stage that failed, `group` of a key or `compile` of an
+/// expression, with its message; a table that does not read fails the call
+/// alone.
+pub(crate) fn failed_plan(call: &TableCall<'_>, stage: Option<&str>, message: &str) -> Plan {
+    let host = call.host;
+    let root = Meta {
+        path: Some("rust".into()),
+        format: Some(FORMAT),
+        n_threads: Some(call.threads.max(1) as u64),
+        message: stage.is_none().then(|| message.to_string()),
+        ..Meta::default()
+    };
+    let mut b = Builder::new(call.function, call.label, root);
+    b.nodes[0].status = Status::Failed;
+    let check = b.stage("check", String::new(), host, &[], Meta::default());
+    b.nodes[1].status = Status::Completed;
+    if let Some(stage) = stage {
+        let label = if stage == "group" {
+            format!("by {}", call.by.join(", "))
+        } else {
+            String::new()
+        };
+        b.stage(
+            stage,
+            label,
+            "rust",
+            std::slice::from_ref(&check),
+            Meta {
+                message: Some(message.to_string()),
+                ..Meta::default()
+            },
+        );
+        b.nodes[2].status = Status::Failed;
+    }
     Plan { nodes: b.nodes }
 }
 
@@ -406,7 +554,7 @@ pub fn list_plan(call: &ListCall<'_>, lookup: &dyn TypeLookup) -> Plan {
         path: Path::Host,
         bodies: vec![body],
     };
-    let lang = language(call.in_rust);
+    let lang = language(call.in_rust, call.host);
     let hash = text_hash(&json!({
         "format": FORMAT,
         "function": call.function,
@@ -429,7 +577,7 @@ pub fn list_plan(call: &ListCall<'_>, lookup: &dyn TypeLookup) -> Plan {
         ..Meta::default()
     };
     let mut b = Builder::new(call.function, &call.typed.to_string(), root);
-    let check = b.stage("check", String::new(), "r", &[], Meta::default());
+    let check = b.stage("check", String::new(), call.host, &[], Meta::default());
     let calls = b.stage(
         "call",
         call.typed.to_string(),
@@ -443,7 +591,13 @@ pub fn list_plan(call: &ListCall<'_>, lookup: &dyn TypeLookup) -> Plan {
             ..Meta::default()
         },
     );
-    b.stage("assemble", String::new(), "r", &[calls], Meta::default());
+    b.stage(
+        "assemble",
+        String::new(),
+        call.host,
+        &[calls],
+        Meta::default(),
+    );
     Plan { nodes: b.nodes }
 }
 
@@ -546,6 +700,14 @@ fn stage_text(n: &Node) -> String {
     text
 }
 
+/// An engine's name in a text: `Rust`, or the host's language, `R`.
+fn engine_name(engine: &str) -> String {
+    match engine {
+        "rust" => "Rust".to_string(),
+        other => other.to_uppercase(),
+    }
+}
+
 /// A label of a flowchart, with its double quotes as Mermaid's entity.
 fn quoted(text: &str) -> String {
     format!("\"{}\"", text.replace('"', "#quot;").replace('\n', " "))
@@ -555,8 +717,8 @@ fn quoted(text: &str) -> String {
 /// each of the class of its engine (`rust` or `r`), and an arrow from each
 /// stage that a stage reads. After a run, a stage that failed, was aborted,
 /// or did not start takes the class of its status (`failed`, `aborted`,
-/// `pending`). The text declares no `classDef`; the host that draws it
-/// styles the classes.
+/// `pending`), and its text ends with its engine, `(Rust)` or `(R)`. The
+/// text declares no `classDef`; the host that draws it styles the classes.
 pub fn mermaid(plan: &Plan) -> String {
     let mut out = String::from("flowchart LR\n");
     let Some(root) = plan.nodes.first() else {
@@ -569,16 +731,22 @@ pub fn mermaid(plan: &Plan) -> String {
         quoted(&format!("{}(): {}", root.kind, root.label))
     ));
     for n in &plan.nodes[1..] {
-        let class = match n.status {
-            Status::Failed if ran => "failed",
-            Status::Aborted if ran => "aborted",
-            Status::Pending if ran => "pending",
-            _ => n.meta.engine.as_deref().unwrap_or("r"),
+        let engine = n.meta.engine.as_deref().unwrap_or_default();
+        let status = match n.status {
+            Status::Failed if ran => Some("failed"),
+            Status::Aborted if ran => Some("aborted"),
+            Status::Pending if ran => Some("pending"),
+            _ => None,
         };
+        let mut text = stage_text(n);
+        if status.is_some() {
+            text.push_str(&format!(" ({})", engine_name(engine)));
+        }
         out.push_str(&format!(
-            "    {}[{}]:::{class}\n",
+            "    {}[{}]:::{}\n",
             n.node_id,
-            quoted(&stage_text(n))
+            quoted(&text),
+            status.unwrap_or(engine)
         ));
     }
     out.push_str("  end\n");
@@ -645,7 +813,10 @@ mod tests {
         let text = mermaid(&p);
         assert!(text.contains("s2[\"check\"]:::r\n"));
         assert!(text.contains(":::failed\n"));
-        assert!(text.contains("s5[\"assemble\"]:::pending\n"));
+        assert!(
+            text.contains("s4[\"call pkgr::spread: #quot;sbp#quot;, 3 calls (Rust)\"]:::failed\n")
+        );
+        assert!(text.contains("s5[\"assemble (R)\"]:::pending\n"));
     }
 
     #[test]

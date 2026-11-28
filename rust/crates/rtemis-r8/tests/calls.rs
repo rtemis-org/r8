@@ -178,7 +178,7 @@ fn run(
 
 fn doubles(out: &rtemis_r8::rules::calc::Outcome, i: usize) -> Vec<Option<f64>> {
     match &out.columns[i].data {
-        Data::Double(v) => v.iter().map(|&x| Some(x).filter(|x| !x.is_nan())).collect(),
+        Some(Data::Double(v)) => v.iter().map(|&x| Some(x).filter(|x| !x.is_nan())).collect(),
         other => panic!("not doubles: {other:?}"),
     }
 }
@@ -202,7 +202,10 @@ fn a_summary_calls_the_function_once_for_each_group() {
     );
     assert_eq!(
         out.columns[1].data,
-        Data::Character(vec![Some("aa".to_string()), Some("bbb".to_string())])
+        Some(Data::Character(vec![
+            Some("aa".to_string()),
+            Some("bbb".to_string())
+        ]))
     );
     assert_eq!(out.columns[0].unit, None);
     assert_eq!(

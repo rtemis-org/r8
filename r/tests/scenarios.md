@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 46 files of 427 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 48 files of 439 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -47,9 +47,11 @@ What each feature does, in 46 files of 427 tests. The runtime has its own tests 
 | `test-143-version.R` | The version of the runtime that the package is built with. | 1 |
 | `test-144-scenarios.R` | The written list of the scenarios is that of the test files. | 3 |
 | `test-145-calls.R` | Descriptions of parameters, the JSON Schema of a function's arguments, and documents of a call: r8check_call(), r8call_from_json(), and r8call_to_json(). | 7 |
-| `test-146-summarize.R` | Expressions as values, columns computed from them, summaries of the groups of a table's rows, and maps of one expression or typed function over columns. The conformance corpus (conformance/summarize/) has the semantics of each aggregate. | 17 |
+| `test-146-summarize.R` | Expressions as values, columns computed from them, summaries of the groups of a table's rows, and maps of one expression or typed function over columns. The conformance corpus (conformance/summarize/) has the semantics of each aggregate. | 18 |
 | `test-147-map.R` | Maps of a typed function over the items of a list or a vector, with constant arguments, in the container of the function's return type. | 10 |
-| `test-148-explain.R` | The plan of a call of a table function before it runs: its stages, where each runs, the typed functions it would call, and its flowchart. | 7 |
+| `test-148-explain.R` | The plan of a call of a table function before it runs: its stages, where each runs, the typed functions it would call, and its flowchart. | 10 |
+| `test-149-rtemis-grouped.R` | The grouped work of rtemis as R8 calls, against base R: the tuner's summary of each metric by its combination of hyperparameters, and the ROC curve's count of each curve's vertices and its down-sample of each curve. | 2 |
+| `test-150-bench.R` | The resources that an expression takes, as r8bench() measures them, and the plans that the runs of its table functions leave. | 6 |
 | `test-151-rust-stored.R` | Types whose values Rust holds, declared in a package's Rust code. | 4 |
 | `test-152-rust-impls.R` | Methods written in Rust, called from R. | 4 |
 | `test-153-documentation.R` | The documentation of packages that declare R8 types: help pages from roxygen2, and the R declarations of types declared in Rust. | 3 |

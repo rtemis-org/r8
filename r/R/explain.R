@@ -6,24 +6,6 @@
 # plan's text, flowchart, and table of stages.
 # spec: R8/raven#plans
 
-# %% .r8_explain ----
-# The state of r8explain() while it runs a call: `active`, and `label`, the
-# label of the map that the call makes.
-.r8_explain <- new.env(parent = emptyenv())
-
-
-# %% explaining ----
-#' Whether r8explain() runs the current call
-#'
-#' @return Logical.
-#'
-#' @keywords internal
-#' @noRd
-explaining <- function() {
-  isTRUE(.r8_explain[["active"]])
-} # /R8::explaining
-
-
 # %% explained ----
 #' End the call that r8explain() runs, with its plan
 #'
@@ -68,14 +50,19 @@ explained <- function(plan, x = NULL, functions = NULL) {
 #' @section Stages:
 #' A call over the columns of a table has the stages `check`, the checks of its
 #' arguments, in R; `compile`, of its expressions against the table's columns;
-#' `group`, of the rows by the key columns; `evaluate`, of the rows of an expression
-#' that reads cells outside its aggregates and calls; `aggregate`, of the aggregates
-#' of the dialect, which may run on worker threads; a `call` stage for each call of
-#' a typed function in each expression, in the language of the function's body;
-#' and `assemble`, of the result, in R. A map over the items of a list or a vector
-#' has `check`, `call`, and `assemble`, and R makes its calls. The engine of the
-#' call, `"rust"`, `"r"`, or `"rust+r"`, is that of its evaluation and its calls,
-#' as the messages of `r8map()` state it.
+#' `group`, of the rows by the key columns; `aggregate`, of the aggregates of the
+#' dialect, which may run on worker threads; a `call` stage for each call of a typed
+#' function in each expression, in the language of the function's body, with an
+#' ordinal where an expression calls one function twice; `evaluate`, of the rows of
+#' an expression that reads cells outside its aggregates and calls; and `assemble`,
+#' of the result, in R. A stage's `inputs` are the stages whose results it reads: a
+#' call whose arguments read an aggregate reads `aggregate`, `evaluate` reads the
+#' aggregates and calls of the expressions of rows, and `assemble` reads the stages
+#' that no other stage reads. A map over the items of a list or a vector has
+#' `check`, `call`, and `assemble`, and R makes its calls. The engine of the call,
+#' `"rust"`, `"r"`, or `"rust+r"`, is that of its evaluation and its calls, as the
+#' messages of `r8map()` state it. Where a table function's checks call another,
+#' the first that R8 enters is the call explained.
 #'
 #' @section What a plan does not state:
 #' What the body of a typed function in R does inside, and whether a body in Rust
@@ -97,14 +84,25 @@ explained <- function(plan, x = NULL, functions = NULL) {
 #'   `"r8.compile"`, ...), `label`, `status` (`"pending"`), `t_start`, `t_end`,
 #'   and `meta`. The call's `meta` holds the call, R8's version, the record's
 #'   format, the plan hash, the threads, the platform, and each typed function's
-#'   name, package, version, and body's language; a stage's `meta` holds its
-#'   engine, the stages that it reads (`inputs`), whether it may run on worker
-#'   threads, and its counts. `as.data.frame()` gives one row for each stage:
+#'   name and body's language with its body's identity: the package and its
+#'   version, or, for a function of no package, `body_hash`, the SHA-256 of its
+#'   body as R deparses it. The plan hash covers the table type's declaration, the
+#'   expressions, the keys, and the typed functions' declarations, and not their
+#'   bodies, so that it is the same for a body in R and in Rust. An equal plan
+#'   hash, equal body identities, and equal inputs give an equal result. A stage's
+#'   `meta` holds its engine, the stages that it reads (`inputs`), whether it may
+#'   run on worker threads, and its counts; in the plan of a run, `busy`, the
+#'   seconds that it worked, and, for a stage that failed, `message` and, where
+#'   it has them, `group` and `row`, the group and its first row, from 1, or,
+#'   for a map over items, `row`, the item.
+#'   `as.data.frame()` gives one row for each stage:
 #'   `node_id`, `stage`, `label`, `engine`, `function` and `language`, of the
-#'   typed function that a `call` stage calls, `calls`, `threads`, `inputs`, and
-#'   `status`. `format(plan)` gives the lines that `print()` writes, and
-#'   `format(plan, "mermaid")` the plan's Mermaid flowchart, as one string, in
-#'   which each stage's class is its engine, `rust` or `r`.
+#'   typed function that a `call` stage calls, `calls`, `threads`, `inputs`,
+#'   `status`, and, for the plan of a run that [r8bench()] collects, `t_start`,
+#'   `t_end`, and `busy`, seconds, which are `NA` before a run. `format(plan)`
+#'   gives the lines that `print()` writes, and `format(plan, "mermaid")` the
+#'   plan's Mermaid flowchart, as one string, in which each stage's class is its
+#'   engine, `rust` or `r`.
 #'
 #' @export
 #'
@@ -148,20 +146,34 @@ r8explain <- function(call) {
     )
   }
   # The arguments evaluate before the call, so that a table function in an
-  # argument runs and only the outer call is explained.
-  args <- lapply(as.list(e)[-1L], eval, envir = env)
-  .r8_explain[["active"]] <- TRUE
-  .r8_explain[["label"]] <- NULL
+  # argument runs and only the outer call is explained. The call reads them as
+  # variables of a frame of its own, so that its call holds names and not the
+  # values of whole tables.
+  args <- as.list(e)[-1L]
+  frame <- new.env(parent = env)
+  held <- paste0(".r8_arg", seq_along(args))
+  for (i in seq_along(args)) {
+    assign(held[[i]], eval(args[[i]], env), envir = frame)
+  }
+  assign(".r8_fn", fn, envir = frame)
+  run <- as.call(c(
+    list(as.name(".r8_fn")),
+    stats::setNames(lapply(held, as.name), names(args))
+  ))
+  depth <- .r8_watch[["depth"]]
+  .r8_watch[["explaining"]] <- TRUE
+  .r8_watch[["depth"]] <- 0L
   on.exit(
     {
-      .r8_explain[["active"]] <- NULL
-      .r8_explain[["label"]] <- NULL
+      .r8_watch[["explaining"]] <- NULL
+      .r8_watch[["depth"]] <- depth
+      .r8_watch[["label"]] <- NULL
     },
     add = TRUE
   )
   ended <- tryCatch(
     {
-      do.call(fn, args)
+      eval(run, frame)
       NULL
     },
     r8_explained = identity
@@ -192,17 +204,30 @@ r8explain <- function(call) {
 #' @noRd
 plan_of <- function(nodes, call, functions = NULL) {
   meta <- nodes[[1L]][["meta"]]
-  meta[["call"]] <- paste(deparse(call, width.cutoff = 500L), collapse = " ")
+  if (!is.null(call)) {
+    meta[["call"]] <- paste(deparse(call, width.cutoff = 500L), collapse = " ")
+  }
   meta[["r8_version"]] <- getNamespaceVersion("R8")[["version"]]
   meta[["platform"]] <- R.version[["platform"]]
-  # The package of a typed function is the namespace in which its closure is
-  # defined; a function of the global environment has none.
+  # A body's identity: the package in whose namespace its closure is defined,
+  # with the package's version, or, for a function of no package, such as one
+  # of the global environment, the SHA-256 of the closure's body as R deparses
+  # it.
   meta[["functions"]] <- lapply(meta[["functions"]], function(f) {
+    f[c("package", "version", "body_hash")] <- NULL
     closure <- functions[[f[["name"]]]]
-    home <- if (is.function(closure)) topenv(environment(closure))
-    if (!is.null(home) && isNamespace(home)) {
+    if (!is.function(closure)) {
+      return(f)
+    }
+    home <- topenv(environment(closure))
+    if (isNamespace(home)) {
       f[["package"]] <- getNamespaceName(home)[["name"]]
       f[["version"]] <- getNamespaceVersion(home)[["version"]]
+    } else {
+      f[["body_hash"]] <- r8_text_hash(paste(
+        deparse(body(closure), width.cutoff = 500L),
+        collapse = "\n"
+      ))
     }
     f
   })
@@ -244,7 +269,14 @@ as.data.frame.r8_plan <- function(x, row.names = NULL, optional = FALSE, ...) {
       function(s) paste(unlist(s[["meta"]][["inputs"]]), collapse = ", "),
       ""
     ),
-    status = vapply(stages, `[[`, "", "status")
+    status = vapply(stages, `[[`, "", "status"),
+    t_start = vapply(stages, function(s) s[["t_start"]] %||% NA_real_, 0),
+    t_end = vapply(stages, function(s) s[["t_end"]] %||% NA_real_, 0),
+    busy = vapply(
+      stages,
+      function(s) as.numeric(s[["meta"]][["busy"]] %||% NA_real_),
+      0
+    )
   )
   as.data.frame(out, stringsAsFactors = FALSE, optional = TRUE)
 } # /R8::as.data.frame.r8_plan

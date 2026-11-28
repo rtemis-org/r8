@@ -49,7 +49,8 @@ fn r8_body_in_rust(qnames: Robj) -> Logicals {
 /// @noRd
 #[extendr]
 fn r8_map_message(phase: &str, fields: List) -> Result<List> {
-    let get = |name: &str| fields.dollar(name).unwrap_or_else(|_| Robj::from(()));
+    let fields: Robj = fields.into();
+    let get = |name: &str| crate::rview::element(&fields, name);
     // A number: an integer or a double.
     let number = |name: &str| {
         let v = get(name);

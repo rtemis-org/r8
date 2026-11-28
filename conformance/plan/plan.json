@@ -10,7 +10,6 @@
         "name": "Visits",
         "description": "",
         "version": 1,
-        "open": true,
         "columns": [
           {
             "name": "ward",
@@ -79,7 +78,8 @@
             },
             "description": ""
           }
-        ]
+        ],
+        "open": true
       }
     ],
     "functions": [
@@ -1076,6 +1076,529 @@
         3.5,
         4.5
       ]
+    },
+    {
+      "id": "a-call-over-an-aggregate-and-a-call-twice",
+      "description": "A call whose argument reads an aggregate reads the aggregate stage, and two calls of one function in one expression take ordinals.",
+      "op": "plan",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "function": "r8map",
+        "label": "spread",
+        "columns": [
+          "weight"
+        ],
+        "by": [
+          "sex"
+        ],
+        "in_rust": [
+          "ns::spread"
+        ],
+        "f": {
+          "-": [
+            {
+              "call": [
+                "ns::spread",
+                "x",
+                {
+                  "-": [
+                    {
+                      "col": []
+                    },
+                    {
+                      "mean": [
+                        {
+                          "col": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "call": [
+                "ns::spread",
+                "x",
+                {
+                  "col": []
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plan": {
+          "nodes": [
+            {
+              "node_id": "s1",
+              "parent_id": null,
+              "kind": "r8map",
+              "label": "spread",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "rows": 8,
+                "columns": 1,
+                "groups": 2,
+                "calls": 4,
+                "path": "rust",
+                "format": 1,
+                "plan_hash": "sha256:fdbed2d1d8a6e38b5526dcf218920ff3147b77fe7459d5d0984ccafd89c2c918",
+                "n_threads": 1,
+                "functions": [
+                  {
+                    "name": "ns::spread",
+                    "language": "rust"
+                  }
+                ]
+              }
+            },
+            {
+              "node_id": "s2",
+              "parent_id": "s1",
+              "kind": "r8.check",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "r",
+                "threads": false
+              }
+            },
+            {
+              "node_id": "s3",
+              "parent_id": "s1",
+              "kind": "r8.compile",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s2"
+                ],
+                "threads": false,
+                "columns": 1
+              }
+            },
+            {
+              "node_id": "s4",
+              "parent_id": "s1",
+              "kind": "r8.group",
+              "label": "by sex",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s2"
+                ],
+                "threads": false,
+                "keys": [
+                  "sex"
+                ],
+                "rows": 8,
+                "groups": 2
+              }
+            },
+            {
+              "node_id": "s5",
+              "parent_id": "s1",
+              "kind": "r8.aggregate",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s3",
+                  "s4"
+                ],
+                "threads": false,
+                "aggregates": 1
+              }
+            },
+            {
+              "node_id": "s6",
+              "parent_id": "s1",
+              "kind": "r8.call",
+              "label": "ns::spread: weight #1",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s3",
+                  "s4",
+                  "s5"
+                ],
+                "threads": false,
+                "function": "ns::spread",
+                "language": "rust",
+                "column": "weight",
+                "calls": 2
+              }
+            },
+            {
+              "node_id": "s7",
+              "parent_id": "s1",
+              "kind": "r8.call",
+              "label": "ns::spread: weight #2",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s3",
+                  "s4"
+                ],
+                "threads": false,
+                "function": "ns::spread",
+                "language": "rust",
+                "column": "weight",
+                "calls": 2
+              }
+            },
+            {
+              "node_id": "s8",
+              "parent_id": "s1",
+              "kind": "r8.assemble",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "r",
+                "inputs": [
+                  "s6",
+                  "s7"
+                ],
+                "threads": false
+              }
+            }
+          ]
+        },
+        "headline": "r8map(): spread over 1 column and 2 groups, 4 calls, in Rust",
+        "mermaid": "flowchart LR\n  subgraph s1[\"r8map(): spread\"]\n    s2[\"check\"]:::r\n    s3[\"compile, 1 expression\"]:::rust\n    s4[\"group by sex, 2 groups\"]:::rust\n    s5[\"aggregate, 1 aggregate\"]:::rust\n    s6[\"call ns::spread: weight #1, 2 calls\"]:::rust\n    s7[\"call ns::spread: weight #2, 2 calls\"]:::rust\n    s8[\"assemble\"]:::r\n  end\n  s2 --> s3\n  s2 --> s4\n  s3 --> s5\n  s4 --> s5\n  s3 --> s6\n  s4 --> s6\n  s5 --> s6\n  s3 --> s7\n  s4 --> s7\n  s6 --> s8\n  s7 --> s8\n"
+      }
+    },
+    {
+      "id": "rows-over-an-aggregate",
+      "description": "A column of every row that reads an aggregate of its group: the evaluate stage reads the aggregate stage, and assemble reads evaluate alone.",
+      "op": "plan",
+      "type": "ns::Visits",
+      "input": {
+        "$length": 8,
+        "ward": [
+          "ICU",
+          "Cardiology",
+          "ICU",
+          "Oncology",
+          "Cardiology",
+          null,
+          "ICU",
+          "Oncology"
+        ],
+        "sex": [
+          "F",
+          "M",
+          "M",
+          "F",
+          "F",
+          "M",
+          "F",
+          "M"
+        ],
+        "age": [
+          71,
+          58,
+          64,
+          49,
+          77,
+          35,
+          82,
+          60
+        ],
+        "weight": [
+          62.0,
+          88.0,
+          79.0,
+          55.0,
+          70.0,
+          92.0,
+          58.0,
+          81.0
+        ],
+        "height": [
+          1.5,
+          2.0,
+          1.75,
+          1.5,
+          1.25,
+          2.0,
+          1.5,
+          1.75
+        ],
+        "sbp": [
+          142.0,
+          128.0,
+          null,
+          118.0,
+          151.0,
+          122.0,
+          160.0,
+          null
+        ],
+        "day": [
+          "2020-01-03",
+          "2020-01-01",
+          "2020-01-02",
+          null,
+          "2020-01-05",
+          "2020-01-04",
+          "2020-01-07",
+          "2020-01-06"
+        ]
+      },
+      "options": {
+        "function": "r8set",
+        "label": "r",
+        "summary": false,
+        "by": [
+          "sex"
+        ],
+        "columns": {
+          "r": {
+            "/": [
+              {
+                "var": "weight"
+              },
+              {
+                "mean": [
+                  {
+                    "var": "weight"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "plan": {
+          "nodes": [
+            {
+              "node_id": "s1",
+              "parent_id": null,
+              "kind": "r8set",
+              "label": "r",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "rows": 8,
+                "columns": 1,
+                "groups": 2,
+                "calls": 0,
+                "path": "rust",
+                "format": 1,
+                "plan_hash": "sha256:23181d0bea93cff61ac079a079454c450fcc005ec441a004fe19fd9d3ab69cf1",
+                "n_threads": 1
+              }
+            },
+            {
+              "node_id": "s2",
+              "parent_id": "s1",
+              "kind": "r8.check",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "r",
+                "threads": false
+              }
+            },
+            {
+              "node_id": "s3",
+              "parent_id": "s1",
+              "kind": "r8.compile",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s2"
+                ],
+                "threads": false,
+                "columns": 1
+              }
+            },
+            {
+              "node_id": "s4",
+              "parent_id": "s1",
+              "kind": "r8.group",
+              "label": "by sex",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s2"
+                ],
+                "threads": false,
+                "keys": [
+                  "sex"
+                ],
+                "rows": 8,
+                "groups": 2
+              }
+            },
+            {
+              "node_id": "s5",
+              "parent_id": "s1",
+              "kind": "r8.aggregate",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s3",
+                  "s4"
+                ],
+                "threads": false,
+                "aggregates": 1
+              }
+            },
+            {
+              "node_id": "s6",
+              "parent_id": "s1",
+              "kind": "r8.evaluate",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "rust",
+                "inputs": [
+                  "s3",
+                  "s4",
+                  "s5"
+                ],
+                "threads": false,
+                "rows": 8
+              }
+            },
+            {
+              "node_id": "s7",
+              "parent_id": "s1",
+              "kind": "r8.assemble",
+              "label": "",
+              "status": "pending",
+              "t_start": null,
+              "t_end": null,
+              "meta": {
+                "engine": "r",
+                "inputs": [
+                  "s6"
+                ],
+                "threads": false
+              }
+            }
+          ]
+        },
+        "headline": "r8set(): r over 1 column and 2 groups, in Rust",
+        "mermaid": "flowchart LR\n  subgraph s1[\"r8set(): r\"]\n    s2[\"check\"]:::r\n    s3[\"compile, 1 expression\"]:::rust\n    s4[\"group by sex, 2 groups\"]:::rust\n    s5[\"aggregate, 1 aggregate\"]:::rust\n    s6[\"evaluate, 8 rows\"]:::rust\n    s7[\"assemble\"]:::r\n  end\n  s2 --> s3\n  s2 --> s4\n  s3 --> s5\n  s4 --> s5\n  s3 --> s6\n  s4 --> s6\n  s5 --> s6\n  s6 --> s7\n"
+      }
     },
     {
       "id": "an-unknown-key",

@@ -646,3 +646,24 @@ test_that("a summary is the same for any number of threads", {
     class = "r8_argument_error"
   )
 })
+
+test_that("a long table's column of doubles is the column that base R computes", {
+  # More rows than the binding's threshold of a long table, 2^16, whose columns
+  # of doubles the core writes into R's vectors.
+  n <- 70000L
+  w <- 40 + (seq_len(n) %% 97)
+  h <- 1.4 + (seq_len(n) %% 13) / 20
+  h[seq(4L, n, by = 7L)] <- NA
+  x <- Raven(k = rep_len(1:3, n), w = w, h = h)
+  out <- r8set(x, list(bmi = calc(w / h^2), d = calc(w - h), s = calc(2 * w)))
+  expect_identical(out$bmi, w / (h * h))
+  expect_identical(out$d, w - h)
+  expect_identical(out$s, 2 * w)
+  grouped <- r8set(x, list(r = calc(w / mean(w))), by = "k")
+  expect_equal(grouped$r, w / ave(w, x$k), tolerance = 1e-14)
+  s <- r8summarize(x, list(q = calc(sum(w) / n())), by = "k")
+  expect_equal(s$q, as.vector(tapply(w, x$k, mean)), tolerance = 1e-14)
+  # A zero divisor is an error at its row.
+  z <- Raven(w = w, d = c(rep(1, n - 1L), 0))
+  refuses(r8set(z, list(q = calc(w / d))), paste0("row ", n))
+})

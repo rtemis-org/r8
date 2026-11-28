@@ -630,6 +630,43 @@ impl Operand<'_> {
     fn each<T>(self, n: usize, f: impl Fn(f64) -> T) -> Vec<T> {
         self.with(Operand::One(0.0), n, |a, _| f(a))
     }
+
+    /// `f` of each pair of cells, written into `out`, with `NA_NUMBER` where
+    /// it is `NaN`.
+    fn write_with(self, other: Operand<'_>, out: &mut [f64], f: impl Fn(f64, f64) -> f64) {
+        // A select, which the compiler vectorizes, where a store under a
+        // condition stays scalar.
+        let na = |v: f64| if v.is_nan() { NA_NUMBER } else { v };
+        match (self, other) {
+            (Operand::Many(a), Operand::Many(b)) => {
+                for ((o, &a), &b) in out.iter_mut().zip(a).zip(b) {
+                    *o = na(f(a, b));
+                }
+            }
+            (Operand::Many(a), Operand::One(b)) => {
+                for (o, &a) in out.iter_mut().zip(a) {
+                    *o = na(f(a, b));
+                }
+            }
+            (Operand::One(a), Operand::Many(b)) => {
+                for (o, &b) in out.iter_mut().zip(b) {
+                    *o = na(f(a, b));
+                }
+            }
+            (Operand::One(a), Operand::One(b)) => out.fill(na(f(a, b))),
+        }
+    }
+}
+
+/// What [`Eval::numbers_into`] gives: numbers written into the caller's
+/// cells, with their states, or the block of an expression that it does not
+/// compute in place.
+pub(super) enum Placed<'e, 'a> {
+    /// The numbers are in the caller's cells, `NA_NUMBER` where missing,
+    /// with the states of the cells.
+    Written(States),
+    /// The expression's block.
+    Block(Block<'e, 'a>),
 }
 
 /// The states of a result: the greatest of the operands', since an error is
@@ -952,6 +989,29 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
         threads: usize,
         functions: &dyn Functions,
     ) -> Result<Self, Failed> {
+        Self::calling_timed(
+            of,
+            table,
+            rows,
+            groups,
+            threads,
+            functions,
+            &mut |_, _, _| {},
+        )
+    }
+
+    /// [`Eval::calling`], giving `done` the place `at` of each aggregate and
+    /// call among the rule's, the time it started, and whether it gave a
+    /// value, as each ends.
+    pub(super) fn calling_timed(
+        of: &Rows,
+        table: A,
+        rows: usize,
+        groups: Option<Arc<Groups>>,
+        threads: usize,
+        functions: &dyn Functions,
+        done: &mut dyn FnMut(usize, std::time::Instant, bool),
+    ) -> Result<Self, Failed> {
         let columns = of
             .cells
             .iter()
@@ -974,16 +1034,18 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
         }
         // One within the operand of another comes before it.
         found.sort_by_key(|(at, _)| *at);
-        for (_, f) in found {
+        for (at, f) in found {
+            let started = std::time::Instant::now();
             let v = match f {
                 Found::Aggregate(op, operands, skip) => {
-                    eval.aggregate(op, operands, skip).map_err(Failed::Table)?
+                    eval.aggregate(op, operands, skip).map_err(Failed::Table)
                 }
                 Found::Call(function, args, kind) => {
-                    eval.call(function, args, kind, &of.cells, functions)?
+                    eval.call(function, args, kind, &of.cells, functions)
                 }
             };
-            eval.aggregates.push(v);
+            done(at, started, v.is_ok());
+            eval.aggregates.push(v?);
         }
         Ok(eval)
     }
@@ -1593,6 +1655,48 @@ impl<'a, A: Access<'a>> Eval<'a, A> {
             Expr::Op(op, args) => self.operation(e, *op, args, lo, hi),
             _ => Err("the expression reads a whole field".to_string()),
         }
+    }
+
+    /// The numbers of `e` over the rows `lo..hi`, as [`Eval::block`] gives
+    /// them: an addition, a subtraction, a product, or a quotient of two
+    /// operands of numbers is computed into `out`, without a block of its own,
+    /// and gives its states; any other expression gives its block.
+    pub(super) fn numbers_into<'e>(
+        &'e self,
+        e: &'e Expr,
+        lo: usize,
+        hi: usize,
+        out: &mut [f64],
+    ) -> Result<Placed<'e, 'a>, String> {
+        let n = hi - lo;
+        let (op, [x, y]) = match e {
+            Expr::Op(op @ (Op::Add | Op::Sub | Op::Mul | Op::Div), args) => match &args[..] {
+                [x, y] => (*op, [x, y]),
+                _ => return self.block(e, lo, hi).map(Placed::Block),
+            },
+            _ => return self.block(e, lo, hi).map(Placed::Block),
+        };
+        let (a, b) = (self.block(x, lo, hi)?, self.block(y, lo, hi)?);
+        let ((x, s), (y, t)) = (a.numbers(n)?, b.numbers(n)?);
+        let mut states = merge(s, t);
+        if op == Op::Div {
+            // A zero divisor is rare: its cells are marked once one is found.
+            let any = match y {
+                Operand::Many(ys) => ys.contains(&0.0),
+                Operand::One(d) => d == 0.0,
+            };
+            if any {
+                let zero = x.with(y, n, |a, d| d == 0.0 && !a.is_nan());
+                states = mark(states, &zero, ZERO_STATE);
+            }
+        }
+        match op {
+            Op::Add => x.write_with(y, out, |a, b| a + b),
+            Op::Sub => x.write_with(y, out, |a, b| a - b),
+            Op::Mul => x.write_with(y, out, |a, b| a * b),
+            _ => x.write_with(y, out, |a, b| a / b),
+        }
+        Ok(Placed::Written(states))
     }
 
     /// The numbers of the column `k`, where the host holds them as one array of

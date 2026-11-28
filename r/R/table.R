@@ -352,7 +352,7 @@ table_calc <- function(
         by,
         list(
           name = fn,
-          label = .r8_explain[["label"]] %||%
+          label = .r8_watch[["label"]] %||%
             paste(names(exprs), collapse = ", "),
           summary = summary,
           threads = threads_of(n_threads)
@@ -362,13 +362,14 @@ table_calc <- function(
       functions
     )
   }
+  # A run whose plan a collector takes traces its stages.
+  trace <- watch_trace(fn, names(exprs))
   run <- function() {
     r8_table_calc(
       x,
       exprs,
       by,
-      summary,
-      threads_of(n_threads),
+      list(summary = summary, threads = threads_of(n_threads), trace = trace),
       functions,
       caller
     )
@@ -399,6 +400,9 @@ table_calc <- function(
         }
       }
     )
+  }
+  if (!is.null(trace)) {
+    watch_pending(res, functions, trace)
   }
   if (inherits(res, "r8_refused") && !is.null(res[["hook"]])) {
     hook <- res[["hook"]]
@@ -1084,6 +1088,9 @@ subset.r8_table <- function(x, ...) {
 #'
 #' @export
 r8set <- function(x, columns, by = NULL, n_threads = NULL) {
+  if (watch_enter()) {
+    on.exit(watch_leave(), add = TRUE)
+  }
   check_table(x)
   if (is_value(columns) && inherits(columns, "r8_table")) {
     columns <- as.list(columns)
@@ -1129,6 +1136,9 @@ r8set <- function(x, columns, by = NULL, n_threads = NULL) {
     })
   }
   if (length(columns) == 0L) {
+    if (explaining()) {
+      table_calc(x, list(), character(), FALSE, n_threads, "r8set")
+    }
     return(x)
   }
   computed <- vapply(columns, inherits, NA, "r8_calc")
@@ -1143,6 +1153,10 @@ r8set <- function(x, columns, by = NULL, n_threads = NULL) {
     }
   }
   units <- NULL
+  if (explaining() && !any(computed)) {
+    # A table of R's vectors alone: the plan of its checks and its assembly.
+    table_calc(x, list(), by %||% character(), FALSE, n_threads, "r8set")
+  }
   if (any(computed)) {
     res <- table_calc(
       x,
@@ -1171,7 +1185,9 @@ r8set <- function(x, columns, by = NULL, n_threads = NULL) {
     }
     fields_refused(x, keys, columns, res)
   }
-  with_units(res, units)
+  out <- with_units(res, units)
+  watch_done("completed")
+  out
 } # /R8::r8set
 
 
@@ -1312,6 +1328,9 @@ key_columns <- function(x, by, e, env) {
 #'
 #' @export
 r8summarize <- function(x, columns, by = NULL, n_threads = NULL) {
+  if (watch_enter()) {
+    on.exit(watch_leave(), add = TRUE)
+  }
   check_table(x)
   check_calcs(columns, "r8summarize")
   by <- if (is.null(by)) {
@@ -1320,7 +1339,7 @@ r8summarize <- function(x, columns, by = NULL, n_threads = NULL) {
     key_columns(x, by, substitute(by), parent.frame())
   }
   res <- table_calc(x, columns, by, TRUE, n_threads, "r8summarize")
-  summary_table(
+  out <- summary_table(
     x,
     by,
     res[["first"]],
@@ -1328,6 +1347,8 @@ r8summarize <- function(x, columns, by = NULL, n_threads = NULL) {
     res[["units"]],
     names(columns)
   )
+  watch_done("completed")
+  out
 } # /R8::r8summarize
 
 
@@ -1346,7 +1367,9 @@ r8summarize <- function(x, columns, by = NULL, n_threads = NULL) {
 #' @keywords internal
 #' @noRd
 summary_table <- function(x, by, first, columns, units, names) {
-  clash <- intersect(names, by)
+  # Sets by `%in%`, 0.3 microseconds here: intersect() and setdiff() take
+  # about 6 each in R 4.6, a tenth of a map at the size of rtemis's tuner.
+  clash <- names[names %in% by]
   if (length(clash) > 0L) {
     r8_abort(
       "The summary `",
@@ -1412,7 +1435,10 @@ summary_table <- function(x, by, first, columns, units, names) {
 #' label its name, and the kind `"r8map"`; on a table, the total is the groups
 #' times the columns. `begin` is called once the map has run for 0.2 s, so that a
 #' shorter map reports nothing, and `update` about every 0.05 to 0.2 s. Without the
-#' option, its default, a map reports nothing.
+#' option, its default, a map reports nothing. A hook with the function
+#' `stages(handle, plan)` receives, before `end`, the plan of the map's run, the
+#' `r8_plan` of [r8explain()] with each stage's status and times, as [r8bench()]
+#' collects it.
 #'
 #' @section Messages:
 #' At `verbosity` 1 or more, a map that takes longer than 0.2 s writes a start
@@ -1561,10 +1587,11 @@ declare_map <- function(ns) {
 #' @noRd
 map_columns <- function(x, columns, by) {
   if (is.null(columns)) {
-    return(setdiff(names(x), by))
+    all <- names(x)
+    return(all[!all %in% by])
   }
   columns <- key_columns(x, columns, quote(columns), environment())
-  keyed <- intersect(columns, by)
+  keyed <- columns[columns %in% by]
   if (length(keyed) > 0L) {
     r8_abort(
       "`",
@@ -1583,6 +1610,9 @@ map_columns <- function(x, columns, by) {
 #' @keywords internal
 #' @noRd
 map_calc <- function(x, f, columns, by, args, n_threads, verbosity) {
+  if (watch_enter()) {
+    on.exit(watch_leave(), add = TRUE)
+  }
   verbosity <- verbosity_of(verbosity)
   if (!is.null(args)) {
     r8_abort(
@@ -1724,6 +1754,9 @@ map_calc_run <- function(x, f, columns, by, n_threads, report = NULL) {
 #' @keywords internal
 #' @noRd
 map_typed <- function(x, f, columns, by, args, n_threads, verbosity) {
+  if (watch_enter()) {
+    on.exit(watch_leave(), add = TRUE)
+  }
   verbosity <- verbosity_of(verbosity)
   sig <- map_signature(f, args)
   returns <- sig[["returns"]]
@@ -1793,7 +1826,8 @@ map_typed <- function(x, f, columns, by, args, n_threads, verbosity) {
 #' @return The option `r8.progress`: `NULL`, its default, or a list of the
 #'   functions `begin(total, label, kind)`, which gives a handle,
 #'   `update(handle, current)`, and `end(handle, status)`, and, optionally,
-#'   `message(event)`, which takes R8's messages.
+#'   `message(event)`, which takes R8's messages, and `stages(handle, plan)`,
+#'   which takes the plan of the map's run.
 #'
 #' @keywords internal
 #' @noRd
@@ -1804,11 +1838,12 @@ map_hook <- function() {
       (!is.list(hook) ||
         !all(c("begin", "update", "end") %in% names(hook)) ||
         !all(vapply(hook[c("begin", "update", "end")], is.function, NA)) ||
-        (!is.null(hook[["message"]]) && !is.function(hook[["message"]])))
+        (!is.null(hook[["message"]]) && !is.function(hook[["message"]])) ||
+        (!is.null(hook[["stages"]]) && !is.function(hook[["stages"]])))
   ) {
     r8_abort(
       "The option `r8.progress` is NULL or a list of the functions `begin`, ",
-      "`update`, and `end`, and optionally `message`.",
+      "`update`, and `end`, and optionally `message` and `stages`.",
       class = "r8_argument_error"
     )
   }
@@ -1866,16 +1901,40 @@ map_progress <- function(
 ) {
   if (explaining()) {
     # r8explain() runs the map to its plan, which reports and says nothing.
-    .r8_explain[["label"]] <- label
+    .r8_watch[["label"]] <- label
     return(run(function() NULL, NULL))
   }
   hook <- map_hook()
   progress <- hooked && !is.null(hook)
   # `label` and `place` are evaluated only for a message or a hook.
   talk <- verbosity >= 1L && (is.null(hook) || is.function(hook[["message"]]))
-  if (!progress && !talk) {
-    return(run(function() NULL, NULL))
+  if (watching() && identical(.r8_watch[["depth"]], 1L)) {
+    .r8_watch[["label"]] <- label
   }
+  if (!progress && !talk) {
+    out <- run(function() NULL, NULL)
+    watch_done("completed")
+    return(out)
+  }
+  # A hook with `stages()` takes the plan of a run that it reports, which the
+  # map watches where no other call is watched.
+  if (progress && is.function(hook[["stages"]]) && !watching()) {
+    .r8_watch[["hooked"]] <- TRUE
+    .r8_watch[["depth"]] <- 1L
+    .r8_watch[["start"]] <- r8_clock()
+    .r8_watch[["call"]] <- table_call()
+    .r8_watch[["label"]] <- label
+    on.exit(
+      {
+        .r8_watch[["hooked"]] <- NULL
+        .r8_watch[["depth"]] <- NULL
+        .r8_watch[["pending"]] <- NULL
+        .r8_watch[["label"]] <- NULL
+      },
+      add = TRUE
+    )
+  }
+  plan <- NULL
   started <- proc.time()
   start <- started[["elapsed"]]
   last <- start
@@ -1972,12 +2031,20 @@ map_progress <- function(
     )
   }
   status <- "failed"
+  # Runs before the end of a watch that the map started, which clears the
+  # plan that its run left.
   on.exit(
     {
+      if (is.null(plan)) {
+        plan <- watch_done(status)
+      }
       if (begun) {
         # A map that completes reports its last steps.
         if (identical(status, "completed")) {
           hook[["update"]](handle, done)
+        }
+        if (!is.null(plan) && is.function(hook[["stages"]])) {
+          hook[["stages"]](handle, plan)
         }
         hook[["end"]](handle, status)
       }
@@ -1993,7 +2060,8 @@ map_progress <- function(
         )
       }
     },
-    add = TRUE
+    add = TRUE,
+    after = FALSE
   )
   out <- if (progress) {
     withCallingHandlers(
@@ -2004,6 +2072,7 @@ map_progress <- function(
     run(step, reported)
   }
   status <- "completed"
+  plan <- watch_done("completed")
   if (!is.null(total)) {
     done <- total
   }
@@ -2078,7 +2147,7 @@ map_signature <- function(f, args) {
       class = "r8_argument_error"
     )
   }
-  unknown <- setdiff(keys, others)
+  unknown <- keys[!keys %in% others]
   if (length(unknown) > 0L) {
     near <- r8_nearest_name(unknown[[1L]], others)
     r8_abort(
@@ -2102,6 +2171,9 @@ map_signature <- function(f, args) {
 #' @keywords internal
 #' @noRd
 map_items <- function(x, f, columns, by, args, n_threads, verbosity) {
+  if (watch_enter()) {
+    on.exit(watch_leave(), add = TRUE)
+  }
   verbosity <- verbosity_of(verbosity)
   if (!is.null(columns) || !is.null(by)) {
     r8_abort(
@@ -2140,9 +2212,14 @@ map_items <- function(x, f, columns, by, args, n_threads, verbosity) {
   )
   # The item whose call runs, for the message of its error; 0 outside a call.
   at <- 0L
+  # Stamps the calls of a run whose plan a collector takes.
+  ended <- NULL
   failed <- function(cnd) {
     if (at == 0L) {
       return(invisible(NULL))
+    }
+    if (!is.null(ended)) {
+      ended(at, conditionMessage(cnd))
     }
     name <- names(x)[at]
     i <- at
@@ -2166,6 +2243,11 @@ map_items <- function(x, f, columns, by, args, n_threads, verbosity) {
       length(x),
       sig[["name"]],
       function(step, report) {
+        ended <<- watch_items(
+          sig[["name"]],
+          length(x),
+          stats::setNames(list(f), sig[["name"]])
+        )
         each <- function(i) {
           at <<- i
           v <- call_f(x[[i]])
@@ -2173,7 +2255,7 @@ map_items <- function(x, f, columns, by, args, n_threads, verbosity) {
           step()
           v
         }
-        if (kind %in% names(scalar)) {
+        out <- if (kind %in% names(scalar)) {
           vapply(seq_along(x), each, scalar[[kind]], USE.NAMES = FALSE)
         } else if (kind %in% c("date", "posixct")) {
           values <- lapply(seq_along(x), each)
@@ -2189,6 +2271,10 @@ map_items <- function(x, f, columns, by, args, n_threads, verbosity) {
         } else {
           lapply(seq_along(x), each)
         }
+        if (!is.null(ended)) {
+          ended()
+        }
+        out
       },
       verbosity = verbosity,
       place = map_place("host", sig[["name"]]),
@@ -2242,7 +2328,8 @@ r8drop <- function(x, columns) {
     names(table_result(r8_table_get(x, NULL, columns, 1L), x)),
     names(x)
   )
-  table_result(r8_table_get(x, NULL, setdiff(seq_along(x), at), 1L), x)
+  kept <- seq_along(x)
+  table_result(r8_table_get(x, NULL, kept[!kept %in% at], 1L), x)
 } # /R8::r8drop
 
 

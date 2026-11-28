@@ -347,7 +347,7 @@ test_that("r8explain() states where a body in Rust runs, and calls none", {
       "say('none', count_of() - before)",
       "say('rust', p$engine, s$engine[s$stage == 'call'], s$language[s$stage == 'call'])",
       "fn <- p$nodes[[1]]$meta$functions[[1]]",
-      "say('package', fn$name, fn$package, identical(fn$version, as.character(packageVersion('r8pkgR'))))",
+      "say('package', fn$name, fn$package, identical(fn$version, as.character(packageVersion('r8pkgR'))), is.null(fn$body_hash))",
       "p <- r8explain(r8map(x, spread, columns = c('v', 'w'), by = 'g'))",
       "say('map', p$headline)",
       "op <- options(r8.namespace = 'mixed')",
@@ -363,7 +363,7 @@ test_that("r8explain() states where a body in Rust runs, and calls none", {
   for (line in c(
     "none 0 ",
     "rust rust rust rust ",
-    "package pkgr::counted r8pkgR TRUE ",
+    "package pkgr::counted r8pkgR TRUE TRUE ",
     "map r8map(): pkgr::spread over 2 columns and 2 groups, 4 calls, in Rust ",
     "mixed rust+r TRUE ",
     "list rust+r host "

@@ -70,7 +70,10 @@ status \code{"completed"}, \code{"failed"}, or \code{"aborted"}. The total is th
 label its name, and the kind \code{"r8map"}; on a table, the total is the groups
 times the columns. \code{begin} is called once the map has run for 0.2 s, so that a
 shorter map reports nothing, and \code{update} about every 0.05 to 0.2 s. Without the
-option, its default, a map reports nothing.
+option, its default, a map reports nothing. A hook with the function
+\code{stages(handle, plan)} receives, before \code{end}, the plan of the map's run, the
+\code{r8_plan} of \code{\link[=r8explain]{r8explain()}} with each stage's status and times, as \code{\link[=r8bench]{r8bench()}}
+collects it.
 }
 
 \section{Messages}{

@@ -57,6 +57,8 @@ pub mod record;
 pub mod refine;
 pub mod registry;
 pub mod report;
+#[cfg(feature = "resources")]
+pub mod resources;
 pub mod rules;
 pub mod rust_signature;
 pub mod text;

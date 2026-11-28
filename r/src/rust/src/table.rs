@@ -1777,9 +1777,33 @@ fn append(parts: &[SEXP], n: usize) -> Robj {
 /// The R vector of a computed column of the table value `x`; a date-time
 /// takes the time zone of the first date-time column that its expression
 /// reads, or `"UTC"`.
+/// R's vectors of doubles for the columns that expressions compute, which the
+/// core fills (`rtemis_r8::rules::calc::Output`); without `enabled`, the core
+/// holds every column.
+struct RColumns {
+    vectors: Vec<Option<Robj>>,
+    enabled: bool,
+}
+
+impl rtemis_r8::rules::calc::Output for RColumns {
+    fn doubles(&mut self, at: usize, n: usize) -> Option<&mut [f64]> {
+        if !self.enabled {
+            return None;
+        }
+        let v = unsafe { Robj::from_sexp(Rf_allocVector(SEXPTYPE::REALSXP, n as R_xlen_t)) };
+        let p = unsafe { REAL(v.get()) };
+        self.vectors[at] = Some(v);
+        // The vector lives in `vectors`, protected, until the column is taken.
+        Some(unsafe { std::slice::from_raw_parts_mut(p, n) })
+    }
+}
+
 fn computed_vector(c: &rtemis_r8::rules::calc::Computed, x: &Held) -> Robj {
     use rtemis_r8::rules::calc::Data;
-    match &c.data {
+    let Some(data) = &c.data else {
+        return ().into();
+    };
+    match data {
         Data::Logical(v) => Logicals::from_values(v.iter().map(|b| match b {
             Some(true) => Rbool::true_value(),
             Some(false) => Rbool::false_value(),
@@ -1881,8 +1905,10 @@ fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summar
 /// @param exprs List: The expressions, as `calc()` holds them, by the names
 ///   of the columns.
 /// @param by Character: The key columns, or a vector of length 0.
-/// @param summary Logical: One value for each group.
-/// @param threads Integer: The threads that the aggregates of a column may use.
+/// @param run List: `summary`, logical, one value for each group; `threads`,
+///   an integer, the threads that the aggregates of a column may use; and
+///   `trace`, `NULL` or, for a collector of the run's plan, a list of `name`,
+///   the table function, `label`, and `before`, the seconds of R's checks.
 /// @param functions List: The typed functions that the expressions call, by
 ///   their qualified names.
 /// @param callers List: R8's `call_typed()`, `call_settled()`, and the function
@@ -1892,8 +1918,9 @@ fn not_computed(e: rtemis_r8::rules::calc::NotComputed, names: &[String], summar
 ///   without keys, `columns`, the computed vectors, and `units`, or an
 ///   `r8_refused`, which for an error of a call holds `call`, the function,
 ///   the column, and the first row of the group, and `failed`, the condition,
-///   and for an error of the progress hook holds `hook`, its condition. A jump
-///   of R that a compiled body caught continues instead.
+///   and for an error of the progress hook holds `hook`, its condition; with a
+///   `trace`, either holds `plan`, the nodes of the run's plan. A jump of R
+///   that a compiled body caught continues instead.
 /// @keywords internal
 /// @noRd
 #[extendr]
@@ -1901,15 +1928,20 @@ fn r8_table_calc(
     x: Robj,
     exprs: List,
     by: Robj,
-    summary: bool,
-    threads: i32,
+    run: List,
     functions: Robj,
     callers: Robj,
 ) -> Result<Robj> {
+    let run: Robj = run.into();
+    let get = |name: &str| crate::rview::element(&run, name);
+    let summary = get("summary").as_bool().unwrap_or(false);
+    let threads = get("threads").as_integer().unwrap_or(1);
+    let traced = get("trace");
     // A call of R may jump, which the protection of a long walk carries past
     // the frames of Rust.
     let calls = !functions.is_null() && functions.len() > 0;
-    crate::interrupt::interruptible_if(calls || crate::interrupt::long(unsafe { x.get() }), || {
+    let long = crate::interrupt::long(unsafe { x.get() });
+    crate::interrupt::interruptible_if(calls || long, || {
         let h = match Held::of(unsafe { x.get() }) {
             Ok(h) => h,
             Err(m) => return Ok(refused(m)),
@@ -1939,7 +1971,42 @@ fn r8_table_calc(
             &callers,
             logic.len(),
         );
-        let out = rtemis_r8::rules::calc::computed(
+        // A long table's columns of doubles are written into R's vectors, under
+        // the protection that `interruptible_if()` gives a long walk.
+        let mut vectors = RColumns {
+            vectors: vec![None; logic.len()],
+            enabled: long,
+        };
+        let threads = usize::try_from(threads).unwrap_or(1).max(1);
+        let columns_named: Vec<&str> = names.iter().map(String::as_str).collect();
+        let field = |name: &str| -> Robj {
+            if traced.is_null() {
+                return ().into();
+            }
+            crate::rview::element(&traced, name)
+        };
+        let (trace_name, trace_label) = (
+            field("name").as_str().unwrap_or("r8map").to_string(),
+            field("label").as_str().unwrap_or("").to_string(),
+        );
+        let in_rust = |f: &QualifiedName| crate::message::in_rust(&f.to_string());
+        let mut trace = (!traced.is_null()).then(|| rtemis_r8::rules::calc::Trace {
+            call: rtemis_r8::plan::TableCall {
+                function: &trace_name,
+                label: &trace_label,
+                table: &h.q,
+                by: &keys,
+                columns: &columns_named,
+                exprs: &refs,
+                summary,
+                threads,
+                host: "r",
+            },
+            in_rust: &in_rust,
+            before: field("before").as_real().unwrap_or(0.0),
+            plan: None,
+        });
+        let out = rtemis_r8::rules::calc::computed_into(
             RView::Whole(unsafe { x.get() }),
             h.def(),
             &keys,
@@ -1947,8 +2014,30 @@ fn r8_table_calc(
             &*h.docs,
             &host,
             summary,
-            usize::try_from(threads).unwrap_or(1).max(1),
+            threads,
+            &mut vectors,
+            trace.as_mut(),
         );
+        // The run's plan, for a collector.
+        let plan: Robj = match trace.and_then(|t| t.plan) {
+            Some(p) => crate::irser::to_r(&p.nodes).map_err(|e| Error::Other(e.to_string()))?,
+            None => ().into(),
+        };
+        let with_plan = |mut r: Robj| -> Robj {
+            if !plan.is_null()
+                && let Some(l) = r.as_list()
+            {
+                let mut items: Vec<(String, Robj)> =
+                    l.iter().map(|(n, v)| (n.to_string(), v)).collect();
+                items.push(("plan".to_string(), plan.clone()));
+                let class = r.class().map(|c| c.map(str::to_string).collect::<Vec<_>>());
+                r = List::from_pairs(items).into();
+                if let Some(class) = class {
+                    let _ = r.set_class(class);
+                }
+            }
+            r
+        };
         // A held jump continues once the frames return, with no call of R
         // before it (`interruptible_if()`).
         if host.jumped() {
@@ -1957,7 +2046,7 @@ fn r8_table_calc(
         if let Some(hook) = host.hook_failed.borrow_mut().take() {
             let mut r: Robj = list!(message = "the progress hook failed", hook = hook).into();
             let _ = r.set_class(["r8_refused"]);
-            return Ok(r);
+            return Ok(with_plan(r));
         }
         let out = match out {
             Ok(o) => o,
@@ -1980,11 +2069,19 @@ fn r8_table_calc(
                 )
                 .into();
                 let _ = r.set_class(["r8_refused"]);
-                return Ok(r);
+                return Ok(with_plan(r));
             }
-            Err(e) => return Ok(refused(not_computed(e, &names, summary))),
+            Err(e) => return Ok(with_plan(refused(not_computed(e, &names, summary)))),
         };
-        let columns: Vec<Robj> = out.columns.iter().map(|c| computed_vector(c, &h)).collect();
+        let columns: Vec<Robj> = out
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(at, c)| match vectors.vectors[at].take() {
+                Some(v) if c.data.is_none() => v,
+                _ => computed_vector(c, &h),
+            })
+            .collect();
         let units: Vec<Option<String>> = out.columns.iter().map(|c| c.unit.clone()).collect();
         let first: Robj = match &out.groups {
             Some(g) => g
@@ -2000,12 +2097,14 @@ fn r8_table_calc(
             None => Rstr::na(),
         }))
         .into();
-        Ok(list!(
-            first = first,
-            columns = List::from_values(columns),
-            units = units
-        )
-        .into())
+        Ok(with_plan(
+            list!(
+                first = first,
+                columns = List::from_values(columns),
+                units = units
+            )
+            .into(),
+        ))
     })
 }
 
@@ -2045,7 +2144,8 @@ fn r8_table_plan(x: Robj, exprs: List, by: Robj, call: List) -> Result<Robj> {
             .collect();
         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
         let refs: Vec<&rtemis_r8::ir::Logic> = logic.iter().collect();
-        let get = |name: &str| call.dollar(name).unwrap_or_else(|_| Robj::from(()));
+        let call: Robj = call.into();
+        let get = |name: &str| crate::rview::element(&call, name);
         let summary = get("summary").as_bool().unwrap_or(true);
         let threads = get("threads")
             .as_integer()
@@ -2076,6 +2176,7 @@ fn r8_table_plan(x: Robj, exprs: List, by: Robj, call: List) -> Result<Robj> {
                 exprs: &refs,
                 summary,
                 threads,
+                host: "r",
             },
             &planned,
             &*h.docs,
@@ -2104,6 +2205,7 @@ fn r8_list_plan(name: &str, typed: &str, items: i32) -> Result<Robj> {
             typed: &q,
             items: u64::try_from(items).unwrap_or(0),
             in_rust: crate::message::in_rust(typed),
+            host: "r",
         },
         &*docs,
     );
@@ -2129,6 +2231,19 @@ fn r8_plan_text(nodes: Robj, form: &str) -> Result<Robj> {
         "stages" => Ok(Strings::from_values(rtemis_r8::plan::stage_texts(&plan)).into()),
         other => Err(Error::Other(format!("no text `{other}` of a plan"))),
     }
+}
+
+/// The SHA-256 of a text's UTF-8 bytes, for the identity of a body of R code.
+///
+/// @param text Character: The text.
+/// @return Character: `sha256:<hex>`.
+/// @keywords internal
+/// @noRd
+#[extendr]
+fn r8_text_hash(text: &str) -> String {
+    let d = rtemis_r8::canonical::sha256(text.as_bytes());
+    let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
+    format!("sha256:{hex}")
 }
 
 /// The expressions of a map of `f` over `columns`: `f` with `col()` set to
@@ -2180,4 +2295,5 @@ extendr_module! {
     fn r8_table_plan;
     fn r8_list_plan;
     fn r8_plan_text;
+    fn r8_text_hash;
 }

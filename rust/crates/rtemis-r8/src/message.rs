@@ -177,6 +177,56 @@ pub fn map_ended(wall: f64, cpu: f64, threads: u64, place: &Place, host: &str) -
     )
 }
 
+/// The text of a benchmark's result: its wall time, the CPU time of the
+/// process, its ratio to the wall time, the threads that R8's work may use,
+/// the most memory that the process held, and the languages of R8's work,
+/// where the expression ran a table function of R8:
+/// `r8bench(): 3.3 s, CPU 3.2 s (1.0 of 4 threads), memory peak 1.2 GiB, in Rust`.
+/// A time under 1 s is in milliseconds.
+pub fn bench_ended(
+    wall: f64,
+    cpu: f64,
+    threads: u64,
+    peak: Option<u64>,
+    engine: Option<Engine>,
+) -> String {
+    let ratio = if wall > 0.0 { cpu / wall } else { 0.0 };
+    let memory = peak
+        .map(|p| format!(", memory peak {}", bytes(p)))
+        .unwrap_or_default();
+    let place = match engine {
+        Some(Engine::Rust) => ", in Rust",
+        Some(Engine::Host) => ", in R",
+        Some(Engine::Both) => ", in Rust and R",
+        None => "",
+    };
+    format!(
+        "r8bench(): {}, CPU {} ({ratio:.1} of {}){memory}{place}",
+        duration(wall),
+        duration(cpu),
+        counted(threads, "thread", "threads"),
+    )
+}
+
+/// A size in bytes, in the binary unit that gives it one to four digits:
+/// `512 B`, `1.5 KiB`, `12 MiB`, `1.2 GiB`.
+fn bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut x = n as f64;
+    let mut u = 0;
+    while x >= 1024.0 && u < UNITS.len() - 1 {
+        x /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{n} B")
+    } else if x < 10.0 {
+        format!("{x:.1} {}", UNITS[u])
+    } else {
+        format!("{x:.0} {}", UNITS[u])
+    }
+}
+
 /// The line of a message, `<timestamp> <text> [<caller>]`; without a caller,
 /// the timestamp and the text.
 pub fn line(timestamp: &str, text: &str, caller: Option<&str>) -> String {
@@ -213,6 +263,23 @@ fn seconds(x: f64) -> String {
         format!("{x:.1}")
     } else {
         format!("{x:.0}")
+    }
+}
+
+/// A duration with its unit: milliseconds under 1 s, with two significant
+/// digits from 1 ms, and seconds from 1 s, as [`seconds`] writes them.
+fn duration(x: f64) -> String {
+    let x = x.max(0.0);
+    if x >= 1.0 {
+        return format!("{} s", seconds(x));
+    }
+    let ms = x * 1e3;
+    if ms < 1.0 {
+        format!("{ms:.2} ms")
+    } else if ms < 10.0 {
+        format!("{ms:.1} ms")
+    } else {
+        format!("{ms:.0} ms")
     }
 }
 
@@ -280,6 +347,20 @@ mod tests {
             line("2026-11-27 10:04:12", "r8map(): completed", Some("r8map")),
             "2026-11-27 10:04:12 r8map(): completed [r8map]"
         );
+        assert_eq!(
+            bench_ended(3.31, 3.2, 4, Some(1_300_000_000), Some(Engine::Both)),
+            "r8bench(): 3.3 s, CPU 3.2 s (1.0 of 4 threads), memory peak 1.2 GiB, in Rust and R"
+        );
+        assert_eq!(
+            bench_ended(0.05, 0.0, 1, None, None),
+            "r8bench(): 50 ms, CPU 0.00 ms (0.0 of 1 thread)"
+        );
+        assert_eq!(duration(0.000_514), "0.51 ms");
+        assert_eq!(duration(0.003_21), "3.2 ms");
+        assert_eq!(duration(0.999), "999 ms");
+        assert_eq!(duration(12.4), "12 s");
+        assert_eq!(bytes(512), "512 B");
+        assert_eq!(bytes(12 << 20), "12 MiB");
         assert_eq!(seconds(0.254), "0.25");
         assert_eq!(seconds(12.4), "12");
         assert_eq!(grouped(999), "999");

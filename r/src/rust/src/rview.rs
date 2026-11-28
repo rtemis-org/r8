@@ -132,6 +132,16 @@ pub(crate) fn nil() -> SEXP {
     unsafe { R_NilValue }
 }
 
+/// The element `name` of a named list, or `NULL` where `x` is no list or has
+/// no element of that name. It reads the names, where `Robj::dollar()` parses
+/// and evaluates a call of R's `$` at each use.
+pub(crate) fn element(x: &extendr_api::Robj, name: &str) -> extendr_api::Robj {
+    use extendr_api::Conversions;
+    x.as_list()
+        .and_then(|l| l.iter().find(|(n, _)| *n == name).map(|(_, v)| v))
+        .unwrap_or_else(|| extendr_api::Robj::from(()))
+}
+
 pub(crate) fn is_null(x: SEXP) -> bool {
     x == nil()
 }

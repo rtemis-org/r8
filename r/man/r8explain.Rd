@@ -36,14 +36,25 @@ each stage, each with the members of rtemis's session records: \code{node_id}
 \code{"r8.compile"}, ...), \code{label}, \code{status} (\code{"pending"}), \code{t_start}, \code{t_end},
 and \code{meta}. The call's \code{meta} holds the call, R8's version, the record's
 format, the plan hash, the threads, the platform, and each typed function's
-name, package, version, and body's language; a stage's \code{meta} holds its
-engine, the stages that it reads (\code{inputs}), whether it may run on worker
-threads, and its counts. \code{as.data.frame()} gives one row for each stage:
+name and body's language with its body's identity: the package and its
+version, or, for a function of no package, \code{body_hash}, the SHA-256 of its
+body as R deparses it. The plan hash covers the table type's declaration, the
+expressions, the keys, and the typed functions' declarations, and not their
+bodies, so that it is the same for a body in R and in Rust. An equal plan
+hash, equal body identities, and equal inputs give an equal result. A stage's
+\code{meta} holds its engine, the stages that it reads (\code{inputs}), whether it may
+run on worker threads, and its counts; in the plan of a run, \code{busy}, the
+seconds that it worked, and, for a stage that failed, \code{message} and, where
+it has them, \code{group} and \code{row}, the group and its first row, from 1, or,
+for a map over items, \code{row}, the item.
+\code{as.data.frame()} gives one row for each stage:
 \code{node_id}, \code{stage}, \code{label}, \code{engine}, \code{function} and \code{language}, of the
-typed function that a \code{call} stage calls, \code{calls}, \code{threads}, \code{inputs}, and
-\code{status}. \code{format(plan)} gives the lines that \code{print()} writes, and
-\code{format(plan, "mermaid")} the plan's Mermaid flowchart, as one string, in
-which each stage's class is its engine, \code{rust} or \code{r}.
+typed function that a \code{call} stage calls, \code{calls}, \code{threads}, \code{inputs},
+\code{status}, and, for the plan of a run that \code{\link[=r8bench]{r8bench()}} collects, \code{t_start},
+\code{t_end}, and \code{busy}, seconds, which are \code{NA} before a run. \code{format(plan)}
+gives the lines that \code{print()} writes, and \code{format(plan, "mermaid")} the
+plan's Mermaid flowchart, as one string, in which each stage's class is its
+engine, \code{rust} or \code{r}.
 }
 \description{
 \code{r8explain(call)} takes a call of \code{r8map()}, \code{r8summarize()}, or \code{r8set()},
@@ -58,14 +69,19 @@ row or calls a typed function.
 
 A call over the columns of a table has the stages \code{check}, the checks of its
 arguments, in R; \code{compile}, of its expressions against the table's columns;
-\code{group}, of the rows by the key columns; \code{evaluate}, of the rows of an expression
-that reads cells outside its aggregates and calls; \code{aggregate}, of the aggregates
-of the dialect, which may run on worker threads; a \code{call} stage for each call of
-a typed function in each expression, in the language of the function's body;
-and \code{assemble}, of the result, in R. A map over the items of a list or a vector
-has \code{check}, \code{call}, and \code{assemble}, and R makes its calls. The engine of the
-call, \code{"rust"}, \code{"r"}, or \code{"rust+r"}, is that of its evaluation and its calls,
-as the messages of \code{r8map()} state it.
+\code{group}, of the rows by the key columns; \code{aggregate}, of the aggregates of the
+dialect, which may run on worker threads; a \code{call} stage for each call of a typed
+function in each expression, in the language of the function's body, with an
+ordinal where an expression calls one function twice; \code{evaluate}, of the rows of
+an expression that reads cells outside its aggregates and calls; and \code{assemble},
+of the result, in R. A stage's \code{inputs} are the stages whose results it reads: a
+call whose arguments read an aggregate reads \code{aggregate}, \code{evaluate} reads the
+aggregates and calls of the expressions of rows, and \code{assemble} reads the stages
+that no other stage reads. A map over the items of a list or a vector has
+\code{check}, \code{call}, and \code{assemble}, and R makes its calls. The engine of the call,
+\code{"rust"}, \code{"r"}, or \code{"rust+r"}, is that of its evaluation and its calls, as the
+messages of \code{r8map()} state it. Where a table function's checks call another,
+the first that R8 enters is the call explained.
 }
 
 \section{What a plan does not state}{

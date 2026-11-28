@@ -17,18 +17,22 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::compile::{ArgValue, Calc, Cell, Expr, Op, RowScope, Rows, RuleError, compile_calc};
 use super::eval::Scalar;
-use super::rows::{Block, Eval, Failed, Groups, Held, MISSING, NA_NUMBER, RowError, STATES};
+use super::rows::{
+    Block, Eval, Failed, Groups, Held, MISSING, NA_NUMBER, Placed, RowError, STATES,
+};
 use super::{Ty, TypeLookup};
 use crate::access::Access;
 use crate::ir::{FieldType, Logic, Operator, TableDef, build};
 use crate::name::QualifiedName;
 use crate::tree::Tree;
 
-/// The rows of a block.
-const BLOCK: usize = 1024;
+/// The rows of a block: 4,096 doubles, 32 KiB, an operand that stays in the
+/// cache.
+const BLOCK: usize = 4096;
 
 /// The kind of a computed column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,8 +76,9 @@ pub struct Computed {
     pub kind: Kind,
     /// The unit that the compiler infers.
     pub unit: Option<String>,
-    /// The cells.
-    pub data: Data,
+    /// The cells, or `None` where they are in the host's buffer
+    /// ([`Output::doubles`]).
+    pub data: Option<Data>,
     /// The date-time column whose time zone the column takes, if it reads
     /// one.
     pub zone_of: Option<String>,
@@ -626,6 +631,88 @@ pub(super) fn empty(kind: Kind, n: usize) -> Data {
     }
 }
 
+/// The state of cell `i` of a block: 0 with a value, `MISSING`, or an error.
+fn cell_state(b: &Block<'_, '_>, i: usize) -> u8 {
+    match b {
+        Block::Bool(x) => match x[i] {
+            0 | 1 => 0,
+            v => v - 1,
+        },
+        Block::Number(x, s) => match s.as_ref().map_or(0, |s| s[i]) {
+            0 if x.all()[i].is_nan() => MISSING,
+            s => s,
+        },
+        Block::Time(x, s, _) => match s.as_ref().map_or(0, |s| s[i]) {
+            0 if x[i] == i64::MIN => MISSING,
+            s => s,
+        },
+        Block::Text(_, s) => s.as_ref().map_or(0, |s| s[i]),
+        Block::Label(..) => u8::from(b.text(i).is_err()) * MISSING,
+        Block::One(Scalar::Null) => MISSING,
+        Block::One(Scalar::Num(x)) if x.is_nan() => MISSING,
+        Block::One(_) => 0,
+        Block::Nothing(s) => *s,
+    }
+}
+
+/// Records the error of state `s` at row `row`: the first error, at its row,
+/// and the number of rows with one.
+fn note_error(error: &mut Option<RowError>, row: usize, s: u8) {
+    match error {
+        Some(e) => e.count += 1,
+        None => {
+            *error = Some(RowError {
+                row,
+                count: 1,
+                message: STATES[s as usize],
+            })
+        }
+    }
+}
+
+/// Writes the cells of a block of `buf.len()` rows from `lo` into `buf`,
+/// `NA_NUMBER` where a cell is missing; the first error, at its row, and the
+/// number of rows with one, go to `error`.
+pub(super) fn write_doubles(
+    buf: &mut [f64],
+    b: &Block<'_, '_>,
+    lo: usize,
+    error: &mut Option<RowError>,
+) {
+    // Numbers of a block without states: `NaN` is missing.
+    if let Block::Number(x, None) = b {
+        let n = buf.len();
+        for (o, &v) in buf.iter_mut().zip(&x.all()[..n]) {
+            *o = if v.is_nan() { NA_NUMBER } else { v };
+        }
+        return;
+    }
+    for (i, o) in buf.iter_mut().enumerate() {
+        let s = cell_state(b, i);
+        if s > MISSING {
+            note_error(error, lo + i, s);
+        }
+        *o = if s == 0 { number(b, i) } else { NA_NUMBER };
+    }
+}
+
+/// Sets the cells of `buf`, rows from `lo`, to `NA_NUMBER` where their state
+/// is not 0; the first error, at its row, and the number of rows with one, go
+/// to `error`.
+fn finish_doubles(buf: &mut [f64], states: Option<&[u8]>, lo: usize, error: &mut Option<RowError>) {
+    let Some(states) = states else {
+        return;
+    };
+    for (i, (o, &s)) in buf.iter_mut().zip(states).enumerate() {
+        if s > MISSING {
+            note_error(error, lo + i, s);
+        }
+        if s != 0 {
+            *o = NA_NUMBER;
+        }
+    }
+}
+
 /// Appends the cells of a block of `n` rows from `lo` to `out`; the first
 /// error, at its row, and the number of rows with one, go to `error`.
 pub(super) fn append(
@@ -635,52 +722,16 @@ pub(super) fn append(
     n: usize,
     error: &mut Option<RowError>,
 ) {
-    // Numbers of a block without states: `NaN` is missing.
-    if let (Data::Double(v), Block::Number(x, None)) = (&mut *out, b) {
-        v.extend(
-            x.all()[..n]
-                .iter()
-                .map(|&x| if x.is_nan() { NA_NUMBER } else { x }),
-        );
+    if let Data::Double(v) = out {
+        let at = v.len();
+        v.resize(at + n, 0.0);
+        write_doubles(&mut v[at..], b, lo, error);
         return;
     }
-    let mut fail = |i: usize, s: u8| match error {
-        Some(e) => e.count += 1,
-        None => {
-            *error = Some(RowError {
-                row: lo + i,
-                count: 1,
-                message: STATES[s as usize],
-            })
-        }
-    };
-    // The state of cell `i`: 0 with a value, `MISSING`, or an error.
-    let state_of = |i: usize| -> u8 {
-        match b {
-            Block::Bool(x) => match x[i] {
-                0 | 1 => 0,
-                v => v - 1,
-            },
-            Block::Number(x, s) => match s.as_ref().map_or(0, |s| s[i]) {
-                0 if x.all()[i].is_nan() => MISSING,
-                s => s,
-            },
-            Block::Time(x, s, _) => match s.as_ref().map_or(0, |s| s[i]) {
-                0 if x[i] == i64::MIN => MISSING,
-                s => s,
-            },
-            Block::Text(_, s) => s.as_ref().map_or(0, |s| s[i]),
-            Block::Label(..) => u8::from(b.text(i).is_err()) * MISSING,
-            Block::One(Scalar::Null) => MISSING,
-            Block::One(Scalar::Num(x)) if x.is_nan() => MISSING,
-            Block::One(_) => 0,
-            Block::Nothing(s) => *s,
-        }
-    };
     for i in 0..n {
-        let s = state_of(i);
+        let s = cell_state(b, i);
         if s > MISSING {
-            fail(i, s);
+            note_error(error, lo + i, s);
         }
         let present = s == 0;
         match out {
@@ -690,7 +741,7 @@ pub(super) fn append(
                 _ => false,
             })),
             Data::Integer(v) => v.push(present.then(|| number(b, i) as i32)),
-            Data::Double(v) => v.push(if present { number(b, i) } else { NA_NUMBER }),
+            Data::Double(_) => unreachable!("written above"),
             Data::Character(v) => v.push(if present {
                 b.text(i).ok().map(str::to_string).or_else(|| match b {
                     Block::One(Scalar::Num(x)) => Some(crate::emit::number_text(*x)),
@@ -765,8 +816,9 @@ fn prepared<'a, A: Access<'a>, R>(
     table: A,
     def: &TableDef,
     by: &[&str],
-    then: impl FnOnce(&dyn RowScope, usize, Option<Arc<Groups>>) -> Result<R, NotComputed>,
+    then: impl FnOnce(&dyn RowScope, usize, Option<Arc<Groups>>, Instant) -> Result<R, NotComputed>,
 ) -> Result<R, NotComputed> {
+    let begun = Instant::now();
     let t = table
         .table(&def.columns, def.open)
         .map_err(|f| NotComputed::Table(f.message))?;
@@ -825,7 +877,45 @@ fn prepared<'a, A: Access<'a>, R>(
             }
         }))
     };
-    then(scope, rows, groups)
+    then(scope, rows, groups, begun)
+}
+
+/// Every expression of a call compiled, before any is evaluated, and what
+/// each computes.
+fn compiled(
+    exprs: &[&Logic],
+    scope: &dyn RowScope,
+    lookup: &dyn TypeLookup,
+    summary: bool,
+) -> Result<Vec<(Calc, ExprWork)>, NotComputed> {
+    let mut out = Vec::with_capacity(exprs.len());
+    for (at, e) in exprs.iter().enumerate() {
+        let calc: Calc = compile_calc(e, scope, lookup, summary)
+            .map_err(|errors| NotComputed::Rule { at, errors })?;
+        let mut w = ExprWork::default();
+        work(&calc.rows.invariant, &mut w);
+        w.rows = !summary;
+        out.push((calc, w));
+    }
+    Ok(out)
+}
+
+/// A host's buffers for computed columns of doubles, which the core fills in
+/// place of columns of its own, so that a column is written once, where the
+/// host keeps it.
+pub trait Output {
+    /// A buffer of `n` doubles for the column of the expression at `at`, or
+    /// `None` for a column that the core holds.
+    fn doubles(&mut self, at: usize, n: usize) -> Option<&mut [f64]>;
+}
+
+/// A host that takes every column as the core holds it.
+pub struct OwnColumns;
+
+impl Output for OwnColumns {
+    fn doubles(&mut self, _: usize, _: usize) -> Option<&mut [f64]> {
+        None
+    }
 }
 
 /// The columns that `exprs` compute over a valid value of the table `def`: of
@@ -843,32 +933,209 @@ pub fn computed<'a, A: Access<'a>>(
     summary: bool,
     threads: usize,
 ) -> Result<Outcome, NotComputed> {
-    prepared(table, def, by, |scope, rows, groups| {
+    computed_into(
+        table,
+        def,
+        by,
+        exprs,
+        lookup,
+        functions,
+        summary,
+        threads,
+        &mut OwnColumns,
+        None,
+    )
+}
+
+/// The plan of a run, filled as the run goes, for a collector: each stage's
+/// status, the first time it started and the last time it ended, in seconds
+/// from the call's start, and the seconds it was busy; a failed stage holds
+/// its group, its first row, and its message, and the stages after it stay
+/// `pending`.
+pub struct Trace<'a> {
+    /// The call, as its plan names it.
+    pub call: crate::plan::TableCall<'a>,
+    /// Whether a package registered a typed function's body in compiled code.
+    pub in_rust: &'a dyn Fn(&QualifiedName) -> bool,
+    /// The seconds from the call's start to the core's: the host's checks,
+    /// which the host stamps on `check`.
+    pub before: f64,
+    /// The plan, once [`computed_into`] has returned.
+    pub plan: Option<crate::plan::Plan>,
+}
+
+/// The stamps of a run's stages into its plan.
+struct Timer {
+    plan: crate::plan::Plan,
+    index: crate::plan::StageIndex,
+    entered: Instant,
+    before: f64,
+}
+
+impl Timer {
+    /// The seconds from the call's start to `t`.
+    fn at(&self, t: Instant) -> f64 {
+        self.before + t.saturating_duration_since(self.entered).as_secs_f64()
+    }
+
+    /// Records the work of stage `i` from `a` to `b` in its first start, its
+    /// last end, and its busy seconds.
+    fn time(&mut self, i: usize, a: Instant, b: Instant) {
+        let (s, e) = (self.at(a), self.at(b));
+        let n = &mut self.plan.nodes[i];
+        n.t_start = Some(n.t_start.map_or(s, |t| t.min(s)));
+        n.t_end = Some(n.t_end.map_or(e, |t| t.max(e)));
+        n.meta.busy = Some(n.meta.busy.unwrap_or(0.0) + (e - s));
+    }
+
+    /// Records the work of stage `i` from `a` to `b`, and marks it completed.
+    fn stamp(&mut self, i: usize, a: Instant, b: Instant) {
+        self.time(i, a, b);
+        self.plan.nodes[i].status = crate::plan::Status::Completed;
+    }
+
+    /// Marks stage `i` failed, or the call where `i` is `None`, with its
+    /// message and, for a call of a typed function, its group and first row.
+    fn fail(
+        &mut self,
+        i: Option<usize>,
+        message: String,
+        group: Option<usize>,
+        row: Option<usize>,
+    ) {
+        self.plan.nodes[0].status = crate::plan::Status::Failed;
+        let n = &mut self.plan.nodes[i.unwrap_or(0)];
+        n.status = crate::plan::Status::Failed;
+        n.meta.message = Some(message);
+        n.meta.group = group.map(|g| g as u64 + 1);
+        n.meta.row = row.map(|r| r as u64 + 1);
+    }
+
+    /// The first `call` stage of expression `at` that has not run, of the
+    /// function `function` where it is given.
+    fn pending_call(&self, at: usize, function: Option<&str>) -> Option<usize> {
+        self.index.calls.get(at)?.iter().copied().find(|&i| {
+            let n = &self.plan.nodes[i];
+            n.status == crate::plan::Status::Pending
+                && function.is_none_or(|f| n.meta.function.as_deref() == Some(f))
+        })
+    }
+}
+
+/// The columns of [`computed`], each column of doubles written into the
+/// buffer that `out` gives for it, where it gives one; that column's `data` is
+/// `None`. With `trace`, the run builds its plan by
+/// [`table_plan`](crate::plan::table_plan) from its own compiled expressions,
+/// before it evaluates any, stamps the times of its stages, and leaves the
+/// plan in `trace`, whether the run completes or fails.
+#[allow(clippy::too_many_arguments)]
+pub fn computed_into<'a, A: Access<'a>>(
+    table: A,
+    def: &TableDef,
+    by: &[&str],
+    exprs: &[&Logic],
+    lookup: &dyn TypeLookup,
+    functions: &dyn Functions,
+    summary: bool,
+    threads: usize,
+    out: &mut dyn Output,
+    trace: Option<&mut Trace<'_>>,
+) -> Result<Outcome, NotComputed> {
+    let entered = Instant::now();
+    let mut timer: Option<Timer> = None;
+    let result = prepared(table, def, by, |scope, rows, groups, begun| {
+        let grouped = Instant::now();
+        let compiled_exprs = compiled(exprs, scope, lookup, summary)?;
+        let done_compiling = Instant::now();
+        if let Some(t) = trace.as_deref() {
+            let planned = Planned {
+                rows,
+                groups: groups.as_ref().map(|g| g.count),
+                exprs: compiled_exprs.iter().map(|(_, w)| w.clone()).collect(),
+                kernel_threads: super::parallel::threads_for(rows, threads.max(1)),
+            };
+            let (mut plan, index) =
+                crate::plan::table_plan_indexed(&t.call, &planned, lookup, t.in_rust);
+            plan.nodes[0].status = crate::plan::Status::Running;
+            let mut tm = Timer {
+                plan,
+                index,
+                entered,
+                before: t.before,
+            };
+            if let Some(g) = tm.index.group {
+                tm.stamp(g, begun, grouped);
+            }
+            tm.stamp(tm.index.compile, grouped, done_compiling);
+            timer = Some(tm);
+        }
         let mut columns = Vec::with_capacity(exprs.len());
-        for (at, e) in exprs.iter().enumerate() {
-            let calc: Calc = compile_calc(e, scope, lookup, summary)
-                .map_err(|errors| NotComputed::Rule { at, errors })?;
+        for (at, (calc, work)) in compiled_exprs.iter().enumerate() {
             let unit = match &calc.ty {
                 Ty::Number { unit, .. } => unit.clone(),
                 _ => None,
             };
             let kind = kind_of(&calc.ty, integer(&calc.rows.invariant, &calc.rows.cells));
             functions.expression(at);
-            let eval = Eval::calling(&calc.rows, table, rows, groups.clone(), threads, functions)
-                .map_err(|f| match f {
+            let stage_of = |slot: usize, tm: &Timer| -> Option<usize> {
+                if let Some(k) = work.call_slots.iter().position(|&s| s == slot) {
+                    return tm.index.calls.get(at).and_then(|c| c.get(k)).copied();
+                }
+                work.aggregate_slots
+                    .contains(&slot)
+                    .then_some(tm.index.aggregate)
+                    .flatten()
+            };
+            let evaluated = {
+                // A slot that fails keeps its stage's status for `fail()`.
+                let mut done = |slot: usize, started: Instant, ok: bool| {
+                    if let Some(tm) = timer.as_mut()
+                        && let Some(i) = stage_of(slot, tm)
+                    {
+                        if ok {
+                            tm.stamp(i, started, Instant::now());
+                        } else {
+                            tm.time(i, started, Instant::now());
+                        }
+                    }
+                };
+                Eval::calling_timed(
+                    &calc.rows,
+                    table,
+                    rows,
+                    groups.clone(),
+                    threads,
+                    functions,
+                    &mut done,
+                )
+            };
+            let eval = evaluated.map_err(|f| match f {
                 Failed::Table(m) => NotComputed::Table(m),
-                Failed::Row(error) => NotComputed::Row { at, error },
+                Failed::Row(error) => {
+                    if let Some(tm) = timer.as_mut() {
+                        let i = tm.pending_call(at, None);
+                        tm.fail(i, error.message.to_string(), None, Some(error.row));
+                    }
+                    NotComputed::Row { at, error }
+                }
                 Failed::Call {
                     function,
                     group,
                     message,
-                } => NotComputed::Call {
-                    at,
-                    function,
-                    group,
-                    first_row: groups.as_ref().map(|g| g.first[group] as usize),
-                    message,
-                },
+                } => {
+                    let first_row = groups.as_ref().map(|g| g.first[group] as usize);
+                    if let Some(tm) = timer.as_mut() {
+                        let i = tm.pending_call(at, Some(&function));
+                        tm.fail(i, message.clone(), Some(group), first_row);
+                    }
+                    NotComputed::Call {
+                        at,
+                        function,
+                        group,
+                        first_row,
+                        message,
+                    }
+                }
             })?;
             let n = if summary { eval.group_count() } else { rows };
             // A summary of a table of no rows, without keys, is one row.
@@ -878,17 +1145,57 @@ pub fn computed<'a, A: Access<'a>>(
                 n
             };
             eval.set_over_groups(summary);
-            let mut data = empty(kind, n);
             let mut error: Option<RowError> = None;
-            for lo in (0..n).step_by(BLOCK) {
-                crate::progress::tick_block();
-                let hi = (lo + BLOCK).min(n);
-                let b = eval
-                    .block(&calc.rows.invariant, lo, hi)
-                    .map_err(NotComputed::Table)?;
-                append(&mut data, &b, lo, hi - lo, &mut error);
-            }
+            let buffer = if kind == Kind::Double {
+                out.doubles(at, n)
+            } else {
+                None
+            };
+            let started = Instant::now();
+            let data = match buffer {
+                Some(buf) => {
+                    for lo in (0..n).step_by(BLOCK) {
+                        crate::progress::tick_block();
+                        let hi = (lo + BLOCK).min(n);
+                        let cells = &mut buf[lo..hi];
+                        match eval
+                            .numbers_into(&calc.rows.invariant, lo, hi, cells)
+                            .map_err(NotComputed::Table)?
+                        {
+                            Placed::Written(states) => {
+                                finish_doubles(cells, states.as_deref(), lo, &mut error)
+                            }
+                            Placed::Block(b) => write_doubles(cells, &b, lo, &mut error),
+                        }
+                    }
+                    None
+                }
+                None => {
+                    let mut data = empty(kind, n);
+                    for lo in (0..n).step_by(BLOCK) {
+                        crate::progress::tick_block();
+                        let hi = (lo + BLOCK).min(n);
+                        let b = eval
+                            .block(&calc.rows.invariant, lo, hi)
+                            .map_err(NotComputed::Table)?;
+                        append(&mut data, &b, lo, hi - lo, &mut error);
+                    }
+                    Some(data)
+                }
+            };
             eval.set_over_groups(false);
+            if let Some(tm) = timer.as_mut()
+                && work.rows
+                && let Some(i) = tm.index.evaluate
+            {
+                let ended = Instant::now();
+                if let Some(e) = &error {
+                    tm.time(i, started, ended);
+                    tm.fail(Some(i), e.message.to_string(), None, Some(e.row));
+                } else {
+                    tm.stamp(i, started, ended);
+                }
+            }
             if let Some(error) = error {
                 return Err(NotComputed::Row { at, error });
             }
@@ -904,7 +1211,48 @@ pub fn computed<'a, A: Access<'a>>(
             rows,
             columns,
         })
-    })
+    });
+    if let Some(t) = trace {
+        t.plan = Some(match timer {
+            Some(mut tm) => {
+                if let Err(e) = &result
+                    && tm.plan.nodes[0].status != crate::plan::Status::Failed
+                {
+                    tm.fail(None, not_computed_text(e), None, None);
+                }
+                tm.plan
+            }
+            None => {
+                let (stage, message) = match &result {
+                    Err(NotComputed::Key(m)) => (Some("group"), m.clone()),
+                    Err(NotComputed::Rule { errors, .. }) => (
+                        Some("compile"),
+                        errors
+                            .first()
+                            .map(|e| e.message.clone())
+                            .unwrap_or_default(),
+                    ),
+                    Err(e) => (None, not_computed_text(e)),
+                    Ok(_) => (None, String::new()),
+                };
+                crate::plan::failed_plan(&t.call, stage, &message)
+            }
+        });
+    }
+    result
+}
+
+/// The message of a run that computes no columns, for its plan.
+fn not_computed_text(e: &NotComputed) -> String {
+    match e {
+        NotComputed::Rule { errors, .. } => errors
+            .first()
+            .map(|e| e.message.clone())
+            .unwrap_or_default(),
+        NotComputed::Row { error, .. } => error.message.to_string(),
+        NotComputed::Call { message, .. } => message.clone(),
+        NotComputed::Key(m) | NotComputed::Table(m) => m.clone(),
+    }
 }
 
 /// What one expression of a call computes, before any row is evaluated.
@@ -912,12 +1260,19 @@ pub fn computed<'a, A: Access<'a>>(
 pub struct ExprWork {
     /// The typed functions that it calls, in the order of their calls.
     pub calls: Vec<QualifiedName>,
+    /// For each call, whether its arguments read an aggregate.
+    pub call_reads_aggregate: Vec<bool>,
+    /// For each call, its place among the expression's aggregates and calls.
+    pub call_slots: Vec<usize>,
+    /// The places of its aggregates among its aggregates and calls.
+    pub aggregate_slots: Vec<usize>,
     /// Its aggregates of the dialect.
     pub aggregates: usize,
     /// Its aggregates that run as a kernel over one column, which may take
     /// several threads: `sum()`, `mean()`, `min()`, or `max()` of a column.
     pub kernels: usize,
-    /// It reads the cells of each row outside an aggregate and a call.
+    /// It is evaluated for each row: an expression of a column of every row,
+    /// whose aggregates and calls are over the row's group.
     pub rows: bool,
 }
 
@@ -949,20 +1304,12 @@ pub fn planned<'a, A: Access<'a>>(
     summary: bool,
     threads: usize,
 ) -> Result<Planned, NotComputed> {
-    prepared(table, def, by, |scope, rows, groups| {
-        let mut out = Vec::with_capacity(exprs.len());
-        for (at, e) in exprs.iter().enumerate() {
-            let calc: Calc = compile_calc(e, scope, lookup, summary)
-                .map_err(|errors| NotComputed::Rule { at, errors })?;
-            let mut w = ExprWork::default();
-            work(&calc.rows.invariant, &mut w);
-            w.rows = !summary && super::compile::reads_cell_outside(&calc.rows.invariant);
-            out.push(w);
-        }
+    prepared(table, def, by, |scope, rows, groups, _| {
+        let exprs = compiled(exprs, scope, lookup, summary)?;
         Ok(Planned {
             rows,
             groups: groups.map(|g| g.count),
-            exprs: out,
+            exprs: exprs.into_iter().map(|(_, w)| w).collect(),
             kernel_threads: super::parallel::threads_for(rows, threads.max(1)),
         })
     })
@@ -971,16 +1318,32 @@ pub fn planned<'a, A: Access<'a>>(
 /// Adds the calls and the aggregates of `e` to `w`.
 fn work(e: &Expr, w: &mut ExprWork) {
     match e {
-        Expr::Call { function, args, .. } => {
+        Expr::Call {
+            function,
+            args,
+            at: slot,
+            ..
+        } => {
+            let at = w.calls.len();
             w.calls.push(function.clone());
+            w.call_reads_aggregate.push(false);
+            w.call_slots.push(*slot);
+            let before = w.aggregates;
             for a in args {
                 if let ArgValue::Cells { expr, .. } = &a.value {
                     work(expr, w);
                 }
             }
+            w.call_reads_aggregate[at] = w.aggregates > before;
         }
-        Expr::Aggregate { op, operands, .. } => {
+        Expr::Aggregate {
+            op,
+            operands,
+            at: slot,
+            ..
+        } => {
             w.aggregates += 1;
+            w.aggregate_slots.push(*slot);
             if matches!(op, Op::Sum | Op::Mean | Op::Min | Op::Max)
                 && matches!(operands.as_slice(), [Expr::Cell(_)])
             {

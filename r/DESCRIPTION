@@ -41,6 +41,7 @@ SystemRequirements: Cargo (Rust's package manager), rustc >= 1.88.0, xz
 Config/roxygen2/version: 8.1.1
 Collate: 
     'R8-package.R'
+    'bench.R'
     'function.R'
     'call.R'
     'check.R'
@@ -69,4 +70,5 @@ Collate:
     'utils.R'
     'values.R'
     'variant.R'
+    'watch.R'
     'zzz.R'

@@ -11,6 +11,7 @@
 use extendr_api::prelude::*;
 
 mod alloc;
+mod bench;
 mod call;
 mod construct;
 mod declare;
@@ -41,6 +42,7 @@ mod version;
 extendr_module! {
     mod R8;
     use alloc;
+    use bench;
     use call;
     use construct;
     use declare;
@@ -63,6 +65,7 @@ extendr_module! {
 extendr_module! {
     mod R8;
     use alloc;
+    use bench;
     use call;
     use construct;
     use declare;

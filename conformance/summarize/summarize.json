@@ -10,7 +10,6 @@
         "name": "Visits",
         "description": "",
         "version": 1,
-        "open": true,
         "columns": [
           {
             "name": "ward",
@@ -79,7 +78,8 @@
             },
             "description": ""
           }
-        ]
+        ],
+        "open": true
       }
     ],
     "functions": [

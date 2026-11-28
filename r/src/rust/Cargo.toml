@@ -27,7 +27,7 @@ alloc-stats = []
 [dependencies]
 extendr-api = '0.9'
 extendr-ffi = '0.9'
-rtemis-r8 = '0.6'
+rtemis-r8 = { version = '0.6', features = ['resources'] }
 serde = '1'
 serde_json = { version = '1', features = ['float_roundtrip', 'preserve_order'] }
 
