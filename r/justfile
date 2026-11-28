@@ -174,15 +174,18 @@ rust-check:
     cd src/rust && export CARGO_TARGET_DIR="$R8_TARGET_DIR" && cp Cargo.lock Cargo.lock.saved && (cargo fmt --check && cargo clippy --all-targets {{ cargo_config }} -- -D warnings && cargo clippy --all-targets --features oracle {{ cargo_config }} -- -D warnings && cargo clippy --all-targets --features alloc-stats {{ cargo_config }} -- -D warnings && cargo test {{ cargo_config }}); status=$?; cp Cargo.lock.saved Cargo.lock; rm -f Cargo.lock.saved; exit $status
     @just _msg "Done"
 
-# Vendor Rust crates into src/rust/vendor.tar.xz, and write LICENSE.note and inst/AUTHORS
 # Lock the crates.io release of rtemis-r8 that Cargo.toml requires, vendor it, and check the package against it
 update-crates:
     @just _msg "─── Locking the crates.io release of rtemis-r8 for {{ pkg }}... ───"
-    cd src/rust && cargo update -p rtemis-r8
+    # The lock of a patched build holds rtemis-r8 without a source, which `-p`
+    # does not match: `--workspace` adds the release, and `-p` takes its latest
+    # patch version.
+    cd src/rust && cargo update --workspace && cargo update -p rtemis-r8
     R8_CRATES_PATH= just vendor
     R8_CRATES_PATH= R8_ORACLE= just check-cran
     @just _msg "Done"
 
+# Vendor Rust crates into src/rust/vendor.tar.xz, and write LICENSE.note and inst/AUTHORS
 vendor:
     @just _msg "─── Vendoring Rust crates for {{ pkg }}... ───"
     {{ rscript }} -e "rextendr::vendor_crates(overwrite = TRUE, clean = TRUE)"

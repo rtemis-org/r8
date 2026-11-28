@@ -1,0 +1,630 @@
+The compiled code of R8.io includes the following Rust crates, bundled
+as source in src/rust/vendor.tar.xz. The license files that a crate ships
+are part of that archive; the notices of crates that ship none follow the
+list.
+
+------------------------------------------------------------------------
+
+Name:        ahash
+Version:     0.8.15
+Authors:     Tom Kaitchuck
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/tkaitchuck/ahash
+
+Name:        aho-corasick
+Version:     1.1.5
+Authors:     Andrew Gallant
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/aho-corasick
+
+Name:        android_system_properties
+Version:     0.1.6
+Authors:     Nicolas Silva
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/nical/android_system_properties
+
+Name:        autocfg
+Version:     1.5.1
+Authors:     Josh Stone
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/cuviper/autocfg
+
+Name:        block-buffer
+Version:     0.12.1
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/utils
+
+Name:        bumpalo
+Version:     3.20.4
+Authors:     Nick Fitzgerald
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/fitzgen/bumpalo
+
+Name:        bytes
+Version:     1.12.2
+Authors:     Carl Lerche, Sean McArthur
+License:     MIT
+Repository:  https://github.com/tokio-rs/bytes
+
+Name:        cc
+Version:     1.12.0
+Authors:     Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/cc-rs
+
+Name:        cfg-if
+Version:     1.0.5
+Authors:     Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/cfg-if
+
+Name:        chrono
+Version:     0.4.45
+Authors:     Kang Seonghoon and contributors
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/chronotope/chrono
+
+Name:        const-oid
+Version:     0.10.3
+Authors:     RustCrypto Developers
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/RustCrypto/formats
+
+Name:        const-random
+Version:     0.1.20
+Authors:     Tom Kaitchuck
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/tkaitchuck/constrandom
+
+Name:        const-random-macro
+Version:     0.1.18
+Authors:     Tom Kaitchuck
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/tkaitchuck/constrandom
+
+Name:        core-foundation-sys
+Version:     0.8.7
+Authors:     The Servo Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/servo/core-foundation-rs
+
+Name:        cpufeatures
+Version:     0.3.1
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/utils
+
+Name:        crunchy
+Version:     0.2.4
+Authors:     Eira Fransham
+License:     MIT
+Repository:  https://github.com/eira-fransham/crunchy
+
+Name:        crypto-common
+Version:     0.2.2
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/traits
+
+Name:        digest
+Version:     0.11.3
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/traits
+
+Name:        equivalent
+Version:     1.0.3
+Authors:     The indexmap-rs contributors
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/indexmap-rs/equivalent
+
+Name:        extendr-api
+Version:     0.9.0
+Authors:     The extendr contributors
+License:     MIT
+Repository:  https://github.com/extendr/extendr
+
+Name:        extendr-ffi
+Version:     0.9.0
+Authors:     The extendr contributors
+License:     MIT
+Repository:  https://github.com/extendr/extendr
+
+Name:        extendr-macros
+Version:     0.9.0
+Authors:     The extendr contributors
+License:     MIT
+Repository:  https://github.com/extendr/extendr
+
+Name:        find-msvc-tools
+Version:     0.1.16
+Authors:     Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/cc-rs
+
+Name:        flate2
+Version:     1.1.11
+Authors:     Alex Crichton, Josh Triplett
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/flate2-rs
+
+Name:        foldhash
+Version:     0.2.0
+Authors:     Orson Peters
+License:     Zlib
+Repository:  https://github.com/orlp/foldhash
+
+Name:        futures-core
+Version:     0.3.34
+Authors:     Alex Crichton, The Tokio Authors
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/futures-rs
+
+Name:        futures-task
+Version:     0.3.34
+Authors:     Alex Crichton, The Tokio Authors
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/futures-rs
+
+Name:        futures-util
+Version:     0.3.34
+Authors:     Alex Crichton, The Tokio Authors
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/futures-rs
+
+Name:        getrandom
+Version:     0.4.3
+Authors:     The Rand Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-random/getrandom
+
+Name:        half
+Version:     2.7.1
+Authors:     Kathryn Long
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/VoidStarKat/half-rs
+
+Name:        hashbrown
+Version:     0.17.2
+Authors:     Amanieu d'Antras
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/hashbrown
+
+Name:        hybrid-array
+Version:     0.4.15
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/hybrid-array
+
+Name:        iana-time-zone
+Version:     0.1.65
+Authors:     Andrew Straw, René Kijewski, Ryan Lopopolo
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/strawlab/iana-time-zone
+
+Name:        iana-time-zone-haiku
+Version:     0.1.2
+Authors:     René Kijewski
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/strawlab/iana-time-zone
+
+Name:        indexmap
+Version:     2.14.2
+Authors:     The indexmap-rs contributors
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/indexmap-rs/indexmap
+
+Name:        itoa
+Version:     1.0.19
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/itoa
+
+Name:        jiff
+Version:     0.2.46
+Authors:     Andrew Gallant
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/jiff
+
+Name:        jiff-core
+Version:     0.1.8
+Authors:     Andrew Gallant
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/jiff
+
+Name:        jiff-static
+Version:     0.2.46
+Authors:     Andrew Gallant
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/jiff
+
+Name:        jiff-tzdb
+Version:     0.1.10
+Authors:     Andrew Gallant
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/jiff
+
+Name:        jobserver
+Version:     0.1.35
+Authors:     Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/jobserver-rs
+
+Name:        js-sys
+Version:     0.3.107
+Authors:     The wasm-bindgen Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys
+
+Name:        lazy_static
+Version:     1.5.1
+Authors:     Marvin Löbel
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang-nursery/lazy-static.rs
+
+Name:        libc
+Version:     0.2.191
+Authors:     The Rust Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/libc
+
+Name:        libm
+Version:     0.2.16
+Authors:     Alex Crichton, Amanieu d'Antras, Jorge Aparicio, Trevor Gross
+License:     MIT
+Repository:  https://github.com/rust-lang/compiler-builtins
+
+Name:        log
+Version:     0.4.35
+Authors:     The Rust Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/log
+
+Name:        lz4_flex
+Version:     0.14.2
+Authors:     Pascal Seitz, Arthur Silva, ticki
+License:     MIT
+Repository:  https://github.com/pseitz/lz4_flex
+
+Name:        memchr
+Version:     2.8.3
+Authors:     Andrew Gallant, bluss
+License:     Unlicense OR MIT
+Repository:  https://github.com/BurntSushi/memchr
+
+Name:        num-bigint
+Version:     0.5.1
+Authors:     The Rust Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-num/num-bigint
+
+Name:        num-integer
+Version:     0.1.47
+Authors:     The Rust Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-num/num-integer
+
+Name:        num-traits
+Version:     0.2.19
+Authors:     The Rust Project Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-num/num-traits
+
+Name:        once_cell
+Version:     1.21.4
+Authors:     Aleksey Kladov
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/matklad/once_cell
+
+Name:        parquet
+Version:     60.2.0
+Authors:     Apache Arrow
+License:     Apache-2.0
+Repository:  https://github.com/apache/arrow-rs
+
+Name:        paste
+Version:     1.0.15
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/paste
+
+Name:        pin-project-lite
+Version:     0.2.18
+Authors:     The pin-project-lite contributors
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/taiki-e/pin-project-lite
+
+Name:        pkg-config
+Version:     0.3.34
+Authors:     Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/pkg-config-rs
+
+Name:        portable-atomic
+Version:     1.15.0
+Authors:     The portable-atomic contributors
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/taiki-e/portable-atomic
+
+Name:        portable-atomic-util
+Version:     0.2.8
+Authors:     The portable-atomic-util contributors
+License:     Apache-2.0 OR MIT
+Repository:  https://github.com/taiki-e/portable-atomic-util
+
+Name:        proc-macro2
+Version:     1.0.107
+Authors:     David Tolnay, Alex Crichton
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/proc-macro2
+
+Name:        quote
+Version:     1.0.47
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/quote
+
+Name:        r-efi
+Version:     6.0.0
+Authors:     Red Hat, Inc., Microsoft Corporation, David Rheinsberg
+License:     MIT OR Apache-2.0 OR LGPL-2.1-or-later
+Repository:  https://github.com/r-efi/r-efi
+
+Name:        readonly
+Version:     0.2.14
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/readonly
+
+Name:        regex
+Version:     1.13.2
+Authors:     The Rust Project Developers, Andrew Gallant
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/regex
+
+Name:        regex-automata
+Version:     0.4.19
+Authors:     The Rust Project Developers, Andrew Gallant
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/regex
+
+Name:        regex-syntax
+Version:     0.8.12
+Authors:     The Rust Project Developers, Andrew Gallant
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/rust-lang/regex
+
+Name:        rtemis-r8
+Version:     0.6.0
+Authors:     E.D. Gennatas
+License:     BSD-3-Clause
+Repository:  https://github.com/rtemis-org/r8
+
+Name:        rtemis-r8-io
+Version:     0.6.0
+Authors:     E.D. Gennatas
+License:     BSD-3-Clause
+Repository:  https://github.com/rtemis-org/r8
+
+Name:        rustversion
+Version:     1.0.23
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/rustversion
+
+Name:        ryu-js
+Version:     0.2.2
+Authors:     David Tolnay, boa-dev
+License:     Apache-2.0 OR BSL-1.0
+Repository:  https://github.com/boa-dev/ryu-js
+
+Name:        seq-macro
+Version:     0.3.6
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/seq-macro
+
+Name:        serde
+Version:     1.0.229
+Authors:     Erick Tryzelaar, David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/serde
+
+Name:        serde_core
+Version:     1.0.229
+Authors:     Erick Tryzelaar, David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/serde
+
+Name:        serde_derive
+Version:     1.0.229
+Authors:     Erick Tryzelaar, David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/serde
+
+Name:        serde_json
+Version:     1.0.154
+Authors:     The serde-rs contributors
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/serde-rs/json
+
+Name:        sha2
+Version:     0.11.1
+Authors:     RustCrypto Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/RustCrypto/hashes
+
+Name:        shlex
+Version:     2.0.1
+Authors:     comex, Fenhl, Adrian Taylor, Alex Touchet, Daniel Parks, Garrett Berg
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/comex/rust-shlex
+
+Name:        slab
+Version:     0.4.12
+Authors:     Carl Lerche
+License:     MIT
+Repository:  https://github.com/tokio-rs/slab
+
+Name:        snap
+Version:     1.1.2
+Authors:     Andrew Gallant
+License:     BSD-3-Clause
+Repository:  https://github.com/BurntSushi/rust-snappy
+
+Name:        syn
+Version:     2.0.119
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/syn
+
+Name:        syn
+Version:     3.0.10
+Authors:     David Tolnay
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/dtolnay/syn
+
+Name:        tiny-keccak
+Version:     2.0.2
+Authors:     debris
+License:     CC0-1.0
+Repository:  
+
+Name:        twox-hash
+Version:     2.1.5
+Authors:     Jake Goulding
+License:     MIT
+Repository:  https://github.com/shepmaster/twox-hash
+
+Name:        typenum
+Version:     1.20.1
+Authors:     Paho Lurie-Gregg
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/paholg/typenum
+
+Name:        unicode-ident
+Version:     1.0.27
+Authors:     David Tolnay
+License:     (MIT OR Apache-2.0) AND Unicode-3.0
+Repository:  https://github.com/dtolnay/unicode-ident
+
+Name:        version_check
+Version:     0.9.5
+Authors:     Sergio Benitez
+License:     MIT/Apache-2.0
+Repository:  https://github.com/SergioBenitez/version_check
+
+Name:        wasm-bindgen
+Version:     0.2.130
+Authors:     The wasm-bindgen Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/wasm-bindgen/wasm-bindgen
+
+Name:        wasm-bindgen-macro
+Version:     0.2.130
+Authors:     The wasm-bindgen Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro
+
+Name:        wasm-bindgen-macro-support
+Version:     0.2.130
+Authors:     The wasm-bindgen Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support
+
+Name:        wasm-bindgen-shared
+Version:     0.2.130
+Authors:     The wasm-bindgen Developers
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared
+
+Name:        windows-core
+Version:     0.62.2
+Authors:     Microsoft Corporation
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/microsoft/windows-rs
+
+Name:        windows-implement
+Version:     0.60.2
+Authors:     Microsoft Corporation
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/microsoft/windows-rs
+
+Name:        windows-interface
+Version:     0.59.3
+Authors:     Microsoft Corporation
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/microsoft/windows-rs
+
+Name:        windows-link
+Version:     0.2.1
+Authors:     Microsoft Corporation
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/microsoft/windows-rs
+
+Name:        windows-result
+Version:     0.4.1
+Authors:     Microsoft Corporation
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/microsoft/windows-rs
+
+Name:        windows-strings
+Version:     0.5.1
+Authors:     Microsoft Corporation
+License:     MIT OR Apache-2.0
+Repository:  https://github.com/microsoft/windows-rs
+
+Name:        zerocopy
+Version:     0.8.66
+Authors:     The Fuchsia Authors
+License:     BSD-2-Clause OR Apache-2.0 OR MIT
+Repository:  https://github.com/google/zerocopy
+
+Name:        zerocopy-derive
+Version:     0.8.66
+Authors:     The Fuchsia Authors
+License:     BSD-2-Clause OR Apache-2.0 OR MIT
+Repository:  https://github.com/google/zerocopy
+
+Name:        zlib-rs
+Version:     0.6.9
+Authors:     Trifecta Tech Foundation
+License:     Zlib
+Repository:  https://github.com/trifectatechfoundation/zlib-rs
+
+Name:        zmij
+Version:     1.0.23
+Authors:     David Tolnay
+License:     MIT
+Repository:  https://github.com/dtolnay/zmij
+
+Name:        zstd
+Version:     0.14.5
+Authors:     Alexandre Bury
+License:     BSD-3-Clause
+Repository:  https://github.com/gyscos/zstd-rs
+
+Name:        zstd-safe
+Version:     8.4.0
+Authors:     Alexandre Bury
+License:     BSD-3-Clause
+Repository:  https://github.com/gyscos/zstd-rs
+
+Name:        zstd-sys
+Version:     2.2.0+zstd.1.6.0
+Authors:     Alexandre Bury
+License:     BSD-3-Clause AND BSD-2-Clause
+Repository:  https://github.com/gyscos/zstd-rs
+
+------------------------------------------------------------------------
+License notice of extendr-api, extendr-ffi, extendr-macros:
+
+Copyright (c) 2021 The Extendr contributors (See CONTRIBUTORS.md)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+

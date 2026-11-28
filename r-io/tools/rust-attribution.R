@@ -9,20 +9,40 @@
 
 # %% Crates without an authors field ----
 # Copyright holders as stated in each crate's license; where the license names
-# no holder (equivalent, indexmap, serde_json), the contributors of the crate's
-# repository.
+# no holder (equivalent, indexmap, pin-project-lite, portable-atomic,
+# portable-atomic-util, serde_json), the contributors of the crate's repository.
 crate_authors <- c(
+  "cc" = "Alex Crichton",
+  "chrono" = "Kang Seonghoon and contributors",
   "equivalent" = "The indexmap-rs contributors",
   "extendr-api" = "The extendr contributors",
   "extendr-ffi" = "The extendr contributors",
   "extendr-macros" = "The extendr contributors",
+  "find-msvc-tools" = "Alex Crichton",
+  "futures-core" = "Alex Crichton, The Tokio Authors",
+  "futures-task" = "Alex Crichton, The Tokio Authors",
+  "futures-util" = "Alex Crichton, The Tokio Authors",
   "hashbrown" = "Amanieu d'Antras",
   "indexmap" = "The indexmap-rs contributors",
   "libc" = "The Rust Project Developers",
+  "num-bigint" = "The Rust Project Developers",
+  "pin-project-lite" = "The pin-project-lite contributors",
+  "portable-atomic" = "The portable-atomic contributors",
+  "portable-atomic-util" = "The portable-atomic-util contributors",
+  "r-efi" = "Red Hat, Inc., Microsoft Corporation, David Rheinsberg",
   "rtemis-r8" = "E.D. Gennatas",
   "rtemis-r8-io" = "E.D. Gennatas",
   "serde_json" = "The serde-rs contributors",
-  "typenum" = "Paho Lurie-Gregg"
+  "typenum" = "Paho Lurie-Gregg",
+  "windows-core" = "Microsoft Corporation",
+  "windows-implement" = "Microsoft Corporation",
+  "windows-interface" = "Microsoft Corporation",
+  "windows-link" = "Microsoft Corporation",
+  "windows-result" = "Microsoft Corporation",
+  "windows-strings" = "Microsoft Corporation",
+  "zerocopy" = "The Fuchsia Authors",
+  "zerocopy-derive" = "The Fuchsia Authors",
+  "zlib-rs" = "Trifecta Tech Foundation"
 )
 
 # %% License notices ----
@@ -68,7 +88,9 @@ crates <- crates[order(
 authors_of <- function(p) {
   a <- unlist(p[["authors"]])
   if (length(a) == 0L) {
-    a <- crate_authors[[p[["name"]]]]
+    a <- if (p[["name"]] %in% names(crate_authors)) {
+      crate_authors[[p[["name"]]]]
+    }
     if (is.null(a)) {
       stop("No authors for crate '", p[["name"]], "': add it to crate_authors.")
     }

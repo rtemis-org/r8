@@ -67,7 +67,9 @@ crates <- crates[order(
 authors_of <- function(p) {
   a <- unlist(p[["authors"]])
   if (length(a) == 0L) {
-    a <- crate_authors[[p[["name"]]]]
+    a <- if (p[["name"]] %in% names(crate_authors)) {
+      crate_authors[[p[["name"]]]]
+    }
     if (is.null(a)) {
       stop("No authors for crate '", p[["name"]], "': add it to crate_authors.")
     }

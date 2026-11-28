@@ -157,6 +157,17 @@ rust-check:
     cd src/rust && export CARGO_TARGET_DIR="$R8_TARGET_DIR" && cp Cargo.lock Cargo.lock.saved && (cargo fmt --check && cargo clippy --all-targets {{ cargo_config }} -- -D warnings && cargo test {{ cargo_config }}); status=$?; cp Cargo.lock.saved Cargo.lock; rm -f Cargo.lock.saved; exit $status
     @just _msg "Done"
 
+# Lock the crates.io releases of rtemis-r8 and rtemis-r8-io that Cargo.toml requires, vendor them, and check the package against them
+update-crates:
+    @just _msg "─── Locking the crates.io releases of rtemis-r8 and rtemis-r8-io for {{ pkg }}... ───"
+    # The lock of a patched build holds the crates without a source, which `-p`
+    # does not match: `--workspace` adds the releases, and `-p` takes their
+    # latest patch versions.
+    cd src/rust && cargo update --workspace && cargo update -p rtemis-r8 -p rtemis-r8-io
+    R8_CRATES_PATH= just vendor
+    R8_CRATES_PATH= just check-cran
+    @just _msg "Done"
+
 # Vendor Rust crates into src/rust/vendor.tar.xz, and write LICENSE.note and inst/AUTHORS
 vendor:
     @just _msg "─── Vendoring Rust crates for {{ pkg }}... ───"
