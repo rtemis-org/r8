@@ -214,10 +214,12 @@ test_that("a map that fails ends its progress with the error", {
 
 test_that("a map of a table's columns counts groups times columns", {
   log <- recorder()
+  # 12 calls of 0.05 s: the map runs past the 0.2 s at which the hook begins
+  # by several of the report points that Rust counts.
   slow_mean <- declared(new_function(
     "slow_mean",
     function(v = arg_vec(type_double())) {
-      Sys.sleep(0.02)
+      Sys.sleep(0.05)
       mean(v)
     },
     return_type = type_double()

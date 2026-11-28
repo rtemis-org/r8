@@ -26,6 +26,7 @@ edit "s/^\(rtemis-r8 = {.*version = \"\)[^\"]*\"/\1$mm\"/" rust/crates/rtemis-r8
 for crate in r/src/rust/Cargo.toml r-io/src/rust/Cargo.toml; do
   edit "1,/^version = /s/^version = '.*'$/version = '$version'/" "$crate"
   edit "s/^rtemis-r8 = '.*'$/rtemis-r8 = '$mm'/" "$crate"
+  edit "s/^\(rtemis-r8 = {.*version = '\)[^']*'/\1$mm'/" "$crate"
 done
 edit "s/^\(rtemis-r8-io = {.*version = '\)[^']*'/\1$mm'/" r-io/src/rust/Cargo.toml
 edit "s/^Version: .*/Version: $version/" r/DESCRIPTION

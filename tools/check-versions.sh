@@ -20,13 +20,15 @@ workspace=$(sed -n 's/^version = "\(.*\)"$/\1/p' rust/Cargo.toml | head -n 1)
 macros_req=$(sed -n 's/^rtemis-r8-macros = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8/Cargo.toml)
 r_package=$(sed -n 's/^Version: *//p' r/DESCRIPTION)
 binding=$(sed -n "s/^version = '\(.*\)'$/\1/p" r/src/rust/Cargo.toml | head -n 1)
-binding_req=$(sed -n "s/^rtemis-r8 = '\(.*\)'$/\1/p" r/src/rust/Cargo.toml)
+# A requirement is written `rtemis-r8 = '0.6'`, or as a table with `version`
+# where it names features.
+binding_req=$(sed -n -e "s/^rtemis-r8 = '\(.*\)'$/\1/p" -e "s/^rtemis-r8 = {.*version = '\([^']*\)'.*/\1/p" r/src/rust/Cargo.toml)
 api_req=$(sed -n 's/^rtemis-r8 = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-api/Cargo.toml)
 api_macros_req=$(sed -n 's/^rtemis-r8-macros = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-api/Cargo.toml)
 io_req=$(sed -n 's/^rtemis-r8 = .*version = "\([^"]*\)".*/\1/p' rust/crates/rtemis-r8-io/Cargo.toml)
 io_package=$(sed -n 's/^Version: *//p' r-io/DESCRIPTION)
 io_binding=$(sed -n "s/^version = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml | head -n 1)
-io_binding_req=$(sed -n "s/^rtemis-r8 = '\(.*\)'$/\1/p" r-io/src/rust/Cargo.toml)
+io_binding_req=$(sed -n -e "s/^rtemis-r8 = '\(.*\)'$/\1/p" -e "s/^rtemis-r8 = {.*version = '\([^']*\)'.*/\1/p" r-io/src/rust/Cargo.toml)
 io_binding_io_req=$(sed -n "s/^rtemis-r8-io = .*version = '\([^']*\)'.*/\1/p" r-io/src/rust/Cargo.toml)
 io_r8=$(sed -n 's/^ *R8 (>= \([^)]*\)).*/\1/p' r-io/DESCRIPTION)
 
