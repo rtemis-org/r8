@@ -264,7 +264,7 @@ test_that("a function of no package is identified by its body", {
   first <- r8explain(r8map(m, spread, by = "combo"))
   home <- topenv(environment(spread))
   if (isNamespace(home)) {
-    expect_identical(f(first)$package, getNamespaceName(home)[["name"]])
+    expect_identical(f(first)$package, unname(getNamespaceName(home)))
   } else {
     expect_match(f(first)$body_hash, "^sha256:[0-9a-f]{64}$")
   }
