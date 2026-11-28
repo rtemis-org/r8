@@ -417,8 +417,8 @@ pub struct StructDef {
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// `new_table()`: a table, whose values hold their columns, each a vector of
-/// the cells of one type, all of one length.
+/// `new_table_type()`: a table type, whose values hold their columns, each a
+/// vector of the cells of one type, all of one length.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]

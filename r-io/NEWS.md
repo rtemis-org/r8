@@ -1,6 +1,8 @@
-# R8.io 0.6.0.9000
+# R8.io 0.7.0
 
-- R8.io imports R8 0.6.0.9000, whose `new_table_type()` declares the table types that `r8read_table()` and `r8check_file()` take.
+- R8.io imports R8 0.7.0, whose `new_table_type()` declares the table types that `r8read_table()` and `r8check_file()` take.
+- Without a type, a whole number beyond 2^53 without a point, such as `9007199254740993`, is read as text.
+- Without a type, a column whose cells are missing but for a quoted `""` or `"NA"` is text, which holds those cells as texts.
 
 # R8.io 0.6.0
 

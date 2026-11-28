@@ -32,7 +32,7 @@ macros = ["dep:rtemis-r8-macros"]
 resources = ["dep:libc"]
 
 [dependencies]
-rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.6", optional = true }
+rtemis-r8-macros = { path = "../rtemis-r8-macros", version = "0.7", optional = true }
 schemars = { version = "1", optional = true }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
 regex = "1"

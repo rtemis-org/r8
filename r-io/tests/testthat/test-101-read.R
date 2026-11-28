@@ -41,6 +41,10 @@ test_that("a file without a type has the types that all its cells have", {
     )
   )
   expect_identical(dim(r8read_table(file_of("a,b"))), c(0L, 2L))
+  # 2^53 is a double, and a whole number beyond it is the text of the file.
+  x <- r8read_table(file_of("n,big", "9007199254740992,9007199254740993"))
+  expect_identical(x$n, 9007199254740992)
+  expect_identical(x$big, "9007199254740993")
 })
 
 test_that("a file is read as a declared type", {
@@ -191,6 +195,9 @@ test_that("missing cells are the texts that are given", {
   x <- r8read_table(f, na_strings_in = list(s = c("NA", "")))
   expect_identical(x$s, c("x", "-99", NA, NA, NA, NA))
   expect_identical(r8read_table(f, na_strings = character())$s[[4]], "NA")
+  # A column of missing cells and quoted texts alone holds the texts.
+  x <- r8read_table(file_of("id,s", "1,", "2,\"\"", "3,NA", "4,\"NA\""))
+  expect_identical(x$s, c(NA, "", NA, "NA"))
   T <- R8::new_table_type(
     "M",
     list(a = R8::type_integer(), s = R8::option(R8::type_character()))

@@ -99,6 +99,9 @@ fn a_column_has_the_kind_that_all_its_cells_have() {
     assert_eq!(one(&["TRUE", "false"]), Column::Logical(vec![1, 0]));
     assert!(matches!(one(&["1", "2.5"]), Column::Double(x) if x == [1.0, 2.5]));
     assert!(matches!(one(&["1", "3000000000"]), Column::Double(x) if x == [1.0, 3e9]));
+    // 2^53 is a double, and the whole numbers beyond it are text.
+    assert!(matches!(one(&["9007199254740992", "-9007199254740992"]),
+        Column::Double(x) if x == [9_007_199_254_740_992.0, -9_007_199_254_740_992.0]));
     assert!(matches!(one(&["", "1", "", ".5"]),
         Column::Double(x) if x[0].is_nan() && x[1..2] == [1.0] && x[2].is_nan() && x[3] == 0.5));
     assert!(matches!(one(&["1e3", "Inf", "NaN"]), Column::Double(x) if x[1].is_infinite()));
@@ -131,6 +134,8 @@ fn a_column_has_the_kind_that_all_its_cells_have() {
         vec!["2024-01-31", "2024-01-31T00:00:00Z"],
         vec!["T", "F"],
         vec!["12345678901234567890"],
+        vec!["9007199254740993"],
+        vec!["1", "-9007199254740993"],
         vec!["1", "12345678901234567890"],
         vec!["1", "+2"],
         vec!["-0", "1"],
@@ -363,6 +368,21 @@ fn a_missing_cell_and_a_text_are_apart() {
             1
         ])
     );
+    // A column of missing cells and quoted `""` and `"NA"` alone is text; a column
+    // whose quoted cells are missing codes of it alone is not.
+    let r = read(
+        "s,n\n,1\n\"\",2\nNA,3\n\"NA\",4\n",
+        &[Kind::Infer, Kind::Infer],
+    );
+    assert_eq!(texts(&r.columns[0]), [None, Some(""), None, Some("NA")]);
+    let csv = Csv::new("s\n\"\"\n\"NA\"\n", Options::default()).unwrap();
+    let spec = ColumnSpec {
+        missing: vec![String::new(), "NA".to_string()],
+        missing_here: vec![String::new(), "NA".to_string()],
+        ..ColumnSpec::new(Kind::Infer)
+    };
+    let r = csv.read(&[spec], &limit(5)).unwrap();
+    assert_eq!(r.columns[0], Column::Logical(vec![MISSING_INTEGER; 2]));
 }
 
 #[test]

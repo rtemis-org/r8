@@ -25,7 +25,7 @@ parquet = ["dep:parquet"]
 jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 memchr = "2"
 parquet = { version = "60", default-features = false, features = ["snap", "flate2-zlib-rs", "lz4", "zstd"], optional = true }
-rtemis-r8 = { path = "../rtemis-r8", version = "0.6" }
+rtemis-r8 = { path = "../rtemis-r8", version = "0.7" }
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

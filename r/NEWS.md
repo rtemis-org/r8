@@ -1,4 +1,4 @@
-# R8 0.6.0.9000
+# R8 0.7.0
 
 - `new_table()` is `new_table_type()`, and a table type prints as `<r8 table type ns::Name v1>`. The error of `type_table("Name")` names `new_table_type()`, and that of `new_table_type(list(...))` names `type_table()`.
 

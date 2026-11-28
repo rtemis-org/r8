@@ -7,8 +7,8 @@
 
 use rtemis_r8::canonical::days_from_civil;
 
-/// The greatest integer below which a double holds every one.
-const WHOLE: f64 = 9_007_199_254_740_992.0;
+/// The digits of 2^53, the greatest integer below which a double holds every one.
+const WHOLE: &str = "9007199254740992";
 
 /// The text without the spaces and tabs around it.
 pub fn trimmed(t: &str) -> &str {
@@ -69,6 +69,12 @@ fn decimal(t: &str) -> Option<Decimal<'_>> {
     })
 }
 
+/// Whether the digits of a whole number, without zeros before them, are of a
+/// number beyond 2^53.
+fn beyond_whole(digits: &str) -> bool {
+    digits.len() > WHOLE.len() || (digits.len() == WHOLE.len() && digits > WHOLE)
+}
+
 /// A whole number in the domain of R8's integers, -2147483647 to 2147483647.
 pub fn integer(t: &str, declared: bool) -> Option<i32> {
     // The common text: digits without a sign and a zero before them.
@@ -107,13 +113,13 @@ pub fn double(t: &str, declared: bool) -> Option<f64> {
     if !declared && (d.plus || (d.whole.len() > 1 && d.whole.starts_with('0'))) {
         return None;
     }
-    let v: f64 = t.parse().ok().filter(|v: &f64| v.is_finite())?;
     // A long number without a point is an identifier more often than a quantity,
-    // and a double does not hold its digits.
-    if !declared && !d.point && !d.exponent && v.abs() > WHOLE {
+    // and a double does not hold its digits. Its digits are compared, not its
+    // double: the double nearest to 2^53 + 1 is 2^53.
+    if !declared && !d.point && !d.exponent && beyond_whole(d.whole) {
         return None;
     }
-    Some(v)
+    t.parse().ok().filter(|v: &f64| v.is_finite())
 }
 
 /// The days since 1970-01-01 of an ISO 8601 date, `2020-01-31`.

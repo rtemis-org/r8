@@ -455,7 +455,8 @@ struct Reading<'s> {
     typed: bool,
     /// Whether a cell was read that is not missing.
     seen: bool,
-    /// Whether a missing cell was quoted, which may be a text.
+    /// Whether a missing cell was a quoted `""` or `"NA"`, which is a text in a
+    /// column of text.
     quoted: bool,
     /// Whether the column is read again as text.
     again: bool,
@@ -544,7 +545,9 @@ impl<'s> Reading<'s> {
 
     fn text_cell(&mut self, t: &str, quoted: bool, row: u64, limit: usize) {
         if self.missing(t, quoted) {
-            self.quoted |= quoted;
+            self.quoted |= quoted
+                && (t.is_empty() || t == "NA")
+                && !self.spec.missing_here.iter().any(|m| m == t);
             return self.cells.push_missing();
         }
         if let Some(k) = self.spec.recode.iter().position(|(from, _)| *from == *t)
@@ -784,6 +787,13 @@ impl Csv<'_> {
             .collect();
         let mut out = Read::default();
         self.pass(&mut columns, options.limit, &mut out)?;
+        // An inferred column whose cells are missing but for a quoted `""` or `"NA"`
+        // is text, which holds those cells as texts.
+        for c in &mut columns {
+            if c.spec.kind == Kind::Infer && !c.seen && c.quoted {
+                c.again = true;
+            }
+        }
         if columns.iter().any(|c| c.again) {
             for c in &mut columns {
                 c.active = c.again;
