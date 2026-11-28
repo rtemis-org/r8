@@ -50,13 +50,21 @@ open-version version:
 
 # Checks before publishing: versions, the workspace's checks and MSRV, a publish dry run, and R CMD check --as-cran against this checkout's crates
 release-check: check-versions rust-check msrv
-    cd rust && cargo publish --workspace --dry-run --allow-dirty
+    just _publish --dry-run --allow-dirty
     cd r && R8_ORACLE= just check-cran
 
 # Publish the workspace crates to crates.io from a committed tree; then run `just update-crates` in r/
 publish-crates: release-check
     @git diff --quiet && git diff --cached --quiet || (echo "Commit the working tree before publishing." && exit 1)
-    cd rust && cargo publish --workspace
+    just _publish
+
+# `cargo publish --workspace` in a new target directory. Each crate is verified
+# against the packaged copies of the crates it requires, which Cargo builds as
+# registry crates and identifies by name and version alone; in rust/target, the
+# build of an earlier run of the same version stands for the current sources.
+[working-directory: "rust"]
+_publish *args:
+    t=$(mktemp -d) && CARGO_TARGET_DIR="$t" cargo publish --workspace {{ args }}; s=$?; rm -rf "$t"; exit $s
 
 # Fast-forward main to devel and tag the release, from a committed release tree on devel
 release:
