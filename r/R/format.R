@@ -356,9 +356,12 @@ print_lines <- function(x) {
 #' @export
 format.r8_type <- function(x, ...) {
   ir <- type_ir(x)
+  # "table" alone names a value of the type; its values print as
+  # `<ns::Name table>`.
+  kind <- if (identical(ir[["kind"]], "table")) "table type" else ir[["kind"]]
   header <- paste0(
     "<r8 ",
-    ir[["kind"]],
+    kind,
     " ",
     attr(x, "r8_name", exact = TRUE),
     " v",

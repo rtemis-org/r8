@@ -469,7 +469,7 @@ declare_report <- function() {
   count <- type_integer(min = 0L)
   assign(
     "report_rules_type",
-    new_table(
+    new_table_type(
       "ReportRules",
       columns = list(
         rule = type_character(),
@@ -485,7 +485,7 @@ declare_report <- function() {
   )
   assign(
     "report_problems_type",
-    new_table(
+    new_table_type(
       "ReportProblems",
       columns = list(
         rule = type_character(),

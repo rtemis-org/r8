@@ -518,7 +518,7 @@ test_that("calc() refuses a call that the declaration of its function does not a
 test_that("r8map() applies to a declared table as to a raven", {
   op <- options(r8.namespace = "maps")
   on.exit(options(op))
-  Visits <- new_table(
+  Visits <- new_table_type(
     "Visits",
     columns = list(
       ward = type_character(),

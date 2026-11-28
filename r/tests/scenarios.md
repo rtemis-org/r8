@@ -4,7 +4,7 @@
 
 ## Essentials
 
-What each feature does, in 48 files of 439 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
+What each feature does, in 48 files of 440 tests. The runtime has its own tests in Rust (`rust/crates/`), and the behavior that every host language shares is in `conformance/`.
 
 | File | What it tests | Tests |
 |:--|:--|--:|
@@ -38,7 +38,7 @@ What each feature does, in 48 files of 439 tests. The runtime has its own tests 
 | `test-134-conformance.R` | The same behavior of a type with fields of every kind, stored by R and by Rust. | 1 |
 | `test-135-rds.R` | Files with a checksum: `r8write_rds()` and `r8read_rds()`. | 3 |
 | `test-136-sharing.R` | What a value shares with the code around it: a vector or a data frame given, and what a read gives, are not copied, and R's own functions and data.table's change no value. | 9 |
-| `test-137-table.R` | Tables: the declaration of a table, its values, the operations on their columns and rows, documents, and saved values. | 23 |
+| `test-137-table.R` | Tables: the declaration of a table, its values, the operations on their columns and rows, documents, and saved values. | 24 |
 | `test-138-filter.R` | Rules that choose the rows of tables: what is kept, what is refused, and rules as values. The conformance corpus has the semantics of each operator. | 12 |
 | `test-139-columns.R` | The functions on tables that change columns and order rows: r8set(), r8drop(), r8rename(), and r8sort(). | 6 |
 | `test-140-check.R` | Checks: r8check() holds a table against rules or a type and reports what it finds, and r8validate() requires. | 13 |

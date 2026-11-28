@@ -20,7 +20,7 @@ test_that("a table that is written reads back as it was", {
     "007",
     "TRUE"
   )
-  T <- R8::new_table(
+  T <- R8::new_table_type(
     "Back",
     list(
       d = R8::option(R8::type_double(infinite = TRUE, nan = TRUE)),

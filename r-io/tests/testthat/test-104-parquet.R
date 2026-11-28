@@ -33,7 +33,7 @@ test_that("a Parquet file of arrow reads as the types it stores", {
 })
 
 test_that("a value of another type is reported by its text and recoded", {
-  T <- R8::new_table(
+  T <- R8::new_table_type(
     "Counts",
     columns = list(
       d = R8::option(R8::type_integer()),
@@ -114,7 +114,7 @@ test_that("a CSV date-time without an offset is the clock reading of the zone", 
     utc,
     as.POSIXct(c("2024-06-01 08:15:00", "2024-03-10 02:30:00"), tz = "UTC")
   )
-  T <- R8::new_table("At", columns = list(at = R8::type_posixct()))
+  T <- R8::new_table_type("At", columns = list(at = R8::type_posixct()))
   # New York's clock skips 02:30 on 2024-03-10.
   e <- expect_error(
     r8read_table(f, T, time_zone = "America/New_York"),

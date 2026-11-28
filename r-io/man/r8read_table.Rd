@@ -36,7 +36,7 @@ r8check_file(
 \item{file}{Character: The file. A CSV or TSV file whose name ends in \code{.gz} is
 decompressed.}
 
-\item{type}{Optional table type: An R8 table type (\code{\link[R8:new_table]{R8::new_table()}}), or an
+\item{type}{Optional table type: An R8 table type (\code{\link[R8:new_table_type]{R8::new_table_type()}}), or an
 \code{\link[R8:type_table]{R8::type_table()}}, of which the result is a \link[R8:Raven]{R8::Raven}.}
 
 \item{infer_types}{Character \{"strict", "none"\}: How the columns without a
@@ -164,7 +164,7 @@ file <- tempfile(fileext = ".csv")
 writeLines(c("id,lab", "1,0.4", "2,<0.1", "3,12"), file)
 r8read_table(file)
 
-Labs <- R8::new_table("Labs", columns = list(
+Labs <- R8::new_table_type("Labs", columns = list(
   id = R8::type_integer(),
   lab = R8::type_double(min = 0)
 ))

@@ -18,7 +18,7 @@ visits <- function() {
 
 visits_type <- function(ns, open = TRUE) {
   declare_in(ns, {
-    new_table(
+    new_table_type(
       "Visits",
       columns = list(
         id = column(type_integer(min = 1), unique = TRUE),
@@ -128,7 +128,7 @@ test_that("a rule is named by the list, its id, or its place", {
 test_that("one list of rules declares, checks, and reports under the same names", {
   set <- list(pressures = rule(dbp < sbp), adult = rule(age >= 18))
   V <- declare_in("chk4", {
-    new_table(
+    new_table_type(
       "V",
       columns = list(
         age = option(type_double()),
@@ -167,7 +167,7 @@ test_that("a problem shows what its rule read", {
   r <- r8check(x, list(s = rule(x * 2 < 10, when = id > 0)))
   expect_identical(r$problems$found, "x = 10, id = 3, x * 2 = 20")
   T <- declare_in("chk_found", {
-    new_table(
+    new_table_type(
       "T",
       list(
         id = column(type_integer(), unique = TRUE),
@@ -332,7 +332,7 @@ test_that("r8validate() requires what r8check() reports", {
 
 test_that("r8validate() of a table gives the problems that the type finds", {
   T <- declare_in("chk_require", {
-    new_table(
+    new_table_type(
       "T",
       list(
         id = column(type_integer(), unique = TRUE),

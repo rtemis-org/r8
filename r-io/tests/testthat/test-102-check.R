@@ -76,7 +76,7 @@ test_that("a report has every problem of a file, and refuses nothing", {
 })
 
 test_that("a cell that does not read has no answer in a rule", {
-  T <- R8::new_table(
+  T <- R8::new_table_type(
     "R",
     list(a = R8::option(R8::type_double()), b = R8::type_double()),
     rules = list(order = R8::rule(a < b))
@@ -93,7 +93,7 @@ test_that("a cell that does not read has no answer in a rule", {
 })
 
 test_that("problems are limited, and counts are not", {
-  T <- R8::new_table(
+  T <- R8::new_table_type(
     "L",
     list(a = R8::type_double(), b = R8::type_double(max = 5))
   )

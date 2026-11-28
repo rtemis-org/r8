@@ -13,7 +13,7 @@ refuses <- function(expr, text) {
 declared <- function(...) {
   op <- options(r8.namespace = "filters")
   on.exit(options(op))
-  new_table(...)
+  new_table_type(...)
 }
 
 # The rows of `x` that `rule` keeps, by a column of their numbers.

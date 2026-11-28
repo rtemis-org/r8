@@ -11,7 +11,7 @@ refuses <- function(expr, text, class = "r8_value_error") {
 
 patients <- function(ns, open = TRUE) {
   declare_in(ns, {
-    new_table(
+    new_table_type(
       "Patients",
       columns = list(
         weight = column(type_double(min = 0), unit = "kg", description = "W"),

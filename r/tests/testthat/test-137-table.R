@@ -9,7 +9,7 @@
 
 vitals <- function(ns) {
   declare_in(ns, {
-    new_table(
+    new_table_type(
       "Vitals",
       columns = list(
         age = column(type_double(min = 0), unit = "a", description = "Age"),
@@ -40,7 +40,7 @@ test_that("a table is declared, and its values hold its columns", {
   expect_identical(
     format(V)[1:3],
     c(
-      "<r8 table tb1::Vitals v1>",
+      "<r8 table type tb1::Vitals v1>",
       "  age: double [0, Inf) (unit a)  # Age",
       "  sbp: double [0, 400]"
     )[1:3] |>
@@ -83,16 +83,31 @@ test_that("a table is declared, and its values hold its columns", {
   }
   expect_error(
     declare_in("tb1", {
-      new_table("W", columns = list(x = vec(type_double())))
+      new_table_type("W", columns = list(x = vec(type_double())))
     }),
     "table_column",
     class = "r8_declaration_error"
   )
   expect_error(
     declare_in("tb1", {
-      new_table("W", columns = list(x = field(type_double(), default = 1)))
+      new_table_type("W", columns = list(x = field(type_double(), default = 1)))
     }),
     "column_default",
+    class = "r8_declaration_error"
+  )
+})
+
+test_that("each declaration of a table type names the other in its error", {
+  # new_table_type() and type_table() are close names, for a type with a name
+  # and one without.
+  expect_error(
+    new_table_type(list(id = type_integer())),
+    "type_table\\(columns\\)",
+    class = "r8_declaration_error"
+  )
+  expect_error(
+    type_table("Labs", columns = list(id = type_integer())),
+    "new_table_type\\(\"Labs\", columns = list\\(...\\)\\)",
     class = "r8_declaration_error"
   )
 })
@@ -120,7 +135,7 @@ test_that("construction checks a table against its declaration", {
   refuses(V(matrix(1:4, 2)), "as.data.frame() gives one of a matrix")
   refuses(Raven(mtcars), "cbind(name = rownames(x), x, row.names = NULL)")
   Closed <- declare_in("tb2", {
-    new_table(
+    new_table_type(
       "Closed",
       columns = list(x = column(type_integer(), unique = TRUE))
     )
@@ -232,7 +247,10 @@ test_that("a column is replaced, added, and removed, and checked", {
   refuses(v[[1]] <- 2, "replaced by name")
   expect_identical(v$age, c(31, 32, 33))
   Closed <- declare_in("tb4", {
-    new_table("Closed", columns = list(x = type_integer(), y = type_integer()))
+    new_table_type(
+      "Closed",
+      columns = list(x = type_integer(), y = type_integer())
+    )
   })
   z <- Closed(x = 1:2, y = 3:4)
   refuses(z$z <- 1:2, "whose columns are `x`, `y`")
@@ -260,7 +278,10 @@ test_that("rbind() binds values of one table", {
     "units or descriptions"
   )
   U <- declare_in("tb5", {
-    new_table("U", columns = list(id = column(type_integer(), unique = TRUE)))
+    new_table_type(
+      "U",
+      columns = list(id = column(type_integer(), unique = TRUE))
+    )
   })
   refuses(rbind(U(id = 1:2), U(id = 2:3)), "not_unique")
   expect_identical(rbind(U(id = 1:2), U(id = 3L))$id, 1:3)
@@ -320,7 +341,7 @@ test_that("the columns of a table have units and descriptions", {
 
 test_that("a table is a field, an implementor, and an argument", {
   out <- declare_in("tb7", {
-    V <- new_table("V", columns = list(x = type_double()))
+    V <- new_table_type("V", columns = list(x = type_double()))
     Size <- new_trait("Size", methods = list(size = trait_method(params(x))))
     size <- Size@size
     impl(Size, V, methods = list(size = function(x) nrow(x)))
@@ -575,7 +596,10 @@ test_that("a table prints as a grid that says what it leaves out", {
     "<grid::Vitals table> 3 rows x 4 columns"
   )
   hidden <- declare_in("grid", {
-    new_table("H", columns = list(x = field(type_integer(), sensitive = TRUE)))
+    new_table_type(
+      "H",
+      columns = list(x = field(type_integer(), sensitive = TRUE))
+    )
   })
   expect_false(any(grepl("42", lines(hidden(x = 42L)))))
   # ggplot2 takes a dim() of plain integers.
@@ -646,7 +670,7 @@ test_that("a table of another declaration is refused and updated", {
   V <- vitals("tb9")
   v <- V(cases())
   V2 <- declare_in("tb9", {
-    new_table(
+    new_table_type(
       "Vitals",
       columns = list(
         sbp = type_double(min = 0, max = 400),
@@ -664,7 +688,7 @@ test_that("a table of another declaration is refused and updated", {
   expect_identical(names(u), c("sbp", "age", "grp", "sex"))
   expect_identical(u[1, ]$sex, "f")
   declare_in("tb9", {
-    new_table(
+    new_table_type(
       "Vitals",
       columns = list(age = column(type_double(), unit = "mo"))
     )

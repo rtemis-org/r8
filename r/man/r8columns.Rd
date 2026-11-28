@@ -20,7 +20,7 @@ convention, and the descriptions, by the names of columns; \code{NA} removes one
 \code{description}, and \code{declared}. \code{r8annotate()}, the new value.
 }
 \description{
-\code{r8columns()} describes the columns of a value of a table (\code{\link[=new_table]{new_table()}}), and
+\code{r8columns()} describes the columns of a value of a table type (\code{\link[=new_table_type]{new_table_type()}}), and
 \code{r8annotate()} gives a value with the units or the descriptions of columns that
 its type does not declare. Those of a declared column are its type's. A column that
 is replaced has neither.

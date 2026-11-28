@@ -23,7 +23,7 @@ declare_file_report <- function() {
   set <- function(name, value) assign(name, value, envir = ns)
   set(
     "file_unread_type",
-    R8::new_table(
+    R8::new_table_type(
       "Unread",
       columns = list(
         column = text,
@@ -36,7 +36,7 @@ declare_file_report <- function() {
   )
   set(
     "file_recoded_type",
-    R8::new_table(
+    R8::new_table_type(
       "Recoded",
       columns = list(column = text, text = text, value = text, cells = count),
       description = "The texts of a file that read as given values."
@@ -44,7 +44,7 @@ declare_file_report <- function() {
   )
   set(
     "file_lines_type",
-    R8::new_table(
+    R8::new_table_type(
       "Lines",
       columns = list(line = R8::type_double(min = 1), cells = count),
       description = "The lines of a file that have another number of cells than the header."

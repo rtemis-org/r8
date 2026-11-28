@@ -39,7 +39,7 @@
 #' whenever `a` is present.
 #'
 #' @section Rows:
-#' A rule of a [new_table()] or a `type_table()` reads the cells of one row by the
+#' A rule of a [new_table_type()] or a [type_table()] reads the cells of one row by the
 #' names of the columns; the cell of a factor is its label. A rule also chooses the
 #' rows of a table ([r8filter()]), and then `mean()`, `sum()`, `median()`, `min()`,
 #' `max()`, `n()`, and `count()` read whole columns, as in [calc()]. `pmin()` and

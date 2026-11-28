@@ -1,3 +1,7 @@
+# R8.io 0.6.0.9000
+
+- R8.io imports R8 0.6.0.9000, whose `new_table_type()` declares the table types that `r8read_table()` and `r8check_file()` take.
+
 # R8.io 0.6.0
 
 - `r8read_table()`, `r8check_file()`, and `r8write_table()` begin with `r8` joined to their first word, as the functions of R8 do.

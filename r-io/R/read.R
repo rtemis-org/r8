@@ -74,7 +74,7 @@
 #'
 #' @param file Character: The file. A CSV or TSV file whose name ends in `.gz` is
 #'   decompressed.
-#' @param type Optional table type: An R8 table type ([R8::new_table()]), or an
+#' @param type Optional table type: An R8 table type ([R8::new_table_type()]), or an
 #'   [R8::type_table()], of which the result is a [R8::Raven].
 #' @param infer_types Character \{"strict", "none"\}: How the columns without a
 #'   declared type are read.
@@ -103,7 +103,7 @@
 #' writeLines(c("id,lab", "1,0.4", "2,<0.1", "3,12"), file)
 #' r8read_table(file)
 #'
-#' Labs <- R8::new_table("Labs", columns = list(
+#' Labs <- R8::new_table_type("Labs", columns = list(
 #'   id = R8::type_integer(),
 #'   lab = R8::type_double(min = 0)
 #' ))
@@ -251,7 +251,7 @@ type_refused <- function(arg) {
   io_abort(
     "`",
     arg,
-    "` is a table type, such as one of new_table(), or type_table().",
+    "` is a table type, of new_table_type() or of type_table().",
     class = "r8_argument_error"
   )
 } # /R8.io::type_refused
