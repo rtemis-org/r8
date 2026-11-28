@@ -35,7 +35,7 @@ cores, at most 2 where \verb{R CMD check} limits the cores, and at most
 A value of the type of \code{x}, or a \link{Raven}.
 }
 \description{
-\code{r8set()} gives a table (\code{\link[=new_table]{new_table()}}) with columns added or replaced,
+\code{r8set()} gives a table, a value of a \code{\link[=new_table_type]{new_table_type()}}, with columns added or replaced,
 \code{r8drop()} without columns, and \code{r8rename()} with columns under other names. Each
 gives a new value, which shares the columns it keeps, and leaves \code{x} as it is.
 }

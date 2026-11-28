@@ -15,7 +15,7 @@ another table, its columns, with the units and the descriptions that its type
 declares.
 }
 \description{
-\code{Raven} is a table (\code{\link[=new_table]{new_table()}}) that declares no column and takes any: a data
+\code{Raven} is a table type (\code{\link[=new_table_type]{new_table_type()}}) that declares no column and takes any: a data
 frame without row names, a data.table, a tibble, a named list of vectors, or
 columns given by name.
 }

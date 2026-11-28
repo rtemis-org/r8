@@ -185,7 +185,7 @@ scenario(
       expect_identical(r8filter(x, r)$row, 1L)
       expect_identical(r8filter(x, !r)$row, 3:4)
       Doses <- declare_in("f14", {
-        new_table(
+        new_table_type(
           "Doses",
           list(dose = option(type_double()), arm = type_character()),
           rules = r
@@ -205,7 +205,7 @@ scenario(
   result = "A calculation is R's, and its result keeps nothing of its source: under another name, it is a column without a range, a rule, or a unit. Where it replaces the declared column, the error says so, and gives another name and Raven(), whose replaced column has no unit.",
   code = {
     Patients <- declare_in("f15", {
-      new_table(
+      new_table_type(
         "Patients",
         list(
           weight = column(type_double(exclusive_min = 0), unit = "kg"),

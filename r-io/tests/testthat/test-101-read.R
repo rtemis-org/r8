@@ -52,11 +52,14 @@ test_that("a file is read as a declared type", {
   expect_identical(x$stage, factor("I", c("I", "II")))
   expect_identical(x$lab, 1.5)
   # A declared number reads a text that inference leaves as it is.
-  T2 <- R8::new_table("T2", list(a = R8::type_double(), b = R8::type_integer()))
+  T2 <- R8::new_table_type(
+    "T2",
+    list(a = R8::type_double(), b = R8::type_integer())
+  )
   x <- r8read_table(file_of("a,b", "007,+5", "1e2,40.0"), T2)
   expect_identical(as.list(x), list(a = c(7, 100), b = c(5L, 40L)))
   # The other columns of an open type are inferred.
-  T3 <- R8::new_table("T3", list(a = R8::type_character()), open = TRUE)
+  T3 <- R8::new_table_type("T3", list(a = R8::type_character()), open = TRUE)
   x <- r8read_table(file_of("a,b", "1,2"), T3)
   expect_identical(as.list(x), list(a = "1", b = 2L))
   expect_identical(
@@ -78,7 +81,7 @@ test_that("a file is read as a declared type", {
   )
   refuses(r8read_table(file_of("a,c", "1,2"), T2), "c")
   # A factor without levels has those of its cells, in code-point order.
-  T4 <- R8::new_table("T4", list(g = R8::type_factor()))
+  T4 <- R8::new_table_type("T4", list(g = R8::type_factor()))
   expect_identical(
     levels(r8read_table(file_of("g", "b", "a", "B"), T4)$g),
     c("B", "a", "b")
@@ -188,7 +191,7 @@ test_that("missing cells are the texts that are given", {
   x <- r8read_table(f, na_strings_in = list(s = c("NA", "")))
   expect_identical(x$s, c("x", "-99", NA, NA, NA, NA))
   expect_identical(r8read_table(f, na_strings = character())$s[[4]], "NA")
-  T <- R8::new_table(
+  T <- R8::new_table_type(
     "M",
     list(a = R8::type_integer(), s = R8::option(R8::type_character()))
   )

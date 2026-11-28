@@ -7,18 +7,19 @@
 #
 # spec: R8/raven
 
-# %% new_table ----
-#' Declare a table
+# %% new_table_type ----
+#' Declare a table type
 #'
-#' A table is a type whose values hold columns: vectors of one length, each with a
-#' name. A value reads as a list of its columns, with `$`, `[[`, `names()`, and
+#' A table type declares the columns of its values, which are tables: each holds
+#' columns, vectors of one length, each with a name. A value reads as a list of its columns, with `$`, `[[`, `names()`, and
 #' `lapply()`, and as a data frame with `[i, j]`, `dim()`, `head()`, and
 #' `as.data.frame()`; `lm()` and the other functions that call
 #' `as.data.frame()` take one ([Raven]).
 #'
 #' `columns` declares the columns that every value has. With `open = TRUE`, a value
 #' has other columns too, after the declared ones, of any name and of any of the
-#' column types. [Raven] is the open table without declared columns.
+#' column types. [Raven] is the open table type without declared columns.
+#' [type_table()] declares a table type without a name, for a field.
 #'
 #' @param name Character: The type name, an R8 name.
 #' @param columns Named list: The columns, each a field type, such as
@@ -60,7 +61,7 @@
 #'
 #' @examples
 #' op <- options(r8.namespace = "demo")
-#' Vitals <- new_table("Vitals", columns = list(
+#' Vitals <- new_table_type("Vitals", columns = list(
 #'   age = column(type_double(min = 0), unit = "a"),
 #'   sbp = type_double(min = 0, max = 400)
 #' ), open = TRUE)
@@ -72,7 +73,7 @@
 #' options(op)
 #'
 #' @export
-new_table <- function(
+new_table_type <- function(
   name,
   columns = list(),
   open = FALSE,
@@ -80,6 +81,13 @@ new_table <- function(
   version = 1L,
   rules = list()
 ) {
+  if (is.list(name)) {
+    r8_abort(
+      "The first argument of new_table_type() is the type name, such as ",
+      "\"Vitals\". A table type without a name is type_table(columns).",
+      class = "r8_declaration_error"
+    )
+  }
   if (!is_name(name)) {
     r8_abort(
       "A type name is an R8 name, such as \"Vitals\"",
@@ -103,13 +111,13 @@ new_table <- function(
     parent.frame(),
     "r8_table_type"
   )
-} # /R8::new_table
+} # /R8::new_table_type
 
 
 # %% Raven ----
 #' A table of any columns
 #'
-#' `Raven` is a table ([new_table()]) that declares no column and takes any: a data
+#' `Raven` is a table type ([new_table_type()]) that declares no column and takes any: a data
 #' frame without row names, a data.table, a tibble, a named list of vectors, or
 #' columns given by name.
 #'
@@ -752,7 +760,7 @@ row_index <- function(x, i, e) {
 # %% r8filter ----
 #' Choose rows and columns of a table
 #'
-#' `r8filter()` gives the rows of a table ([new_table()]) where a [rule()] is true,
+#' `r8filter()` gives the rows of a table, a value of a [new_table_type()], where a [rule()] is true,
 #' and `r8select()` gives columns. Neither changes `x`, and `r8select()` copies no
 #' column. `x[rule, ]` and `x[rule, columns]` are the same.
 #'
@@ -876,7 +884,7 @@ as.data.frame.r8_table <- function(
 # %% r8to_data_frame ----
 #' A table as a data frame
 #'
-#' The columns of a table ([new_table()]) as a data frame, which shares them.
+#' The columns of a table, a value of a [new_table_type()], as a data frame, which shares them.
 #' `as.data.frame()` of a table, which `lm()` and other functions of R call, is the
 #' same.
 #'
@@ -1044,7 +1052,7 @@ subset.r8_table <- function(x, ...) {
 # %% r8set ----
 #' Change the columns of a table
 #'
-#' `r8set()` gives a table ([new_table()]) with columns added or replaced,
+#' `r8set()` gives a table, a value of a [new_table_type()], with columns added or replaced,
 #' `r8drop()` without columns, and `r8rename()` with columns under other names. Each
 #' gives a new value, which shares the columns it keeps, and leaves `x` as it is.
 #'
@@ -2427,7 +2435,7 @@ table_columns_arg <- function(x, value, e, env, arg = "columns") {
 # %% r8columns ----
 #' The columns of a table
 #'
-#' `r8columns()` describes the columns of a value of a table ([new_table()]), and
+#' `r8columns()` describes the columns of a value of a table type ([new_table_type()]), and
 #' `r8annotate()` gives a value with the units or the descriptions of columns that
 #' its type does not declare. Those of a declared column are its type's. A column that
 #' is replaced has neither.

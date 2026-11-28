@@ -59,7 +59,7 @@ whenever \code{a} is present.
 
 \section{Rows}{
 
-A rule of a \code{\link[=new_table]{new_table()}} or a \code{type_table()} reads the cells of one row by the
+A rule of a \code{\link[=new_table_type]{new_table_type()}} or a \code{\link[=type_table]{type_table()}} reads the cells of one row by the
 names of the columns; the cell of a factor is its label. A rule also chooses the
 rows of a table (\code{\link[=r8filter]{r8filter()}}), and then \code{mean()}, \code{sum()}, \code{median()}, \code{min()},
 \code{max()}, \code{n()}, and \code{count()} read whole columns, as in \code{\link[=calc]{calc()}}. \code{pmin()} and

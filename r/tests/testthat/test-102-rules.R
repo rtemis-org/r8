@@ -364,7 +364,7 @@ test_that("the name of a rule in a list is its ID", {
     new_struct("A", fields = fields, rules = list(a = shared))
   })
   B <- declare_in("rn2", {
-    new_table(
+    new_table_type(
       "B",
       columns = fields,
       rules = list(b = shared, shared_too = rule(lo > 0))
@@ -438,7 +438,7 @@ test_that("an argument that is TRUE or FALSE takes nothing else", {
       function() column(type_double(), unique = x),
       function() column(type_double(), required = x),
       function() type_table(open = x),
-      function() new_table("T", open = x),
+      function() new_table_type("T", open = x),
       function() trait_method(params(x), stochastic = x)
     )) {
       expect_error(f(), "is TRUE or FALSE", class = "r8_declaration_error")

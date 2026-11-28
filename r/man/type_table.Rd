@@ -25,7 +25,8 @@ A \code{data.frame} of equal-length columns, each a scalar type, a factor, or
 \code{option()} of one, with automatic row names. An open table also accepts
 columns its declaration does not name. A table's rules run once per row
 and read the row's columns by name. With \code{of}, a table whose columns are
-the fields of a struct.
+the fields of a struct. \code{\link[=new_table_type]{new_table_type()}} declares a table type with a name,
+whose values are tables.
 }
 \examples{
 type_table(

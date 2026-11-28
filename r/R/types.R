@@ -582,7 +582,8 @@ type_sparse_matrix <- function(type = type_double(), nrow = NULL, ncol = NULL) {
 #' `option()` of one, with automatic row names. An open table also accepts
 #' columns its declaration does not name. A table's rules run once per row
 #' and read the row's columns by name. With `of`, a table whose columns are
-#' the fields of a struct.
+#' the fields of a struct. [new_table_type()] declares a table type with a name,
+#' whose values are tables.
 #'
 #' @param columns Named list of fields or field types.
 #' @param open Logical: Accept columns the declaration does not name.
@@ -617,6 +618,27 @@ type_table <- function(
       "type_table",
       length(columns) == 0L && isFALSE(open) && length(rules) == 0L
     ))
+  }
+  # A type name written first, as for new_table_type(), lands in `columns`, or in
+  # `open` where `columns` is named; the call as written tells which.
+  given <- as.list(sys.call())[-1L]
+  tags <- names(given)
+  if (is.null(tags)) {
+    tags <- character(length(given))
+  }
+  first <- given[!nzchar(tags)]
+  if (
+    length(first) > 0L &&
+      is.character(first[[1L]]) &&
+      length(first[[1L]]) == 1L
+  ) {
+    r8_abort(
+      "type_table() declares a table type without a name; one with a name is ",
+      "new_table_type(\"",
+      first[[1L]],
+      "\", columns = list(...)).",
+      class = "r8_declaration_error"
+    )
   }
   if (inherits(columns, "r8_struct_type")) {
     r8_abort(

@@ -13,7 +13,7 @@ file_of <- function(..., ext = ".csv", env = parent.frame()) {
 }
 
 labs_type <- function() {
-  R8::new_table(
+  R8::new_table_type(
     "Labs",
     columns = list(
       mrn = R8::column(R8::type_character(), unique = TRUE),

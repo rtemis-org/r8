@@ -1,3 +1,7 @@
+# R8 0.6.0.9000
+
+- `new_table()` is `new_table_type()`, and a table type prints as `<r8 table type ns::Name v1>`. The error of `type_table("Name")` names `new_table_type()`, and that of `new_table_type(list(...))` names `type_table()`.
+
 # R8 0.6.0
 
 - Exported functions that operate on values, types, tables, and packages begin with `r8` joined to their first word, with underscores between the later words: `r8filter()`, `r8set()`, `r8check()`, `r8to_json()`, `r8is_variant()`, and the roclet `r8rd()`. Classes and conditions begin with `r8_`: `r8_value`, `r8_table`, and `r8_value_error`.

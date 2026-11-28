@@ -171,7 +171,12 @@ update-crates:
 # Vendor Rust crates into src/rust/vendor.tar.xz, and write LICENSE.note and inst/AUTHORS
 vendor:
     @just _msg "─── Vendoring Rust crates for {{ pkg }}... ───"
-    {{ rscript }} -e "rextendr::vendor_crates(overwrite = TRUE, clean = TRUE)"
+    # COPYFILE_DISABLE=1 keeps macOS tar from storing the extended attributes of
+    # each file as an AppleDouble file, `._name`, which a build script that
+    # compiles every `*.c` of a directory, as that of zstd-sys does, compiles on
+    # Linux. The check lists the archive with R's own tar, which shows such files.
+    COPYFILE_DISABLE=1 {{ rscript }} -e "rextendr::vendor_crates(overwrite = TRUE, clean = TRUE)"
+    {{ rscript }} -e "n <- utils::untar('src/rust/vendor.tar.xz', list = TRUE, tar = 'internal'); bad <- grep('(^|/)[.]_', n, value = TRUE); if (length(bad) > 0L) stop(length(bad), ' AppleDouble files in src/rust/vendor.tar.xz, such as ', bad[[1L]])"
     {{ rscript }} tools/rust-attribution.R
     @just _msg "Done"
 

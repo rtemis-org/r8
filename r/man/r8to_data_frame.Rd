@@ -13,7 +13,7 @@ r8to_data_frame(x)
 A data frame.
 }
 \description{
-The columns of a table (\code{\link[=new_table]{new_table()}}) as a data frame, which shares them.
+The columns of a table, a value of a \code{\link[=new_table_type]{new_table_type()}}, as a data frame, which shares them.
 \code{as.data.frame()} of a table, which \code{lm()} and other functions of R call, is the
 same.
 }

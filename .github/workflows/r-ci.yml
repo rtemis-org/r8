@@ -12,8 +12,8 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   CARGO_TERM_COLOR: always
-  # tools/config.R patches the crates.io release of rtemis-r8 with this checkout's
-  # crate.
+  # tools/config.R of R8 and of R8.io patch the crates.io releases of rtemis-r8
+  # and rtemis-r8-io with this checkout's crates.
   R8_CRATES_PATH: ${{ github.workspace }}/rust/crates
   # The differential oracle that test-construct.R compares in-place
   # construction with; the tests fail when it is set and the oracle is missing.
@@ -99,6 +99,80 @@ jobs:
       - run: cargo clippy --all-targets --features oracle --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
       - run: cargo clippy --all-targets --features alloc-stats --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" -- -D warnings
 
+  r-io-check:
+    name: R CMD check (R8.io)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install checkbashisms
+        run: sudo apt-get update && sudo apt-get install -y devscripts
+      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+      # R8.io imports R8, which the next step installs from this checkout; this
+      # step installs the packages of R8.io's Suggests and the check.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: r-io
+          packages: any::rcmdcheck, any::testthat, any::nanoparquet
+          cache: always
+          cache-version: 1
+      - name: Install R8 from this checkout
+        run: R CMD INSTALL r
+      - uses: r-lib/actions/check-r-package@v2
+        timeout-minutes: 20
+        with:
+          working-directory: r-io
+          # The check builds against this checkout's rtemis-r8 and
+          # rtemis-r8-io; an error fails the job.
+          error-on: '"error"'
+          args: 'c("--no-manual", "--as-cran")'
+          build_args: 'c("--no-manual")'
+      # CRAN builds install the committed R/extendr-wrappers.R; a development
+      # build regenerates it from the Rust doc comments, and the two must match.
+      - name: Check that R/extendr-wrappers.R is current
+        working-directory: r-io
+        env:
+          NOT_CRAN: "true"
+        run: |
+          R CMD INSTALL --no-test-load .
+          git diff --exit-code R/extendr-wrappers.R
+      - name: Preserve incomplete check diagnostics
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: check-diagnostics-r-io
+          path: r-io/check
+          if-no-files-found: ignore
+
+  rust-io:
+    name: Rust (R8.io binding crate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: r-io/src/rust
+    steps:
+      - uses: actions/checkout@v6
+      # extendr-ffi links against R, so R is present for the build.
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --check
+      # The patch rewrites the lock's entries of both crates without their
+      # crates.io source, so this step runs without --locked; the job `vendored`
+      # builds from the committed lock.
+      - run: cargo clippy --all-targets --config "patch.crates-io.rtemis-r8.path=\"$R8_CRATES_PATH/rtemis-r8\"" --config "patch.crates-io.rtemis-r8-io.path=\"$R8_CRATES_PATH/rtemis-r8-io\"" -- -D warnings
+
   msrv:
     name: Install with the minimum Rust version
     runs-on: ubuntu-latest
@@ -139,7 +213,7 @@ jobs:
     name: Install from the vendored crates
     # The release line builds from crates.io: pushes to main, pull requests
     # into main, and manual runs. devel builds against this checkout's crates,
-    # which may hold items no release of rtemis-r8 has.
+    # which may hold items no release of rtemis-r8 or rtemis-r8-io has.
     if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -147,9 +221,9 @@ jobs:
       run:
         working-directory: r
     env:
-      # Empty: the build compiles the crates.io release of rtemis-r8 from
+      # Empty: each build compiles the crates.io releases from its package's
       # src/rust/vendor.tar.xz, offline, as r-universe and CRAN do. A binding
-      # that uses items of an unpublished rtemis-r8 fails here.
+      # that uses items of an unpublished crate fails here.
       R8_CRATES_PATH: ""
       R8_ORACLE: ""
     steps:
@@ -166,3 +240,9 @@ jobs:
           R CMD build --no-manual .
           R CMD INSTALL R8_*.tar.gz
           Rscript -e 'stopifnot(grepl("^[0-9]+[.][0-9]+[.][0-9]+", R8::r8runtime_version()))'
+      - name: Build and install R8.io from its vendored crates
+        working-directory: r-io
+        run: |
+          R CMD build --no-manual .
+          R CMD INSTALL R8.io_*.tar.gz
+          Rscript -e 'f <- tempfile(fileext = ".csv"); writeLines(c("a,b", "1,x"), f); stopifnot(nrow(R8.io::r8read_table(f)) == 1L)'

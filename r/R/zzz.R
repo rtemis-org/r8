@@ -478,7 +478,7 @@ declare_conversion <- function(converter, source, fn, env) {
   # The type of the tables without declared columns.
   assign(
     "Raven",
-    new_table(
+    new_table_type(
       "Raven",
       open = TRUE,
       description = "A table of any columns."

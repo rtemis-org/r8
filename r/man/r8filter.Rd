@@ -27,7 +27,7 @@ A value of the type of \code{x}. \code{r8select()} without a column that the typ
 requires gives a \link{Raven}.
 }
 \description{
-\code{r8filter()} gives the rows of a table (\code{\link[=new_table]{new_table()}}) where a \code{\link[=rule]{rule()}} is true,
+\code{r8filter()} gives the rows of a table, a value of a \code{\link[=new_table_type]{new_table_type()}}, where a \code{\link[=rule]{rule()}} is true,
 and \code{r8select()} gives columns. Neither changes \code{x}, and \code{r8select()} copies no
 column. \code{x[rule, ]} and \code{x[rule, columns]} are the same.
 }
