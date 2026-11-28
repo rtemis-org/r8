@@ -2,6 +2,8 @@
 
 Readers and writers of table files for the types of [R8](https://github.com/rtemis-org/r8).
 
+The part "Files" of the [R8 guide](https://docs.rtemis.org/r/r8/file-read.html) documents the package.
+
 ```r
 library(R8)
 library(R8.io)
