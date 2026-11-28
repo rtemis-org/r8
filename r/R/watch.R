@@ -11,10 +11,10 @@
 # `explaining`, set by r8explain(); `collecting`, set by r8bench(); `hooked`,
 # set by map_progress() for a hook with `stages()`; each is `TRUE` or `NULL`,
 # tested by `is.null()`, a primitive: `isTRUE()` is a closure, whose calls cost
-# about 1 us of a map of 50 us at the size of rtemis's tuner. `depth`, the table
-# functions of R8 entered; `start`, the seconds of `r8_clock()` at the first's
-# entry; `call`, its call; `label`, the label of its map; `pending`, the plan
-# that its run left; and `plans`, the plans that r8bench() collects.
+# about 1 microsecond of a map of 50 at the size of rtemis's tuner. `depth`, the
+# table functions of R8 entered; `start`, the seconds of `r8_clock()` at the
+# first's entry; `call`, its call; `label`, the label of its map; `pending`, the
+# plan that its run left; and `plans`, the plans that r8bench() collects.
 .r8_watch <- new.env(parent = emptyenv())
 
 
