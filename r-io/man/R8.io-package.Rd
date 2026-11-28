@@ -12,6 +12,7 @@ what in a file does not read as a type, and \code{\link[=r8write_table]{r8write_
 \seealso{
 Useful links:
 \itemize{
+  \item \url{https://docs.rtemis.org/r/r8.io-api/}
   \item \url{https://docs.rtemis.org/r/r8/file-read.html}
   \item \url{https://www.rtemis.org}
   \item \url{https://github.com/rtemis-org/r8}

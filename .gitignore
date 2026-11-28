@@ -6,6 +6,10 @@ __dev/
 /target
 r/tests/testthat/packages/*/src/rust/target
 
+# R
+_pkgdown.yml
+pkgdown/
+
 # macOS
 .DS_Store
 

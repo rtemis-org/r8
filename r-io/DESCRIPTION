@@ -14,7 +14,7 @@ Description: Readers and writers of table files for the types of 'R8'. A column 
     with its count and its first rows, for the user to give what it reads as. A
     column without a declared type has the type that all its cells have, and is text
     otherwise.
-URL: https://docs.rtemis.org/r/r8/file-read.html,
+URL: https://docs.rtemis.org/r/r8.io-api/, https://docs.rtemis.org/r/r8/file-read.html,
     https://www.rtemis.org, https://github.com/rtemis-org/r8
 BugReports: https://github.com/rtemis-org/r8/issues
 License: BSD_3_clause + file LICENSE

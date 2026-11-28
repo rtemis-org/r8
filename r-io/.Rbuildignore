@@ -14,6 +14,9 @@
 ^CLAUDE\.md$
 ^README\.md$
 ^justfile$
+^_pkgdown\.yml$
+^pkgdown$
+^docs$
 ^LICENSE\.md$
 ^cran-comments\.md$
 ^CRAN-SUBMISSION$
